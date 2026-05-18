@@ -46,7 +46,6 @@ def _empty_call_log_summary(reason: str) -> dict:
     }
 
 
-
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.error_localizer_model import (
@@ -137,8 +136,14 @@ from simulate.serializers.test_execution import (
     CallExecutionDetailSerializer,
     CallExecutionSerializer,
     CallExecutionSnapshotSerializer,
+    EvalExplanationSummaryRefreshResponseSerializer,
+    EvalExplanationSummaryResponseSerializer,
+    OptimiserAnalysisRefreshResponseSerializer,
+    OptimiserAnalysisResponseSerializer,
     PerformanceSummarySerializer,
     RunTestAnalyticsSerializer,
+    RunTestKPIsResponseSerializer,
+    TestExecutionDetailResponseSerializer,
     TestExecutionAnalyticsSerializer,
     TestExecutionBulkDeleteResponseSerializer,
     TestExecutionBulkDeleteSerializer,
@@ -181,7 +186,6 @@ from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
-    ApiSuccessResponseSerializer,
     EmptyRequestSerializer,
 )
 from tfc.utils.error_codes import get_error_message
@@ -1399,7 +1403,7 @@ class RunTestKPIsView(APIView):
 
     @swagger_auto_schema(
         responses={
-            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            200: RunTestKPIsResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
@@ -1978,7 +1982,7 @@ class TestExecutionDetailView(APIView):
 
     @swagger_auto_schema(
         responses={
-            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            200: TestExecutionDetailResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
@@ -5696,7 +5700,7 @@ class RunTestEvalSummaryComparisonView(APIView):
             eval_configs = _get_eval_configs_with_template(run_test)
 
             if not eval_configs:
-                return Response({}, status=status.HTTP_200_OK)
+                return self._gm.success_response({})
 
             comparison_results = {}
 
@@ -5729,7 +5733,7 @@ class RunTestEvalExplanationSummaryView(APIView):
 
     @swagger_auto_schema(
         responses={
-            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            200: EvalExplanationSummaryResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
@@ -5786,7 +5790,7 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
     @swagger_auto_schema(
         request_body=EmptyRequestSerializer,
         responses={
-            200: ApiSuccessResponseSerializer,
+            200: EvalExplanationSummaryRefreshResponseSerializer,
             404: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
         },
@@ -5836,7 +5840,7 @@ class TestExecutionOptimiserAnalysisView(APIView):
 
     @swagger_auto_schema(
         responses={
-            200: ApiSuccessResponseSerializer,
+            200: OptimiserAnalysisResponseSerializer,
             404: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,
         },
@@ -5884,7 +5888,7 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
     @swagger_auto_schema(
         request_body=EmptyRequestSerializer,
         responses={
-            200: ApiSuccessResponseSerializer,
+            200: OptimiserAnalysisRefreshResponseSerializer,
             400: ApiErrorResponseSerializer,
             404: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,

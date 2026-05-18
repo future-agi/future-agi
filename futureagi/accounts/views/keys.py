@@ -12,8 +12,10 @@ from rest_framework.viewsets import ViewSet
 from accounts.models import OrgApiKey
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
-    AccountsJSONResponseSerializer,
-    AccountsPaginatedResponseSerializer,
+    AccountsStringResultResponseSerializer,
+    SecretKeyCreateResponseSerializer,
+    SecretKeyListResponseSerializer,
+    SecretKeysResponseSerializer,
 )
 from accounts.serializers.org_api_key import (
     CreateSecretKeySerializer,
@@ -35,7 +37,7 @@ class GetKeysView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={200: SecretKeysResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         user_organization = (
@@ -84,7 +86,7 @@ class SecretKeyAPIViewSet(ViewSet):
     }
 
     @swagger_auto_schema(
-        responses={200: AccountsPaginatedResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={200: SecretKeyListResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     @action(detail=False, methods=["GET"])
     def get_secret_keys(self, request, *args, **kwargs):
@@ -171,7 +173,10 @@ class SecretKeyAPIViewSet(ViewSet):
 
     @swagger_auto_schema(
         request_body=UserSecretKeySerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: AccountsStringResultResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     @action(detail=False, methods=["POST"])
     def enable_key(self, request, *args, **kwargs):
@@ -206,7 +211,10 @@ class SecretKeyAPIViewSet(ViewSet):
 
     @swagger_auto_schema(
         request_body=UserSecretKeySerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: AccountsStringResultResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     @action(detail=False, methods=["POST"])
     def disable_key(self, request, *args, **kwargs):
@@ -241,7 +249,7 @@ class SecretKeyAPIViewSet(ViewSet):
 
     @swagger_auto_schema(
         request_body=CreateSecretKeySerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: SecretKeyCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     @action(detail=False, methods=["POST"])
     def generate_secret_key(self, request, *args, **kwargs):
@@ -283,7 +291,10 @@ class SecretKeyAPIViewSet(ViewSet):
 
     @swagger_auto_schema(
         request_body=UserSecretKeySerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: AccountsStringResultResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     @action(detail=False, methods=["DELETE"])
     def delete_secret_key(self, request, *args, **kwargs):

@@ -13,7 +13,7 @@ from model_hub.models.monitor_alert import MonitorAlert
 from model_hub.serializers.ai_model import AIModelSerializer
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
-    ModelHubJSONResponseSerializer,
+    OverviewResponseSerializer,
 )
 from model_hub.utils.clickhouse import get_model_volume
 
@@ -23,7 +23,7 @@ class OverviewView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: OverviewResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         # Get the organization of the logged-in user

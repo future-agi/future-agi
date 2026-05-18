@@ -1,6 +1,7 @@
 import structlog
 from django.db import transaction
 from django.db.models import Avg, Count
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -23,9 +24,16 @@ from simulate.models import (
 )
 from simulate.serializers.agent_prompt_optimiser import (
     OPTIMISER_REQUIRED_CONFIG_KEYS,
+    AgentPromptOptimiserGraphResponseSerializer,
     AgentPromptOptimiserRunCreateSerializer,
+    AgentPromptOptimiserRunDetailResponseSerializer,
     AgentPromptOptimiserRunListSerializer,
+    AgentPromptOptimiserRunModelResponseSerializer,
     AgentPromptOptimiserRunSerializer,
+    AgentPromptOptimiserRunStepsResponseSerializer,
+    AgentPromptOptimiserTrialEvaluationsResponseSerializer,
+    AgentPromptOptimiserTrialPromptResponseSerializer,
+    AgentPromptOptimiserTrialScenariosResponseSerializer,
 )
 from simulate.utils.agent_prompt_optimiser import (
     build_trial_table_data,
@@ -196,6 +204,18 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error listing AgentPromptOptimiserRuns: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={200: AgentPromptOptimiserRunModelResponseSerializer}
+    )
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={200: AgentPromptOptimiserRunModelResponseSerializer}
+    )
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
+
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         try:
@@ -232,6 +252,9 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error creating AgentPromptOptimiserRun: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={200: AgentPromptOptimiserRunDetailResponseSerializer}
+    )
     def retrieve(self, request, *args, **kwargs):
         """
         Get run details with trial comparison table.
@@ -272,6 +295,9 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error retrieving AgentPromptOptimiserRun: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={200: AgentPromptOptimiserRunStepsResponseSerializer}
+    )
     @action(detail=True, methods=["get"])
     def steps(self, request, *args, **kwargs):
         """Get all steps for this optimization run."""
@@ -285,6 +311,7 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(responses={200: AgentPromptOptimiserGraphResponseSerializer})
     @action(detail=True, methods=["get"])
     def graph(self, request, *args, **kwargs):
         """
@@ -321,6 +348,9 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             "score_percentage_change": score_percentage_change,
         }
 
+    @swagger_auto_schema(
+        responses={200: AgentPromptOptimiserTrialPromptResponseSerializer}
+    )
     @action(
         detail=True,
         methods=["get"],
@@ -352,6 +382,9 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error retrieving trial prompt: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={200: AgentPromptOptimiserTrialEvaluationsResponseSerializer}
+    )
     @action(
         detail=True,
         methods=["get"],
@@ -436,6 +469,9 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error retrieving trial evaluations: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={200: AgentPromptOptimiserTrialScenariosResponseSerializer}
+    )
     @action(
         detail=True,
         methods=["get"],

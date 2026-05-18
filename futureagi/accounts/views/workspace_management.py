@@ -33,7 +33,16 @@ from accounts.models.user import User
 from accounts.models.workspace import OrganizationRoles, Workspace, WorkspaceMembership
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
-    AccountsJSONResponseSerializer,
+    DeactivateUserResponseSerializer,
+    DeleteUserResponseSerializer,
+    ResendInviteResponseSerializer,
+    SwitchWorkspaceResponseSerializer,
+    TeamCreateResponseSerializer,
+    TeamUsersResponseSerializer,
+    UserListPaginatedResponseSerializer,
+    UserRoleUpdateResponseSerializer,
+    WorkspaceInviteResponseSerializer,
+    WorkspaceListPaginatedResponseSerializer,
 )
 from accounts.serializers.user import CreateMemberSerializer, UserSerializer
 from accounts.serializers.workspace import (
@@ -147,7 +156,10 @@ class WorkspaceListAPIView(APIView):
 
     @swagger_auto_schema(
         query_serializer=WorkspaceListRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: WorkspaceListPaginatedResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def get(self, request):
         """Get paginated list of workspaces"""
@@ -258,7 +270,7 @@ class WorkspaceInviteAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=WorkspaceInviteSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: WorkspaceInviteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     @transaction.atomic
     def post(self, request):
@@ -627,7 +639,10 @@ class UserListAPIView(APIView):
 
     @swagger_auto_schema(
         query_serializer=UserListRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: UserListPaginatedResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def get(self, request):
         """Get paginated list of users with filtering at workspace level"""
@@ -1066,7 +1081,7 @@ class UserRoleUpdateAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=UserRoleUpdateSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: UserRoleUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         """Update user role at organization or workspace level"""
@@ -1356,7 +1371,7 @@ class ResendInviteAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=ResendInviteSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: ResendInviteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         """Resend invitation email with workspace context"""
@@ -1466,7 +1481,7 @@ class DeleteUserAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=DeleteUserSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: DeleteUserResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         """Delete user or remove invite at organization or workspace level"""
@@ -1606,7 +1621,7 @@ class DeactivateUserAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=DeactivateUserSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: DeactivateUserResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         """Deactivate user by marking is_active as False"""
@@ -1727,7 +1742,7 @@ class SwitchWorkspaceAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=SwitchWorkspaceSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: SwitchWorkspaceResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         """Switch to a different workspace with proper validation"""
@@ -1817,7 +1832,7 @@ class ManageTeamView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={200: TeamUsersResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         user = request.user
@@ -1982,7 +1997,7 @@ class ManageTeamView(APIView):
 
     @swagger_auto_schema(
         request_body=CreateMemberSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={201: TeamCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:

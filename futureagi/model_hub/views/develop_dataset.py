@@ -147,6 +147,7 @@ from model_hub.serializers.contracts import (
     DatasetUpdateColumnTypeRequestSerializer,
     DuplicateDatasetRequestSerializer,
     DuplicateRowsRequestSerializer,
+    EmbeddingsResponseSerializer,
     HuggingFaceDatasetDetailResponseSerializer,
     HuggingFaceDatasetDetailRequestSerializer,
     HuggingFaceDatasetListResponseSerializer,
@@ -10494,7 +10495,7 @@ class GetEmbeddingsListView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: EmbeddingsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
         try:

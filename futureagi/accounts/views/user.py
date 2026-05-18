@@ -30,9 +30,14 @@ from accounts.serializers import UserSerializer
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsAccessTokenResponseSerializer,
-    AccountsJSONResponseSerializer,
+    AccountsRedisDeleteResponseSerializer,
+    AccountsRedisSetResponseSerializer,
     RedisKeyRequestSerializer,
     TokenRefreshRequestSerializer,
+    UserChecksResponseSerializer,
+    UserInfoResponseSerializer,
+    UserOnboardingResponseSerializer,
+    UserOnboardingSaveResponseSerializer,
 )
 from accounts.serializers.user import UserOnboardingSerializer
 
@@ -59,12 +64,12 @@ logger = structlog.get_logger(__name__)
 @swagger_auto_schema(
     method="post",
     request_body=RedisKeyRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AccountsRedisSetResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @swagger_auto_schema(
     method="delete",
     request_body=RedisKeyRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AccountsRedisDeleteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST", "DELETE"])
 @permission_classes([IsAuthenticated])
@@ -533,7 +538,7 @@ class CustomTokenRefreshView(APIView):
 
 @swagger_auto_schema(
     method="get",
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: UserInfoResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -827,7 +832,7 @@ class FirstChecksView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={200: UserChecksResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def get(self, request):
         try:
@@ -855,12 +860,12 @@ class FirstChecksView(APIView):
 
 @swagger_auto_schema(
     method="get",
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: UserOnboardingResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @swagger_auto_schema(
     method="post",
     request_body=UserOnboardingSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: UserOnboardingSaveResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST", "GET"])
 @permission_classes([IsAuthenticated])

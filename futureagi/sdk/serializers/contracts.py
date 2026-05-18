@@ -173,24 +173,68 @@ class SDKExecutionRunsDetailResultSerializer(ExecutionRunsSerializer):
     )
 
 
+class SDKSimulationMetricsResultSerializer(serializers.Serializer):
+    call_execution_id = serializers.UUIDField(required=False)
+    execution_id = serializers.UUIDField(required=False)
+    status = serializers.CharField(required=False)
+    duration_seconds = serializers.FloatField(required=False, allow_null=True)
+    started_at = serializers.DateTimeField(required=False, allow_null=True)
+    completed_at = serializers.DateTimeField(required=False, allow_null=True)
+    total_calls = serializers.IntegerField(required=False)
+    completed_calls = serializers.IntegerField(required=False)
+    failed_calls = serializers.IntegerField(required=False)
+    latency = serializers.JSONField(required=False)
+    cost = serializers.JSONField(required=False)
+    conversation = serializers.JSONField(required=False)
+    chat_metrics = serializers.JSONField(required=False, allow_null=True)
+    metrics = serializers.JSONField(required=False)
+    total_pages = serializers.IntegerField(required=False)
+    current_page = serializers.IntegerField(required=False)
+    count = serializers.IntegerField(required=False)
+    results = ExecutionMetricsSerializer(many=True, required=False)
+
+
 class SDKSimulationMetricsResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
-    result = serializers.JSONField(
-        help_text=(
-            "CallMetrics, ExecutionMetrics, or paginated ExecutionMetrics depending "
-            "on call_execution_id/execution_id/run_test_name query parameters."
-        )
+    result = SDKSimulationMetricsResultSerializer()
+
+
+class SDKSimulationRunsResultSerializer(serializers.Serializer):
+    call_execution_id = serializers.UUIDField(required=False)
+    execution_id = serializers.UUIDField(required=False)
+    scenario_id = serializers.UUIDField(required=False)
+    scenario_name = serializers.CharField(required=False, allow_blank=True)
+    status = serializers.CharField(required=False)
+    started_at = serializers.DateTimeField(required=False, allow_null=True)
+    completed_at = serializers.DateTimeField(required=False, allow_null=True)
+    duration_seconds = serializers.FloatField(required=False, allow_null=True)
+    ended_reason = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
     )
+    call_summary = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    total_calls = serializers.IntegerField(required=False)
+    completed_calls = serializers.IntegerField(required=False)
+    failed_calls = serializers.IntegerField(required=False)
+    eval_outputs = serializers.JSONField(required=False)
+    eval_results = serializers.ListField(child=serializers.JSONField(), required=False)
+    latency = serializers.JSONField(required=False)
+    cost = serializers.JSONField(required=False)
+    call_results = serializers.JSONField(required=False)
+    eval_explanation_summary = serializers.JSONField(required=False, allow_null=True)
+    eval_explanation_summary_status = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    total_pages = serializers.IntegerField(required=False)
+    current_page = serializers.IntegerField(required=False)
+    count = serializers.IntegerField(required=False)
+    results = ExecutionRunsSerializer(many=True, required=False)
 
 
 class SDKSimulationRunsResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
-    result = serializers.JSONField(
-        help_text=(
-            "CallRunDetail, ExecutionRuns detail, or paginated ExecutionRuns depending "
-            "on call_execution_id/execution_id/run_test_name query parameters."
-        )
-    )
+    result = SDKSimulationRunsResultSerializer()
 
 
 class SDKSimulationAnalyticsNoCompletedSerializer(serializers.Serializer):
@@ -201,14 +245,23 @@ class SDKSimulationAnalyticsNoCompletedSerializer(serializers.Serializer):
     system_summary = serializers.DictField()
 
 
+class SDKSimulationAnalyticsResultSerializer(serializers.Serializer):
+    execution_id = serializers.UUIDField(required=False)
+    run_test_name = serializers.CharField()
+    status = serializers.CharField(required=False)
+    message = serializers.CharField(required=False)
+    eval_results = serializers.ListField(child=serializers.JSONField())
+    eval_averages = serializers.JSONField()
+    system_summary = serializers.JSONField()
+    eval_explanation_summary = serializers.JSONField(required=False, allow_null=True)
+    eval_explanation_summary_status = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+
+
 class SDKSimulationAnalyticsResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
-    result = serializers.JSONField(
-        help_text=(
-            "AnalyticsResponse when data exists, or a no-completed-executions result "
-            "with run_test_name/message/eval_results/eval_averages/system_summary."
-        )
-    )
+    result = SDKSimulationAnalyticsResultSerializer()
 
 
 __all__ = [

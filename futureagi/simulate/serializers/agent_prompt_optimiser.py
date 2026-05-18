@@ -279,3 +279,235 @@ class PromptTrialListSerializer(serializers.ModelSerializer):
             "average_score",
             "created_at",
         )
+
+
+class AgentPromptOptimiserColumnConfigSerializer(serializers.Serializer):
+    id = serializers.CharField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    is_visible = serializers.BooleanField(read_only=True)
+
+
+class AgentPromptOptimiserConfigurationSerializer(serializers.Serializer):
+    """Known optimiser configuration fields accepted across optimiser types."""
+
+    num_gradients = serializers.IntegerField(required=False)
+    errors_per_gradient = serializers.IntegerField(required=False)
+    prompts_per_gradient = serializers.IntegerField(required=False)
+    beam_size = serializers.IntegerField(required=False)
+    num_rounds = serializers.IntegerField(required=False)
+    num_variations = serializers.IntegerField(required=False)
+    max_metric_calls = serializers.IntegerField(required=False)
+    min_examples = serializers.IntegerField(required=False)
+    max_examples = serializers.IntegerField(required=False)
+    n_trials = serializers.IntegerField(required=False)
+    task_description = serializers.CharField(required=False, allow_blank=True)
+    mutate_rounds = serializers.IntegerField(required=False)
+    refine_iterations = serializers.IntegerField(required=False)
+
+
+class AgentPromptOptimiserParameterSerializer(serializers.Serializer):
+    key = serializers.CharField(read_only=True)
+    label = serializers.CharField(read_only=True)
+    value = serializers.JSONField(read_only=True)
+    description = serializers.CharField(read_only=True, allow_blank=True)
+
+
+class AgentPromptOptimiserTrialEvalScoreSerializer(serializers.Serializer):
+    score = serializers.FloatField(read_only=True, allow_null=True)
+    percentage_change = serializers.FloatField(read_only=True, allow_null=True)
+
+
+class AgentPromptOptimiserTrialTableRowSerializer(serializers.Serializer):
+    id = serializers.UUIDField(read_only=True)
+    trial = serializers.CharField(read_only=True)
+    score = serializers.FloatField(read_only=True, allow_null=True, required=False)
+    score_percentage_change = serializers.FloatField(
+        read_only=True, allow_null=True, required=False
+    )
+    prompt = serializers.CharField(read_only=True, allow_blank=True, allow_null=True)
+    is_best = serializers.BooleanField(read_only=True, required=False)
+    eval_scores = serializers.DictField(
+        child=AgentPromptOptimiserTrialEvalScoreSerializer(),
+        read_only=True,
+        required=False,
+        help_text="Dynamic eval-config UUID keys are returned as top-level row keys at runtime.",
+    )
+
+
+class AgentPromptOptimiserRunDetailResultSerializer(serializers.Serializer):
+    optimiser_name = serializers.CharField(read_only=True)
+    optimiser_type = serializers.CharField(read_only=True)
+    model = serializers.CharField(read_only=True)
+    provider_logo = serializers.CharField(read_only=True, allow_null=True)
+    configuration = AgentPromptOptimiserConfigurationSerializer(
+        read_only=True, allow_null=True
+    )
+    parameters = AgentPromptOptimiserParameterSerializer(many=True, read_only=True)
+    start_time = serializers.DateTimeField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    error_message = serializers.CharField(read_only=True, allow_null=True)
+    table = AgentPromptOptimiserTrialTableRowSerializer(many=True, read_only=True)
+    column_config = AgentPromptOptimiserColumnConfigSerializer(
+        many=True, read_only=True
+    )
+
+
+class AgentPromptOptimiserRunDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AgentPromptOptimiserRunDetailResultSerializer()
+
+
+class AgentPromptOptimiserRunStepsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AgentPromptOptimiserRunStepSerializer(many=True)
+
+
+class AgentPromptOptimiserGraphEvaluationSerializer(serializers.Serializer):
+    trial_id = serializers.UUIDField(read_only=True)
+    trial_number = serializers.IntegerField(read_only=True)
+    trial_name = serializers.CharField(read_only=True)
+    score = serializers.FloatField(read_only=True, allow_null=True)
+
+
+class AgentPromptOptimiserGraphSeriesSerializer(serializers.Serializer):
+    name = serializers.CharField(read_only=True)
+    evaluations = AgentPromptOptimiserGraphEvaluationSerializer(
+        many=True, read_only=True
+    )
+
+
+class AgentPromptOptimiserGraphResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(
+        child=AgentPromptOptimiserGraphSeriesSerializer(),
+        help_text="Dictionary keyed by eval-config UUID.",
+    )
+
+
+class AgentPromptOptimiserTrialHeaderSerializer(serializers.Serializer):
+    trial_name = serializers.CharField(read_only=True)
+    optimisation_name = serializers.CharField(read_only=True)
+    created_at = serializers.DateTimeField(read_only=True)
+    score = serializers.FloatField(read_only=True, allow_null=True)
+    score_percentage_change = serializers.FloatField(read_only=True, allow_null=True)
+
+
+class AgentPromptOptimiserTrialPromptResultSerializer(
+    AgentPromptOptimiserTrialHeaderSerializer
+):
+    trial_prompt = serializers.CharField(read_only=True, allow_null=True)
+    base_prompt = serializers.CharField(read_only=True, allow_null=True)
+
+
+class AgentPromptOptimiserTrialPromptResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AgentPromptOptimiserTrialPromptResultSerializer()
+
+
+class AgentPromptOptimiserTrialEvaluationRowSerializer(serializers.Serializer):
+    id = serializers.UUIDField(read_only=True)
+    eval_name = serializers.CharField(read_only=True, allow_null=True)
+    eval_template_description = serializers.CharField(
+        read_only=True, allow_null=True, allow_blank=True
+    )
+    score = serializers.FloatField(read_only=True, allow_null=True)
+    score_percentage_change = serializers.FloatField(read_only=True, allow_null=True)
+
+
+class AgentPromptOptimiserTrialEvaluationsResultSerializer(
+    AgentPromptOptimiserTrialHeaderSerializer
+):
+    table = AgentPromptOptimiserTrialEvaluationRowSerializer(many=True, read_only=True)
+    column_config = AgentPromptOptimiserColumnConfigSerializer(
+        many=True, read_only=True
+    )
+
+
+class AgentPromptOptimiserTrialEvaluationsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AgentPromptOptimiserTrialEvaluationsResultSerializer()
+
+
+class AgentPromptOptimiserTrialScenarioRowSerializer(serializers.Serializer):
+    id = serializers.UUIDField(read_only=True)
+    input_text = serializers.CharField(read_only=True, allow_blank=True)
+    output_text = serializers.CharField(read_only=True, allow_blank=True)
+    eval_scores = serializers.DictField(
+        child=serializers.FloatField(allow_null=True),
+        read_only=True,
+        required=False,
+        help_text="Dynamic eval-config UUID keys are returned as top-level row keys at runtime.",
+    )
+
+
+class AgentPromptOptimiserTrialScenariosResultSerializer(
+    AgentPromptOptimiserTrialHeaderSerializer
+):
+    table = AgentPromptOptimiserTrialScenarioRowSerializer(many=True, read_only=True)
+    column_config = AgentPromptOptimiserColumnConfigSerializer(
+        many=True, read_only=True
+    )
+
+
+class AgentPromptOptimiserTrialScenariosResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AgentPromptOptimiserTrialScenariosResultSerializer()
+
+
+class AgentPromptOptimiserComponentEvalResultSerializer(serializers.Serializer):
+    score = serializers.FloatField(required=False, allow_null=True)
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class AgentPromptOptimiserIndividualResultMetadataSerializer(serializers.Serializer):
+    input = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    output = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    component_evals = serializers.DictField(
+        child=AgentPromptOptimiserComponentEvalResultSerializer(), required=False
+    )
+
+
+class AgentPromptOptimiserIndividualResultSerializer(serializers.Serializer):
+    score = serializers.FloatField(required=False, allow_null=True)
+    reason = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    metadata = AgentPromptOptimiserIndividualResultMetadataSerializer(required=False)
+
+
+class AgentPromptOptimiserRawTrialResultSerializer(serializers.Serializer):
+    prompt = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    average_score = serializers.FloatField(required=False, allow_null=True)
+    is_baseline = serializers.BooleanField(required=False)
+    individual_results = serializers.DictField(
+        child=AgentPromptOptimiserIndividualResultSerializer(), required=False
+    )
+
+
+class AgentPromptOptimiserRawResultSerializer(serializers.Serializer):
+    history = AgentPromptOptimiserRawTrialResultSerializer(many=True, required=False)
+    best_prompt = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    final_score = serializers.FloatField(required=False, allow_null=True)
+    best_score = serializers.FloatField(required=False, allow_null=True)
+    trials_run = serializers.IntegerField(required=False)
+    error = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class AgentPromptOptimiserRunModelResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField(read_only=True)
+    agent_optimiser = serializers.UUIDField(read_only=True)
+    agent_optimiser_run = serializers.UUIDField(read_only=True)
+    test_execution = serializers.UUIDField(read_only=True)
+    optimiser_type = serializers.ChoiceField(
+        choices=AgentPromptOptimiserRun.OptimiserType.choices, read_only=True
+    )
+    model = serializers.CharField(read_only=True)
+    status = serializers.ChoiceField(
+        choices=AgentPromptOptimiserRun.Status.choices, read_only=True
+    )
+    result = AgentPromptOptimiserRawResultSerializer(
+        read_only=True, allow_null=True, required=False
+    )
+    configuration = AgentPromptOptimiserConfigurationSerializer(
+        read_only=True, allow_null=True
+    )

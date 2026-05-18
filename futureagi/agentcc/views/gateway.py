@@ -22,10 +22,12 @@ from agentcc.org_config_defaults import (
 from agentcc.serializers.contracts import (
     AgentccEmptyRequestSerializer,
     AgentccErrorResponseSerializer,
-    AgentccJSONResultResponseSerializer,
     AgentccListResultResponseSerializer,
+    GatewayBatchCancelResponseSerializer,
+    GatewayBatchDetailResponseSerializer,
     GatewayBatchRequestSerializer,
     GatewayBatchSubmitRequestSerializer,
+    GatewayBatchSubmitResponseSerializer,
     GatewayBudgetRemoveRequestSerializer,
     GatewayBudgetSetRequestSerializer,
     GatewayConfigPatchRequestSerializer,
@@ -36,11 +38,15 @@ from agentcc.serializers.contracts import (
     GatewayMCPGuardrailsUpdateRequestSerializer,
     GatewayMCPServerRemoveRequestSerializer,
     GatewayMCPServerUpdateRequestSerializer,
+    GatewayMCPStatusResponseSerializer,
     GatewayMCPToolTestRequestSerializer,
+    GatewayMCPToolTestResponseSerializer,
     GatewayMutationResponseSerializer,
     GatewayNamedConfigRequestSerializer,
     GatewayNameRequestSerializer,
     GatewayPlaygroundTestRequestSerializer,
+    GatewayPlaygroundTestResponseSerializer,
+    GatewayProvidersResponseSerializer,
     GatewayProviderUpdateRequestSerializer,
     GatewayToggleGuardrailRequestSerializer,
 )
@@ -785,7 +791,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         request_body=GatewayPlaygroundTestRequestSerializer,
         responses={
-            200: AgentccJSONResultResponseSerializer,
+            200: GatewayPlaygroundTestResponseSerializer,
             400: AgentccErrorResponseSerializer,
         },
     )
@@ -1009,7 +1015,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         request_body=GatewayBatchSubmitRequestSerializer,
         responses={
-            200: AgentccJSONResultResponseSerializer,
+            200: GatewayBatchSubmitResponseSerializer,
             400: AgentccErrorResponseSerializer,
         },
     )
@@ -1035,7 +1041,7 @@ class AgentccGatewayViewSet(ViewSet):
 
     @swagger_auto_schema(
         responses={
-            200: AgentccJSONResultResponseSerializer,
+            200: GatewayBatchDetailResponseSerializer,
             400: AgentccErrorResponseSerializer,
             404: AgentccErrorResponseSerializer,
         }
@@ -1061,7 +1067,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         request_body=GatewayBatchRequestSerializer,
         responses={
-            200: AgentccJSONResultResponseSerializer,
+            200: GatewayBatchCancelResponseSerializer,
             400: AgentccErrorResponseSerializer,
             404: AgentccErrorResponseSerializer,
         },
@@ -1086,7 +1092,7 @@ class AgentccGatewayViewSet(ViewSet):
 
     @swagger_auto_schema(
         responses={
-            200: AgentccJSONResultResponseSerializer,
+            200: GatewayProvidersResponseSerializer,
             400: AgentccErrorResponseSerializer,
         }
     )
@@ -1196,7 +1202,7 @@ class AgentccGatewayViewSet(ViewSet):
 
     @swagger_auto_schema(
         responses={
-            200: AgentccJSONResultResponseSerializer,
+            200: GatewayMCPStatusResponseSerializer,
             400: AgentccErrorResponseSerializer,
         }
     )
@@ -1411,7 +1417,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         request_body=GatewayMCPToolTestRequestSerializer,
         responses={
-            200: AgentccJSONResultResponseSerializer,
+            200: GatewayMCPToolTestResponseSerializer,
             400: AgentccErrorResponseSerializer,
         },
     )

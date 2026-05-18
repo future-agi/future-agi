@@ -16,17 +16,25 @@ import type {
   APIKeyBulkResponseApi,
   AWSMarketplaceLaunchRequestApi,
   AWSMarketplaceSignupRequestApi,
+  AWSMarketplaceSignupResponseApi,
+  AcceptInvitationPreviewResponseApi,
   AcceptInvitationRequestApi,
   AccountsAccessTokenResponseApi,
   AccountsAwsMarketplaceVerifyTokenCreateBody,
+  AccountsBulkUserMutationItemApi,
+  AccountsDirectMessageResponseApi,
   AccountsEmptyRequestApi,
   AccountsErrorResponseApi,
   AccountsJSONRequestApi,
-  AccountsJSONResponseApi,
+  AccountsMessageResponseApi,
   AccountsOrganizationMembersListParams,
-  AccountsPaginatedResponseApi,
+  AccountsPaginatedUserResponseApi,
+  AccountsRedisDeleteResponseApi,
+  AccountsRedisSetResponseApi,
+  AccountsStringResultResponseApi,
   AccountsTokenPairResponseApi,
   AccountsUserListListParams,
+  AccountsUserProfileResponseApi,
   AccountsWorkspaceListListParams,
   AccountsWorkspaceMembersListParams,
   AddApiColumnRequestApi,
@@ -37,6 +45,7 @@ import type {
   AddObservationSpanAnnotationsApi,
   AddRowsFromFileRequestApi,
   AddRunPromptApi,
+  AdditionalOrganizationCreateResponseApi,
   AddonPostResponseApi,
   AddonRequestApi,
   AdminCustomPlanRequestApi,
@@ -68,8 +77,15 @@ import type {
   AgentPlaygroundGraphsVersionsReadParams,
   AgentPlaygroundNodeTemplatesList200,
   AgentPlaygroundNodeTemplatesListParams,
+  AgentPromptOptimiserGraphResponseApi,
   AgentPromptOptimiserRunApi,
   AgentPromptOptimiserRunCreateApi,
+  AgentPromptOptimiserRunDetailResponseApi,
+  AgentPromptOptimiserRunModelResponseApi,
+  AgentPromptOptimiserRunStepsResponseApi,
+  AgentPromptOptimiserTrialEvaluationsResponseApi,
+  AgentPromptOptimiserTrialPromptResponseApi,
+  AgentPromptOptimiserTrialScenariosResponseApi,
   AgentVersionActivateResponseApi,
   AgentVersionCreateRequestApi,
   AgentVersionCreateResponseApi,
@@ -119,7 +135,6 @@ import type {
   AgentccGuardrailPoliciesList200,
   AgentccGuardrailPoliciesListParams,
   AgentccGuardrailPolicyApi,
-  AgentccJSONResultResponseApi,
   AgentccListResultResponseApi,
   AgentccOrgConfigApi,
   AgentccOrgConfigsActive200,
@@ -171,13 +186,15 @@ import type {
   ApiPublicOtelV1TracesCreateBodyOne,
   ApiPublicOtelV1TracesCreateBodyTwo,
   ApiSelectionTooLargeErrorApi,
-  ApiSuccessResponseApi,
   ApiTracesSpanAttributeDetailListParams,
   ApiTracesSpanAttributeKeysListParams,
   ApiTracesSpanAttributeValuesListParams,
+  AppsmithPasswordUpdateResponseApi,
+  AppsmithUserCreateResponseApi,
   AssignItemsApi,
   AutoReloadSettingsRequestApi,
   AutoReloadSettingsResponseApi,
+  AutoReloadUpdateResponseApi,
   AutomationRuleApi,
   AutomationRuleEvaluateAcceptedResponseApi,
   AutomationRuleEvaluateResponseApi,
@@ -214,6 +231,7 @@ import type {
   CloneDatasetRequestApi,
   ColumnConfigResponseApi,
   ColumnValuesRequestApi,
+  ColumnValuesResponseApi,
   CompareDatasetApi,
   CompareDatasetStatsRequestApi,
   CompareEvalsListRequestApi,
@@ -244,6 +262,7 @@ import type {
   CreateRunTestApi,
   CreateScoreApi,
   CreateSecretKeyApi,
+  CurrentOrganizationResponseApi,
   CustomAIModelApi,
   CustomAIModelBaselineRequestApi,
   CustomAIModelCreateRequestApi,
@@ -291,13 +310,16 @@ import type {
   DatasetUpdateColumnNameRequestApi,
   DatasetUpdateColumnTypeRequestApi,
   DeactivateUserApi,
+  DeactivateUserResponseApi,
   DeepAnalysisApiResponseApi,
   DeepAnalysisBodyApi,
   DeepAnalysisDispatchApiResponseApi,
   DeleteEvalConfigResponseApi,
   DeleteEvalTemplateApi,
   DeleteUserApi,
+  DeleteUserResponseApi,
   DeploymentInfoResponseApi,
+  DerivedVariableDetailResponseApi,
   DerivedVariableExtractRequestApi,
   DerivedVariablePreviewRequestApi,
   DevelopAnnotationsUserApi,
@@ -316,6 +338,7 @@ import type {
   EELicenseRevokeRequestApi,
   EELicenseRevokeResponseApi,
   EditRunPromptColumnApi,
+  EmbeddingsResponseApi,
   EmptyRequestApi,
   ErrorResponseApi,
   EvalApiLogRowResponseApi,
@@ -326,6 +349,8 @@ import type {
   EvalConfigUpdateResponseApi,
   EvalErrorResponseApi,
   EvalExecutionResponseApi,
+  EvalExplanationSummaryRefreshResponseApi,
+  EvalExplanationSummaryResponseApi,
   EvalFeedbackListResponseApi,
   EvalGroupApi,
   EvalListRequestApi,
@@ -391,8 +416,11 @@ import type {
   FetchAssistantResponseApi,
   FetchGraphApi,
   FileUploadResponseApi,
+  GatewayBatchCancelResponseApi,
+  GatewayBatchDetailResponseApi,
   GatewayBatchRequestApi,
   GatewayBatchSubmitRequestApi,
+  GatewayBatchSubmitResponseApi,
   GatewayBudgetRemoveRequestApi,
   GatewayBudgetSetRequestApi,
   GatewayConfigPatchRequestApi,
@@ -403,12 +431,16 @@ import type {
   GatewayMCPGuardrailsUpdateRequestApi,
   GatewayMCPServerRemoveRequestApi,
   GatewayMCPServerUpdateRequestApi,
+  GatewayMCPStatusResponseApi,
   GatewayMCPToolTestRequestApi,
+  GatewayMCPToolTestResponseApi,
   GatewayMutationResponseApi,
   GatewayNameRequestApi,
   GatewayNamedConfigRequestApi,
   GatewayPlaygroundTestRequestApi,
+  GatewayPlaygroundTestResponseApi,
   GatewayProviderUpdateRequestApi,
+  GatewayProvidersResponseApi,
   GatewayToggleGuardrailRequestApi,
   GenerateScenarioApi,
   GetAnnotationLabelsResponseApi,
@@ -463,6 +495,7 @@ import type {
   LangfuseIngestionRequestApi,
   LangfuseIngestionResponseApi,
   LangfuseTracesResponseApi,
+  LastFourDigitsResponseApi,
   LegacyEvalTemplateUpdateResponseApi,
   LegacyEvalTemplatesRequestApi,
   LegacyEvalTemplatesResponseApi,
@@ -477,11 +510,14 @@ import type {
   LinearTeamsResponseApi,
   LiteLLMModelVoicesResponseApi,
   LitellmApi,
+  LiveKitCallConfigResponseApi,
   LiveKitCallExecutionUpdateRequestApi,
   LiveKitErrorResponseApi,
   LiveKitListenerTokenResponseApi,
   LiveKitOkResponseApi,
+  LiveKitPhoneResolutionResponseApi,
   LiveKitTemporalSignalRequestApi,
+  LiveKitTranscriptCreatedResponseApi,
   LiveKitTranscriptsRequestApi,
   MCPAnalyticsSummaryResponseApi,
   MCPAnalyticsTimelineResponseApi,
@@ -522,6 +558,7 @@ import type {
   MessageFeedbackApi,
   MessageFeedbackResponseApi,
   MetricTagOptionApi,
+  MetricsByColumnResponseApi,
   ModelHubAnnotationQueuesAutomationRulesList200,
   ModelHubAnnotationQueuesAutomationRulesListParams,
   ModelHubAnnotationQueuesExportAnnotationsParams,
@@ -568,8 +605,11 @@ import type {
   ModelHubOptimisationListParams,
   ModelHubOptimizeDatasetList200,
   ModelHubOptimizeDatasetListParams,
+  ModelHubOptimizeDatasetPromptTemplateExploreCreate200,
+  ModelHubOptimizeDatasetRightAnswersCreate200,
   ModelHubOrganizationsUsersList200,
   ModelHubOrganizationsUsersListParams,
+  ModelHubOverviewResponseApi,
   ModelHubPaginatedResponseApi,
   ModelHubPerformanceCreate200,
   ModelHubPerformanceTagDistributionCreate200,
@@ -605,6 +645,7 @@ import type {
   ModelHubStatusMessageResponseApi,
   ModelHubStatusResponseApi,
   ModelHubStringResultResponseApi,
+  ModelHubSuccessMessageResponseApi,
   ModelHubToolsList200,
   ModelHubToolsListParams,
   ModelHubTtsVoicesList200,
@@ -620,30 +661,47 @@ import type {
   ObservabilityProviderApi,
   ObservationSpanApi,
   OperationConfigResponseApi,
+  OptimiserAnalysisRefreshResponseApi,
+  OptimiserAnalysisResponseApi,
   OptimizationDatasetApi,
   OptimizationDatasetGetApi,
   OptimizationDetailApi,
+  OptimizeDatasetColumnConfigResponseApi,
+  OptimizeDatasetColumnConfigUpdateResponseApi,
+  OptimizeDatasetCreateResponseApi,
+  OptimizeDatasetDetailResponseApi,
+  OptimizeDatasetKnowledgeBaseCreateResponseApi,
+  OptimizeDatasetKnowledgeBaseDetailResponseApi,
   OptimizeDatasetKnowledgeBaseRequestApi,
   OptimizeDatasetMutationRequestApi,
   OptimizeDatasetOperationRequestApi,
+  OptimizeDatasetTemplateResultsResponseApi,
   OrgConfigBulkResponseApi,
   OrgTwoFactorPolicyApi,
+  OrgTwoFactorPolicyResponseApi,
   OrganizationBillingDetailResponseApi,
   OrganizationBillingLegacyResponseApi,
   OrganizationBillingListResponseApi,
   OrganizationCreateRequestApi,
+  OrganizationCreateResponseApi,
   OrganizationListResponseApi,
   OrganizationNameRequestApi,
+  OrganizationSelectResponseApi,
+  OrganizationSelectionListResponseApi,
   OrganizationSubscriptionListResponseApi,
   OrganizationSubscriptionMutationResponseApi,
   OrganizationSwitchRequestApi,
+  OrganizationSwitchResponseApi,
   OrganizationUpdateRequestApi,
+  OrganizationUpdateResponseApi,
   OverviewApiResponseApi,
   PIIEntitiesResponseApi,
   PasskeyCredentialRequestApi,
   PasskeyOptionsResponseApi,
   PasskeyRegisterVerifyApi,
+  PasskeyRegisterVerifyResponseApi,
   PasskeyRenameApi,
+  PasskeyRenameResponseApi,
   PasswordResetConfirmRequestApi,
   PasswordResetInitiateRequestApi,
   PasswordValidationApi,
@@ -676,15 +734,19 @@ import type {
   ProjectApi,
   ProjectVersionApi,
   PromptBaseTemplateApi,
+  PromptDerivedVariablesResponseApi,
   PromptExecutionApi,
   PromptFolderApi,
   PromptHistoryExecutionApi,
   PromptLabelApi,
+  PromptMetricsEmptyScreenResponseApi,
+  PromptMetricsResponseApi,
   PromptSimulationListResponseApi,
   PromptSimulationRunResponseApi,
   PromptSimulationScenariosResponseApi,
   PromptSimulationUpdateRequestApi,
   PromptTemplateApi,
+  PublicConfigResponseApi,
   QueueAddItemsResponseApi,
   QueueAddLabelResponseApi,
   QueueAgreementResponseApi,
@@ -723,6 +785,8 @@ import type {
   RateLimitListResponseApi,
   RateLimitMutationResponseApi,
   RecoveryCodesRegenerateApi,
+  RecoveryCodesRegenerateResponseApi,
+  RecoveryCodesRemainingResponseApi,
   RedisKeyRequestApi,
   ReplaySessionApi,
   ReplaySessionListApi,
@@ -730,6 +794,7 @@ import type {
   RerunOperationRequestApi,
   RerunOperationResponseApi,
   ResendInviteApi,
+  ResendInviteResponseApi,
   ResourceLimitDetailResponseApi,
   ResourceLimitListResponseApi,
   ResourceLimitMutationResponseApi,
@@ -746,6 +811,7 @@ import type {
   RunTestComponentsUpdateApi,
   RunTestErrorResponseApi,
   RunTestExecutionResponseApi,
+  RunTestKPIsResponseApi,
   RunTestMessageResponseApi,
   RunTestNameResponseApi,
   RunTestResponseApi,
@@ -812,6 +878,9 @@ import type {
   SdkApiV1SimulationMetricsListParams,
   SdkApiV1SimulationRunsListParams,
   SecretApi,
+  SecretKeyCreateResponseApi,
+  SecretKeyListResponseApi,
+  SecretKeysResponseApi,
   SendChatRequestApi,
   SessionComparisonResponseApi,
   SetupIntentConfirmRequestApi,
@@ -826,9 +895,6 @@ import type {
   SimulateApiAgentPromptOptimiserList200,
   SimulateApiAgentPromptOptimiserListParams,
   SimulateApiCallExecutionsListParams,
-  SimulateApiLivekitCallConfigRead200,
-  SimulateApiLivekitPhoneResolutionRead200,
-  SimulateApiLivekitTranscriptsCreate201,
   SimulateApiLivekitWebhookCreateBody,
   SimulateApiPersonasFieldOptions200,
   SimulateApiPersonasFieldOptionsParams,
@@ -845,9 +911,6 @@ import type {
   SimulateRunTestsListParams,
   SimulateScenariosGetColumnsListParams,
   SimulateScenariosListParams,
-  SimulateTestExecutionsEvalExplanationSummaryList200,
-  SimulateTestExecutionsKpisList200,
-  SimulateTestExecutionsRead200,
   SimulatorAgentApi,
   SimulatorAgentListResponseApi,
   SimulatorAgentValidationErrorResponseApi,
@@ -867,17 +930,24 @@ import type {
   StripeWebhookRequestApi,
   StripeWebhookResponseApi,
   SubmitAnnotationsApi,
+  SubscriptionPlansResponseApi,
   SubscriptionStatusResponseApi,
   SubscriptionTierDetailResponseApi,
   SubscriptionTierListResponseApi,
   SwitchWorkspaceApi,
+  SwitchWorkspaceResponseApi,
   SyncLogApi,
   SyntheticDataApi,
   SyntheticDatasetConfigApi,
   SyntheticDatasetCreationApi,
   TOTPConfirmApi,
+  TOTPConfirmResponseApi,
   TOTPDisableApi,
+  TOTPDisableResponseApi,
+  TOTPSetupResponseApi,
   TTSVoiceApi,
+  TeamCreateResponseApi,
+  TeamUsersResponseApi,
   TestEvalTemplateApi,
   TestExecutionAnalyticsApi,
   TestExecutionApi,
@@ -886,6 +956,7 @@ import type {
   TestExecutionChatBatchResponseApi,
   TestExecutionColumnOrderApi,
   TestExecutionColumnOrderResponseApi,
+  TestExecutionDetailResponseApi,
   TestExecutionItemResponseApi,
   TestExecutionRerunApi,
   TestExecutionRerunResponseApi,
@@ -1050,6 +1121,7 @@ import type {
   TwoFactorPasskeyVerifyRequestApi,
   TwoFactorStatusApi,
   TwoFactorVerifyApi,
+  UpdateBillingDetailsResponseApi,
   UpdateColumnConfigApi,
   UpdateEvalTemplateApi,
   UpdateNodeApi,
@@ -1060,6 +1132,7 @@ import type {
   UpgradeToPaygConfirmRequestApi,
   UpgradeToPaygPostResponseApi,
   UploadFileApi,
+  UploadFileResponseApi,
   UsageAdminCustomPlanListParams,
   UsageAdminEntitlementsDeleteParams,
   UsageAdminEntitlementsListParams,
@@ -1075,7 +1148,6 @@ import type {
   UsageErrorResponseApi,
   UsageInvoiceDetailResponseApi,
   UsageInvoiceListResponseApi,
-  UsageJSONResponseApi,
   UsageMessageResponseApi,
   UsageNotificationsResponseApi,
   UsageOrganizationBillingApi,
@@ -1098,17 +1170,24 @@ import type {
   UsageWorkspaceUsageSummaryListParams,
   UserAlertMonitorApi,
   UserAlertMonitorDuplicateApi,
+  UserAlertMonitorDuplicateResponseApi,
   UserAlertMonitorLogApi,
   UserAlertMonitorMetricOptionsResponseApi,
+  UserChecksResponseApi,
   UserCodeExampleResponseApi,
   UserCreateApi,
   UserEvalApi,
   UserEvalMutationRequestApi,
   UserFullNameUpdateRequestApi,
   UserIdsRequestApi,
+  UserInfoResponseApi,
+  UserListPaginatedResponseApi,
   UserOnboardingApi,
+  UserOnboardingResponseApi,
+  UserOnboardingSaveResponseApi,
   UserResponseSchemaApi,
   UserRoleUpdateApi,
+  UserRoleUpdateResponseApi,
   UserSecretKeyApi,
   UsersResponseApi,
   ValidateCELRequestApi,
@@ -1123,12 +1202,21 @@ import type {
   WebhookRequestApi,
   WebhookResponseApi,
   WorkspaceCreateRequestApi,
+  WorkspaceCreateResponseApi,
+  WorkspaceDeleteResponseApi,
   WorkspaceInviteApi,
+  WorkspaceInviteResponseApi,
+  WorkspaceListPaginatedResponseApi,
+  WorkspaceManagementListResponseApi,
   WorkspaceMemberRemoveApi,
+  WorkspaceMemberRemoveResponseApi,
   WorkspaceMemberRoleUpdateApi,
   WorkspaceMemberRoleUpdateResponseApi,
+  WorkspaceMembersAddResponseApi,
+  WorkspaceMembersListResponseApi,
   WorkspaceMembersRequestApi,
-  WorkspaceUpdateRequestApi
+  WorkspaceUpdateRequestApi,
+  WorkspaceUpdateResponseApi
 } from './api.schemas';
 
 import { apiMutator } from '../../api/contracts/openapi-mutator';
@@ -1161,7 +1249,7 @@ type NonReadonly<T> = [T] extends [UnionToIntersection<T>] ? {
 
 
 export type accounts2faRecoveryCodesListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: RecoveryCodesRemainingResponseApi
   status: 200
 }
 
@@ -1224,7 +1312,7 @@ export const accounts2faRecoveryCodesList = async ( options?: RequestInit): Prom
 
 
 export type accounts2faRecoveryCodesRegenerateCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: RecoveryCodesRegenerateResponseApi
   status: 200
 }
 
@@ -1351,7 +1439,7 @@ export const accounts2faStatusList = async ( options?: RequestInit): Promise<acc
 
 
 export type accounts2faTotpDeleteResponse200 = {
-  data: AccountsJSONResponseApi
+  data: TOTPDisableResponseApi
   status: 200
 }
 
@@ -1415,7 +1503,7 @@ export const accounts2faTotpDelete = async (tOTPDisableApi: TOTPDisableApi, opti
 
 
 export type accounts2faTotpConfirmCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: TOTPConfirmResponseApi
   status: 200
 }
 
@@ -1479,7 +1567,7 @@ export const accounts2faTotpConfirmCreate = async (tOTPConfirmApi: TOTPConfirmAp
 
 
 export type accounts2faTotpSetupCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: TOTPSetupResponseApi
   status: 200
 }
 
@@ -1799,7 +1887,7 @@ export const accounts2faVerifyTotpCreate = async (twoFactorVerifyApi: TwoFactorV
 
 
 export type accountsAcceptInvitationReadResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AcceptInvitationPreviewResponseApi
   status: 200
 }
 
@@ -1939,7 +2027,7 @@ export const accountsAcceptInvitationCreate = async (uidb64: string,
 
 
 export type accountsAppsmithUsersListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsPaginatedUserResponseApi
   status: 200
 }
 
@@ -1999,7 +2087,7 @@ export const accountsAppsmithUsersList = async ( options?: RequestInit): Promise
 
 
 export type accountsAppsmithUsersCreateResponse201 = {
-  data: AccountsJSONResponseApi
+  data: AppsmithUserCreateResponseApi
   status: 201
 }
 
@@ -2061,7 +2149,7 @@ export const accountsAppsmithUsersCreate = async (userId: string,
 
 
 export type accountsAppsmithUsersPartialUpdateResponse201 = {
-  data: AccountsJSONResponseApi
+  data: AppsmithPasswordUpdateResponseApi
   status: 201
 }
 
@@ -2184,7 +2272,7 @@ export const accountsAppsmithUsersLoginCreate = async (sOSLoginApi: SOSLoginApi,
 
 
 export type accountsAppsmithUsersReadResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsPaginatedUserResponseApi
   status: 200
 }
 
@@ -2244,8 +2332,13 @@ export const accountsAppsmithUsersRead = async (userId: string, options?: Reques
 
 
 export type accountsAwsMarketplaceLaunchSoftwareCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: void
   status: 200
+}
+
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponse302 = {
+  data: void
+  status: 302
 }
 
 export type accountsAwsMarketplaceLaunchSoftwareCreateResponse400 = {
@@ -2276,7 +2369,7 @@ export type accountsAwsMarketplaceLaunchSoftwareCreateResponse500 = {
 export type accountsAwsMarketplaceLaunchSoftwareCreateResponseSuccess = (accountsAwsMarketplaceLaunchSoftwareCreateResponse200) & {
   headers: Headers;
 };
-export type accountsAwsMarketplaceLaunchSoftwareCreateResponseError = (accountsAwsMarketplaceLaunchSoftwareCreateResponse400 | accountsAwsMarketplaceLaunchSoftwareCreateResponse401 | accountsAwsMarketplaceLaunchSoftwareCreateResponse403 | accountsAwsMarketplaceLaunchSoftwareCreateResponse404 | accountsAwsMarketplaceLaunchSoftwareCreateResponse500) & {
+export type accountsAwsMarketplaceLaunchSoftwareCreateResponseError = (accountsAwsMarketplaceLaunchSoftwareCreateResponse302 | accountsAwsMarketplaceLaunchSoftwareCreateResponse400 | accountsAwsMarketplaceLaunchSoftwareCreateResponse401 | accountsAwsMarketplaceLaunchSoftwareCreateResponse403 | accountsAwsMarketplaceLaunchSoftwareCreateResponse404 | accountsAwsMarketplaceLaunchSoftwareCreateResponse500) & {
   headers: Headers;
 };
 
@@ -2310,7 +2403,7 @@ export const accountsAwsMarketplaceLaunchSoftwareCreate = async (aWSMarketplaceL
 
 
 export type accountsAwsMarketplaceSignupCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AWSMarketplaceSignupResponseApi
   status: 200
 }
 
@@ -2456,7 +2549,7 @@ if(accountsAwsMarketplaceVerifyTokenCreateBody?.['x-amzn-marketplace-agreement-i
 
 
 export type accountsConfigListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: PublicConfigResponseApi
   status: 200
 }
 
@@ -2495,7 +2588,7 @@ export const accountsConfigList = async ( options?: RequestInit): Promise<accoun
 
 
 export type accountsDeleteUsersDeleteResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsBulkUserMutationItemApi[]
   status: 200
 }
 
@@ -2556,7 +2649,7 @@ export const accountsDeleteUsersDelete = async (userIdsRequestApi: UserIdsReques
 
 
 export type accountsFirstChecksListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: UserChecksResponseApi
   status: 200
 }
 
@@ -2616,7 +2709,7 @@ export const accountsFirstChecksList = async ( options?: RequestInit): Promise<a
 
 
 export type accountsGetUserProfileDetailsListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsUserProfileResponseApi
   status: 200
 }
 
@@ -2676,7 +2769,7 @@ export const accountsGetUserProfileDetailsList = async ( options?: RequestInit):
 
 
 export type accountsKeyDeleteSecretKeyResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsStringResultResponseApi
   status: 200
 }
 
@@ -2737,7 +2830,7 @@ export const accountsKeyDeleteSecretKey = async (userSecretKeyApi: UserSecretKey
 
 
 export type accountsKeyDisableKeyResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsStringResultResponseApi
   status: 200
 }
 
@@ -2798,7 +2891,7 @@ export const accountsKeyDisableKey = async (userSecretKeyApi: UserSecretKeyApi, 
 
 
 export type accountsKeyEnableKeyResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsStringResultResponseApi
   status: 200
 }
 
@@ -2859,7 +2952,7 @@ export const accountsKeyEnableKey = async (userSecretKeyApi: UserSecretKeyApi, o
 
 
 export type accountsKeyGenerateSecretKeyResponse200 = {
-  data: AccountsJSONResponseApi
+  data: SecretKeyCreateResponseApi
   status: 200
 }
 
@@ -2920,7 +3013,7 @@ export const accountsKeyGenerateSecretKey = async (createSecretKeyApi: CreateSec
 
 
 export type accountsKeyGetSecretKeysResponse200 = {
-  data: AccountsPaginatedResponseApi
+  data: SecretKeyListResponseApi
   status: 200
 }
 
@@ -2980,7 +3073,7 @@ export const accountsKeyGetSecretKeys = async ( options?: RequestInit): Promise<
 
 
 export type accountsKeysListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: SecretKeysResponseApi
   status: 200
 }
 
@@ -3040,7 +3133,7 @@ export const accountsKeysList = async ( options?: RequestInit): Promise<accounts
 
 
 export type accountsLogoutCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsMessageResponseApi
   status: 200
 }
 
@@ -3291,7 +3384,7 @@ export const accountsNotificationsUnsubscribeList = async ( options?: RequestIni
 
 
 export type accountsOnboardingListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: UserOnboardingResponseApi
   status: 200
 }
 
@@ -3354,7 +3447,7 @@ export const accountsOnboardingList = async ( options?: RequestInit): Promise<ac
 
 
 export type accountsOnboardingCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: UserOnboardingSaveResponseApi
   status: 200
 }
 
@@ -3418,7 +3511,7 @@ export const accountsOnboardingCreate = async (userOnboardingApi: UserOnboarding
 
 
 export type accountsOrganization2faPolicyListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: OrgTwoFactorPolicyResponseApi
   status: 200
 }
 
@@ -3484,7 +3577,7 @@ export const accountsOrganization2faPolicyList = async ( options?: RequestInit):
 
 
 export type accountsOrganization2faPolicyUpdateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: OrgTwoFactorPolicyResponseApi
   status: 200
 }
 
@@ -4017,7 +4110,7 @@ export const accountsOrganizationMembersRoleCreate = async (memberRoleUpdateApi:
 
 
 export type accountsOrganizationsListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: OrganizationSelectionListResponseApi
   status: 200
 }
 
@@ -4080,7 +4173,7 @@ export const accountsOrganizationsList = async ( options?: RequestInit): Promise
 
 
 export type accountsOrganizationsCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: OrganizationSelectResponseApi
   status: 200
 }
 
@@ -4144,7 +4237,7 @@ export const accountsOrganizationsCreate = async (organizationSwitchRequestApi: 
 
 
 export type accountsOrganizationsCreateCreateResponse201 = {
-  data: AccountsJSONResponseApi
+  data: OrganizationCreateResponseApi
   status: 201
 }
 
@@ -4210,7 +4303,7 @@ export const accountsOrganizationsCreateCreate = async (organizationNameRequestA
 
 
 export type accountsOrganizationsCurrentListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: CurrentOrganizationResponseApi
   status: 200
 }
 
@@ -4273,7 +4366,7 @@ export const accountsOrganizationsCurrentList = async ( options?: RequestInit): 
 
 
 export type accountsOrganizationsNewCreateResponse201 = {
-  data: AccountsJSONResponseApi
+  data: AdditionalOrganizationCreateResponseApi
   status: 201
 }
 
@@ -4342,7 +4435,7 @@ export const accountsOrganizationsNewCreate = async (organizationCreateRequestAp
 
 
 export type accountsOrganizationsSwitchCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: OrganizationSwitchResponseApi
   status: 200
 }
 
@@ -4408,7 +4501,7 @@ export const accountsOrganizationsSwitchCreate = async (organizationSwitchReques
 
 
 export type accountsOrganizationsUpdatePartialUpdateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: OrganizationUpdateResponseApi
   status: 200
 }
 
@@ -4666,7 +4759,7 @@ export const accountsPasskeyRegisterOptionsCreate = async (accountsEmptyRequestA
 
 
 export type accountsPasskeyRegisterVerifyCreateResponse201 = {
-  data: AccountsJSONResponseApi
+  data: PasskeyRegisterVerifyResponseApi
   status: 201
 }
 
@@ -4793,7 +4886,7 @@ export const accountsPasskeysList = async ( options?: RequestInit): Promise<acco
 
 
 export type accountsPasskeysPartialUpdateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: PasskeyRenameResponseApi
   status: 200
 }
 
@@ -4894,7 +4987,7 @@ export const accountsPasskeysDelete = async (id: string, options?: RequestInit):
 
 
 export type accountsPasswordResetConfirmCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsMessageResponseApi
   status: 200
 }
 
@@ -4958,7 +5051,7 @@ export const accountsPasswordResetConfirmCreate = async (uidb64: string,
 
 
 export type accountsPasswordResetInitiateCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsMessageResponseApi
   status: 200
 }
 
@@ -5019,7 +5112,7 @@ export const accountsPasswordResetInitiateCreate = async (passwordResetInitiateR
 
 
 export type accountsRedisKeyCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsRedisSetResponseApi
   status: 200
 }
 
@@ -5080,7 +5173,7 @@ export const accountsRedisKeyCreate = async (redisKeyRequestApi: RedisKeyRequest
 
 
 export type accountsRedisKeyDeleteResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsRedisDeleteResponseApi
   status: 200
 }
 
@@ -5141,7 +5234,7 @@ export const accountsRedisKeyDelete = async (redisKeyRequestApi: RedisKeyRequest
 
 
 export type accountsResendInvitationEmailsCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsBulkUserMutationItemApi[]
   status: 200
 }
 
@@ -5202,7 +5295,7 @@ export const accountsResendInvitationEmailsCreate = async (userIdsRequestApi: Us
 
 
 export type accountsSignupCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsMessageResponseApi
   status: 200
 }
 
@@ -5263,7 +5356,7 @@ export const accountsSignupCreate = async (accountsJSONRequestApi: AccountsJSONR
 
 
 export type accountsTeamUsersListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: TeamUsersResponseApi
   status: 200
 }
 
@@ -5322,9 +5415,9 @@ export const accountsTeamUsersList = async ( options?: RequestInit): Promise<acc
 
 
 
-export type accountsTeamUsersCreateResponse200 = {
-  data: AccountsJSONResponseApi
-  status: 200
+export type accountsTeamUsersCreateResponse201 = {
+  data: TeamCreateResponseApi
+  status: 201
 }
 
 export type accountsTeamUsersCreateResponse400 = {
@@ -5352,7 +5445,7 @@ export type accountsTeamUsersCreateResponse500 = {
   status: 500
 }
 
-export type accountsTeamUsersCreateResponseSuccess = (accountsTeamUsersCreateResponse200) & {
+export type accountsTeamUsersCreateResponseSuccess = (accountsTeamUsersCreateResponse201) & {
   headers: Headers;
 };
 export type accountsTeamUsersCreateResponseError = (accountsTeamUsersCreateResponse400 | accountsTeamUsersCreateResponse401 | accountsTeamUsersCreateResponse403 | accountsTeamUsersCreateResponse404 | accountsTeamUsersCreateResponse500) & {
@@ -5418,7 +5511,7 @@ export const accountsTeamUsersDelete = async (memberId: string, options?: Reques
 
 
 export type accountsTeamUsersReadResponse200 = {
-  data: AccountsJSONResponseApi
+  data: TeamUsersResponseApi
   status: 200
 }
 
@@ -5573,7 +5666,7 @@ export const accountsTokenRefreshCreate = async (tokenRefreshRequestApi: TokenRe
 
 
 export type accountsUpdateUserFullNameCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsDirectMessageResponseApi
   status: 200
 }
 
@@ -5634,7 +5727,7 @@ export const accountsUpdateUserFullNameCreate = async (userFullNameUpdateRequest
 
 
 export type accountsUpdateUserCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: AccountsStringResultResponseApi
   status: 200
 }
 
@@ -5695,7 +5788,7 @@ export const accountsUpdateUserCreate = async (updateUserApi: UpdateUserApi, opt
 
 
 export type accountsUserInfoListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: UserInfoResponseApi
   status: 200
 }
 
@@ -5755,7 +5848,7 @@ export const accountsUserInfoList = async ( options?: RequestInit): Promise<acco
 
 
 export type accountsUserDeactivateCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: DeactivateUserResponseApi
   status: 200
 }
 
@@ -5819,7 +5912,7 @@ export const accountsUserDeactivateCreate = async (deactivateUserApi: Deactivate
 
 
 export type accountsUserDeleteCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: DeleteUserResponseApi
   status: 200
 }
 
@@ -5883,7 +5976,7 @@ export const accountsUserDeleteCreate = async (deleteUserApi: DeleteUserApi, opt
 
 
 export type accountsUserListListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: UserListPaginatedResponseApi
   status: 200
 }
 
@@ -5953,7 +6046,7 @@ export const accountsUserListList = async (params?: AccountsUserListListParams, 
 
 
 export type accountsUserResendInviteCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: ResendInviteResponseApi
   status: 200
 }
 
@@ -6017,7 +6110,7 @@ export const accountsUserResendInviteCreate = async (resendInviteApi: ResendInvi
 
 
 export type accountsUserRoleUpdateCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: UserRoleUpdateResponseApi
   status: 200
 }
 
@@ -6081,7 +6174,7 @@ export const accountsUserRoleUpdateCreate = async (userRoleUpdateApi: UserRoleUp
 
 
 export type accountsWorkspaceInviteCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceInviteResponseApi
   status: 200
 }
 
@@ -6145,7 +6238,7 @@ export const accountsWorkspaceInviteCreate = async (workspaceInviteApi: Workspac
 
 
 export type accountsWorkspaceListListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceListPaginatedResponseApi
   status: 200
 }
 
@@ -6215,7 +6308,7 @@ export const accountsWorkspaceListList = async (params?: AccountsWorkspaceListLi
 
 
 export type accountsWorkspaceSwitchCreateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: SwitchWorkspaceResponseApi
   status: 200
 }
 
@@ -6485,7 +6578,7 @@ export const accountsWorkspaceMembersRoleCreate = async (workspaceId: string,
 
 
 export type accountsWorkspacesListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceManagementListResponseApi
   status: 200
 }
 
@@ -6547,9 +6640,9 @@ export const accountsWorkspacesList = async ( options?: RequestInit): Promise<ac
 
 
 
-export type accountsWorkspacesCreateResponse200 = {
-  data: AccountsJSONResponseApi
-  status: 200
+export type accountsWorkspacesCreateResponse201 = {
+  data: WorkspaceCreateResponseApi
+  status: 201
 }
 
 export type accountsWorkspacesCreateResponse400 = {
@@ -6577,7 +6670,7 @@ export type accountsWorkspacesCreateResponse500 = {
   status: 500
 }
 
-export type accountsWorkspacesCreateResponseSuccess = (accountsWorkspacesCreateResponse200) & {
+export type accountsWorkspacesCreateResponseSuccess = (accountsWorkspacesCreateResponse201) & {
   headers: Headers;
 };
 export type accountsWorkspacesCreateResponseError = (accountsWorkspacesCreateResponse400 | accountsWorkspacesCreateResponse401 | accountsWorkspacesCreateResponse403 | accountsWorkspacesCreateResponse404 | accountsWorkspacesCreateResponse500) & {
@@ -6613,7 +6706,7 @@ export const accountsWorkspacesCreate = async (workspaceId: string,
 
 
 export type accountsWorkspacesUpdateResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceUpdateResponseApi
   status: 200
 }
 
@@ -6678,7 +6771,7 @@ export const accountsWorkspacesUpdate = async (workspaceId: string,
 
 
 export type accountsWorkspacesDeleteResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceDeleteResponseApi
   status: 200
 }
 
@@ -6741,7 +6834,7 @@ export const accountsWorkspacesDelete = async (workspaceId: string, options?: Re
 
 
 export type accountsWorkspacesReadResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceManagementListResponseApi
   status: 200
 }
 
@@ -6804,7 +6897,7 @@ export const accountsWorkspacesRead = async (workspaceId: string, options?: Requ
 
 
 export type accountsWorkspacesMembersListResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceMembersListResponseApi
   status: 200
 }
 
@@ -6866,9 +6959,9 @@ export const accountsWorkspacesMembersList = async (workspaceId: string, options
 
 
 
-export type accountsWorkspacesMembersCreateResponse200 = {
-  data: AccountsJSONResponseApi
-  status: 200
+export type accountsWorkspacesMembersCreateResponse201 = {
+  data: WorkspaceMembersAddResponseApi
+  status: 201
 }
 
 export type accountsWorkspacesMembersCreateResponse400 = {
@@ -6896,7 +6989,7 @@ export type accountsWorkspacesMembersCreateResponse500 = {
   status: 500
 }
 
-export type accountsWorkspacesMembersCreateResponseSuccess = (accountsWorkspacesMembersCreateResponse200) & {
+export type accountsWorkspacesMembersCreateResponseSuccess = (accountsWorkspacesMembersCreateResponse201) & {
   headers: Headers;
 };
 export type accountsWorkspacesMembersCreateResponseError = (accountsWorkspacesMembersCreateResponse400 | accountsWorkspacesMembersCreateResponse401 | accountsWorkspacesMembersCreateResponse403 | accountsWorkspacesMembersCreateResponse404 | accountsWorkspacesMembersCreateResponse500) & {
@@ -6934,7 +7027,7 @@ export const accountsWorkspacesMembersCreate = async (workspaceId: string,
 
 
 export type accountsWorkspacesMembersDeleteResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceMemberRemoveResponseApi
   status: 200
 }
 
@@ -6999,7 +7092,7 @@ export const accountsWorkspacesMembersDelete = async (workspaceId: string,
 
 
 export type accountsWorkspacesMembersReadResponse200 = {
-  data: AccountsJSONResponseApi
+  data: WorkspaceMembersListResponseApi
   status: 200
 }
 
@@ -10123,7 +10216,7 @@ export const agentccGatewaysRead = async (id: string, options?: RequestInit): Pr
 
 
 export type agentccGatewaysCancelBatchResponse200 = {
-  data: AgentccJSONResultResponseApi
+  data: GatewayBatchCancelResponseApi
   status: 200
 }
 
@@ -10218,7 +10311,7 @@ export const agentccGatewaysConfig = async (id: string, options?: RequestInit): 
 
 
 export type agentccGatewaysGetBatchResponse200 = {
-  data: AgentccJSONResultResponseApi
+  data: GatewayBatchDetailResponseApi
   status: 200
 }
 
@@ -10387,7 +10480,7 @@ export const agentccGatewaysMcpResources = async (id: string, options?: RequestI
 
 
 export type agentccGatewaysMcpStatusResponse200 = {
-  data: AgentccJSONResultResponseApi
+  data: GatewayMCPStatusResponseApi
   status: 200
 }
 
@@ -10468,7 +10561,7 @@ export const agentccGatewaysMcpTools = async (id: string, options?: RequestInit)
 
 
 export type agentccGatewaysProvidersResponse200 = {
-  data: AgentccJSONResultResponseApi
+  data: GatewayProvidersResponseApi
   status: 200
 }
 
@@ -10750,7 +10843,7 @@ export const agentccGatewaysSetBudget = async (id: string,
 
 
 export type agentccGatewaysSubmitBatchResponse200 = {
-  data: AgentccJSONResultResponseApi
+  data: GatewayBatchSubmitResponseApi
   status: 200
 }
 
@@ -10796,7 +10889,7 @@ export const agentccGatewaysSubmitBatch = async (id: string,
 
 
 export type agentccGatewaysTestMcpToolResponse200 = {
-  data: AgentccJSONResultResponseApi
+  data: GatewayMCPToolTestResponseApi
   status: 200
 }
 
@@ -10842,7 +10935,7 @@ export const agentccGatewaysTestMcpTool = async (id: string,
 
 
 export type agentccGatewaysTestPlaygroundResponse200 = {
-  data: AgentccJSONResultResponseApi
+  data: GatewayPlaygroundTestResponseApi
   status: 200
 }
 
@@ -28762,7 +28855,7 @@ export const modelHubDuplicateEvalTemplateCreate = async (duplicateEvalTemplateA
 
 
 export type modelHubEmbeddingsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: EmbeddingsResponseApi
   status: 200
 }
 
@@ -28822,7 +28915,7 @@ export const modelHubEmbeddingsList = async ( options?: RequestInit): Promise<mo
 
 
 export type modelHubEmbeddingsReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: EmbeddingsResponseApi
   status: 200
 }
 
@@ -33891,7 +33984,7 @@ export const modelHubFeedbackDelete = async (id: string, options?: RequestInit):
 
 
 export type modelHubGetColumnValuesCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ColumnValuesResponseApi
   status: 200
 }
 
@@ -35786,7 +35879,7 @@ export const modelHubKnowledgeBaseListList = async ( options?: RequestInit): Pro
 
 
 export type modelHubMetricsByColumnListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: MetricsByColumnResponseApi
   status: 200
 }
 
@@ -35886,7 +35979,7 @@ export const modelHubOptimisationList = async (params?: ModelHubOptimisationList
 
 
 export type modelHubOptimisationCreateCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStringResultResponseApi
   status: 200
 }
 
@@ -35947,7 +36040,7 @@ export const modelHubOptimisationCreateCreate = async (optimizationDatasetApi: N
 
 
 export type modelHubOptimisationCreateUpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStringResultResponseApi
   status: 200
 }
 
@@ -36008,7 +36101,7 @@ export const modelHubOptimisationCreateUpdate = async (optimizationDatasetApi: N
 
 
 export type modelHubOptimisationUpdateCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStringResultResponseApi
   status: 200
 }
 
@@ -36070,7 +36163,7 @@ export const modelHubOptimisationUpdateCreate = async (id: string,
 
 
 export type modelHubOptimisationUpdateUpdateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStringResultResponseApi
   status: 200
 }
 
@@ -36238,7 +36331,7 @@ export const modelHubOptimizeDatasetList = async (params?: ModelHubOptimizeDatas
 
 
 export type modelHubOptimizeDatasetKbReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetKnowledgeBaseDetailResponseApi
   status: 200
 }
 
@@ -36298,7 +36391,7 @@ export const modelHubOptimizeDatasetKbRead = async (optimId: string, options?: R
 
 
 export type modelHubOptimizeDatasetKnowledgeBaseCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetKnowledgeBaseCreateResponseApi
   status: 200
 }
 
@@ -36359,7 +36452,7 @@ export const modelHubOptimizeDatasetKnowledgeBaseCreate = async (optimizeDataset
 
 
 export type modelHubOptimizeDatasetReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetDetailResponseApi
   status: 200
 }
 
@@ -36421,7 +36514,7 @@ export const modelHubOptimizeDatasetRead = async (modelId: string,
 
 
 export type modelHubOptimizeDatasetCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetCreateResponseApi
   status: 200
 }
 
@@ -36483,7 +36576,7 @@ export const modelHubOptimizeDatasetCreate = async (modelId: string,
 
 
 export type modelHubOptimizeDatasetColumnConfigListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetColumnConfigResponseApi
   status: 200
 }
 
@@ -36543,7 +36636,7 @@ export const modelHubOptimizeDatasetColumnConfigList = async (modelId: string, o
 
 
 export type modelHubOptimizeDatasetColumnConfigCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetColumnConfigUpdateResponseApi
   status: 200
 }
 
@@ -36605,7 +36698,7 @@ export const modelHubOptimizeDatasetColumnConfigCreate = async (modelId: string,
 
 
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetColumnConfigResponseApi
   status: 200
 }
 
@@ -36667,7 +36760,7 @@ export const modelHubOptimizeDatasetColumnConfigPromptTemplateExploreRead = asyn
 
 
 export type modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetColumnConfigUpdateResponseApi
   status: 200
 }
 
@@ -36731,7 +36824,7 @@ export const modelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreate = as
 
 
 export type modelHubOptimizeDatasetColumnConfigRightAnswersReadResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetColumnConfigResponseApi
   status: 200
 }
 
@@ -36793,7 +36886,7 @@ export const modelHubOptimizeDatasetColumnConfigRightAnswersRead = async (modelI
 
 
 export type modelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetColumnConfigUpdateResponseApi
   status: 200
 }
 
@@ -36857,7 +36950,7 @@ export const modelHubOptimizeDatasetColumnConfigRightAnswersCreate = async (mode
 
 
 export type modelHubOptimizeDatasetPromptTemplateExploreCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubOptimizeDatasetPromptTemplateExploreCreate200
   status: 200
 }
 
@@ -36921,7 +37014,7 @@ export const modelHubOptimizeDatasetPromptTemplateExploreCreate = async (modelId
 
 
 export type modelHubOptimizeDatasetPromptTemplateResultCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: OptimizeDatasetTemplateResultsResponseApi
   status: 200
 }
 
@@ -36985,7 +37078,7 @@ export const modelHubOptimizeDatasetPromptTemplateResultCreate = async (modelId:
 
 
 export type modelHubOptimizeDatasetRightAnswersCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubOptimizeDatasetRightAnswersCreate200
   status: 200
 }
 
@@ -37270,7 +37363,7 @@ export const modelHubOrganizationsUsersDelete = async (organizationId: string,
 
 
 export type modelHubOverviewListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubOverviewResponseApi
   status: 200
 }
 
@@ -39179,7 +39272,7 @@ export const modelHubPromptTemplatesCreateDraft = async (promptTemplateApi: NonR
 
 
 export type modelHubPromptTemplatesDerivedVariablesPreviewCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DerivedVariableDetailResponseApi
   status: 200
 }
 
@@ -40202,7 +40295,7 @@ export const modelHubPromptTemplatesVersions = async (id: string, options?: Requ
 
 
 export type modelHubPromptTemplatesDerivedVariablesListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: PromptDerivedVariablesResponseApi
   status: 200
 }
 
@@ -40270,7 +40363,7 @@ export const modelHubPromptTemplatesDerivedVariablesList = async (promptId: stri
 
 
 export type modelHubPromptTemplatesDerivedVariablesExtractCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DerivedVariableDetailResponseApi
   status: 200
 }
 
@@ -40343,7 +40436,7 @@ export const modelHubPromptTemplatesDerivedVariablesExtractCreate = async (promp
 
 
 export type modelHubPromptTemplatesDerivedVariablesSchemaListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: DerivedVariableDetailResponseApi
   status: 200
 }
 
@@ -40416,7 +40509,7 @@ export const modelHubPromptTemplatesDerivedVariablesSchemaList = async (promptId
 
 
 export type modelHubPromptMetricsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: PromptMetricsResponseApi
   status: 200
 }
 
@@ -40476,7 +40569,7 @@ export const modelHubPromptMetricsList = async ( options?: RequestInit): Promise
 
 
 export type modelHubPromptMetricsEmptyScreenListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: PromptMetricsEmptyScreenResponseApi
   status: 200
 }
 
@@ -40536,7 +40629,7 @@ export const modelHubPromptMetricsEmptyScreenList = async ( options?: RequestIni
 
 
 export type modelHubPromptSpanMetricsListResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: PromptMetricsResponseApi
   status: 200
 }
 
@@ -40806,7 +40899,7 @@ export const modelHubResponseSchemaDelete = async (id: string, options?: Request
 
 
 export type modelHubRunPromptForRowsCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubSuccessMessageResponseApi
   status: 200
 }
 
@@ -40867,7 +40960,7 @@ export const modelHubRunPromptForRowsCreate = async (runPromptForRowsRequestApi:
 
 
 export type modelHubRunPromptCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: ModelHubStringResultResponseApi
   status: 200
 }
 
@@ -42139,7 +42232,7 @@ export const modelHubUpdateEvalTemplateCreate = async (updateEvalTemplateApi: Up
 
 
 export type modelHubUploadFileCreateResponse200 = {
-  data: ModelHubJSONResponseApi
+  data: UploadFileResponseApi
   status: 200
 }
 
@@ -44257,7 +44350,7 @@ export const simulateApiAgentPromptOptimiserCreate = async (agentPromptOptimiser
 
 
 export type simulateApiAgentPromptOptimiserReadResponse200 = {
-  data: AgentPromptOptimiserRunApi
+  data: AgentPromptOptimiserRunDetailResponseApi
   status: 200
 }
 
@@ -44293,7 +44386,7 @@ export const simulateApiAgentPromptOptimiserRead = async (id: string, options?: 
 
 
 export type simulateApiAgentPromptOptimiserUpdateResponse200 = {
-  data: AgentPromptOptimiserRunApi
+  data: AgentPromptOptimiserRunModelResponseApi
   status: 200
 }
 
@@ -44331,7 +44424,7 @@ export const simulateApiAgentPromptOptimiserUpdate = async (id: string,
 
 
 export type simulateApiAgentPromptOptimiserPartialUpdateResponse200 = {
-  data: AgentPromptOptimiserRunApi
+  data: AgentPromptOptimiserRunModelResponseApi
   status: 200
 }
 
@@ -44405,7 +44498,7 @@ export const simulateApiAgentPromptOptimiserDelete = async (id: string, options?
 
 
 export type simulateApiAgentPromptOptimiserGraphResponse200 = {
-  data: AgentPromptOptimiserRunApi
+  data: AgentPromptOptimiserGraphResponseApi
   status: 200
 }
 
@@ -44441,7 +44534,7 @@ export const simulateApiAgentPromptOptimiserGraph = async (id: string, options?:
 
 
 export type simulateApiAgentPromptOptimiserStepsResponse200 = {
-  data: AgentPromptOptimiserRunApi
+  data: AgentPromptOptimiserRunStepsResponseApi
   status: 200
 }
 
@@ -44477,7 +44570,7 @@ export const simulateApiAgentPromptOptimiserSteps = async (id: string, options?:
 
 
 export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse200 = {
-  data: AgentPromptOptimiserRunApi
+  data: AgentPromptOptimiserTrialEvaluationsResponseApi
   status: 200
 }
 
@@ -44515,7 +44608,7 @@ export const simulateApiAgentPromptOptimiserTrialTrialEvaluations = async (id: s
 
 
 export type simulateApiAgentPromptOptimiserTrialTrialPromptResponse200 = {
-  data: AgentPromptOptimiserRunApi
+  data: AgentPromptOptimiserTrialPromptResponseApi
   status: 200
 }
 
@@ -44553,7 +44646,7 @@ export const simulateApiAgentPromptOptimiserTrialTrialPrompt = async (id: string
 
 
 export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponse200 = {
-  data: AgentPromptOptimiserRunApi
+  data: AgentPromptOptimiserTrialScenariosResponseApi
   status: 200
 }
 
@@ -44652,7 +44745,7 @@ export const simulateApiCallExecutionsList = async (params?: SimulateApiCallExec
 
 
 export type simulateApiLivekitCallConfigReadResponse200 = {
-  data: SimulateApiLivekitCallConfigRead200
+  data: LiveKitCallConfigResponseApi
   status: 200
 }
 
@@ -44803,7 +44896,7 @@ export const simulateApiLivekitListenerTokenRead = async (callId: string, option
 
 
 export type simulateApiLivekitPhoneResolutionReadResponse200 = {
-  data: SimulateApiLivekitPhoneResolutionRead200
+  data: LiveKitPhoneResolutionResponseApi
   status: 200
 }
 
@@ -44895,7 +44988,7 @@ export const simulateApiLivekitTemporalSignalCreate = async (liveKitTemporalSign
 
 
 export type simulateApiLivekitTranscriptsCreateResponse201 = {
-  data: SimulateApiLivekitTranscriptsCreate201
+  data: LiveKitTranscriptCreatedResponseApi
   status: 201
 }
 
@@ -48609,7 +48702,7 @@ export const simulateSimulatorAgentsEditUpdate = async (agentId: string,
 
 
 export type simulateTestExecutionsReadResponse200 = {
-  data: SimulateTestExecutionsRead200
+  data: TestExecutionDetailResponseApi
   status: 200
 }
 
@@ -48916,7 +49009,7 @@ export const simulateTestExecutionsDeleteDelete = async (testExecutionId: string
 
 
 export type simulateTestExecutionsEvalExplanationSummaryListResponse200 = {
-  data: SimulateTestExecutionsEvalExplanationSummaryList200
+  data: EvalExplanationSummaryResponseApi
   status: 200
 }
 
@@ -48965,7 +49058,7 @@ export const simulateTestExecutionsEvalExplanationSummaryList = async (testExecu
 
 
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse200 = {
-  data: ApiSuccessResponseApi
+  data: EvalExplanationSummaryRefreshResponseApi
   status: 200
 }
 
@@ -49016,7 +49109,7 @@ export const simulateTestExecutionsEvalExplanationSummaryRefreshCreate = async (
 
 
 export type simulateTestExecutionsKpisListResponse200 = {
-  data: SimulateTestExecutionsKpisList200
+  data: RunTestKPIsResponseApi
   status: 200
 }
 
@@ -49064,7 +49157,7 @@ export const simulateTestExecutionsKpisList = async (testExecutionId: string, op
 
 
 export type simulateTestExecutionsOptimiserAnalysisListResponse200 = {
-  data: ApiSuccessResponseApi
+  data: OptimiserAnalysisResponseApi
   status: 200
 }
 
@@ -49113,7 +49206,7 @@ export const simulateTestExecutionsOptimiserAnalysisList = async (testExecutionI
 
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse200 = {
-  data: ApiSuccessResponseApi
+  data: OptimiserAnalysisRefreshResponseApi
   status: 200
 }
 
@@ -57955,7 +58048,7 @@ export const tracerUserAlertsBulkMute = async (userAlertMonitorApi: NonReadonly<
 
 
 export type tracerUserAlertsDuplicateResponse200 = {
-  data: ApiSuccessResponseApi
+  data: UserAlertMonitorDuplicateResponseApi
   status: 200
 }
 
@@ -60229,7 +60322,7 @@ export const usageGetCustomerInvoicesList = async ( options?: RequestInit): Prom
 
 
 export type usageGetLastFourDigitsListResponse200 = {
-  data: UsageJSONResponseApi
+  data: LastFourDigitsResponseApi
   status: 200
 }
 
@@ -62198,7 +62291,7 @@ export const usageResourceTypeList = async ( options?: RequestInit): Promise<usa
 
 
 export type usageSubscriptionPlansListResponse200 = {
-  data: UsageJSONResponseApi
+  data: SubscriptionPlansResponseApi
   status: 200
 }
 
@@ -62657,7 +62750,7 @@ export const usageSubscriptionTierRead = async (subscriptionId: string, options?
 
 
 export type usageUpdateAutoReloadSettingsCreateResponse200 = {
-  data: UsageJSONResponseApi
+  data: AutoReloadUpdateResponseApi
   status: 200
 }
 
@@ -62723,7 +62816,7 @@ export const usageUpdateAutoReloadSettingsCreate = async (autoReloadSettingsRequ
 
 
 export type usageUpdateBillingDetailsCreateResponse200 = {
-  data: UsageJSONResponseApi
+  data: UpdateBillingDetailsResponseApi
   status: 200
 }
 

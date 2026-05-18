@@ -1,5 +1,9 @@
 from rest_framework import serializers
 
+from model_hub.serializers.optimize_dataset import (
+    OptimizeDatasetKbSerializer,
+    OptimizeDatasetSerializer,
+)
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 
 
@@ -51,6 +55,15 @@ class ModelHubStatusMessageResponseSerializer(serializers.Serializer):
 class ModelHubStringResultResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = serializers.CharField()
+
+
+class ModelHubSuccessMessageResultSerializer(serializers.Serializer):
+    success = serializers.CharField()
+
+
+class ModelHubSuccessMessageResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = ModelHubSuccessMessageResultSerializer()
 
 
 class CustomEvalTemplateCreateResponseResultSerializer(serializers.Serializer):
@@ -277,6 +290,46 @@ class CustomMetricListResponseSerializer(serializers.Serializer):
     metrics = CustomMetricListItemSerializer(many=True)
 
 
+class MetricsByColumnItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField()
+    template_name = serializers.CharField()
+    eval_template_name = serializers.CharField()
+    eval_required_keys = serializers.ListField(child=serializers.CharField())
+    eval_template_tags = serializers.ListField(child=serializers.CharField())
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    model = serializers.CharField(required=False, allow_blank=True)
+    column_id = serializers.UUIDField(required=False, allow_null=True)
+    updated_at = serializers.DateTimeField()
+    eval_group = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+    status = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    eval_type = serializers.CharField()
+    template_type = serializers.CharField()
+    template_id = serializers.UUIDField()
+    owner = serializers.CharField()
+    mapping = serializers.JSONField()
+    params = serializers.JSONField()
+    error_localizer = serializers.BooleanField()
+    run_config = serializers.JSONField()
+    output_type = serializers.CharField()
+    aggregation_function = serializers.CharField(required=False, allow_blank=True)
+    aggregation_enabled = serializers.BooleanField(required=False)
+    children_count = serializers.IntegerField(required=False)
+
+
+class MetricsByColumnResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = MetricsByColumnItemSerializer(many=True)
+
+
 class MetricTagOptionSerializer(serializers.Serializer):
     label = serializers.CharField()
     value = serializers.CharField()
@@ -334,6 +387,60 @@ class ModelParametersResultSerializer(serializers.Serializer):
 class ModelParametersResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = ModelParametersResultSerializer()
+
+
+class OverviewPointSerializer(serializers.Serializer):
+    x = serializers.JSONField()
+    y = serializers.IntegerField()
+
+
+class OverviewCountSeriesSerializer(serializers.Serializer):
+    total_count = serializers.IntegerField()
+    change = serializers.FloatField(allow_null=True)
+
+
+class OverviewVolumeSerializer(OverviewCountSeriesSerializer):
+    volume = OverviewPointSerializer(many=True)
+
+
+class OverviewIssuesSerializer(OverviewCountSeriesSerializer):
+    last_day = OverviewPointSerializer(many=True)
+
+
+class OverviewResponseSerializer(serializers.Serializer):
+    volume = OverviewVolumeSerializer()
+    issues = OverviewIssuesSerializer()
+    versions = serializers.JSONField()
+
+    class Meta:
+        ref_name = "ModelHubOverviewResponse"
+
+
+class PromptMetricsMetadataSerializer(serializers.Serializer):
+    total_rows = serializers.IntegerField()
+
+
+class PromptMetricsResultSerializer(serializers.Serializer):
+    prompt_template_id = serializers.UUIDField(required=False)
+    prompt_template_name = serializers.CharField(required=False)
+    table = serializers.ListField(child=serializers.JSONField())
+    config = serializers.JSONField()
+    metadata = PromptMetricsMetadataSerializer()
+
+
+class PromptMetricsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = PromptMetricsResultSerializer()
+
+
+class PromptMetricsEmptyScreenResultSerializer(serializers.Serializer):
+    python = serializers.CharField()
+    typescript = serializers.CharField()
+
+
+class PromptMetricsEmptyScreenResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = PromptMetricsEmptyScreenResultSerializer()
 
 
 class LiteLLMVoiceOptionSerializer(serializers.Serializer):
@@ -421,6 +528,33 @@ class EmbeddingModelOptionSerializer(serializers.Serializer):
 class KnowledgeBaseEmbeddingModelsResponseSerializer(serializers.Serializer):
     status = serializers.IntegerField()
     result = EmbeddingModelOptionSerializer(many=True)
+
+
+class EmbeddingConfigOptionSerializer(serializers.Serializer):
+    type = serializers.CharField()
+    required = serializers.BooleanField()
+    description = serializers.CharField()
+    default = serializers.CharField(required=False, allow_blank=True)
+
+
+class EmbeddingProviderSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    description = serializers.CharField()
+    requires_api_key = serializers.BooleanField()
+    config_schema = serializers.DictField(child=EmbeddingConfigOptionSerializer())
+
+
+class EmbeddingsResponseResultSerializer(serializers.Serializer):
+    embeddings = serializers.DictField(
+        child=EmbeddingProviderSerializer(),
+        required=False,
+    )
+    embedding = EmbeddingProviderSerializer(required=False)
+
+
+class EmbeddingsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = EmbeddingsResponseResultSerializer()
 
 
 class KnowledgeBaseItemSerializer(serializers.Serializer):
@@ -611,6 +745,78 @@ class OptimizeDatasetOperationRequestSerializer(serializers.Serializer):
     prompt_template = serializers.CharField(required=False, allow_blank=True)
     prompt = serializers.CharField(required=False, allow_blank=True)
     variables = serializers.JSONField(required=False)
+
+
+class OptimizeDatasetPaginatedResponseSerializer(serializers.Serializer):
+    count = serializers.IntegerField()
+    next = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    previous = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    results = OptimizeDatasetSerializer(many=True)
+    total_pages = serializers.IntegerField(required=False)
+    current_page = serializers.IntegerField(required=False)
+
+
+class OptimizeDatasetCreateDataSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+
+
+class OptimizeDatasetCreateResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    message = serializers.CharField()
+    data = OptimizeDatasetCreateDataSerializer(allow_null=True)
+
+
+class OptimizeDatasetDetailResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    data = OptimizeDatasetSerializer(allow_null=True)
+
+
+class OptimizeDatasetColumnConfigResponseSerializer(serializers.Serializer):
+    columns = serializers.ListField(child=serializers.JSONField())
+    status = serializers.CharField()
+
+
+class OptimizeDatasetColumnConfigUpdateResponseSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    status = serializers.CharField()
+
+
+class OptimizeDatasetTemplateResultSerializer(serializers.Serializer):
+    metric_name = serializers.CharField()
+    templates = serializers.ListField(child=serializers.FloatField())
+    old_template = serializers.FloatField()
+
+
+class OptimizeDatasetTemplateResultsResponseSerializer(serializers.Serializer):
+    k_prompts = serializers.ListField(child=serializers.CharField())
+    results = OptimizeDatasetTemplateResultSerializer(many=True)
+
+
+class OptimizeDatasetKnowledgeBaseCreateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = serializers.UUIDField()
+
+
+class OptimizeDatasetKnowledgeBaseListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = OptimizeDatasetKbSerializer(many=True)
+
+
+class OptimizeDatasetKnowledgeBaseDetailResultSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    prompt = serializers.CharField(allow_blank=True, allow_null=True)
+    knowledge_base_filters = serializers.JSONField(allow_null=True)
+    knowledge_base_metrics = serializers.JSONField(allow_null=True)
+    variables = serializers.JSONField(allow_null=True)
+    status = serializers.CharField()
+    optimized_k_prompts = serializers.ListField(
+        child=serializers.CharField(), allow_null=True
+    )
+
+
+class OptimizeDatasetKnowledgeBaseDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = OptimizeDatasetKnowledgeBaseDetailResultSerializer()
 
 
 class PerformanceQueryRequestSerializer(serializers.Serializer):
@@ -961,6 +1167,32 @@ class RunPromptForRowsRequestSerializer(serializers.Serializer):
     selected_all_rows = serializers.BooleanField(required=False, default=False)
 
 
+class UploadedFileResultSerializer(serializers.Serializer):
+    url = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    file_name = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    error = serializers.CharField(required=False, allow_blank=True)
+
+
+class UploadFileResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = UploadedFileResultSerializer(many=True)
+
+
+class ColumnValuesItemSerializer(serializers.Serializer):
+    column_id = serializers.UUIDField()
+    column_name = serializers.CharField()
+    values = serializers.ListField(child=serializers.CharField(allow_blank=True))
+
+
+class ColumnValuesResponseResultSerializer(serializers.Serializer):
+    result = serializers.DictField(child=ColumnValuesItemSerializer())
+
+
+class ColumnValuesResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = ColumnValuesResponseResultSerializer()
+
+
 class DerivedVariableExtractRequestSerializer(serializers.Serializer):
     version = serializers.CharField()
     column_name = serializers.CharField(required=False, default="output")
@@ -971,6 +1203,34 @@ class DerivedVariableExtractRequestSerializer(serializers.Serializer):
 class DerivedVariablePreviewRequestSerializer(serializers.Serializer):
     content = serializers.JSONField()
     column_name = serializers.CharField(required=False, default="output")
+
+
+class DerivedVariableDetailSerializer(serializers.Serializer):
+    paths = serializers.ListField(child=serializers.CharField(), required=False)
+    schema = serializers.JSONField(required=False)
+    full_variables = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+    raw_sample = serializers.JSONField(required=False, allow_null=True)
+    is_json = serializers.BooleanField(required=False)
+
+
+class PromptDerivedVariablesResultSerializer(serializers.Serializer):
+    version = serializers.CharField()
+    derived_variables = serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField())
+    )
+
+
+class PromptDerivedVariablesResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = PromptDerivedVariablesResultSerializer()
+
+
+class DerivedVariableDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = DerivedVariableDetailSerializer()
 
 
 class EvalSummaryTemplateMutationRequestSerializer(serializers.Serializer):

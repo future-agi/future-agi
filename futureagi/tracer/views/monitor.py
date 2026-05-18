@@ -12,7 +12,6 @@ from rest_framework.viewsets import ModelViewSet
 
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
-    ApiSuccessResponseSerializer,
 )
 from tfc.utils.base_viewset import (
     BaseModelViewSetMixin,
@@ -29,6 +28,7 @@ from tracer.models.monitor import (
 from tracer.models.project import Project
 from tracer.serializers.monitor import (
     UserAlertMonitorDetailSerializer,
+    UserAlertMonitorDuplicateResponseSerializer,
     UserAlertMonitorDuplicateSerializer,
     UserAlertMonitorLogSerializer,
     UserAlertMonitorMetricOptionsResponseSerializer,
@@ -431,7 +431,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     @swagger_auto_schema(
         request_body=UserAlertMonitorDuplicateSerializer,
         responses={
-            200: ApiSuccessResponseSerializer,
+            200: UserAlertMonitorDuplicateResponseSerializer,
             400: ApiErrorResponseSerializer,
             404: ApiErrorResponseSerializer,
             500: ApiErrorResponseSerializer,

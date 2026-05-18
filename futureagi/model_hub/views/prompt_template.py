@@ -87,8 +87,9 @@ from model_hub.models.run_prompt import (
 )
 from model_hub.serializers.contracts import (
     ColumnValuesRequestSerializer,
+    ColumnValuesResponseSerializer,
     MODEL_HUB_ERROR_RESPONSES,
-    ModelHubJSONResponseSerializer,
+    UploadFileResponseSerializer,
 )
 from model_hub.serializers.prompt_folder import PromptFolderSerializer
 from model_hub.serializers.prompt_template import (
@@ -542,7 +543,7 @@ class UploadFileView(APIView):
 
     @swagger_auto_schema(
         request_body=UploadFileSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: UploadFileResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request):
         try:
@@ -3711,7 +3712,7 @@ class ColumnValuesAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=ColumnValuesRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={200: ColumnValuesResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:

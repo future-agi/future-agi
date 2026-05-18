@@ -4,7 +4,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 
-from accounts.serializers.contracts import AccountsJSONResponseSerializer
+from accounts.serializers.contracts import PublicConfigResponseSerializer
 
 
 def _parse_regions():
@@ -25,7 +25,7 @@ def _parse_regions():
     return regions
 
 
-@swagger_auto_schema(method="get", responses={200: AccountsJSONResponseSerializer})
+@swagger_auto_schema(method="get", responses={200: PublicConfigResponseSerializer})
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def public_config(request):

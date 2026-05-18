@@ -11,10 +11,12 @@ from accounts.models.user import OrgApiKey
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
-    AccountsJSONResponseSerializer,
+    AdditionalOrganizationCreateResponseSerializer,
     OrganizationCreateRequestSerializer,
+    OrganizationCreateResponseSerializer,
     OrganizationNameRequestSerializer,
     OrganizationUpdateRequestSerializer,
+    OrganizationUpdateResponseSerializer,
 )
 from accounts.utils import process_post_registration
 from tfc.constants.email import FREE_EMAIL_DOMAINS
@@ -37,7 +39,10 @@ class OrganizationCreateAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=OrganizationNameRequestSerializer,
-        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: OrganizationCreateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def post(self, request):
         gm = GeneralMethods()
@@ -150,7 +155,10 @@ class OrganizationUpdateAPIView(APIView):
 
     @swagger_auto_schema(
         request_body=OrganizationUpdateRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: OrganizationUpdateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def patch(self, request):
         org = getattr(request, "organization", None)
@@ -204,7 +212,10 @@ class CreateAdditionalOrganizationView(APIView):
 
     @swagger_auto_schema(
         request_body=OrganizationCreateRequestSerializer,
-        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: AdditionalOrganizationCreateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def post(self, request):
         gm = GeneralMethods()

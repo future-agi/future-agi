@@ -17,10 +17,16 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
-    AccountsJSONResponseSerializer,
     WorkspaceCreateRequestSerializer,
+    WorkspaceCreateResponseSerializer,
+    WorkspaceDeleteResponseSerializer,
+    WorkspaceManagementListResponseSerializer,
+    WorkspaceMemberRemoveResponseSerializer,
+    WorkspaceMembersAddResponseSerializer,
+    WorkspaceMembersListResponseSerializer,
     WorkspaceMembersRequestSerializer,
     WorkspaceUpdateRequestSerializer,
+    WorkspaceUpdateResponseSerializer,
 )
 from accounts.utils import generate_password, resolve_org, resolve_org_role
 from tfc.constants.levels import Level
@@ -38,7 +44,10 @@ class WorkspaceManagementView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={
+            200: WorkspaceManagementListResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
     )
     def get(self, request, *args, **kwargs):
         """Get workspaces for the current organization"""
@@ -105,7 +114,7 @@ class WorkspaceManagementView(APIView):
 
     @swagger_auto_schema(
         request_body=WorkspaceCreateRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={201: WorkspaceCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     @transaction.atomic
     def post(self, request, *args, **kwargs):
@@ -428,7 +437,7 @@ class WorkspaceManagementView(APIView):
 
     @swagger_auto_schema(
         request_body=WorkspaceUpdateRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: WorkspaceUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def put(self, request, workspace_id, *args, **kwargs):
         """Update workspace details"""
@@ -489,7 +498,7 @@ class WorkspaceManagementView(APIView):
         return self._gm.success_response(response_data)
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={200: WorkspaceDeleteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def delete(self, request, workspace_id, *args, **kwargs):
         """Delete a workspace"""
@@ -534,7 +543,10 @@ class WorkspaceMembershipView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={
+            200: WorkspaceMembersListResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
     )
     def get(self, request, workspace_id, *args, **kwargs):
         """Get members of a specific workspace"""
@@ -608,7 +620,10 @@ class WorkspaceMembershipView(APIView):
 
     @swagger_auto_schema(
         request_body=WorkspaceMembersRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: WorkspaceMembersAddResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     @transaction.atomic
     def post(self, request, workspace_id, *args, **kwargs):
@@ -888,7 +903,10 @@ class WorkspaceMembershipView(APIView):
         return self._gm.create_response(response_data)
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={
+            200: WorkspaceMemberRemoveResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
     )
     def delete(self, request, workspace_id, member_id, *args, **kwargs):
         """Remove user from workspace"""

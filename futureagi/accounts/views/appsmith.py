@@ -20,8 +20,10 @@ from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
-    AccountsJSONResponseSerializer,
+    AccountsPaginatedUserResponseSerializer,
     AccountsTokenPairResponseSerializer,
+    AppsmithPasswordUpdateResponseSerializer,
+    AppsmithUserCreateResponseSerializer,
 )
 from accounts.serializers.user import (
     PasswordValidationSerializer,
@@ -40,7 +42,10 @@ class UserApiView(APIView):
     permission_classes = [APIKeyPermission]
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={
+            200: AccountsPaginatedUserResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
     )
     def get(
         self,
@@ -64,7 +69,10 @@ class UserApiView(APIView):
 
     @swagger_auto_schema(
         request_body=UserCreateSerializer,
-        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: AppsmithUserCreateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def post(self, request):
         serializer = UserCreateSerializer(data=request.data)
@@ -91,7 +99,6 @@ class UserApiView(APIView):
                 organization=organization, type="system", enabled=True
             )
             if len(apiKeys) == 0:
-
                 OrgApiKey.no_workspace_objects.create(
                     organization=organization, type="system"
                 )
@@ -109,7 +116,10 @@ class UserApiView(APIView):
 
     @swagger_auto_schema(
         request_body=PasswordValidationSerializer,
-        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: AppsmithPasswordUpdateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def patch(self, request, user_id):
         serializer = PasswordValidationSerializer(data=request.data)

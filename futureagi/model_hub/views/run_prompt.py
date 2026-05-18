@@ -26,6 +26,7 @@ from rest_framework.views import APIView
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
 # (available_models always available)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
@@ -46,12 +47,14 @@ from model_hub.models.openai_tools import Tools
 from model_hub.models.run_prompt import RunPrompter, UserResponseSchema
 from model_hub.queries.tts_voices import get_custom_voices
 from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
     DatasetRunPromptStatsResponseSerializer,
     LiteLLMModelVoicesResponseSerializer,
-    MODEL_HUB_ERROR_RESPONSES,
-    ModelParametersResponseSerializer,
     ModelHubJSONResponseSerializer,
     ModelHubPaginatedResponseSerializer,
+    ModelHubStringResultResponseSerializer,
+    ModelHubSuccessMessageResponseSerializer,
+    ModelParametersResponseSerializer,
     RunPromptColumnConfigResponseSerializer,
     RunPromptForRowsRequestSerializer,
     RunPromptOptionsResponseSerializer,
@@ -94,6 +97,7 @@ from tfc.utils.storage import (
     convert_image_from_url_to_base64,
     detect_audio_format,
 )
+
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
@@ -860,7 +864,10 @@ class LitellmAPIView(CreateAPIView):
 
     @swagger_auto_schema(
         request_body=LitellmSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
@@ -2499,7 +2506,10 @@ class RunPromptForRowsView(APIView):
 
     @swagger_auto_schema(
         request_body=RunPromptForRowsRequestSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ModelHubSuccessMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request):
         try:

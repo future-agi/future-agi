@@ -849,8 +849,8 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/eval-user-template/create/"): (
             "ModelHubStringResultResponse"
         ),
-        ("GET", "/model-hub/embeddings/"): "ModelHubJSONResponse",
-        ("GET", "/model-hub/embeddings/{type}/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/embeddings/"): "EmbeddingsResponse",
+        ("GET", "/model-hub/embeddings/{type}/"): "EmbeddingsResponse",
         ("GET", "/model-hub/experiments/v2/{experiment_id}/feedback/get-template/"): (
             "ModelHubJSONResponse"
         ),
@@ -865,7 +865,7 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
             "POST",
             "/model-hub/experiments/v2/{experiment_id}/feedback/submit-feedback/",
         ): "ModelHubJSONResponse",
-        ("POST", "/model-hub/get-column-values/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/get-column-values/"): "ColumnValuesResponse",
         ("GET", "/model-hub/get-eval-config"): "ModelHubEvalConfigResponse",
         ("GET", "/model-hub/get-eval-logs"): "EvalApiLogRowResponse",
         ("PATCH", "/model-hub/get-eval-logs"): "ModelHubStringResultResponse",
@@ -925,60 +925,52 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("GET", "/model-hub/knowledge-base/list/"): (
             "LegacyKnowledgeBaseListResponse"
         ),
-        ("GET", "/model-hub/metrics/by-column/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/metrics/by-column/"): "MetricsByColumnResponse",
         ("GET", "/model-hub/optimize-dataset/kb/{optim_id}/"): (
-            "ModelHubJSONResponse"
+            "OptimizeDatasetKnowledgeBaseDetailResponse"
         ),
         ("POST", "/model-hub/optimize-dataset/knowledge-base/"): (
-            "ModelHubJSONResponse"
+            "OptimizeDatasetKnowledgeBaseCreateResponse"
         ),
         ("GET", "/model-hub/optimize-dataset/{model_id}/"): (
-            "ModelHubPaginatedResponse"
+            "OptimizeDatasetPaginatedResponse"
         ),
         ("POST", "/model-hub/optimize-dataset/{model_id}/"): (
-            "ModelHubJSONResponse"
+            "OptimizeDatasetCreateResponse"
         ),
         ("GET", "/model-hub/optimize-dataset/{model_id}/column-config/"): (
-            "ModelHubJSONResponse"
+            "OptimizeDatasetColumnConfigResponse"
         ),
         ("POST", "/model-hub/optimize-dataset/{model_id}/column-config/"): (
-            "ModelHubJSONResponse"
+            "OptimizeDatasetColumnConfigUpdateResponse"
         ),
         (
             "GET",
             "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
-        ): "ModelHubJSONResponse",
+        ): "OptimizeDatasetColumnConfigResponse",
         (
             "POST",
             "/model-hub/optimize-dataset/{model_id}/column-config/prompt-template-explore/{optimization_id}/",
-        ): "ModelHubJSONResponse",
+        ): "OptimizeDatasetColumnConfigUpdateResponse",
         (
             "GET",
             "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
-        ): "ModelHubJSONResponse",
+        ): "OptimizeDatasetColumnConfigResponse",
         (
             "POST",
             "/model-hub/optimize-dataset/{model_id}/column-config/right-answers/{optimization_id}/",
-        ): "ModelHubJSONResponse",
-        (
-            "POST",
-            "/model-hub/optimize-dataset/{model_id}/prompt-template-explore/{optimization_id}/",
-        ): "ModelHubJSONResponse",
+        ): "OptimizeDatasetColumnConfigUpdateResponse",
         (
             "POST",
             "/model-hub/optimize-dataset/{model_id}/prompt-template-result/{optimization_id}/",
-        ): "ModelHubJSONResponse",
-        (
-            "POST",
-            "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
-        ): "ModelHubJSONResponse",
+        ): "OptimizeDatasetTemplateResultsResponse",
         ("GET", "/model-hub/optimize-dataset/{model_id}/{optimization_id}/"): (
-            "ModelHubJSONResponse"
+            "OptimizeDatasetDetailResponse"
         ),
-        ("POST", "/model-hub/optimisation/create/"): "ModelHubJSONResponse",
-        ("PUT", "/model-hub/optimisation/create/"): "ModelHubJSONResponse",
-        ("POST", "/model-hub/optimisation/update/{id}/"): "ModelHubJSONResponse",
-        ("PUT", "/model-hub/optimisation/update/{id}/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/optimisation/create/"): "ModelHubStringResultResponse",
+        ("PUT", "/model-hub/optimisation/create/"): "ModelHubStringResultResponse",
+        ("POST", "/model-hub/optimisation/update/{id}/"): "ModelHubStringResultResponse",
+        ("PUT", "/model-hub/optimisation/update/{id}/"): "ModelHubStringResultResponse",
         ("POST", "/model-hub/performance/detail/{id}/"): (
             "PerformanceDetailsResponse"
         ),
@@ -991,31 +983,33 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
         ("POST", "/model-hub/performance/report/{model_id}/"): (
             "PerformanceReportCreateResponse"
         ),
-        ("GET", "/model-hub/overview/"): "ModelHubJSONResponse",
-        ("GET", "/model-hub/prompt/metrics/"): "ModelHubJSONResponse",
-        ("GET", "/model-hub/prompt/metrics/empty-screen"): "ModelHubJSONResponse",
-        ("GET", "/model-hub/prompt/span-metrics/"): "ModelHubJSONResponse",
+        ("GET", "/model-hub/overview/"): "ModelHubOverviewResponse",
+        ("GET", "/model-hub/prompt/metrics/"): "PromptMetricsResponse",
+        ("GET", "/model-hub/prompt/metrics/empty-screen"): "PromptMetricsEmptyScreenResponse",
+        ("GET", "/model-hub/prompt/span-metrics/"): "PromptMetricsResponse",
         ("POST", "/model-hub/prompt-templates/derived-variables/preview/"): (
-            "ModelHubJSONResponse"
+            "DerivedVariableDetailResponse"
         ),
         ("GET", "/model-hub/prompt-templates/{prompt_id}/derived-variables/"): (
-            "ModelHubJSONResponse"
+            "PromptDerivedVariablesResponse"
         ),
         (
             "POST",
             "/model-hub/prompt-templates/{prompt_id}/derived-variables/extract/",
-        ): "ModelHubJSONResponse",
+        ): "DerivedVariableDetailResponse",
         (
             "GET",
             "/model-hub/prompt-templates/{prompt_id}/derived-variables/{column_name}/schema/",
-        ): "ModelHubJSONResponse",
-        ("POST", "/model-hub/run-prompt-for-rows/"): "ModelHubJSONResponse",
-        ("POST", "/model-hub/run-prompt/"): "ModelHubJSONResponse",
+        ): "DerivedVariableDetailResponse",
+        ("POST", "/model-hub/run-prompt-for-rows/"): (
+            "ModelHubSuccessMessageResponse"
+        ),
+        ("POST", "/model-hub/run-prompt/"): "ModelHubStringResultResponse",
         ("POST", "/model-hub/test-evaluation/"): "EvalExecutionResponse",
         ("POST", "/model-hub/update-eval-template/"): (
             "LegacyEvalTemplateUpdateResponse"
         ),
-        ("POST", "/model-hub/upload-file/"): "ModelHubJSONResponse",
+        ("POST", "/model-hub/upload-file/"): "UploadFileResponse",
     }
 
     for (method, path), definition_name in expected.items():
@@ -1024,6 +1018,14 @@ def test_model_hub_ai_writer_and_custom_model_endpoints_have_response_contracts(
 
 def test_model_hub_performance_endpoints_with_dynamic_payloads_have_response_contracts():
     expected = [
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/prompt-template-explore/{optimization_id}/",
+        ),
+        (
+            "POST",
+            "/model-hub/optimize-dataset/{model_id}/right-answers/{optimization_id}/",
+        ),
         ("POST", "/model-hub/performance/tag-distribution/{model_id}/"),
         ("POST", "/model-hub/performance/{id}/"),
         ("POST", "/model-hub/performance/export/{id}/"),

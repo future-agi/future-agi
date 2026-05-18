@@ -12,10 +12,11 @@ from accounts.models.webauthn_credential import WebAuthnCredential
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsEmptyRequestSerializer,
-    AccountsJSONResponseSerializer,
     AccountsTokenPairResponseSerializer,
     PasskeyCredentialRequestSerializer,
     PasskeyOptionsResponseSerializer,
+    PasskeyRegisterVerifyResponseSerializer,
+    PasskeyRenameResponseSerializer,
 )
 from accounts.serializers.two_factor import (
     PasskeyRegisterVerifySerializer,
@@ -63,7 +64,10 @@ class PasskeyRegisterVerifyView(APIView):
 
     @swagger_auto_schema(
         request_body=PasskeyRegisterVerifySerializer,
-        responses={201: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            201: PasskeyRegisterVerifyResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def post(self, request):
         serializer = PasskeyRegisterVerifySerializer(data=request.data)
@@ -122,7 +126,10 @@ class PasskeyListView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: WebAuthnCredentialSerializer(many=True), **ACCOUNTS_ERROR_RESPONSES}
+        responses={
+            200: WebAuthnCredentialSerializer(many=True),
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
     )
     def get(self, request):
         passkeys = WebAuthnCredential.objects.filter(user=request.user)
@@ -138,7 +145,7 @@ class PasskeyDetailView(APIView):
 
     @swagger_auto_schema(
         request_body=PasskeyRenameSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: PasskeyRenameResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def patch(self, request, pk):
         try:

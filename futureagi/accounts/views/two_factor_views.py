@@ -16,9 +16,14 @@ from accounts.models.user import User
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
     AccountsEmptyRequestSerializer,
-    AccountsJSONResponseSerializer,
     AccountsTokenPairResponseSerializer,
+    OrgTwoFactorPolicyResponseSerializer,
     PasskeyOptionsResponseSerializer,
+    RecoveryCodesRegenerateResponseSerializer,
+    RecoveryCodesRemainingResponseSerializer,
+    TOTPConfirmResponseSerializer,
+    TOTPDisableResponseSerializer,
+    TOTPSetupResponseSerializer,
     TwoFactorPasskeyVerifyRequestSerializer,
 )
 from accounts.serializers.two_factor import (
@@ -118,7 +123,7 @@ class TOTPSetupView(APIView):
 
     @swagger_auto_schema(
         request_body=AccountsEmptyRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: TOTPSetupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         try:
@@ -145,7 +150,7 @@ class TOTPConfirmView(APIView):
 
     @swagger_auto_schema(
         request_body=TOTPConfirmSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: TOTPConfirmResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def post(self, request):
         serializer = TOTPConfirmSerializer(data=request.data)
@@ -175,7 +180,7 @@ class TOTPDisableView(APIView):
 
     @swagger_auto_schema(
         request_body=TOTPDisableSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={200: TOTPDisableResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
     )
     def delete(self, request):
         serializer = TOTPDisableSerializer(data=request.data)
@@ -392,9 +397,7 @@ class TwoFactorVerifyPasskeyView(APIView):
             expected_challenge = base64url_to_bytes(
                 webauthn_challenge_data["challenge"]
             )
-            verify_authentication(
-                credential_response, expected_challenge, user=user
-            )
+            verify_authentication(credential_response, expected_challenge, user=user)
         except Exception as e:
             logger.exception("passkey_2fa_verification_failed", error=str(e))
             return self._gm.bad_request("Passkey verification failed.")
@@ -411,7 +414,10 @@ class RecoveryCodesView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={
+            200: RecoveryCodesRemainingResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
     )
     def get(self, request):
         remaining = get_remaining_count(request.user)
@@ -426,7 +432,10 @@ class RecoveryCodesRegenerateView(APIView):
 
     @swagger_auto_schema(
         request_body=RecoveryCodesRegenerateSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: RecoveryCodesRegenerateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def post(self, request):
         user = request.user
@@ -476,7 +485,10 @@ class OrgTwoFactorPolicyView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={
+            200: OrgTwoFactorPolicyResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
     )
     def get(self, request):
         org = getattr(request, "organization", None)
@@ -493,7 +505,10 @@ class OrgTwoFactorPolicyView(APIView):
 
     @swagger_auto_schema(
         request_body=OrgTwoFactorPolicySerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: OrgTwoFactorPolicyResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def put(self, request):
         org = getattr(request, "organization", None)

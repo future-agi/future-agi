@@ -229,6 +229,16 @@ class UserAlertMonitorDuplicateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
 
 
+class UserAlertMonitorDuplicateResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    message = serializers.CharField()
+
+
+class UserAlertMonitorDuplicateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = UserAlertMonitorDuplicateResultSerializer()
+
+
 class UserAlertMonitorMetricOptionSerializer(serializers.Serializer):
     id = serializers.CharField(read_only=True)
     name = serializers.CharField(read_only=True)

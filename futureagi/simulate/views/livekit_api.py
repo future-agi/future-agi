@@ -36,7 +36,6 @@ from tracer.models.observability_provider import ProviderChoices
 
 logger = structlog.get_logger(__name__)
 
-LIVEKIT_OBJECT_RESPONSE = openapi.Schema(type=openapi.TYPE_OBJECT)
 LIVEKIT_WEBHOOK_REQUEST = openapi.Schema(
     type=openapi.TYPE_OBJECT,
     description="LiveKit webhook payload verified against the Authorization JWT.",
@@ -63,7 +62,24 @@ class LiveKitTranscriptsRequestSerializer(LiveKitTranscriptRowSerializer):
 
 
 class LiveKitTranscriptCreatedResponseSerializer(serializers.Serializer):
-    created = serializers.IntegerField()
+    id = serializers.UUIDField(required=False)
+    created = serializers.IntegerField(required=False)
+
+
+class LiveKitCallConfigResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    call_metadata = serializers.DictField(child=serializers.JSONField())
+    provider_call_data = serializers.DictField(child=serializers.JSONField())
+    status = serializers.CharField()
+    ended_reason = serializers.CharField(allow_blank=True)
+    duration_seconds = serializers.IntegerField(allow_null=True)
+
+
+class LiveKitPhoneResolutionResponseSerializer(serializers.Serializer):
+    call_id = serializers.UUIDField()
+    call_metadata = serializers.DictField(child=serializers.JSONField())
+    provider_call_data = serializers.DictField(child=serializers.JSONField())
+    status = serializers.CharField()
 
 
 class LiveKitCallExecutionUpdateRequestSerializer(serializers.Serializer):
@@ -204,7 +220,7 @@ class CallConfigView(InternalAPIView):
 
     @swagger_auto_schema(
         responses={
-            200: LIVEKIT_OBJECT_RESPONSE,
+            200: LiveKitCallConfigResponseSerializer,
             404: LiveKitErrorResponseSerializer,
         },
     )
@@ -229,13 +245,7 @@ class TranscriptsView(InternalAPIView):
     @swagger_auto_schema(
         request_body=LiveKitTranscriptsRequestSerializer,
         responses={
-            201: openapi.Response(
-                "Created transcript row or rows.",
-                schema=openapi.Schema(
-                    type=openapi.TYPE_OBJECT,
-                    additional_properties=openapi.Schema(type=openapi.TYPE_OBJECT),
-                ),
-            ),
+            201: LiveKitTranscriptCreatedResponseSerializer,
             400: LiveKitErrorResponseSerializer,
             404: LiveKitErrorResponseSerializer,
         },
@@ -295,7 +305,7 @@ class PhoneResolutionView(InternalAPIView):
 
     @swagger_auto_schema(
         responses={
-            200: LIVEKIT_OBJECT_RESPONSE,
+            200: LiveKitPhoneResolutionResponseSerializer,
             404: LiveKitErrorResponseSerializer,
         },
     )

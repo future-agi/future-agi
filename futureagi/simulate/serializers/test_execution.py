@@ -993,6 +993,119 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         return reason
 
 
+class TestExecutionDetailResponseSerializer(serializers.Serializer):
+    """Paginated response for GET /simulate/test-executions/{id}/."""
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = serializers.ListField(
+        child=serializers.DictField(),
+        read_only=True,
+        help_text="Call execution rows may include dynamic eval/scenario columns.",
+    )
+    total_pages = serializers.IntegerField(read_only=True)
+    current_page = serializers.IntegerField(read_only=True)
+    column_order = serializers.ListField(child=serializers.DictField(), read_only=True)
+    error_messages = serializers.ListField(
+        child=serializers.CharField(), read_only=True
+    )
+    status = serializers.CharField(read_only=True, required=False)
+    provider = serializers.CharField(read_only=True, required=False)
+    agent_type = serializers.CharField(read_only=True, required=False)
+
+
+class RunTestKPIsResponseSerializer(serializers.Serializer):
+    """Response for GET /simulate/test-executions/{id}/kpis/."""
+
+    total_calls = serializers.IntegerField(read_only=True)
+    avg_score = serializers.FloatField(read_only=True)
+    avg_response = serializers.FloatField(read_only=True)
+    calls_attempted = serializers.IntegerField(read_only=True)
+    connected_calls = serializers.IntegerField(read_only=True)
+    calls_connected_percentage = serializers.FloatField(read_only=True)
+    scenario_graphs = serializers.DictField(
+        child=serializers.DictField(child=serializers.JSONField()), read_only=True
+    )
+    agent_type = serializers.CharField(read_only=True)
+    is_inbound = serializers.BooleanField(read_only=True, allow_null=True)
+    avg_agent_latency = serializers.FloatField(read_only=True)
+    avg_user_interruption_count = serializers.FloatField(read_only=True)
+    avg_user_interruption_rate = serializers.FloatField(read_only=True)
+    avg_user_wpm = serializers.FloatField(read_only=True)
+    avg_bot_wpm = serializers.FloatField(read_only=True)
+    avg_talk_ratio = serializers.FloatField(read_only=True)
+    avg_ai_interruption_count = serializers.FloatField(read_only=True)
+    avg_ai_interruption_rate = serializers.FloatField(read_only=True)
+    avg_stop_time_after_interruption = serializers.FloatField(read_only=True)
+    agent_talk_percentage = serializers.FloatField(read_only=True)
+    customer_talk_percentage = serializers.FloatField(read_only=True)
+    avg_total_tokens = serializers.FloatField(read_only=True)
+    avg_input_tokens = serializers.FloatField(read_only=True)
+    avg_output_tokens = serializers.FloatField(read_only=True)
+    avg_chat_latency_ms = serializers.FloatField(read_only=True)
+    avg_turn_count = serializers.FloatField(read_only=True)
+    avg_csat_score = serializers.FloatField(read_only=True)
+    failed_calls = serializers.IntegerField(read_only=True)
+    total_duration = serializers.FloatField(read_only=True)
+
+
+class EvalExplanationClusterSerializer(serializers.Serializer):
+    kind = serializers.CharField(read_only=True, required=False)
+    confidence = serializers.CharField(read_only=True, required=False)
+    theme = serializers.CharField(read_only=True, required=False)
+    guidance = serializers.CharField(read_only=True, required=False)
+    evidenceSummary = serializers.CharField(read_only=True, required=False)
+    eval_config_id = serializers.UUIDField(read_only=True, required=False)
+    eval_template_id = serializers.UUIDField(read_only=True, required=False)
+    eval_name = serializers.CharField(read_only=True, required=False)
+
+
+class EvalExplanationSummaryResultSerializer(serializers.Serializer):
+    response = serializers.DictField(
+        child=serializers.ListField(child=EvalExplanationClusterSerializer()),
+        allow_null=True,
+    )
+    last_updated = serializers.DateTimeField(allow_null=True)
+    status = serializers.CharField()
+
+
+class EvalExplanationSummaryResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalExplanationSummaryResultSerializer()
+
+
+class EvalExplanationSummaryRefreshResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class EvalExplanationSummaryRefreshResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalExplanationSummaryRefreshResultSerializer()
+
+
+class OptimiserAnalysisResultPayloadSerializer(serializers.Serializer):
+    response = serializers.DictField(child=serializers.JSONField(), allow_null=True)
+    status = serializers.CharField()
+    last_updated = serializers.DateTimeField(required=False)
+    message = serializers.CharField(required=False, allow_blank=True)
+
+
+class OptimiserAnalysisResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = OptimiserAnalysisResultPayloadSerializer()
+
+
+class OptimiserAnalysisRefreshResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+    status = serializers.CharField()
+
+
+class OptimiserAnalysisRefreshResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = OptimiserAnalysisRefreshResultSerializer()
+
+
 class CallExecutionSerializer(serializers.ModelSerializer):
     """Serializer for CallExecution model"""
 

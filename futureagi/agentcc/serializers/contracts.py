@@ -17,6 +17,20 @@ class AgentccJSONResultResponseSerializer(serializers.Serializer):
     result = serializers.JSONField()
 
 
+class GatewaySummaryResultSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    base_url = serializers.URLField()
+    status = serializers.CharField()
+    provider_count = serializers.IntegerField(required=False)
+    model_count = serializers.IntegerField(required=False)
+
+
+class GatewayDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewaySummaryResultSerializer()
+
+
 class AgentccListResultResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = serializers.ListField(child=serializers.JSONField())
@@ -26,16 +40,201 @@ class GatewayListResponseSerializer(AgentccListResultResponseSerializer):
     pass
 
 
-class GatewayDetailResponseSerializer(AgentccJSONResultResponseSerializer):
-    pass
+class GatewayConfiguredProviderSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    display_name = serializers.CharField(required=False, allow_blank=True)
+    models = serializers.ListField(child=serializers.JSONField(), required=False)
+    status = serializers.CharField(required=False, allow_blank=True)
 
 
-class GatewayHealthResponseSerializer(AgentccJSONResultResponseSerializer):
-    pass
+class GatewayConfiguredProvidersSerializer(serializers.Serializer):
+    providers = GatewayConfiguredProviderSerializer(many=True)
 
 
-class GatewayConfigResponseSerializer(AgentccJSONResultResponseSerializer):
-    pass
+class GatewayHealthResultSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    health = serializers.JSONField(required=False)
+    providers = GatewayConfiguredProvidersSerializer()
+    provider_count = serializers.IntegerField()
+    model_count = serializers.IntegerField()
+
+
+class GatewayHealthResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewayHealthResultSerializer()
+
+
+class GatewayConfigProviderSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    display_name = serializers.CharField()
+    base_url = serializers.CharField(allow_blank=True, allow_null=True)
+    api_format = serializers.CharField(allow_blank=True, allow_null=True)
+    models = serializers.ListField(child=serializers.JSONField())
+    is_active = serializers.BooleanField()
+    default_timeout = serializers.IntegerField(allow_null=True)
+    max_concurrent = serializers.IntegerField(allow_null=True)
+    conn_pool_size = serializers.IntegerField(allow_null=True)
+
+
+class GatewayStatusSerializer(serializers.Serializer):
+    status = serializers.CharField()
+
+
+class GatewayConfigResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField(required=False)
+    organization = serializers.UUIDField(required=False)
+    version = serializers.IntegerField(required=False)
+    guardrails = serializers.JSONField(required=False)
+    routing = serializers.JSONField(required=False)
+    cache = serializers.JSONField(required=False)
+    rate_limiting = serializers.JSONField(required=False)
+    budgets = serializers.JSONField(required=False)
+    cost_tracking = serializers.JSONField(required=False)
+    ip_acl = serializers.JSONField(required=False)
+    alerting = serializers.JSONField(required=False)
+    privacy = serializers.JSONField(required=False)
+    tool_policy = serializers.JSONField(required=False)
+    mcp = serializers.JSONField(required=False)
+    a2a = serializers.JSONField(required=False)
+    audit = serializers.JSONField(required=False)
+    model_database = serializers.JSONField(required=False)
+    model_map = serializers.JSONField(required=False)
+    is_active = serializers.BooleanField(required=False)
+    created_by = serializers.UUIDField(required=False, allow_null=True)
+    change_description = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    created_at = serializers.DateTimeField(required=False)
+    updated_at = serializers.DateTimeField(required=False)
+    providers = serializers.DictField(child=GatewayConfigProviderSerializer())
+    gateway = GatewayStatusSerializer()
+
+
+class GatewayConfigResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewayConfigResultSerializer()
+
+
+class GatewayBatchSubmitResultSerializer(serializers.Serializer):
+    batch_id = serializers.CharField()
+    status = serializers.CharField()
+    total = serializers.IntegerField()
+    max_concurrency = serializers.IntegerField()
+    created_at = serializers.DateTimeField()
+
+
+class GatewayBatchSummarySerializer(serializers.Serializer):
+    total_cost = serializers.FloatField()
+    total_input_tokens = serializers.IntegerField()
+    total_output_tokens = serializers.IntegerField()
+    completed = serializers.IntegerField()
+    failed = serializers.IntegerField()
+    cancelled = serializers.IntegerField()
+
+
+class GatewayBatchDetailResultSerializer(GatewayBatchSubmitResultSerializer):
+    completed_at = serializers.DateTimeField(required=False)
+    results = serializers.ListField(child=serializers.JSONField(), required=False)
+    summary = GatewayBatchSummarySerializer(required=False)
+
+
+class GatewayBatchCancelResultSerializer(serializers.Serializer):
+    batch_id = serializers.CharField()
+    status = serializers.CharField()
+
+
+class GatewayBatchSubmitResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewayBatchSubmitResultSerializer()
+
+
+class GatewayBatchDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewayBatchDetailResultSerializer()
+
+
+class GatewayBatchCancelResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewayBatchCancelResultSerializer()
+
+
+class GatewayProviderStatusSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    status = serializers.CharField()
+    healthy = serializers.BooleanField()
+    circuit_state = serializers.CharField()
+    display_name = serializers.CharField(required=False, allow_blank=True)
+    base_url = serializers.CharField(required=False, allow_blank=True)
+    api_format = serializers.CharField(required=False, allow_blank=True)
+    models = serializers.ListField(child=serializers.JSONField(), required=False)
+    request_count = serializers.IntegerField(required=False)
+    avg_latency = serializers.FloatField(required=False)
+    error_rate = serializers.FloatField(required=False)
+
+
+class GatewayProvidersResultSerializer(serializers.Serializer):
+    providers = GatewayProviderStatusSerializer(many=True)
+
+
+class GatewayProvidersResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewayProvidersResultSerializer()
+
+
+class GatewayMCPStatusResultSerializer(serializers.Serializer):
+    enabled = serializers.BooleanField()
+    sessions = serializers.IntegerField()
+    tools = serializers.IntegerField()
+    resources = serializers.IntegerField()
+    prompts = serializers.IntegerField()
+    servers = serializers.ListField(child=serializers.JSONField())
+
+
+class GatewayMCPStatusResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewayMCPStatusResultSerializer()
+
+
+class GatewayMCPToolTestContentSerializer(serializers.Serializer):
+    type = serializers.CharField()
+    text = serializers.CharField(required=False, allow_blank=True)
+    data = serializers.CharField(required=False, allow_blank=True)
+    mimeType = serializers.CharField(required=False, allow_blank=True)
+
+
+class GatewayMCPToolTestResultSerializer(serializers.Serializer):
+    content = GatewayMCPToolTestContentSerializer(many=True, required=False)
+    is_error = serializers.BooleanField(required=False)
+    duration_ms = serializers.FloatField(required=False)
+    guardrail_pre = serializers.ChoiceField(
+        choices=("pass", "blocked", "skipped"), required=False
+    )
+    guardrail_post = serializers.ChoiceField(
+        choices=("pass", "blocked", "skipped"), required=False
+    )
+    error = serializers.CharField(required=False, allow_blank=True)
+    server = serializers.CharField(required=False, allow_blank=True)
+
+
+class GatewayMCPToolTestResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewayMCPToolTestResultSerializer()
+
+
+class GatewayPlaygroundTestResultSerializer(serializers.Serializer):
+    status_code = serializers.IntegerField()
+    body = serializers.JSONField()
+    guardrail_headers = serializers.DictField(child=serializers.CharField())
+    model = serializers.CharField()
+    blocked = serializers.BooleanField()
+    warned = serializers.BooleanField()
+
+
+class GatewayPlaygroundTestResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = GatewayPlaygroundTestResultSerializer()
 
 
 class GatewayMutationResultSerializer(serializers.Serializer):

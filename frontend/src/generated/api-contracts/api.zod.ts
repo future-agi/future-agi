@@ -12,24 +12,7 @@ import * as zod from 'zod';
  * GET /accounts/2fa/recovery-codes/ - Get remaining count.
  */
 export const Accounts2faRecoveryCodesListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "remaining": zod.number()
 })
 
 
@@ -47,25 +30,11 @@ export const Accounts2faRecoveryCodesRegenerateCreateBody = zod.object({
   "password": zod.string().min(1).optional()
 })
 
+
+
+
 export const Accounts2faRecoveryCodesRegenerateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "recovery_codes": zod.array(zod.string().min(1))
 })
 
 
@@ -92,24 +61,7 @@ export const Accounts2faTotpDeleteBody = zod.object({
 })
 
 export const Accounts2faTotpDeleteResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "success": zod.boolean()
 })
 
 
@@ -125,25 +77,12 @@ export const Accounts2faTotpConfirmCreateBody = zod.object({
   "code": zod.string().min(accounts2faTotpConfirmCreateBodyCodeMin).max(accounts2faTotpConfirmCreateBodyCodeMax)
 })
 
+
+
+
 export const Accounts2faTotpConfirmCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "success": zod.boolean(),
+  "recovery_codes": zod.array(zod.string().min(1))
 })
 
 
@@ -154,25 +93,15 @@ export const Accounts2faTotpSetupCreateBody = zod.object({
 
 }).passthrough()
 
+
+
+
+
+
 export const Accounts2faTotpSetupCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "qr_code": zod.string().min(1),
+  "secret": zod.string().min(1),
+  "provisioning_uri": zod.string().min(1)
 })
 
 
@@ -193,6 +122,8 @@ export const Accounts2faVerifyPasskeyCreateBody = zod.object({
 
 
 
+
+
 export const Accounts2faVerifyPasskeyCreateResponse = zod.object({
   "access": zod.string().min(1).optional(),
   "refresh": zod.string().min(1).optional(),
@@ -201,7 +132,10 @@ export const Accounts2faVerifyPasskeyCreateResponse = zod.object({
   "methods": zod.array(zod.string().min(1)).optional(),
   "requires_org_setup": zod.boolean().optional(),
   "message": zod.string().min(1).optional(),
-  "new_org": zod.boolean().optional()
+  "new_org": zod.boolean().optional(),
+  "org_name": zod.string().min(1).optional(),
+  "is_first_login": zod.boolean().optional(),
+  "recovery_codes_warning": zod.string().min(1).optional()
 })
 
 
@@ -212,7 +146,70 @@ export const Accounts2faVerifyPasskeyOptionsCreateBody = zod.object({
   "challenge_token": zod.string().uuid()
 })
 
-export const Accounts2faVerifyPasskeyOptionsCreateResponse = zod.record(zod.string(), zod.unknown())
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const Accounts2faVerifyPasskeyOptionsCreateResponse = zod.object({
+  "challenge": zod.string().min(1),
+  "timeout": zod.number().optional(),
+  "rp": zod.object({
+  "id": zod.string().min(1).optional(),
+  "name": zod.string().min(1).optional()
+}).optional(),
+  "user": zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "displayName": zod.string().min(1).optional()
+}).optional(),
+  "pubKeyCredParams": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "alg": zod.number()
+})).optional(),
+  "excludeCredentials": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "id": zod.string().min(1),
+  "transports": zod.array(zod.string().min(1)).optional()
+})).optional(),
+  "allowCredentials": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "id": zod.string().min(1),
+  "transports": zod.array(zod.string().min(1)).optional()
+})).optional(),
+  "authenticatorSelection": zod.object({
+  "authenticatorAttachment": zod.string().min(1).optional(),
+  "residentKey": zod.string().min(1).optional(),
+  "requireResidentKey": zod.boolean().optional(),
+  "userVerification": zod.string().min(1).optional()
+}).optional(),
+  "attestation": zod.string().min(1).optional(),
+  "rpId": zod.string().min(1).optional(),
+  "userVerification": zod.string().min(1).optional(),
+  "extensions": zod.object({
+  "appid": zod.string().min(1).optional(),
+  "credProps": zod.boolean().optional(),
+  "uvm": zod.boolean().optional()
+}).optional(),
+  "session_id": zod.string().uuid().optional()
+})
 
 
 /**
@@ -234,6 +231,8 @@ export const Accounts2faVerifyRecoveryCreateBody = zod.object({
 
 
 
+
+
 export const Accounts2faVerifyRecoveryCreateResponse = zod.object({
   "access": zod.string().min(1).optional(),
   "refresh": zod.string().min(1).optional(),
@@ -242,7 +241,10 @@ export const Accounts2faVerifyRecoveryCreateResponse = zod.object({
   "methods": zod.array(zod.string().min(1)).optional(),
   "requires_org_setup": zod.boolean().optional(),
   "message": zod.string().min(1).optional(),
-  "new_org": zod.boolean().optional()
+  "new_org": zod.boolean().optional(),
+  "org_name": zod.string().min(1).optional(),
+  "is_first_login": zod.boolean().optional(),
+  "recovery_codes_warning": zod.string().min(1).optional()
 })
 
 
@@ -265,6 +267,8 @@ export const Accounts2faVerifyTotpCreateBody = zod.object({
 
 
 
+
+
 export const Accounts2faVerifyTotpCreateResponse = zod.object({
   "access": zod.string().min(1).optional(),
   "refresh": zod.string().min(1).optional(),
@@ -273,7 +277,10 @@ export const Accounts2faVerifyTotpCreateResponse = zod.object({
   "methods": zod.array(zod.string().min(1)).optional(),
   "requires_org_setup": zod.boolean().optional(),
   "message": zod.string().min(1).optional(),
-  "new_org": zod.boolean().optional()
+  "new_org": zod.boolean().optional(),
+  "org_name": zod.string().min(1).optional(),
+  "is_first_login": zod.boolean().optional(),
+  "recovery_codes_warning": zod.string().min(1).optional()
 })
 
 
@@ -289,25 +296,14 @@ export const AccountsAcceptInvitationReadParams = zod.object({
   "token": zod.string()
 })
 
+
+
+
+
 export const AccountsAcceptInvitationReadResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "valid": zod.boolean(),
+  "email": zod.string().email().min(1),
+  "org_name": zod.string().min(1)
 })
 
 
@@ -338,6 +334,8 @@ export const AccountsAcceptInvitationCreateBody = zod.object({
 
 
 
+
+
 export const AccountsAcceptInvitationCreateResponse = zod.object({
   "access": zod.string().min(1).optional(),
   "refresh": zod.string().min(1).optional(),
@@ -346,29 +344,51 @@ export const AccountsAcceptInvitationCreateResponse = zod.object({
   "methods": zod.array(zod.string().min(1)).optional(),
   "requires_org_setup": zod.boolean().optional(),
   "message": zod.string().min(1).optional(),
-  "new_org": zod.boolean().optional()
+  "new_org": zod.boolean().optional(),
+  "org_name": zod.string().min(1).optional(),
+  "is_first_login": zod.boolean().optional(),
+  "recovery_codes_warning": zod.string().min(1).optional()
 })
 
 
+
+
+
+
+
+
+
+
+
 export const AccountsAppsmithUsersListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "count": zod.number(),
+  "next": zod.string().min(1),
+  "previous": zod.string().min(1),
+  "results": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "email": zod.string().email().min(1),
+  "name": zod.string(),
+  "organization_role": zod.string(),
+  "organization": zod.object({
+  "id": zod.string().uuid(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "is_new": zod.boolean().optional(),
+  "ws_enabled": zod.boolean().optional(),
+  "region": zod.string().min(1).optional(),
+  "require_2fa": zod.boolean().optional(),
+  "require_2fa_grace_period_days": zod.number().optional(),
+  "require_2fa_enforced_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "created_at": zod.string().datetime({"offset":true}),
+  "status": zod.string().min(1),
+  "role": zod.string(),
+  "goals": zod.array(zod.string().min(1)).optional()
+})),
+  "total_pages": zod.number(),
+  "current_page": zod.number(),
+  "total_queries": zod.number().optional()
 })
 
 
@@ -421,6 +441,8 @@ export const AccountsAppsmithUsersLoginCreateBody = zod.object({
 
 
 
+
+
 export const AccountsAppsmithUsersLoginCreateResponse = zod.object({
   "access": zod.string().min(1).optional(),
   "refresh": zod.string().min(1).optional(),
@@ -429,7 +451,10 @@ export const AccountsAppsmithUsersLoginCreateResponse = zod.object({
   "methods": zod.array(zod.string().min(1)).optional(),
   "requires_org_setup": zod.boolean().optional(),
   "message": zod.string().min(1).optional(),
-  "new_org": zod.boolean().optional()
+  "new_org": zod.boolean().optional(),
+  "org_name": zod.string().min(1).optional(),
+  "is_first_login": zod.boolean().optional(),
+  "recovery_codes_warning": zod.string().min(1).optional()
 })
 
 
@@ -437,25 +462,44 @@ export const AccountsAppsmithUsersReadParams = zod.object({
   "user_id": zod.string()
 })
 
+
+
+
+
+
+
+
+
+
 export const AccountsAppsmithUsersReadResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "count": zod.number(),
+  "next": zod.string().min(1),
+  "previous": zod.string().min(1),
+  "results": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "email": zod.string().email().min(1),
+  "name": zod.string(),
+  "organization_role": zod.string(),
+  "organization": zod.object({
+  "id": zod.string().uuid(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "is_new": zod.boolean().optional(),
+  "ws_enabled": zod.boolean().optional(),
+  "region": zod.string().min(1).optional(),
+  "require_2fa": zod.boolean().optional(),
+  "require_2fa_grace_period_days": zod.number().optional(),
+  "require_2fa_enforced_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "created_at": zod.string().datetime({"offset":true}),
+  "status": zod.string().min(1),
+  "role": zod.string(),
+  "goals": zod.array(zod.string().min(1)).optional()
+})),
+  "total_pages": zod.number(),
+  "current_page": zod.number(),
+  "total_queries": zod.number().optional()
 })
 
 
@@ -469,27 +513,6 @@ and redirects appropriately.
 
 export const AccountsAwsMarketplaceLaunchSoftwareCreateBody = zod.object({
   "x_amzn_marketplace_token": zod.string().min(1)
-})
-
-export const AccountsAwsMarketplaceLaunchSoftwareCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
 })
 
 
@@ -509,25 +532,16 @@ export const AccountsAwsMarketplaceSignupCreateBody = zod.object({
   "full_name": zod.string().min(1)
 })
 
+
+
+
+
 export const AccountsAwsMarketplaceSignupCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "user_email": zod.string().email().min(1)
+})
 })
 
 
@@ -537,25 +551,23 @@ Cloud returns the current region and available regions list.
  * @summary Public (unauthenticated) endpoint returning platform config.
 Used by the frontend to decide whether to show region UI.
  */
+
+
+
+
+
+
 export const AccountsConfigListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "cloud": zod.boolean(),
+  "region": zod.string().min(1),
+  "available_regions": zod.array(zod.object({
+  "code": zod.string().min(1),
+  "label": zod.string().min(1),
+  "app_url": zod.string().url().min(1)
+}))
+})
 })
 
 
@@ -563,69 +575,38 @@ export const AccountsDeleteUsersDeleteBody = zod.object({
   "user_ids": zod.array(zod.string().uuid())
 })
 
-export const AccountsDeleteUsersDeleteResponse = zod.object({
-  "status": zod.object({
 
-}).passthrough().optional(),
-  "result": zod.object({
 
-}).passthrough().optional(),
-  "data": zod.object({
 
-}).passthrough().optional(),
-  "detail": zod.object({
 
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+export const AccountsDeleteUsersDeleteResponseItem = zod.object({
+  "user_id": zod.string().uuid(),
+  "message": zod.string().min(1).optional(),
+  "error": zod.string().min(1).optional()
 })
+export const AccountsDeleteUsersDeleteResponse = zod.array(AccountsDeleteUsersDeleteResponseItem)
 
 
 export const AccountsFirstChecksListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "keys": zod.boolean(),
+  "dataset": zod.boolean(),
+  "evaluation": zod.boolean(),
+  "experiment": zod.boolean(),
+  "observe": zod.boolean(),
+  "invite": zod.boolean()
+})
 })
 
 
+
+
+
 export const AccountsGetUserProfileDetailsListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "name": zod.string(),
+  "email": zod.string().email().min(1),
+  "org_name": zod.string()
 })
 
 
@@ -633,25 +614,12 @@ export const AccountsKeyDeleteSecretKeyBody = zod.object({
   "key_id": zod.string().uuid()
 })
 
+
+
+
 export const AccountsKeyDeleteSecretKeyResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -659,25 +627,12 @@ export const AccountsKeyDisableKeyBody = zod.object({
   "key_id": zod.string().uuid()
 })
 
+
+
+
 export const AccountsKeyDisableKeyResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -685,25 +640,12 @@ export const AccountsKeyEnableKeyBody = zod.object({
   "key_id": zod.string().uuid()
 })
 
+
+
+
 export const AccountsKeyEnableKeyResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -715,85 +657,80 @@ export const AccountsKeyGenerateSecretKeyBody = zod.object({
   "key_name": zod.string().min(1).max(accountsKeyGenerateSecretKeyBodyKeyNameMax)
 })
 
+
+
+
+
+
+
+
 export const AccountsKeyGenerateSecretKeyResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "key_id": zod.string().uuid(),
+  "key_name": zod.string().min(1),
+  "api_key": zod.string().min(1),
+  "masked_api_key": zod.string().min(1),
+  "secret_key": zod.string().min(1),
+  "masked_secret_key": zod.string().min(1)
 })
+})
+
+
+
+
+
+
 
 
 export const AccountsKeyGetSecretKeysResponse = zod.object({
-  "status": zod.boolean().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
   "metadata": zod.object({
-
-}).passthrough().optional(),
-  "table": zod.object({
-
-}).passthrough().optional()
+  "total_rows": zod.number(),
+  "total_pages": zod.number(),
+  "page_number": zod.number(),
+  "page_size": zod.number()
+}),
+  "table": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "key_name": zod.string(),
+  "api_key": zod.string().min(1),
+  "secret_key": zod.string().min(1),
+  "created_by": zod.string().min(1),
+  "created_at": zod.string().datetime({"offset":true}),
+  "enabled": zod.boolean(),
+  "type": zod.string().min(1)
+}))
+})
 })
 
 
+
+
+
+
+
 export const AccountsKeysListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.string().min(1),
   "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid(),
+  "api_key": zod.string().min(1),
+  "secret_key": zod.string().min(1)
+})
 })
 
 
 export const AccountsLogoutCreateBody = zod.record(zod.string(), zod.unknown())
 
+
+
+
 export const AccountsLogoutCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -831,25 +768,16 @@ export const AccountsNotificationsUnsubscribeListResponse = zod.string()
 /**
  * Handle user onboarding data (role and goals)
  */
+
+
+
 export const AccountsOnboardingListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "role": zod.string(),
+  "goals": zod.array(zod.string().min(1)),
+  "completed": zod.boolean()
+})
 })
 
 
@@ -867,25 +795,20 @@ export const AccountsOnboardingCreateBody = zod.object({
   "goals": zod.array(zod.string().min(1).max(accountsOnboardingCreateBodyGoalsItemMax))
 })
 
+
+
+
+
+
 export const AccountsOnboardingCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
+  "message": zod.string().min(1),
   "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "role": zod.string().min(1),
+  "goals": zod.array(zod.string().min(1))
+})
+})
 })
 
 
@@ -896,24 +819,9 @@ class so that a single view can serve both roles without splitting.
  * @summary GET/PUT /accounts/organization/2fa-policy/ - Org 2FA policy.
  */
 export const AccountsOrganization2faPolicyListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "require_2fa": zod.boolean(),
+  "require_2fa_grace_period_days": zod.number(),
+  "require_2fa_enforced_at": zod.string().datetime({"offset":true})
 })
 
 
@@ -933,24 +841,9 @@ export const AccountsOrganization2faPolicyUpdateBody = zod.object({
 })
 
 export const AccountsOrganization2faPolicyUpdateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "require_2fa": zod.boolean(),
+  "require_2fa_grace_period_days": zod.number(),
+  "require_2fa_enforced_at": zod.string().datetime({"offset":true})
 })
 
 
@@ -1160,25 +1053,22 @@ export const AccountsOrganizationMembersRoleCreateResponse = zod.object({
 /**
  * Get all organizations the user has access to.
  */
+
+
+
 export const AccountsOrganizationsListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "organizations": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "role": zod.string(),
+  "level": zod.number(),
+  "is_selected": zod.boolean()
+})),
+  "total_count": zod.number()
+})
 })
 
 
@@ -1189,25 +1079,21 @@ export const AccountsOrganizationsCreateBody = zod.object({
   "organization_id": zod.string().uuid()
 })
 
+
+
+
+
 export const AccountsOrganizationsCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "organization": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "ws_enabled": zod.boolean().optional()
+})
+})
 })
 
 
@@ -1224,25 +1110,24 @@ export const AccountsOrganizationsCreateCreateBody = zod.object({
 /**
  * Get the currently selected organization for the user.
  */
+
+
+
+
 export const AccountsOrganizationsCurrentListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "organization": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "ws_enabled": zod.boolean().optional()
+}),
+  "role": zod.string().optional(),
+  "level": zod.number().optional(),
+  "source": zod.string().optional(),
+  "message": zod.string().min(1).optional()
+})
 })
 
 
@@ -1272,25 +1157,30 @@ export const AccountsOrganizationsSwitchCreateBody = zod.object({
   "organization_id": zod.string().uuid()
 })
 
+
+
+
+
 export const AccountsOrganizationsSwitchCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "organization": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "ws_enabled": zod.boolean().optional()
+}),
+  "org_role": zod.string(),
+  "org_level": zod.number(),
+  "workspace_role": zod.string(),
+  "workspace": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "description": zod.string().optional(),
+  "is_default": zod.boolean().optional()
+}).optional()
+})
 })
 
 
@@ -1304,25 +1194,16 @@ export const AccountsOrganizationsUpdatePartialUpdateBody = zod.object({
   "display_name": zod.string().optional()
 })
 
+
+
+
 export const AccountsOrganizationsUpdatePartialUpdateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string()
+})
 })
 
 
@@ -1333,7 +1214,70 @@ export const AccountsPasskeyAuthenticateOptionsCreateBody = zod.object({
 
 }).passthrough()
 
-export const AccountsPasskeyAuthenticateOptionsCreateResponse = zod.record(zod.string(), zod.unknown())
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const AccountsPasskeyAuthenticateOptionsCreateResponse = zod.object({
+  "challenge": zod.string().min(1),
+  "timeout": zod.number().optional(),
+  "rp": zod.object({
+  "id": zod.string().min(1).optional(),
+  "name": zod.string().min(1).optional()
+}).optional(),
+  "user": zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "displayName": zod.string().min(1).optional()
+}).optional(),
+  "pubKeyCredParams": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "alg": zod.number()
+})).optional(),
+  "excludeCredentials": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "id": zod.string().min(1),
+  "transports": zod.array(zod.string().min(1)).optional()
+})).optional(),
+  "allowCredentials": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "id": zod.string().min(1),
+  "transports": zod.array(zod.string().min(1)).optional()
+})).optional(),
+  "authenticatorSelection": zod.object({
+  "authenticatorAttachment": zod.string().min(1).optional(),
+  "residentKey": zod.string().min(1).optional(),
+  "requireResidentKey": zod.boolean().optional(),
+  "userVerification": zod.string().min(1).optional()
+}).optional(),
+  "attestation": zod.string().min(1).optional(),
+  "rpId": zod.string().min(1).optional(),
+  "userVerification": zod.string().min(1).optional(),
+  "extensions": zod.object({
+  "appid": zod.string().min(1).optional(),
+  "credProps": zod.boolean().optional(),
+  "uvm": zod.boolean().optional()
+}).optional(),
+  "session_id": zod.string().uuid().optional()
+})
 
 
 /**
@@ -1356,6 +1300,8 @@ export const AccountsPasskeyAuthenticateVerifyCreateBody = zod.object({
 
 
 
+
+
 export const AccountsPasskeyAuthenticateVerifyCreateResponse = zod.object({
   "access": zod.string().min(1).optional(),
   "refresh": zod.string().min(1).optional(),
@@ -1364,7 +1310,10 @@ export const AccountsPasskeyAuthenticateVerifyCreateResponse = zod.object({
   "methods": zod.array(zod.string().min(1)).optional(),
   "requires_org_setup": zod.boolean().optional(),
   "message": zod.string().min(1).optional(),
-  "new_org": zod.boolean().optional()
+  "new_org": zod.boolean().optional(),
+  "org_name": zod.string().min(1).optional(),
+  "is_first_login": zod.boolean().optional(),
+  "recovery_codes_warning": zod.string().min(1).optional()
 })
 
 
@@ -1375,7 +1324,70 @@ export const AccountsPasskeyRegisterOptionsCreateBody = zod.object({
 
 }).passthrough()
 
-export const AccountsPasskeyRegisterOptionsCreateResponse = zod.record(zod.string(), zod.unknown())
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const AccountsPasskeyRegisterOptionsCreateResponse = zod.object({
+  "challenge": zod.string().min(1),
+  "timeout": zod.number().optional(),
+  "rp": zod.object({
+  "id": zod.string().min(1).optional(),
+  "name": zod.string().min(1).optional()
+}).optional(),
+  "user": zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "displayName": zod.string().min(1).optional()
+}).optional(),
+  "pubKeyCredParams": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "alg": zod.number()
+})).optional(),
+  "excludeCredentials": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "id": zod.string().min(1),
+  "transports": zod.array(zod.string().min(1)).optional()
+})).optional(),
+  "allowCredentials": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "id": zod.string().min(1),
+  "transports": zod.array(zod.string().min(1)).optional()
+})).optional(),
+  "authenticatorSelection": zod.object({
+  "authenticatorAttachment": zod.string().min(1).optional(),
+  "residentKey": zod.string().min(1).optional(),
+  "requireResidentKey": zod.boolean().optional(),
+  "userVerification": zod.string().min(1).optional()
+}).optional(),
+  "attestation": zod.string().min(1).optional(),
+  "rpId": zod.string().min(1).optional(),
+  "userVerification": zod.string().min(1).optional(),
+  "extensions": zod.object({
+  "appid": zod.string().min(1).optional(),
+  "credProps": zod.boolean().optional(),
+  "uvm": zod.boolean().optional()
+}).optional(),
+  "session_id": zod.string().uuid().optional()
+})
 
 
 /**
@@ -1424,25 +1436,12 @@ export const AccountsPasskeysPartialUpdateBody = zod.object({
   "name": zod.string().min(1).max(accountsPasskeysPartialUpdateBodyNameMax)
 })
 
+
+
+
 export const AccountsPasskeysPartialUpdateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1)
 })
 
 
@@ -1468,25 +1467,14 @@ export const AccountsPasswordResetConfirmCreateBody = zod.object({
   "repeat_password": zod.string().min(1)
 })
 
+
+
+
 export const AccountsPasswordResetConfirmCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -1497,25 +1485,14 @@ export const AccountsPasswordResetInitiateCreateBody = zod.object({
   "email": zod.string().email().min(1)
 })
 
+
+
+
 export const AccountsPasswordResetInitiateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -1533,25 +1510,19 @@ export const AccountsRedisKeyCreateBody = zod.object({
   "expiry": zod.number().min(1).optional()
 })
 
+
+
+
+
 export const AccountsRedisKeyCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "message": zod.string().min(1),
+  "key": zod.string().min(1),
+  "value": zod.object({
 
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+}).passthrough()
+})
 })
 
 
@@ -1569,25 +1540,16 @@ export const AccountsRedisKeyDeleteBody = zod.object({
   "expiry": zod.number().min(1).optional()
 })
 
+
+
+
+
 export const AccountsRedisKeyDeleteResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "key": zod.string().min(1)
+})
 })
 
 
@@ -1595,71 +1557,82 @@ export const AccountsResendInvitationEmailsCreateBody = zod.object({
   "user_ids": zod.array(zod.string().uuid())
 })
 
-export const AccountsResendInvitationEmailsCreateResponse = zod.object({
-  "status": zod.object({
 
-}).passthrough().optional(),
-  "result": zod.object({
 
-}).passthrough().optional(),
-  "data": zod.object({
 
-}).passthrough().optional(),
-  "detail": zod.object({
 
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+export const AccountsResendInvitationEmailsCreateResponseItem = zod.object({
+  "user_id": zod.string().uuid(),
+  "message": zod.string().min(1).optional(),
+  "error": zod.string().min(1).optional()
 })
+export const AccountsResendInvitationEmailsCreateResponse = zod.array(AccountsResendInvitationEmailsCreateResponseItem)
 
 
 export const AccountsSignupCreateBody = zod.record(zod.string(), zod.unknown())
 
+
+
+
 export const AccountsSignupCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1)
+})
 })
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export const AccountsTeamUsersListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "org_name": zod.string().min(1),
+  "workspace_name": zod.string().min(1).optional(),
+  "results": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "email": zod.string().email().min(1),
+  "name": zod.string(),
+  "organization_role": zod.string(),
+  "organization": zod.object({
+  "id": zod.string().uuid(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "is_new": zod.boolean().optional(),
+  "ws_enabled": zod.boolean().optional(),
+  "region": zod.string().min(1).optional(),
+  "require_2fa": zod.boolean().optional(),
+  "require_2fa_grace_period_days": zod.number().optional(),
+  "require_2fa_enforced_at": zod.string().datetime({"offset":true}).optional()
+}).optional(),
+  "created_at": zod.string().min(1),
+  "status": zod.string().min(1),
+  "role": zod.string(),
+  "goals": zod.array(zod.string().min(1)).optional(),
+  "membership_type": zod.string().min(1).optional(),
+  "workspace_role": zod.string().min(1).optional(),
+  "workspace_member": zod.boolean().optional(),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "role": zod.string().min(1)
+})).optional()
+})),
+  "total": zod.number()
+})
 })
 
 
@@ -1680,51 +1653,62 @@ export const AccountsTeamUsersCreateBody = zod.object({
   "name": zod.string().min(1).max(accountsTeamUsersCreateBodyNameMax)
 })
 
-export const AccountsTeamUsersCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
-})
-
 
 export const AccountsTeamUsersReadParams = zod.object({
   "member_id": zod.string()
 })
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 export const AccountsTeamUsersReadResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "org_name": zod.string().min(1),
+  "workspace_name": zod.string().min(1).optional(),
+  "results": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "email": zod.string().email().min(1),
+  "name": zod.string(),
+  "organization_role": zod.string(),
+  "organization": zod.object({
+  "id": zod.string().uuid(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "is_new": zod.boolean().optional(),
+  "ws_enabled": zod.boolean().optional(),
+  "region": zod.string().min(1).optional(),
+  "require_2fa": zod.boolean().optional(),
+  "require_2fa_grace_period_days": zod.number().optional(),
+  "require_2fa_enforced_at": zod.string().datetime({"offset":true}).optional()
+}).optional(),
+  "created_at": zod.string().min(1),
+  "status": zod.string().min(1),
+  "role": zod.string(),
+  "goals": zod.array(zod.string().min(1)).optional(),
+  "membership_type": zod.string().min(1).optional(),
+  "workspace_role": zod.string().min(1).optional(),
+  "workspace_member": zod.boolean().optional(),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "role": zod.string().min(1)
+})).optional()
+})),
+  "total": zod.number()
+})
 })
 
 
@@ -1765,25 +1749,11 @@ export const AccountsUpdateUserFullNameCreateBody = zod.object({
   "name": zod.string().optional()
 })
 
+
+
+
 export const AccountsUpdateUserFullNameCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1)
 })
 
 
@@ -1798,47 +1768,55 @@ export const AccountsUpdateUserCreateBody = zod.object({
   "organization_role": zod.enum(['Owner', 'Admin', 'Member', 'Viewer', 'workspace_admin', 'workspace_member', 'workspace_viewer']).optional()
 })
 
+
+
+
 export const AccountsUpdateUserCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
+
+
+
+
+
+
 export const AccountsUserInfoListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid(),
+  "email": zod.string().email().min(1),
+  "name": zod.string(),
+  "organization_role": zod.string(),
+  "organization": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "ws_enabled": zod.boolean().optional()
+}),
+  "created_at": zod.string().datetime({"offset":true}),
+  "status": zod.string().min(1),
+  "role": zod.string(),
+  "goals": zod.array(zod.string().min(1)).optional(),
+  "remember_me": zod.boolean(),
+  "get_started_completed": zod.boolean(),
+  "onboarding_completed": zod.boolean(),
+  "ws_enabled": zod.boolean(),
+  "requires_org_setup": zod.boolean().optional(),
+  "default_workspace_id": zod.string().uuid(),
+  "default_workspace_name": zod.string(),
+  "default_workspace_display_name": zod.string(),
+  "default_workspace_role": zod.string(),
+  "org_level": zod.number(),
+  "ws_level": zod.number(),
+  "effective_level": zod.number(),
+  "has_2fa_enabled": zod.boolean().optional(),
+  "two_factor_methods": zod.object({
+  "totp": zod.boolean(),
+  "passkey": zod.boolean()
+}).optional(),
+  "org_2fa_required": zod.boolean().optional(),
+  "org_2fa_grace_ends_at": zod.string().datetime({"offset":true}).optional()
 })
 
 
@@ -1849,25 +1827,18 @@ export const AccountsUserDeactivateCreateBody = zod.object({
   "user_id": zod.string().uuid()
 })
 
+
+
+
+
 export const AccountsUserDeactivateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "user_id": zod.string().uuid(),
+  "user_email": zod.string().email().min(1),
+  "user_name": zod.string()
+})
 })
 
 
@@ -1878,25 +1849,19 @@ export const AccountsUserDeleteCreateBody = zod.object({
   "user_id": zod.string().uuid()
 })
 
+
+
+
+
+
 export const AccountsUserDeleteCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "user_id": zod.string().uuid(),
+  "workspace": zod.string().min(1).optional(),
+  "level": zod.string().min(1)
+})
 })
 
 
@@ -1922,25 +1887,32 @@ export const AccountsUserListListQueryParams = zod.object({
   "filter_role": zod.array(zod.enum(['Owner', 'Admin', 'Member', 'Viewer', 'workspace_admin', 'workspace_member', 'workspace_viewer'])).default(accountsUserListListQueryFilterRoleDefault)
 })
 
+
+
+
+
+
+
+
+
 export const AccountsUserListListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "count": zod.number(),
+  "next": zod.string().min(1),
+  "previous": zod.string().min(1),
+  "results": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string(),
+  "email": zod.string().email().min(1),
+  "role": zod.string(),
+  "status": zod.string().min(1),
+  "start_date": zod.string(),
+  "last_updated_date": zod.string(),
+  "workspace_role": zod.string().min(1).optional(),
+  "workspace_member_since": zod.string().optional(),
+  "invited_by": zod.string().min(1).optional()
+})),
+  "total_pages": zod.number(),
+  "current_page": zod.number()
 })
 
 
@@ -1951,25 +1923,17 @@ export const AccountsUserResendInviteCreateBody = zod.object({
   "user_id": zod.string().uuid()
 })
 
+
+
+
+
 export const AccountsUserResendInviteCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "user_id": zod.string().uuid(),
+  "workspace": zod.string().min(1).optional()
+})
 })
 
 
@@ -1982,25 +1946,23 @@ export const AccountsUserRoleUpdateCreateBody = zod.object({
   "workspace_id": zod.string().uuid().optional()
 })
 
+
+
+
+
+
+
+
 export const AccountsUserRoleUpdateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "user_id": zod.string().uuid(),
+  "new_role": zod.string().min(1),
+  "workspace_role": zod.string().min(1).optional(),
+  "workspace": zod.string().min(1).optional(),
+  "level": zod.string().min(1)
+})
 })
 
 
@@ -2019,25 +1981,30 @@ export const AccountsWorkspaceInviteCreateBody = zod.object({
   "workspace_ids": zod.array(zod.string().uuid()).optional()
 })
 
+
+
+
+
+
+
 export const AccountsWorkspaceInviteCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "results": zod.array(zod.object({
+  "email": zod.string().email().min(1),
+  "status": zod.string().min(1),
+  "workspaces": zod.array(zod.string().uuid()),
+  "select_all": zod.boolean(),
+  "total_workspaces": zod.number()
+})),
+  "total_invited": zod.number(),
+  "select_all": zod.boolean(),
+  "total_workspaces": zod.number(),
+  "errors": zod.array(zod.object({
+  "email": zod.string().email().min(1).optional(),
+  "error": zod.string().min(1)
+})).optional()
+})
 })
 
 
@@ -2059,25 +2026,32 @@ export const AccountsWorkspaceListListQueryParams = zod.object({
   "sort": zod.array(zod.string().min(1)).default(accountsWorkspaceListListQuerySortDefault)
 })
 
+
+
+
+
+
+
 export const AccountsWorkspaceListListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "count": zod.number(),
+  "next": zod.string().min(1),
+  "previous": zod.string().min(1),
+  "results": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "admin_names": zod.array(zod.object({
+  "name": zod.string(),
+  "id": zod.string().uuid()
+})).optional(),
+  "start_data": zod.string().optional(),
+  "last_update_date": zod.string().optional(),
+  "invite_link": zod.string().optional(),
+  "user_ws_level": zod.number().optional(),
+  "user_ws_role": zod.string().min(1).optional()
+})),
+  "total_pages": zod.number(),
+  "current_page": zod.number()
 })
 
 
@@ -2088,25 +2062,28 @@ export const AccountsWorkspaceSwitchCreateBody = zod.object({
   "new_workspace_id": zod.string().uuid()
 })
 
+
+
+
+
+
+
+
 export const AccountsWorkspaceSwitchCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "workspace": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "description": zod.string().optional(),
+  "is_default": zod.boolean().optional()
+}),
+  "user_role": zod.string().min(1),
+  "access_type": zod.string().min(1),
+  "organization": zod.string().min(1)
+})
 })
 
 
@@ -2233,25 +2210,27 @@ export const AccountsWorkspaceMembersRoleCreateResponse = zod.object({
 /**
  * Get workspaces for the current organization
  */
+
+
+
+
+
 export const AccountsWorkspacesListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "organization": zod.string().min(1),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "description": zod.string(),
+  "is_default": zod.boolean(),
+  "member_count": zod.number(),
+  "created_at": zod.string().min(1),
+  "created_by": zod.string()
+})),
+  "total": zod.number()
+})
 })
 
 
@@ -2274,27 +2253,6 @@ export const AccountsWorkspacesCreateBody = zod.object({
   "role": zod.string().optional()
 })
 
-export const AccountsWorkspacesCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
-})
-
 
 /**
  * Update workspace details
@@ -2309,25 +2267,22 @@ export const AccountsWorkspacesUpdateBody = zod.object({
   "description": zod.string().optional()
 })
 
+
+
+
+
 export const AccountsWorkspacesUpdateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "workspace": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "description": zod.string().optional(),
+  "is_default": zod.boolean().optional()
+}),
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -2338,25 +2293,14 @@ export const AccountsWorkspacesDeleteParams = zod.object({
   "workspace_id": zod.string()
 })
 
+
+
+
 export const AccountsWorkspacesDeleteResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -2367,25 +2311,27 @@ export const AccountsWorkspacesReadParams = zod.object({
   "workspace_id": zod.string()
 })
 
+
+
+
+
+
 export const AccountsWorkspacesReadResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "organization": zod.string().min(1),
+  "workspaces": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "description": zod.string(),
+  "is_default": zod.boolean(),
+  "member_count": zod.number(),
+  "created_at": zod.string().min(1),
+  "created_by": zod.string()
+})),
+  "total": zod.number()
+})
 })
 
 
@@ -2396,25 +2342,33 @@ export const AccountsWorkspacesMembersListParams = zod.object({
   "workspace_id": zod.string()
 })
 
+
+
+
+
+
+
+
 export const AccountsWorkspacesMembersListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "workspace": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "description": zod.string().optional(),
+  "is_default": zod.boolean().optional()
+}),
+  "members": zod.array(zod.object({
+  "user_id": zod.string().uuid(),
+  "email": zod.string().email().min(1),
+  "name": zod.string(),
+  "role": zod.string().min(1),
+  "joined_at": zod.string().min(1),
+  "invited_by": zod.string().min(1)
+})),
+  "total": zod.number()
+})
 })
 
 
@@ -2430,27 +2384,6 @@ export const AccountsWorkspacesMembersCreateBody = zod.object({
   "users": zod.array(zod.record(zod.string(), zod.string()))
 })
 
-export const AccountsWorkspacesMembersCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
-})
-
 
 /**
  * Remove user from workspace
@@ -2460,25 +2393,14 @@ export const AccountsWorkspacesMembersDeleteParams = zod.object({
   "member_id": zod.string()
 })
 
+
+
+
 export const AccountsWorkspacesMembersDeleteResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -2490,25 +2412,33 @@ export const AccountsWorkspacesMembersReadParams = zod.object({
   "member_id": zod.string()
 })
 
+
+
+
+
+
+
+
 export const AccountsWorkspacesMembersReadResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional()
+  "workspace": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "display_name": zod.string(),
+  "description": zod.string().optional(),
+  "is_default": zod.boolean().optional()
+}),
+  "members": zod.array(zod.object({
+  "user_id": zod.string().uuid(),
+  "email": zod.string().email().min(1),
+  "name": zod.string(),
+  "role": zod.string().min(1),
+  "joined_at": zod.string().min(1),
+  "invited_by": zod.string().min(1)
+})),
+  "total": zod.number()
+})
 })
 
 
@@ -5172,11 +5102,22 @@ export const AgentccGatewaysReadParams = zod.object({
   "id": zod.string()
 })
 
+
+
+
+
+
+
 export const AgentccGatewaysReadResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough()
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "base_url": zod.string().url().min(1),
+  "status": zod.string().min(1),
+  "provider_count": zod.number().optional(),
+  "model_count": zod.number().optional()
+})
 })
 
 
@@ -5195,11 +5136,16 @@ export const AgentccGatewaysCancelBatchBody = zod.object({
   "batch_id": zod.string().min(1)
 })
 
+
+
+
+
 export const AgentccGatewaysCancelBatchResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough()
+  "batch_id": zod.string().min(1),
+  "status": zod.string().min(1)
+})
 })
 
 
@@ -5211,11 +5157,86 @@ export const AgentccGatewaysConfigParams = zod.object({
   "id": zod.string()
 })
 
+
+
+
+
+
+
 export const AgentccGatewaysConfigResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "id": zod.string().uuid().optional(),
+  "organization": zod.string().uuid().optional(),
+  "version": zod.number().optional(),
+  "guardrails": zod.object({
 
-}).passthrough()
+}).passthrough().optional(),
+  "routing": zod.object({
+
+}).passthrough().optional(),
+  "cache": zod.object({
+
+}).passthrough().optional(),
+  "rate_limiting": zod.object({
+
+}).passthrough().optional(),
+  "budgets": zod.object({
+
+}).passthrough().optional(),
+  "cost_tracking": zod.object({
+
+}).passthrough().optional(),
+  "ip_acl": zod.object({
+
+}).passthrough().optional(),
+  "alerting": zod.object({
+
+}).passthrough().optional(),
+  "privacy": zod.object({
+
+}).passthrough().optional(),
+  "tool_policy": zod.object({
+
+}).passthrough().optional(),
+  "mcp": zod.object({
+
+}).passthrough().optional(),
+  "a2a": zod.object({
+
+}).passthrough().optional(),
+  "audit": zod.object({
+
+}).passthrough().optional(),
+  "model_database": zod.object({
+
+}).passthrough().optional(),
+  "model_map": zod.object({
+
+}).passthrough().optional(),
+  "is_active": zod.boolean().optional(),
+  "created_by": zod.string().uuid().optional(),
+  "change_description": zod.string().optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional(),
+  "providers": zod.record(zod.string(), zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "display_name": zod.string().min(1),
+  "base_url": zod.string(),
+  "api_format": zod.string(),
+  "models": zod.array(zod.object({
+
+}).passthrough()),
+  "is_active": zod.boolean(),
+  "default_timeout": zod.number(),
+  "max_concurrent": zod.number(),
+  "conn_pool_size": zod.number()
+})),
+  "gateway": zod.object({
+  "status": zod.string().min(1)
+})
+})
 })
 
 
@@ -5227,11 +5248,31 @@ export const AgentccGatewaysGetBatchParams = zod.object({
   "id": zod.string()
 })
 
+
+
+
+
 export const AgentccGatewaysGetBatchResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "batch_id": zod.string().min(1),
+  "status": zod.string().min(1),
+  "total": zod.number(),
+  "max_concurrency": zod.number(),
+  "created_at": zod.string().datetime({"offset":true}),
+  "completed_at": zod.string().datetime({"offset":true}).optional(),
+  "results": zod.array(zod.object({
 
-}).passthrough()
+}).passthrough()).optional(),
+  "summary": zod.object({
+  "total_cost": zod.number(),
+  "total_input_tokens": zod.number(),
+  "total_output_tokens": zod.number(),
+  "completed": zod.number(),
+  "failed": zod.number(),
+  "cancelled": zod.number()
+}).optional()
+})
 })
 
 
@@ -5247,11 +5288,30 @@ export const AgentccGatewaysHealthCheckBody = zod.object({
 
 }).passthrough()
 
+
+
+
+
 export const AgentccGatewaysHealthCheckResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "status": zod.string().min(1),
+  "health": zod.object({
 
-}).passthrough()
+}).passthrough().optional(),
+  "providers": zod.object({
+  "providers": zod.array(zod.object({
+  "name": zod.string().min(1),
+  "display_name": zod.string().optional(),
+  "models": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "status": zod.string().optional()
+}))
+}),
+  "provider_count": zod.number(),
+  "model_count": zod.number()
+})
 })
 
 
@@ -5298,8 +5358,15 @@ export const AgentccGatewaysMcpStatusParams = zod.object({
 export const AgentccGatewaysMcpStatusResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "enabled": zod.boolean(),
+  "sessions": zod.number(),
+  "tools": zod.number(),
+  "resources": zod.number(),
+  "prompts": zod.number(),
+  "servers": zod.array(zod.object({
 
-}).passthrough()
+}).passthrough())
+})
 })
 
 
@@ -5327,11 +5394,32 @@ export const AgentccGatewaysProvidersParams = zod.object({
   "id": zod.string()
 })
 
+
+
+
+
+
+
 export const AgentccGatewaysProvidersResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "providers": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "status": zod.string().min(1),
+  "healthy": zod.boolean(),
+  "circuit_state": zod.string().min(1),
+  "display_name": zod.string().optional(),
+  "base_url": zod.string().optional(),
+  "api_format": zod.string().optional(),
+  "models": zod.array(zod.object({
 
-}).passthrough()
+}).passthrough()).optional(),
+  "request_count": zod.number().optional(),
+  "avg_latency": zod.number().optional(),
+  "error_rate": zod.number().optional()
+}))
+})
 })
 
 
@@ -5508,11 +5596,19 @@ export const AgentccGatewaysSubmitBatchBody = zod.object({
   "max_concurrency": zod.number().min(1).default(agentccGatewaysSubmitBatchBodyMaxConcurrencyDefault)
 })
 
+
+
+
+
 export const AgentccGatewaysSubmitBatchResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough()
+  "batch_id": zod.string().min(1),
+  "status": zod.string().min(1),
+  "total": zod.number(),
+  "max_concurrency": zod.number(),
+  "created_at": zod.string().datetime({"offset":true})
+})
 })
 
 
@@ -5532,11 +5628,25 @@ export const AgentccGatewaysTestMcpToolBody = zod.object({
   "arguments": zod.record(zod.string(), zod.string()).default(agentccGatewaysTestMcpToolBodyArgumentsDefault)
 })
 
+
+
+
 export const AgentccGatewaysTestMcpToolResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough()
+  "content": zod.array(zod.object({
+  "type": zod.string().min(1),
+  "text": zod.string().optional(),
+  "data": zod.string().optional(),
+  "mimeType": zod.string().optional()
+})).optional(),
+  "is_error": zod.boolean().optional(),
+  "duration_ms": zod.number().optional(),
+  "guardrail_pre": zod.enum(['pass', 'blocked', 'skipped']).optional(),
+  "guardrail_post": zod.enum(['pass', 'blocked', 'skipped']).optional(),
+  "error": zod.string().optional(),
+  "server": zod.string().optional()
+})
 })
 
 
@@ -5556,11 +5666,22 @@ export const AgentccGatewaysTestPlaygroundBody = zod.object({
   "system_prompt": zod.string().optional()
 })
 
+
+
+
+
 export const AgentccGatewaysTestPlaygroundResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "status_code": zod.number(),
+  "body": zod.object({
 
-}).passthrough()
+}).passthrough(),
+  "guardrail_headers": zod.record(zod.string(), zod.string().min(1)),
+  "model": zod.string().min(1),
+  "blocked": zod.boolean(),
+  "warned": zod.boolean()
+})
 })
 
 
@@ -9776,8 +9897,10 @@ export const FalconAiMcpConnectorsTestCreateBody = zod.object({
 export const FalconAiMcpConnectorsTestCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
+  "success": zod.boolean(),
+  "status_code": zod.number().optional(),
+  "error": zod.string().optional()
+}).optional(),
   "error": zod.string().optional()
 })
 
@@ -18029,23 +18152,42 @@ export const ModelHubDuplicateEvalTemplateCreateResponse = zod.object({
 })
 
 
+
+
+
+
+
+
+
+
+
+
 export const ModelHubEmbeddingsListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "embeddings": zod.record(zod.string(), zod.object({
+  "name": zod.string().min(1),
+  "description": zod.string().min(1),
+  "requires_api_key": zod.boolean(),
+  "config_schema": zod.record(zod.string(), zod.object({
+  "type": zod.string().min(1),
+  "required": zod.boolean(),
+  "description": zod.string().min(1),
+  "default": zod.string().optional()
+}))
+})).optional(),
+  "embedding": zod.object({
+  "name": zod.string().min(1),
+  "description": zod.string().min(1),
+  "requires_api_key": zod.boolean(),
+  "config_schema": zod.record(zod.string(), zod.object({
+  "type": zod.string().min(1),
+  "required": zod.boolean(),
+  "description": zod.string().min(1),
+  "default": zod.string().optional()
+}))
+}).optional()
+})
 })
 
 
@@ -18053,23 +18195,42 @@ export const ModelHubEmbeddingsReadParams = zod.object({
   "type": zod.string()
 })
 
+
+
+
+
+
+
+
+
+
+
 export const ModelHubEmbeddingsReadResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "embeddings": zod.record(zod.string(), zod.object({
+  "name": zod.string().min(1),
+  "description": zod.string().min(1),
+  "requires_api_key": zod.boolean(),
+  "config_schema": zod.record(zod.string(), zod.object({
+  "type": zod.string().min(1),
+  "required": zod.boolean(),
+  "description": zod.string().min(1),
+  "default": zod.string().optional()
+}))
+})).optional(),
+  "embedding": zod.object({
+  "name": zod.string().min(1),
+  "description": zod.string().min(1),
+  "requires_api_key": zod.boolean(),
+  "config_schema": zod.record(zod.string(), zod.object({
+  "type": zod.string().min(1),
+  "required": zod.boolean(),
+  "description": zod.string().min(1),
+  "default": zod.string().optional()
+}))
+}).optional()
+})
 })
 
 
@@ -21081,23 +21242,18 @@ export const ModelHubGetColumnValuesCreateBody = zod.object({
 }).passthrough()
 })
 
+
+
+
 export const ModelHubGetColumnValuesCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "result": zod.record(zod.string(), zod.object({
+  "column_id": zod.string().uuid(),
+  "column_name": zod.string().min(1),
+  "values": zod.array(zod.string())
+}))
+})
 })
 
 
@@ -21883,23 +22039,51 @@ export const ModelHubKnowledgeBaseListListResponse = zod.object({
 })
 
 
+
+
+
+
+
+
+
+
+
+
+
 export const ModelHubMetricsByColumnListResponse = zod.object({
-  "status": zod.object({
+  "status": zod.boolean(),
+  "result": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "template_name": zod.string().min(1),
+  "eval_template_name": zod.string().min(1),
+  "eval_required_keys": zod.array(zod.string().min(1)),
+  "eval_template_tags": zod.array(zod.string().min(1)),
+  "description": zod.string().optional(),
+  "model": zod.string().optional(),
+  "column_id": zod.string().uuid().optional(),
+  "updated_at": zod.string().datetime({"offset":true}),
+  "eval_group": zod.string().optional(),
+  "status": zod.string().optional(),
+  "eval_type": zod.string().min(1),
+  "template_type": zod.string().min(1),
+  "template_id": zod.string().uuid(),
+  "owner": zod.string().min(1),
+  "mapping": zod.object({
 
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
+}).passthrough(),
+  "params": zod.object({
 
-}).passthrough().optional(),
-  "data": zod.object({
+}).passthrough(),
+  "error_localizer": zod.boolean(),
+  "run_config": zod.object({
 
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough(),
+  "output_type": zod.string().min(1),
+  "aggregation_function": zod.string().optional(),
+  "aggregation_enabled": zod.boolean().optional(),
+  "children_count": zod.number().optional()
+}))
 })
 
 
@@ -21970,23 +22154,12 @@ export const ModelHubOptimisationCreateCreateBody = zod.object({
   "status": zod.enum(['NotStarted', 'Queued', 'Running', 'Completed', 'Editing', 'Inactive', 'Failed', 'PartialRun', 'ExperimentEvaluation', 'Uploading', 'PartialExtracted', 'Processing', 'Deleting', 'PartialCompleted', 'OptimizationEvaluation', 'Error', 'Cancelled']).optional()
 })
 
+
+
+
 export const ModelHubOptimisationCreateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -22015,23 +22188,12 @@ export const ModelHubOptimisationCreateUpdateBody = zod.object({
   "status": zod.enum(['NotStarted', 'Queued', 'Running', 'Completed', 'Editing', 'Inactive', 'Failed', 'PartialRun', 'ExperimentEvaluation', 'Uploading', 'PartialExtracted', 'Processing', 'Deleting', 'PartialCompleted', 'OptimizationEvaluation', 'Error', 'Cancelled']).optional()
 })
 
+
+
+
 export const ModelHubOptimisationCreateUpdateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -22064,23 +22226,12 @@ export const ModelHubOptimisationUpdateCreateBody = zod.object({
   "status": zod.enum(['NotStarted', 'Queued', 'Running', 'Completed', 'Editing', 'Inactive', 'Failed', 'PartialRun', 'ExperimentEvaluation', 'Uploading', 'PartialExtracted', 'Processing', 'Deleting', 'PartialCompleted', 'OptimizationEvaluation', 'Error', 'Cancelled']).optional()
 })
 
+
+
+
 export const ModelHubOptimisationUpdateCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -22113,23 +22264,12 @@ export const ModelHubOptimisationUpdateUpdateBody = zod.object({
   "status": zod.enum(['NotStarted', 'Queued', 'Running', 'Completed', 'Editing', 'Inactive', 'Failed', 'PartialRun', 'ExperimentEvaluation', 'Uploading', 'PartialExtracted', 'Processing', 'Deleting', 'PartialCompleted', 'OptimizationEvaluation', 'Error', 'Cancelled']).optional()
 })
 
+
+
+
 export const ModelHubOptimisationUpdateUpdateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -22222,23 +22362,28 @@ export const ModelHubOptimizeDatasetKbReadParams = zod.object({
   "optim_id": zod.string()
 })
 
+
+
+
+
+
 export const ModelHubOptimizeDatasetKbReadResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "name": zod.string().min(1),
+  "prompt": zod.string(),
+  "knowledge_base_filters": zod.object({
 
-}).passthrough().optional(),
-  "data": zod.object({
+}).passthrough(),
+  "knowledge_base_metrics": zod.object({
 
-}).passthrough().optional(),
-  "error": zod.object({
+}).passthrough(),
+  "variables": zod.object({
 
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough(),
+  "status": zod.string().min(1),
+  "optimized_k_prompts": zod.array(zod.string().min(1))
+})
 })
 
 
@@ -22257,22 +22402,8 @@ export const ModelHubOptimizeDatasetKnowledgeBaseCreateBody = zod.object({
 })
 
 export const ModelHubOptimizeDatasetKnowledgeBaseCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().uuid()
 })
 
 
@@ -22281,23 +22412,32 @@ export const ModelHubOptimizeDatasetReadParams = zod.object({
   "optimization_id": zod.string()
 })
 
+
+export const modelHubOptimizeDatasetReadResponseDataNameMax = 255;
+
+export const modelHubOptimizeDatasetReadResponseDataVersionMax = 255;
+
+export const modelHubOptimizeDatasetReadResponseDataMetricsItemNameMax = 100;
+
+
+
 export const ModelHubOptimizeDatasetReadResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.string().min(1),
   "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid().optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "name": zod.string().min(1).max(modelHubOptimizeDatasetReadResponseDataNameMax),
+  "optimize_type": zod.enum(['PromptTemplate', 'RightAnswer', 'RagPromptTemplate']),
+  "environment": zod.enum(['Production', 'Training', 'Validation', 'Corpus']),
+  "version": zod.string().min(1).max(modelHubOptimizeDatasetReadResponseDataVersionMax),
+  "status": zod.enum(['not_started', 'pending', 'running', 'completed', 'failed', 'cancelled']).optional(),
+  "metrics": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "name": zod.string().min(1).max(modelHubOptimizeDatasetReadResponseDataMetricsItemNameMax)
+})),
+  "start_date": zod.string().datetime({"offset":true}).optional(),
+  "end_date": zod.string().datetime({"offset":true}).optional()
+})
 })
 
 
@@ -22322,23 +22462,16 @@ export const ModelHubOptimizeDatasetCreateBody = zod.object({
 }).passthrough().optional()
 })
 
+
+
+
+
 export const ModelHubOptimizeDatasetCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
+  "status": zod.string().min(1),
+  "message": zod.string().min(1),
   "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid()
+})
 })
 
 
@@ -22346,23 +22479,14 @@ export const ModelHubOptimizeDatasetColumnConfigListParams = zod.object({
   "model_id": zod.string()
 })
 
+
+
+
 export const ModelHubOptimizeDatasetColumnConfigListResponse = zod.object({
-  "status": zod.object({
+  "columns": zod.array(zod.object({
 
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough()),
+  "status": zod.string().min(1)
 })
 
 
@@ -22389,23 +22513,13 @@ export const ModelHubOptimizeDatasetColumnConfigCreateBody = zod.object({
 }).passthrough().optional()
 })
 
+
+
+
+
 export const ModelHubOptimizeDatasetColumnConfigCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "status": zod.string().min(1)
 })
 
 
@@ -22414,23 +22528,14 @@ export const ModelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadParams 
   "optimization_id": zod.string()
 })
 
+
+
+
 export const ModelHubOptimizeDatasetColumnConfigPromptTemplateExploreReadResponse = zod.object({
-  "status": zod.object({
+  "columns": zod.array(zod.object({
 
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough()),
+  "status": zod.string().min(1)
 })
 
 
@@ -22458,23 +22563,13 @@ export const ModelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateBody 
 }).passthrough().optional()
 })
 
+
+
+
+
 export const ModelHubOptimizeDatasetColumnConfigPromptTemplateExploreCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "status": zod.string().min(1)
 })
 
 
@@ -22483,23 +22578,14 @@ export const ModelHubOptimizeDatasetColumnConfigRightAnswersReadParams = zod.obj
   "optimization_id": zod.string()
 })
 
+
+
+
 export const ModelHubOptimizeDatasetColumnConfigRightAnswersReadResponse = zod.object({
-  "status": zod.object({
+  "columns": zod.array(zod.object({
 
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough()),
+  "status": zod.string().min(1)
 })
 
 
@@ -22527,23 +22613,13 @@ export const ModelHubOptimizeDatasetColumnConfigRightAnswersCreateBody = zod.obj
 }).passthrough().optional()
 })
 
+
+
+
+
 export const ModelHubOptimizeDatasetColumnConfigRightAnswersCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "status": zod.string().min(1)
 })
 
 
@@ -22572,22 +22648,18 @@ export const ModelHubOptimizeDatasetPromptTemplateExploreCreateBody = zod.object
 })
 
 export const ModelHubOptimizeDatasetPromptTemplateExploreCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "results": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "input": zod.string().optional(),
+  "output": zod.string().optional(),
+  "right_answer": zod.string().optional()
+})),
+  "count": zod.number(),
+  "total_pages": zod.number(),
+  "current_page": zod.number(),
+  "next": zod.boolean(),
+  "previous": zod.boolean(),
+  "message": zod.string()
 })
 
 
@@ -22615,23 +22687,17 @@ export const ModelHubOptimizeDatasetPromptTemplateResultCreateBody = zod.object(
 }).passthrough().optional()
 })
 
+
+
+
+
 export const ModelHubOptimizeDatasetPromptTemplateResultCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "k_prompts": zod.array(zod.string().min(1)),
+  "results": zod.array(zod.object({
+  "metric_name": zod.string().min(1),
+  "templates": zod.array(zod.number()),
+  "old_template": zod.number()
+}))
 })
 
 
@@ -22660,22 +22726,18 @@ export const ModelHubOptimizeDatasetRightAnswersCreateBody = zod.object({
 })
 
 export const ModelHubOptimizeDatasetRightAnswersCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "results": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "input": zod.string().optional(),
+  "output": zod.string().optional(),
+  "right_answer": zod.string().optional()
+})),
+  "count": zod.number(),
+  "total_pages": zod.number(),
+  "current_page": zod.number(),
+  "next": zod.boolean(),
+  "previous": zod.boolean(),
+  "message": zod.string()
 })
 
 
@@ -22826,22 +22888,29 @@ export const ModelHubOrganizationsUsersDeleteParams = zod.object({
 
 
 export const ModelHubOverviewListResponse = zod.object({
-  "status": zod.object({
+  "volume": zod.object({
+  "total_count": zod.number(),
+  "change": zod.number(),
+  "volume": zod.array(zod.object({
+  "x": zod.object({
 
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
+}).passthrough(),
+  "y": zod.number()
+}))
+}),
+  "issues": zod.object({
+  "total_count": zod.number(),
+  "change": zod.number(),
+  "last_day": zod.array(zod.object({
+  "x": zod.object({
 
-}).passthrough().optional(),
-  "data": zod.object({
+}).passthrough(),
+  "y": zod.number()
+}))
+}),
+  "versions": zod.object({
 
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough()
 })
 
 
@@ -24042,23 +24111,23 @@ export const ModelHubPromptTemplatesDerivedVariablesPreviewCreateBody = zod.obje
   "column_name": zod.string().min(1).default(modelHubPromptTemplatesDerivedVariablesPreviewCreateBodyColumnNameDefault)
 })
 
+
+
+
+
 export const ModelHubPromptTemplatesDerivedVariablesPreviewCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "paths": zod.array(zod.string().min(1)).optional(),
+  "schema": zod.object({
 
 }).passthrough().optional(),
-  "data": zod.object({
+  "full_variables": zod.array(zod.string().min(1)).optional(),
+  "raw_sample": zod.object({
 
 }).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "is_json": zod.boolean().optional()
+})
 })
 
 
@@ -24746,23 +24815,16 @@ export const ModelHubPromptTemplatesDerivedVariablesListParams = zod.object({
   "prompt_id": zod.string()
 })
 
+
+
+
+
 export const ModelHubPromptTemplatesDerivedVariablesListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "version": zod.string().min(1),
+  "derived_variables": zod.record(zod.string(), zod.array(zod.string().min(1)))
+})
 })
 
 
@@ -24793,23 +24855,23 @@ export const ModelHubPromptTemplatesDerivedVariablesExtractCreateBody = zod.obje
   "response_format_type": zod.string().optional()
 })
 
+
+
+
+
 export const ModelHubPromptTemplatesDerivedVariablesExtractCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "paths": zod.array(zod.string().min(1)).optional(),
+  "schema": zod.object({
 
 }).passthrough().optional(),
-  "data": zod.object({
+  "full_variables": zod.array(zod.string().min(1)).optional(),
+  "raw_sample": zod.object({
 
 }).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "is_json": zod.boolean().optional()
+})
 })
 
 
@@ -24829,83 +24891,78 @@ export const ModelHubPromptTemplatesDerivedVariablesSchemaListParams = zod.objec
   "column_name": zod.string()
 })
 
+
+
+
+
 export const ModelHubPromptTemplatesDerivedVariablesSchemaListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "paths": zod.array(zod.string().min(1)).optional(),
+  "schema": zod.object({
 
 }).passthrough().optional(),
-  "data": zod.object({
+  "full_variables": zod.array(zod.string().min(1)).optional(),
+  "raw_sample": zod.object({
 
 }).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "is_json": zod.boolean().optional()
 })
+})
+
+
+
 
 
 export const ModelHubPromptMetricsListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "prompt_template_id": zod.string().uuid().optional(),
+  "prompt_template_name": zod.string().min(1).optional(),
+  "table": zod.array(zod.object({
 
-}).passthrough().optional(),
-  "data": zod.object({
+}).passthrough()),
+  "config": zod.object({
 
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough(),
+  "metadata": zod.object({
+  "total_rows": zod.number()
 })
+})
+})
+
+
+
+
 
 
 export const ModelHubPromptMetricsEmptyScreenListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "python": zod.string().min(1),
+  "typescript": zod.string().min(1)
+})
 })
 
 
+
+
+
 export const ModelHubPromptSpanMetricsListResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
+  "prompt_template_id": zod.string().uuid().optional(),
+  "prompt_template_name": zod.string().min(1).optional(),
+  "table": zod.array(zod.object({
 
-}).passthrough().optional(),
-  "data": zod.object({
+}).passthrough()),
+  "config": zod.object({
 
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+}).passthrough(),
+  "metadata": zod.object({
+  "total_rows": zod.number()
+})
+})
 })
 
 
@@ -25049,23 +25106,14 @@ export const ModelHubRunPromptForRowsCreateBody = zod.object({
   "selected_all_rows": zod.boolean().default(modelHubRunPromptForRowsCreateBodySelectedAllRowsDefault)
 })
 
+
+
+
 export const ModelHubRunPromptForRowsCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
+  "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "success": zod.string().min(1)
+})
 })
 
 
@@ -25112,23 +25160,12 @@ export const ModelHubRunPromptCreateBody = zod.object({
   "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.')
 })
 
+
+
+
 export const ModelHubRunPromptCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.string().min(1)
 })
 
 
@@ -26134,22 +26171,12 @@ export const ModelHubUploadFileCreateBody = zod.object({
 })
 
 export const ModelHubUploadFileCreateResponse = zod.object({
-  "status": zod.object({
-
-}).passthrough().optional(),
-  "message": zod.string().optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "data": zod.object({
-
-}).passthrough().optional(),
-  "error": zod.object({
-
-}).passthrough().optional(),
-  "detail": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean(),
+  "result": zod.array(zod.object({
+  "url": zod.string().optional(),
+  "file_name": zod.string().optional(),
+  "error": zod.string().optional()
+}))
 })
 
 
@@ -26569,11 +26596,32 @@ export const SdkApiV1SimulationAnalyticsListQueryParams = zod.object({
   "summary": zod.boolean().default(sdkApiV1SimulationAnalyticsListQuerySummaryDefault)
 })
 
+
+
+
+
+
 export const SdkApiV1SimulationAnalyticsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "execution_id": zod.string().uuid().optional(),
+  "run_test_name": zod.string().min(1),
+  "status": zod.string().min(1).optional(),
+  "message": zod.string().min(1).optional(),
+  "eval_results": zod.array(zod.object({
 
-}).passthrough().describe('AnalyticsResponse when data exists, or a no-completed-executions result with run_test_name\/message\/eval_results\/eval_averages\/system_summary.')
+}).passthrough()),
+  "eval_averages": zod.object({
+
+}).passthrough(),
+  "system_summary": zod.object({
+
+}).passthrough(),
+  "eval_explanation_summary": zod.object({
+
+}).passthrough().optional(),
+  "eval_explanation_summary_status": zod.string().optional()
+})
 })
 
 
@@ -26590,11 +26638,50 @@ export const SdkApiV1SimulationMetricsListQueryParams = zod.object({
   "call_execution_id": zod.string().uuid().optional()
 })
 
+
+
+
 export const SdkApiV1SimulationMetricsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "call_execution_id": zod.string().uuid().optional(),
+  "execution_id": zod.string().uuid().optional(),
+  "status": zod.string().min(1).optional(),
+  "duration_seconds": zod.number().optional(),
+  "started_at": zod.string().datetime({"offset":true}).optional(),
+  "completed_at": zod.string().datetime({"offset":true}).optional(),
+  "total_calls": zod.number().optional(),
+  "completed_calls": zod.number().optional(),
+  "failed_calls": zod.number().optional(),
+  "latency": zod.object({
 
-}).passthrough().describe('CallMetrics, ExecutionMetrics, or paginated ExecutionMetrics depending on call_execution_id\/execution_id\/run_test_name query parameters.')
+}).passthrough().optional(),
+  "cost": zod.object({
+
+}).passthrough().optional(),
+  "conversation": zod.object({
+
+}).passthrough().optional(),
+  "chat_metrics": zod.object({
+
+}).passthrough().optional(),
+  "metrics": zod.object({
+
+}).passthrough().optional(),
+  "total_pages": zod.number().optional(),
+  "current_page": zod.number().optional(),
+  "count": zod.number().optional(),
+  "results": zod.array(zod.object({
+  "execution_id": zod.string().uuid(),
+  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'cancelled', 'cancelling', 'evaluating']).optional().describe('Current status of the test execution'),
+  "started_at": zod.string().datetime({"offset":true}).optional().describe('When the test execution started'),
+  "completed_at": zod.string().datetime({"offset":true}).optional().describe('When the test execution completed'),
+  "total_calls": zod.number().optional().describe('Total number of calls to be made'),
+  "completed_calls": zod.number().optional().describe('Number of successfully completed calls'),
+  "failed_calls": zod.number().optional().describe('Number of failed calls'),
+  "metrics": zod.string().optional()
+})).optional()
+})
 })
 
 
@@ -26614,11 +26701,58 @@ export const SdkApiV1SimulationRunsListQueryParams = zod.object({
   "summary": zod.boolean().default(sdkApiV1SimulationRunsListQuerySummaryDefault)
 })
 
+
+
+
 export const SdkApiV1SimulationRunsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "call_execution_id": zod.string().uuid().optional(),
+  "execution_id": zod.string().uuid().optional(),
+  "scenario_id": zod.string().uuid().optional(),
+  "scenario_name": zod.string().optional(),
+  "status": zod.string().min(1).optional(),
+  "started_at": zod.string().datetime({"offset":true}).optional(),
+  "completed_at": zod.string().datetime({"offset":true}).optional(),
+  "duration_seconds": zod.number().optional(),
+  "ended_reason": zod.string().optional(),
+  "call_summary": zod.string().optional(),
+  "total_calls": zod.number().optional(),
+  "completed_calls": zod.number().optional(),
+  "failed_calls": zod.number().optional(),
+  "eval_outputs": zod.object({
 
-}).passthrough().describe('CallRunDetail, ExecutionRuns detail, or paginated ExecutionRuns depending on call_execution_id\/execution_id\/run_test_name query parameters.')
+}).passthrough().optional(),
+  "eval_results": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "latency": zod.object({
+
+}).passthrough().optional(),
+  "cost": zod.object({
+
+}).passthrough().optional(),
+  "call_results": zod.object({
+
+}).passthrough().optional(),
+  "eval_explanation_summary": zod.object({
+
+}).passthrough().optional(),
+  "eval_explanation_summary_status": zod.string().optional(),
+  "total_pages": zod.number().optional(),
+  "current_page": zod.number().optional(),
+  "count": zod.number().optional(),
+  "results": zod.array(zod.object({
+  "execution_id": zod.string().uuid(),
+  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'cancelled', 'cancelling', 'evaluating']).optional().describe('Current status of the test execution'),
+  "started_at": zod.string().datetime({"offset":true}).optional().describe('When the test execution started'),
+  "completed_at": zod.string().datetime({"offset":true}).optional().describe('When the test execution completed'),
+  "total_calls": zod.number().optional().describe('Total number of calls to be made'),
+  "completed_calls": zod.number().optional().describe('Number of successfully completed calls'),
+  "failed_calls": zod.number().optional().describe('Number of failed calls'),
+  "eval_results": zod.string().optional()
+})).optional()
+})
 })
 
 
@@ -27594,24 +27728,70 @@ export const SimulateApiAgentPromptOptimiserReadParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this agent prompt optimiser run.')
 })
 
-export const simulateApiAgentPromptOptimiserReadResponseModelMax = 255;
+export const simulateApiAgentPromptOptimiserReadResponseStatusDefault = true;
+
+
+
+
+
+
+
+
+
 
 
 
 export const SimulateApiAgentPromptOptimiserReadResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "agent_optimiser": zod.string().uuid(),
-  "agent_optimiser_run": zod.string().uuid(),
-  "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
-  "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserReadResponseModelMax).describe('LLM model used for the optimiser run'),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
+  "status": zod.boolean().default(simulateApiAgentPromptOptimiserReadResponseStatusDefault),
   "result": zod.object({
+  "optimiser_name": zod.string().min(1).optional(),
+  "optimiser_type": zod.string().min(1).optional(),
+  "model": zod.string().min(1).optional(),
+  "provider_logo": zod.string().min(1).optional(),
+  "configuration": zod.object({
+  "num_gradients": zod.number().optional(),
+  "errors_per_gradient": zod.number().optional(),
+  "prompts_per_gradient": zod.number().optional(),
+  "beam_size": zod.number().optional(),
+  "num_rounds": zod.number().optional(),
+  "num_variations": zod.number().optional(),
+  "max_metric_calls": zod.number().optional(),
+  "min_examples": zod.number().optional(),
+  "max_examples": zod.number().optional(),
+  "n_trials": zod.number().optional(),
+  "task_description": zod.string().optional(),
+  "mutate_rounds": zod.number().optional(),
+  "refine_iterations": zod.number().optional()
+}).optional(),
+  "parameters": zod.array(zod.object({
+  "key": zod.string().min(1).optional(),
+  "label": zod.string().min(1).optional(),
+  "value": zod.object({
 
 }).passthrough().optional(),
-  "configuration": zod.object({
-
-}).passthrough().optional()
+  "description": zod.string().optional()
+})).optional(),
+  "start_time": zod.string().datetime({"offset":true}).optional(),
+  "status": zod.string().min(1).optional(),
+  "error_message": zod.string().min(1).optional(),
+  "table": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "trial": zod.string().min(1).optional(),
+  "score": zod.number().optional(),
+  "score_percentage_change": zod.number().optional(),
+  "prompt": zod.string().optional(),
+  "is_best": zod.boolean().optional(),
+  "eval_scores": zod.record(zod.string(), zod.object({
+  "score": zod.number().optional(),
+  "percentage_change": zod.number().optional()
+})).optional().describe('Dynamic eval-config UUID keys are returned as top-level row keys at runtime.')
+})).optional(),
+  "column_config": zod.array(zod.object({
+  "id": zod.string().min(1).optional(),
+  "name": zod.string().min(1).optional(),
+  "is_visible": zod.boolean().optional()
+})).optional()
+})
 })
 
 
@@ -27641,24 +27821,56 @@ export const SimulateApiAgentPromptOptimiserUpdateBody = zod.object({
 }).passthrough().optional()
 })
 
-export const simulateApiAgentPromptOptimiserUpdateResponseModelMax = 255;
 
 
 
 export const SimulateApiAgentPromptOptimiserUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
-  "agent_optimiser": zod.string().uuid(),
-  "agent_optimiser_run": zod.string().uuid(),
-  "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
-  "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserUpdateResponseModelMax).describe('LLM model used for the optimiser run'),
+  "agent_optimiser": zod.string().uuid().optional(),
+  "agent_optimiser_run": zod.string().uuid().optional(),
+  "test_execution": zod.string().uuid().optional(),
+  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']).optional(),
+  "model": zod.string().min(1).optional(),
   "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
   "result": zod.object({
-
-}).passthrough().optional(),
+  "history": zod.array(zod.object({
+  "prompt": zod.string().optional(),
+  "average_score": zod.number().optional(),
+  "is_baseline": zod.boolean().optional(),
+  "individual_results": zod.record(zod.string(), zod.object({
+  "score": zod.number().optional(),
+  "reason": zod.string().optional(),
+  "metadata": zod.object({
+  "input": zod.string().optional(),
+  "output": zod.string().optional(),
+  "component_evals": zod.record(zod.string(), zod.object({
+  "score": zod.number().optional(),
+  "reason": zod.string().optional()
+})).optional()
+}).optional()
+})).optional()
+})).optional(),
+  "best_prompt": zod.string().optional(),
+  "final_score": zod.number().optional(),
+  "best_score": zod.number().optional(),
+  "trials_run": zod.number().optional(),
+  "error": zod.string().optional()
+}).optional(),
   "configuration": zod.object({
-
-}).passthrough().optional()
+  "num_gradients": zod.number().optional(),
+  "errors_per_gradient": zod.number().optional(),
+  "prompts_per_gradient": zod.number().optional(),
+  "beam_size": zod.number().optional(),
+  "num_rounds": zod.number().optional(),
+  "num_variations": zod.number().optional(),
+  "max_metric_calls": zod.number().optional(),
+  "min_examples": zod.number().optional(),
+  "max_examples": zod.number().optional(),
+  "n_trials": zod.number().optional(),
+  "task_description": zod.string().optional(),
+  "mutate_rounds": zod.number().optional(),
+  "refine_iterations": zod.number().optional()
+}).optional()
 })
 
 
@@ -27688,24 +27900,56 @@ export const SimulateApiAgentPromptOptimiserPartialUpdateBody = zod.object({
 }).passthrough().optional()
 })
 
-export const simulateApiAgentPromptOptimiserPartialUpdateResponseModelMax = 255;
 
 
 
 export const SimulateApiAgentPromptOptimiserPartialUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
-  "agent_optimiser": zod.string().uuid(),
-  "agent_optimiser_run": zod.string().uuid(),
-  "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
-  "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserPartialUpdateResponseModelMax).describe('LLM model used for the optimiser run'),
+  "agent_optimiser": zod.string().uuid().optional(),
+  "agent_optimiser_run": zod.string().uuid().optional(),
+  "test_execution": zod.string().uuid().optional(),
+  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']).optional(),
+  "model": zod.string().min(1).optional(),
   "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
   "result": zod.object({
-
-}).passthrough().optional(),
+  "history": zod.array(zod.object({
+  "prompt": zod.string().optional(),
+  "average_score": zod.number().optional(),
+  "is_baseline": zod.boolean().optional(),
+  "individual_results": zod.record(zod.string(), zod.object({
+  "score": zod.number().optional(),
+  "reason": zod.string().optional(),
+  "metadata": zod.object({
+  "input": zod.string().optional(),
+  "output": zod.string().optional(),
+  "component_evals": zod.record(zod.string(), zod.object({
+  "score": zod.number().optional(),
+  "reason": zod.string().optional()
+})).optional()
+}).optional()
+})).optional()
+})).optional(),
+  "best_prompt": zod.string().optional(),
+  "final_score": zod.number().optional(),
+  "best_score": zod.number().optional(),
+  "trials_run": zod.number().optional(),
+  "error": zod.string().optional()
+}).optional(),
   "configuration": zod.object({
-
-}).passthrough().optional()
+  "num_gradients": zod.number().optional(),
+  "errors_per_gradient": zod.number().optional(),
+  "prompts_per_gradient": zod.number().optional(),
+  "beam_size": zod.number().optional(),
+  "num_rounds": zod.number().optional(),
+  "num_variations": zod.number().optional(),
+  "max_metric_calls": zod.number().optional(),
+  "min_examples": zod.number().optional(),
+  "max_examples": zod.number().optional(),
+  "n_trials": zod.number().optional(),
+  "task_description": zod.string().optional(),
+  "mutate_rounds": zod.number().optional(),
+  "refine_iterations": zod.number().optional()
+}).optional()
 })
 
 
@@ -27724,24 +27968,21 @@ export const SimulateApiAgentPromptOptimiserGraphParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this agent prompt optimiser run.')
 })
 
-export const simulateApiAgentPromptOptimiserGraphResponseModelMax = 255;
+export const simulateApiAgentPromptOptimiserGraphResponseStatusDefault = true;
 
 
 
 export const SimulateApiAgentPromptOptimiserGraphResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "agent_optimiser": zod.string().uuid(),
-  "agent_optimiser_run": zod.string().uuid(),
-  "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
-  "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserGraphResponseModelMax).describe('LLM model used for the optimiser run'),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
-  "result": zod.object({
-
-}).passthrough().optional(),
-  "configuration": zod.object({
-
-}).passthrough().optional()
+  "status": zod.boolean().default(simulateApiAgentPromptOptimiserGraphResponseStatusDefault),
+  "result": zod.record(zod.string(), zod.object({
+  "name": zod.string().min(1).optional(),
+  "evaluations": zod.array(zod.object({
+  "trial_id": zod.string().uuid().optional(),
+  "trial_number": zod.number().optional(),
+  "trial_name": zod.string().min(1).optional(),
+  "score": zod.number().optional()
+})).optional()
+})).describe('Dictionary keyed by eval-config UUID.')
 })
 
 
@@ -27752,24 +27993,28 @@ export const SimulateApiAgentPromptOptimiserStepsParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this agent prompt optimiser run.')
 })
 
-export const simulateApiAgentPromptOptimiserStepsResponseModelMax = 255;
+export const simulateApiAgentPromptOptimiserStepsResponseStatusDefault = true;
+export const simulateApiAgentPromptOptimiserStepsResponseResultItemNameMax = 255;
+
+export const simulateApiAgentPromptOptimiserStepsResponseResultItemStepNumberMin = -2147483648;
+export const simulateApiAgentPromptOptimiserStepsResponseResultItemStepNumberMax = 2147483647;
 
 
 
 export const SimulateApiAgentPromptOptimiserStepsResponse = zod.object({
+  "status": zod.boolean().default(simulateApiAgentPromptOptimiserStepsResponseStatusDefault),
+  "result": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
-  "agent_optimiser": zod.string().uuid(),
-  "agent_optimiser_run": zod.string().uuid(),
-  "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
-  "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserStepsResponseModelMax).describe('LLM model used for the optimiser run'),
+  "name": zod.string().min(1).max(simulateApiAgentPromptOptimiserStepsResponseResultItemNameMax),
+  "description": zod.string().optional(),
   "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
-  "result": zod.object({
+  "metadata": zod.object({
 
 }).passthrough().optional(),
-  "configuration": zod.object({
-
-}).passthrough().optional()
+  "step_number": zod.number().min(simulateApiAgentPromptOptimiserStepsResponseResultItemStepNumberMin).max(simulateApiAgentPromptOptimiserStepsResponseResultItemStepNumberMax),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional()
+}))
 })
 
 
@@ -27781,24 +28026,34 @@ export const SimulateApiAgentPromptOptimiserTrialTrialEvaluationsParams = zod.ob
   "trial_id": zod.string()
 })
 
-export const simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseModelMax = 255;
+export const simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseStatusDefault = true;
+
+
+
 
 
 
 export const SimulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "agent_optimiser": zod.string().uuid(),
-  "agent_optimiser_run": zod.string().uuid(),
-  "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
-  "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseModelMax).describe('LLM model used for the optimiser run'),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
+  "status": zod.boolean().default(simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "configuration": zod.object({
-
-}).passthrough().optional()
+  "trial_name": zod.string().min(1).optional(),
+  "optimisation_name": zod.string().min(1).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "score": zod.number().optional(),
+  "score_percentage_change": zod.number().optional(),
+  "table": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "eval_name": zod.string().min(1).optional(),
+  "eval_template_description": zod.string().optional(),
+  "score": zod.number().optional(),
+  "score_percentage_change": zod.number().optional()
+})).optional(),
+  "column_config": zod.array(zod.object({
+  "id": zod.string().min(1).optional(),
+  "name": zod.string().min(1).optional(),
+  "is_visible": zod.boolean().optional()
+})).optional()
+})
 })
 
 
@@ -27810,24 +28065,23 @@ export const SimulateApiAgentPromptOptimiserTrialTrialPromptParams = zod.object(
   "trial_id": zod.string()
 })
 
-export const simulateApiAgentPromptOptimiserTrialTrialPromptResponseModelMax = 255;
+export const simulateApiAgentPromptOptimiserTrialTrialPromptResponseStatusDefault = true;
+
+
 
 
 
 export const SimulateApiAgentPromptOptimiserTrialTrialPromptResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "agent_optimiser": zod.string().uuid(),
-  "agent_optimiser_run": zod.string().uuid(),
-  "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
-  "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserTrialTrialPromptResponseModelMax).describe('LLM model used for the optimiser run'),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
+  "status": zod.boolean().default(simulateApiAgentPromptOptimiserTrialTrialPromptResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "configuration": zod.object({
-
-}).passthrough().optional()
+  "trial_name": zod.string().min(1).optional(),
+  "optimisation_name": zod.string().min(1).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "score": zod.number().optional(),
+  "score_percentage_change": zod.number().optional(),
+  "trial_prompt": zod.string().min(1).optional(),
+  "base_prompt": zod.string().min(1).optional()
+})
 })
 
 
@@ -27839,24 +28093,32 @@ export const SimulateApiAgentPromptOptimiserTrialTrialScenariosParams = zod.obje
   "trial_id": zod.string()
 })
 
-export const simulateApiAgentPromptOptimiserTrialTrialScenariosResponseModelMax = 255;
+export const simulateApiAgentPromptOptimiserTrialTrialScenariosResponseStatusDefault = true;
+
+
 
 
 
 export const SimulateApiAgentPromptOptimiserTrialTrialScenariosResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "agent_optimiser": zod.string().uuid(),
-  "agent_optimiser_run": zod.string().uuid(),
-  "test_execution": zod.string().uuid(),
-  "optimiser_type": zod.enum(['random_search', 'gepa', 'protegi', 'bayesian', 'metaprompt', 'promptwizard']),
-  "model": zod.string().min(1).max(simulateApiAgentPromptOptimiserTrialTrialScenariosResponseModelMax).describe('LLM model used for the optimiser run'),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
+  "status": zod.boolean().default(simulateApiAgentPromptOptimiserTrialTrialScenariosResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough().optional(),
-  "configuration": zod.object({
-
-}).passthrough().optional()
+  "trial_name": zod.string().min(1).optional(),
+  "optimisation_name": zod.string().min(1).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "score": zod.number().optional(),
+  "score_percentage_change": zod.number().optional(),
+  "table": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "input_text": zod.string().optional(),
+  "output_text": zod.string().optional(),
+  "eval_scores": zod.record(zod.string(), zod.number()).optional().describe('Dynamic eval-config UUID keys are returned as top-level row keys at runtime.')
+})).optional(),
+  "column_config": zod.array(zod.object({
+  "id": zod.string().min(1).optional(),
+  "name": zod.string().min(1).optional(),
+  "is_visible": zod.boolean().optional()
+})).optional()
+})
 })
 
 
@@ -27994,9 +28256,21 @@ export const SimulateApiLivekitCallConfigReadParams = zod.object({
   "call_id": zod.string()
 })
 
-export const SimulateApiLivekitCallConfigReadResponse = zod.object({
 
-}).passthrough()
+
+
+export const SimulateApiLivekitCallConfigReadResponse = zod.object({
+  "id": zod.string().uuid(),
+  "call_metadata": zod.record(zod.string(), zod.object({
+
+}).passthrough()),
+  "provider_call_data": zod.record(zod.string(), zod.object({
+
+}).passthrough()),
+  "status": zod.string().min(1),
+  "ended_reason": zod.string(),
+  "duration_seconds": zod.number()
+})
 
 
 /**
@@ -28061,9 +28335,19 @@ export const SimulateApiLivekitPhoneResolutionReadParams = zod.object({
   "phone_number": zod.string()
 })
 
-export const SimulateApiLivekitPhoneResolutionReadResponse = zod.object({
 
-}).passthrough()
+
+
+export const SimulateApiLivekitPhoneResolutionReadResponse = zod.object({
+  "call_id": zod.string().uuid(),
+  "call_metadata": zod.record(zod.string(), zod.object({
+
+}).passthrough()),
+  "provider_call_data": zod.record(zod.string(), zod.object({
+
+}).passthrough()),
+  "status": zod.string().min(1)
+})
 
 
 /**
@@ -30813,9 +31097,21 @@ export const SimulateRunTestsEvalSummaryComparisonListQueryParams = zod.object({
   "execution_ids": zod.string().min(1).describe('JSON-encoded array of test execution UUIDs to compare. Example: [\"uuid1\",\"uuid2\"]. Must be URL-encoded.')
 })
 
+export const simulateRunTestsEvalSummaryComparisonListResponseStatusDefault = true;
+
+
+
 export const SimulateRunTestsEvalSummaryComparisonListResponse = zod.object({
+  "status": zod.boolean().default(simulateRunTestsEvalSummaryComparisonListResponseStatusDefault),
+  "result": zod.record(zod.string(), zod.array(zod.object({
+  "name": zod.string().min(1),
+  "id": zod.string().min(1),
+  "total_cells": zod.number(),
+  "output": zod.object({
 
 }).passthrough()
+})))
+})
 
 
 /**
@@ -31741,9 +32037,27 @@ export const SimulateTestExecutionsReadParams = zod.object({
   "test_execution_id": zod.string()
 })
 
-export const SimulateTestExecutionsReadResponse = zod.object({
 
-}).passthrough()
+
+
+
+
+
+
+
+export const SimulateTestExecutionsReadResponse = zod.object({
+  "count": zod.number().optional(),
+  "next": zod.string().min(1).optional(),
+  "previous": zod.string().min(1).optional(),
+  "results": zod.array(zod.record(zod.string(), zod.string())).optional().describe('Call execution rows may include dynamic eval\/scenario columns.'),
+  "total_pages": zod.number().optional(),
+  "current_page": zod.number().optional(),
+  "column_order": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "error_messages": zod.array(zod.string().min(1)).optional(),
+  "status": zod.string().min(1).optional(),
+  "provider": zod.string().min(1).optional(),
+  "agent_type": zod.string().min(1).optional()
+})
 
 
 /**
@@ -31863,9 +32177,32 @@ export const SimulateTestExecutionsEvalExplanationSummaryListParams = zod.object
   "test_execution_id": zod.string()
 })
 
-export const SimulateTestExecutionsEvalExplanationSummaryListResponse = zod.object({
+export const simulateTestExecutionsEvalExplanationSummaryListResponseStatusDefault = true;
 
-}).passthrough()
+
+
+
+
+
+
+
+export const SimulateTestExecutionsEvalExplanationSummaryListResponse = zod.object({
+  "status": zod.boolean().default(simulateTestExecutionsEvalExplanationSummaryListResponseStatusDefault),
+  "result": zod.object({
+  "response": zod.record(zod.string(), zod.array(zod.object({
+  "kind": zod.string().min(1).optional(),
+  "confidence": zod.string().min(1).optional(),
+  "theme": zod.string().min(1).optional(),
+  "guidance": zod.string().min(1).optional(),
+  "evidenceSummary": zod.string().min(1).optional(),
+  "eval_config_id": zod.string().uuid().optional(),
+  "eval_template_id": zod.string().uuid().optional(),
+  "eval_name": zod.string().min(1).optional()
+}))),
+  "last_updated": zod.string().datetime({"offset":true}),
+  "status": zod.string().min(1)
+})
+})
 
 
 /**
@@ -31882,11 +32219,12 @@ export const SimulateTestExecutionsEvalExplanationSummaryRefreshCreateBody = zod
 
 export const simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseStatusDefault = true;
 
+
 export const SimulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse = zod.object({
   "status": zod.boolean().default(simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -31897,9 +32235,41 @@ export const SimulateTestExecutionsKpisListParams = zod.object({
   "test_execution_id": zod.string()
 })
 
-export const SimulateTestExecutionsKpisListResponse = zod.object({
 
-}).passthrough()
+
+
+export const SimulateTestExecutionsKpisListResponse = zod.object({
+  "total_calls": zod.number().optional(),
+  "avg_score": zod.number().optional(),
+  "avg_response": zod.number().optional(),
+  "calls_attempted": zod.number().optional(),
+  "connected_calls": zod.number().optional(),
+  "calls_connected_percentage": zod.number().optional(),
+  "scenario_graphs": zod.record(zod.string(), zod.record(zod.string(), zod.object({
+
+}).passthrough())).optional(),
+  "agent_type": zod.string().min(1).optional(),
+  "is_inbound": zod.boolean().optional(),
+  "avg_agent_latency": zod.number().optional(),
+  "avg_user_interruption_count": zod.number().optional(),
+  "avg_user_interruption_rate": zod.number().optional(),
+  "avg_user_wpm": zod.number().optional(),
+  "avg_bot_wpm": zod.number().optional(),
+  "avg_talk_ratio": zod.number().optional(),
+  "avg_ai_interruption_count": zod.number().optional(),
+  "avg_ai_interruption_rate": zod.number().optional(),
+  "avg_stop_time_after_interruption": zod.number().optional(),
+  "agent_talk_percentage": zod.number().optional(),
+  "customer_talk_percentage": zod.number().optional(),
+  "avg_total_tokens": zod.number().optional(),
+  "avg_input_tokens": zod.number().optional(),
+  "avg_output_tokens": zod.number().optional(),
+  "avg_chat_latency_ms": zod.number().optional(),
+  "avg_turn_count": zod.number().optional(),
+  "avg_csat_score": zod.number().optional(),
+  "failed_calls": zod.number().optional(),
+  "total_duration": zod.number().optional()
+})
 
 
 /**
@@ -31912,11 +32282,17 @@ export const SimulateTestExecutionsOptimiserAnalysisListParams = zod.object({
 
 export const simulateTestExecutionsOptimiserAnalysisListResponseStatusDefault = true;
 
+
 export const SimulateTestExecutionsOptimiserAnalysisListResponse = zod.object({
   "status": zod.boolean().default(simulateTestExecutionsOptimiserAnalysisListResponseStatusDefault),
   "result": zod.object({
+  "response": zod.record(zod.string(), zod.object({
 
-}).passthrough().optional()
+}).passthrough()),
+  "status": zod.string().min(1),
+  "last_updated": zod.string().datetime({"offset":true}).optional(),
+  "message": zod.string().optional()
+})
 })
 
 
@@ -31933,11 +32309,14 @@ export const SimulateTestExecutionsOptimiserAnalysisRefreshCreateBody = zod.obje
 
 export const simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseStatusDefault = true;
 
+
+
 export const SimulateTestExecutionsOptimiserAnalysisRefreshCreateResponse = zod.object({
   "status": zod.boolean().default(simulateTestExecutionsOptimiserAnalysisRefreshCreateResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough().optional()
+  "message": zod.string().min(1),
+  "status": zod.string().min(1)
+})
 })
 
 
@@ -39412,13 +39791,46 @@ export const TracerSharedReadParams = zod.object({
 
 
 
+
+
+
+
+
 export const TracerSharedReadResponse = zod.object({
   "resource_type": zod.enum(['trace', 'dashboard', 'eval_run', 'dataset', 'project']),
   "resource_id": zod.string().min(1),
   "access_type": zod.enum(['public', 'restricted']),
   "data": zod.object({
+  "trace": zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().optional(),
+  "project_id": zod.string().min(1),
+  "input": zod.object({
 
-}).passthrough()
+}).passthrough().optional(),
+  "output": zod.object({
+
+}).passthrough().optional(),
+  "metadata": zod.object({
+
+}).passthrough().optional(),
+  "tags": zod.object({
+
+}).passthrough().optional(),
+  "created_at": zod.string().min(1).optional()
+}).optional(),
+  "observation_spans": zod.array(zod.object({
+
+}).passthrough()).optional(),
+  "summary": zod.object({
+  "total_spans": zod.number().optional()
+}).optional(),
+  "id": zod.string().min(1).optional(),
+  "name": zod.string().min(1).optional(),
+  "config": zod.object({
+
+}).passthrough().optional()
+})
 })
 
 
@@ -41503,11 +41915,13 @@ export const TracerUserAlertsDuplicateBody = zod.object({
 
 export const tracerUserAlertsDuplicateResponseStatusDefault = true;
 
+
 export const TracerUserAlertsDuplicateResponse = zod.object({
   "status": zod.boolean().default(tracerUserAlertsDuplicateResponseStatusDefault),
   "result": zod.object({
-
-}).passthrough().optional()
+  "id": zod.string().uuid(),
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -42729,8 +43143,8 @@ export const UsageGetCustomerInvoicesListResponse = zod.object({
 export const UsageGetLastFourDigitsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough()
+  "last4": zod.string()
+})
 })
 
 
@@ -43576,11 +43990,19 @@ export const UsageResourceTypeListResponse = zod.object({
 })
 
 
+
+
+
 export const UsageSubscriptionPlansListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
+  "status": zod.enum(['success', 'error']),
+  "data": zod.object({
 
-}).passthrough()
+}).passthrough().optional(),
+  "current_subscription": zod.string().min(1).optional(),
+  "message": zod.string().optional()
+})
 })
 
 
@@ -43718,11 +44140,12 @@ export const UsageUpdateAutoReloadSettingsCreateBody = zod.object({
   "autoreload_walletthreshold": zod.string()
 })
 
-export const UsageUpdateAutoReloadSettingsCreateResponse = zod.object({
-  "status": zod.boolean(),
-  "result": zod.object({
 
-}).passthrough()
+
+
+export const UsageUpdateAutoReloadSettingsCreateResponse = zod.object({
+  "status": zod.enum(['success']),
+  "message": zod.string().min(1)
 })
 
 
@@ -43739,11 +44162,14 @@ export const UsageUpdateBillingDetailsCreateBody = zod.object({
   "tax_id": zod.string().optional()
 })
 
+
+
+
 export const UsageUpdateBillingDetailsCreateResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-
-}).passthrough()
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -44542,8 +44968,11 @@ export const UsageV2StripeWebhookCreateBody = zod.object({
 export const UsageV2StripeWebhookCreateResponse = zod.object({
   "status": zod.string().min(1),
   "result": zod.object({
-
-}).passthrough().optional()
+  "event_type": zod.string().optional(),
+  "action": zod.string().optional(),
+  "status": zod.string().optional(),
+  "message": zod.string().optional()
+}).optional()
 })
 
 
@@ -44756,8 +45185,11 @@ export const UsageWebhookCreateBody = zod.object({
 export const UsageWebhookCreateResponse = zod.object({
   "status": zod.string().min(1),
   "result": zod.object({
-
-}).passthrough().optional()
+  "event_type": zod.string().optional(),
+  "action": zod.string().optional(),
+  "status": zod.string().optional(),
+  "message": zod.string().optional()
+}).optional()
 })
 
 

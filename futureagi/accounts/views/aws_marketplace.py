@@ -15,9 +15,9 @@ from accounts.aws_marketplace_utils import (
 )
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
-    AccountsJSONResponseSerializer,
     AWSMarketplaceLaunchRequestSerializer,
     AWSMarketplaceSignupRequestSerializer,
+    AWSMarketplaceSignupResponseSerializer,
 )
 from accounts.services.aws_marketplace import AWSMarketplaceService
 from tfc.utils.general_methods import GeneralMethods
@@ -134,7 +134,7 @@ def aws_marketplace_verify_token(request):
 @swagger_auto_schema(
     method="post",
     request_body=AWSMarketplaceSignupRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AWSMarketplaceSignupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST"])
 def aws_marketplace_signup(request):
@@ -170,7 +170,11 @@ def aws_marketplace_signup(request):
 @swagger_auto_schema(
     method="post",
     request_body=AWSMarketplaceLaunchRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: "Successful requests redirect to the Future AGI frontend.",
+        302: "Redirects to the Future AGI frontend.",
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
 )
 @api_view(["POST"])
 def aws_marketplace_launch_software(request):

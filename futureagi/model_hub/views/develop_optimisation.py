@@ -15,7 +15,8 @@ from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
-    ModelHubJSONResponseSerializer,
+    MetricsByColumnResponseSerializer,
+    ModelHubStringResultResponseSerializer,
 )
 from model_hub.serializers.develop_optimisation import (
     OptimizationDatasetGetSerializer,
@@ -37,7 +38,10 @@ class OptimisationCreateView(APIView):
 
     @swagger_auto_schema(
         request_body=OptimizationDatasetSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def post(self, request):
         try:
@@ -86,7 +90,10 @@ class OptimisationCreateView(APIView):
 
     @swagger_auto_schema(
         request_body=OptimizationDatasetSerializer,
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
     )
     def put(self, request, pk):
         try:
@@ -190,7 +197,7 @@ class OptimizationDatasetDetailView(generics.RetrieveAPIView):
 
 @swagger_auto_schema(
     method="get",
-    responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    responses={200: MetricsByColumnResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])

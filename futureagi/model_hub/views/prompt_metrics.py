@@ -6,12 +6,12 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
+from model_hub.schema.prompt.prompt_metrics import FetchPromptMetricsRequest
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
-    ModelHubJSONResponseSerializer,
+    PromptMetricsEmptyScreenResponseSerializer,
+    PromptMetricsResponseSerializer,
 )
-from model_hub.schema.prompt.prompt_metrics import FetchPromptMetricsRequest
 from model_hub.services.prompt_metrics import (
     fetch_prompt_metrics,
     fetch_prompt_metrics_span_view,
@@ -19,13 +19,15 @@ from model_hub.services.prompt_metrics import (
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
+logger = structlog.get_logger(__name__)
+
 
 class FetchPromptObserveMetricsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: PromptMetricsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request):
         try:
@@ -76,7 +78,7 @@ class FetchPromptMetricsSpanView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={200: PromptMetricsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request):
         try:
@@ -130,7 +132,10 @@ class FetchPromptMetricsNullView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+        responses={
+            200: PromptMetricsEmptyScreenResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
     )
     def get(self, request):
         try:

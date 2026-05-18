@@ -11,8 +11,11 @@ from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
-    AccountsJSONResponseSerializer,
+    CurrentOrganizationResponseSerializer,
+    OrganizationSelectionListResponseSerializer,
+    OrganizationSelectResponseSerializer,
     OrganizationSwitchRequestSerializer,
+    OrganizationSwitchResponseSerializer,
 )
 from tfc.constants.roles import RoleMapping
 from tfc.utils.general_methods import GeneralMethods
@@ -35,7 +38,10 @@ class OrganizationSelectionView(APIView):
 
     @swagger_auto_schema(
         request_body=OrganizationSwitchRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: OrganizationSelectResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         """Select an organization for the current session."""
@@ -81,7 +87,10 @@ class OrganizationSelectionView(APIView):
             return self._gm.bad_request("Failed to select organization")
 
     @swagger_auto_schema(
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+        responses={
+            200: OrganizationSelectionListResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
     )
     def get(self, request, *args, **kwargs):
         """Get all organizations the user has access to."""
@@ -163,7 +172,10 @@ class SwitchOrganizationView(APIView):
 
     @swagger_auto_schema(
         request_body=OrganizationSwitchRequestSerializer,
-        responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: OrganizationSwitchResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
     )
     def post(self, request, *args, **kwargs):
         """Switch to a different organization.
@@ -295,7 +307,7 @@ class SwitchOrganizationView(APIView):
 
 @swagger_auto_schema(
     method="get",
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: CurrentOrganizationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])

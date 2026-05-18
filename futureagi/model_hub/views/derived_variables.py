@@ -4,17 +4,17 @@ API endpoints for managing derived variables from JSON/structured outputs.
 
 import structlog
 from drf_yasg.utils import swagger_auto_schema
-from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 
 from model_hub.models.run_prompt import PromptVersion
 from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    DerivedVariableDetailResponseSerializer,
     DerivedVariableExtractRequestSerializer,
     DerivedVariablePreviewRequestSerializer,
-    MODEL_HUB_ERROR_RESPONSES,
     ModelHubJSONResponseSerializer,
+    PromptDerivedVariablesResponseSerializer,
 )
 from model_hub.services.derived_variable_service import (
     extract_derived_variables_from_output,
@@ -32,7 +32,10 @@ _gm = GeneralMethods()
 
 @swagger_auto_schema(
     method="get",
-    responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    responses={
+        200: PromptDerivedVariablesResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -106,7 +109,10 @@ def get_prompt_derived_variables(request, prompt_id):
 
 @swagger_auto_schema(
     method="get",
-    responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    responses={
+        200: DerivedVariableDetailResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
@@ -170,7 +176,10 @@ def get_derived_variable_schema_view(request, prompt_id, column_name):
 @swagger_auto_schema(
     method="post",
     request_body=DerivedVariableExtractRequestSerializer,
-    responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    responses={
+        200: DerivedVariableDetailResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
@@ -237,7 +246,10 @@ def extract_derived_variables(request, prompt_id):
 @swagger_auto_schema(
     method="post",
     request_body=DerivedVariablePreviewRequestSerializer,
-    responses={200: ModelHubJSONResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+    responses={
+        200: DerivedVariableDetailResponseSerializer,
+        **MODEL_HUB_ERROR_RESPONSES,
+    },
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])

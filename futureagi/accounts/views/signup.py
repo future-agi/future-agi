@@ -32,10 +32,15 @@ from accounts.models.auth_token import (
 from accounts.models.organization import Organization
 from accounts.serializers.contracts import (
     ACCOUNTS_ERROR_RESPONSES,
+    AcceptInvitationPreviewResponseSerializer,
     AcceptInvitationRequestSerializer,
+    AccountsBulkUserMutationItemSerializer,
+    AccountsDirectMessageResponseSerializer,
     AccountsJSONRequestSerializer,
-    AccountsJSONResponseSerializer,
+    AccountsMessageResponseSerializer,
+    AccountsStringResultResponseSerializer,
     AccountsTokenPairResponseSerializer,
+    AccountsUserProfileResponseSerializer,
     PasswordResetConfirmRequestSerializer,
     PasswordResetInitiateRequestSerializer,
     UserFullNameUpdateRequestSerializer,
@@ -113,7 +118,7 @@ def verify_recaptcha(token):
 @swagger_auto_schema(
     method="post",
     request_body=AccountsJSONRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST"])
 def user_signup(request):
@@ -186,7 +191,7 @@ def user_signup(request):
 @swagger_auto_schema(
     method="post",
     request_body=AccountsJSONRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST"])
 def user_logout(request):
@@ -309,7 +314,7 @@ def activate_account(request, uidb64, token):
 @swagger_auto_schema(
     method="post",
     request_body=PasswordResetInitiateRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST"])
 def initiate_password_reset(request):
@@ -384,7 +389,7 @@ def initiate_password_reset(request):
 @swagger_auto_schema(
     method="post",
     request_body=PasswordResetConfirmRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST"])
 def reset_password_confirm(request, uidb64, token):
@@ -489,7 +494,10 @@ def _activate_memberships(user):
 
 @swagger_auto_schema(
     method="get",
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: AcceptInvitationPreviewResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
 )
 @swagger_auto_schema(
     method="post",
@@ -701,7 +709,10 @@ def accept_invitation_mail(request, uidb64, token):
 @swagger_auto_schema(
     method="post",
     request_body=UserIdsRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: AccountsBulkUserMutationItemSerializer(many=True),
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsOrganizationAdmin])
@@ -762,7 +773,10 @@ def resend_invitation_emails(request):
 @swagger_auto_schema(
     method="delete",
     request_body=UserIdsRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: AccountsBulkUserMutationItemSerializer(many=True),
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
 )
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated, IsOrganizationAdmin])
@@ -829,7 +843,10 @@ def delete_users(request):
 @swagger_auto_schema(
     method="post",
     request_body=UpdateUserSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: AccountsStringResultResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
@@ -910,7 +927,10 @@ def update_user(request):
 @swagger_auto_schema(
     method="post",
     request_body=UserFullNameUpdateRequestSerializer,
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={
+        200: AccountsDirectMessageResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
@@ -937,7 +957,7 @@ def update_user_full_name(request):
 
 @swagger_auto_schema(
     method="get",
-    responses={200: AccountsJSONResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    responses={200: AccountsUserProfileResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])

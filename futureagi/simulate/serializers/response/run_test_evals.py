@@ -68,11 +68,14 @@ class EvalSummaryResponseSerializer(serializers.Serializer):
 class EvalSummaryComparisonResponseSerializer(serializers.Serializer):
     """Response serializer for GET /simulate/run-tests/{run_test_id}/eval-summary-comparison/  (HTTP 200)
 
-    Returns a dict keyed by execution UUID, each value being an array of eval summary objects.
-    The actual response is a plain dict — this serializer documents the shape.
+    Returns the GeneralMethods envelope. ``result`` is keyed by execution UUID,
+    with each value being an array of eval summary objects.
     """
 
-    pass  # Dynamic dict — documented in the MDX response section
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(
+        child=serializers.ListField(child=EvalTemplateSummarySerializer())
+    )
 
 
 class EvalConfigStructureSerializer(serializers.Serializer):
