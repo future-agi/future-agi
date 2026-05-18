@@ -555,8 +555,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           .replace(/[^a-z0-9_-]/g, "");
         const sourceSlug = SOURCE_NAME_SLUGS[source] || "";
         const stamp = format(new Date(), "dd_MMM_yyyy_HH_mm").toLowerCase();
+        const suffix = [sourceSlug, stamp].filter(Boolean).join("_");
+        const maxBaseLen = Math.max(0, 50 - suffix.length - (suffix ? 1 : 0));
+        const truncatedBase = sanitized.slice(0, maxBaseLen).replace(/_+$/, "");
         setEvalName(
-          [sanitized, sourceSlug, stamp].filter(Boolean).join("_"),
+          [truncatedBase, sourceSlug, stamp].filter(Boolean).join("_"),
         );
       }
 
