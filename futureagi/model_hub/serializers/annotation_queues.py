@@ -1,3 +1,5 @@
+import json
+
 from django.db import transaction
 from rest_framework import serializers
 
@@ -615,10 +617,64 @@ class QueueExportQuerySerializer(StrictInputSerializer):
     status = serializers.CharField(required=False, allow_blank=True)
 
 
+class QueueSourceLookupSerializer(StrictInputSerializer):
+    source_type = serializers.ChoiceField(choices=sorted(SOURCE_TYPE_FK_MAP))
+    source_id = serializers.CharField(allow_blank=False)
+    span_notes_source_id = serializers.CharField(required=False, allow_blank=False)
+
+
+class QueueSourceListQueryParamField(serializers.CharField):
+    class Meta:
+        swagger_schema_fields = {
+            "type": "string",
+            "description": (
+                "JSON-encoded source lookup list. Each item must contain "
+                "source_type and source_id, plus optional span_notes_source_id."
+            ),
+        }
+
+    def to_internal_value(self, data):
+        if data in (None, ""):
+            return []
+        try:
+            sources = json.loads(data) if isinstance(data, str) else data
+        except json.JSONDecodeError as exc:
+            raise serializers.ValidationError("sources must be valid JSON.") from exc
+        if not isinstance(sources, list) or not sources:
+            raise serializers.ValidationError("sources must be a non-empty list.")
+
+        serializer = QueueSourceLookupSerializer(data=sources, many=True)
+        serializer.is_valid(raise_exception=True)
+        return serializer.validated_data
+
+
 class QueueForSourceQuerySerializer(StrictInputSerializer):
-    source_type = serializers.CharField(required=False, allow_blank=True)
+    source_type = serializers.ChoiceField(
+        choices=sorted(SOURCE_TYPE_FK_MAP),
+        required=False,
+    )
     source_id = serializers.CharField(required=False, allow_blank=True)
-    sources = serializers.CharField(required=False, allow_blank=True)
+    sources = QueueSourceListQueryParamField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        sources = attrs.get("sources") or []
+        has_single_source_type = bool(attrs.get("source_type"))
+        has_single_source_id = bool(attrs.get("source_id"))
+
+        if sources and (has_single_source_type or has_single_source_id):
+            raise serializers.ValidationError(
+                "Use either sources or source_type/source_id, not both."
+            )
+        if sources:
+            return attrs
+        if not has_single_source_type or not has_single_source_id:
+            raise serializers.ValidationError(
+                "source_type and source_id (or sources) are required."
+            )
+        attrs["sources"] = [
+            {"source_type": attrs["source_type"], "source_id": attrs["source_id"]}
+        ]
+        return attrs
 
 
 class QueueItemListQuerySerializer(StrictInputSerializer):

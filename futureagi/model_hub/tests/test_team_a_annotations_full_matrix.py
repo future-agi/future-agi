@@ -1374,6 +1374,29 @@ class TestQueueForSource:
         assert "sourceType" in str(resp.data)
         assert "sourceId" in str(resp.data)
 
+    def test_rejects_legacy_nested_source_aliases(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        _, rows = dataset_with_rows
+
+        resp = auth_client.get(
+            _queues_for_source_url(),
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "sourceType": "dataset_row",
+                            "sourceId": str(rows[0].id),
+                        }
+                    ]
+                )
+            },
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
+
 
 # ===========================================================================
 # 20. add-items (manual + filter mode)

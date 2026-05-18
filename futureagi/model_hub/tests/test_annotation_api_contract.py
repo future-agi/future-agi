@@ -12,6 +12,7 @@ from model_hub.serializers.annotation_queues import (
     AssignItemsSerializer,
     DiscussionCommentRequestSerializer,
     DiscussionReactionRequestSerializer,
+    QueueForSourceQuerySerializer,
     ReviewItemRequestSerializer,
     SelectionSerializer,
     SubmitAnnotationsSerializer,
@@ -412,6 +413,55 @@ class TestAnnotationApiContract:
         )
         assert not legacy_single_user.is_valid()
         assert "user_id" in legacy_single_user.errors
+
+    def test_queue_for_source_contract_validates_nested_sources(self):
+        source_id = _uuid()
+
+        single = QueueForSourceQuerySerializer(
+            data={"source_type": "trace", "source_id": source_id}
+        )
+        assert single.is_valid(), single.errors
+        assert single.validated_data["sources"] == [
+            {"source_type": "trace", "source_id": source_id}
+        ]
+
+        multi = QueueForSourceQuerySerializer(
+            data={
+                "sources": json.dumps(
+                    [
+                        {"source_type": "trace", "source_id": source_id},
+                        {
+                            "source_type": "observation_span",
+                            "source_id": "span-1",
+                            "span_notes_source_id": "span-root",
+                        },
+                    ]
+                )
+            }
+        )
+        assert multi.is_valid(), multi.errors
+
+        legacy_nested_alias = QueueForSourceQuerySerializer(
+            data={
+                "sources": json.dumps(
+                    [{"sourceType": "trace", "sourceId": source_id}]
+                )
+            }
+        )
+        assert not legacy_nested_alias.is_valid()
+        assert "sourceType" in str(legacy_nested_alias.errors)
+        assert "sourceId" in str(legacy_nested_alias.errors)
+
+        mixed_single_and_multi = QueueForSourceQuerySerializer(
+            data={
+                "source_type": "trace",
+                "source_id": source_id,
+                "sources": json.dumps(
+                    [{"source_type": "trace", "source_id": source_id}]
+                ),
+            }
+        )
+        assert not mixed_single_and_multi.is_valid()
 
     def test_discussion_and_review_request_contracts_validate_shape(self):
         empty_comment = DiscussionCommentRequestSerializer(data={"comment": ""})

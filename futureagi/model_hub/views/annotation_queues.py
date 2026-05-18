@@ -3805,40 +3805,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
           - source_type, source_id  (single source)
           - OR sources (JSON array of {source_type, source_id} objects for multi-source lookup)
         """
-        import json
-
         query_serializer = QueueForSourceQuerySerializer(data=request.query_params)
         if not query_serializer.is_valid():
             return self._gm.bad_request(query_serializer.errors)
         query_params = query_serializer.validated_data
-
-        # Parse sources – either single or multi
-        sources_param = query_params.get("sources")
-        if sources_param:
-            try:
-                sources = json.loads(sources_param)
-            except (json.JSONDecodeError, TypeError):
-                return self._gm.bad_request("Invalid sources JSON.")
-        else:
-            source_type = query_params.get("source_type")
-            source_id = query_params.get("source_id")
-            if not source_type or not source_id:
-                return self._gm.bad_request(
-                    "source_type and source_id (or sources) are required."
-                )
-            sources = [{"source_type": source_type, "source_id": source_id}]
+        sources = query_params["sources"]
 
         # Validate all sources
         span_notes_source_ids = {}
         for src in sources:
             st = src.get("source_type")
             sid = src.get("source_id")
-            if not st or not sid:
-                return self._gm.bad_request(
-                    "Each source must have source_type and source_id."
-                )
-            if st not in SOURCE_TYPE_FK_MAP:
-                return self._gm.bad_request(f"Invalid source_type: {st}")
             span_notes_source_id = src.get("span_notes_source_id")
             if span_notes_source_id:
                 span_notes_source = resolve_source_object(
