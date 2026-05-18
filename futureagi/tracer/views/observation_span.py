@@ -80,6 +80,9 @@ from tracer.serializers.filters import ObserveGraphDataRequestSerializer
 from tracer.serializers.observation_span import (
     ObservationAttributeListQuerySerializer,
     ObservationSpanSerializer,
+    SpanIndexQuerySerializer,
+    SpanObserveIndexQuerySerializer,
+    SpanObserveListQuerySerializer,
     SpanExportSerializer,
     SubmitFeedbackActionTypeSerializer,
     SubmitFeedbackSerializer,
@@ -1555,26 +1558,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error submitting feedback action type: {str(e)}"
             )
 
+    @swagger_auto_schema(query_serializer=SpanObserveListQuerySerializer)
     @action(detail=False, methods=["get"])
     def list_spans_observe(self, request, *args, **kwargs):
         try:
-            query_data = {"filters": request.query_params.get("filters", "[]")}
-            if query_data["filters"]:
-                query_data["filters"] = json.loads(query_data["filters"])
-            serializer = SpanExportSerializer(data=query_data)
+            serializer = SpanObserveListQuerySerializer(data=request.query_params)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
             validated_data = serializer.validated_data
             export = kwargs.get("export", False) if kwargs else False
 
-            project_id = self.request.query_params.get(
-                "project_id"
-            ) or self.request.query_params.get("projectId")
-            user_id = request.query_params.get("user_id") or request.query_params.get(
-                "userId"
-            )
-            if not project_id:
-                raise Exception("Project id is required")
+            project_id = str(validated_data["project_id"])
+            user_id = validated_data.get("user_id") or None
 
             project = Project.objects.get(
                 id=project_id,
@@ -1600,12 +1595,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     )
 
             # Get pagination parameters
-            page_number = int(self.request.query_params.get("page_number", 0)) or int(
-                self.request.query_params.get("pageNumber", 0)
-            )
-            page_size = int(self.request.query_params.get("page_size", 30)) or int(
-                self.request.query_params.get("pageSize", 30)
-            )
+            page_number = validated_data["page_number"]
+            page_size = validated_data["page_size"]
 
             end_user_id = None
             if user_id:
@@ -1992,16 +1983,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
 
         filters = validated_data.get("filters", [])
-        page_number = int(request.query_params.get("page_number", 0)) or int(
-            request.query_params.get("pageNumber", 0)
-        )
-        page_size = int(request.query_params.get("page_size", 30)) or int(
-            request.query_params.get("pageSize", 30)
-        )
+        page_number = validated_data["page_number"]
+        page_size = validated_data["page_size"]
 
-        user_id = request.query_params.get("user_id") or request.query_params.get(
-            "userId"
-        )
+        user_id = validated_data.get("user_id")
         end_user_id = None
         if user_id:
             try:
@@ -3537,6 +3522,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         except Exception as e:
             return self._gm.bad_request(f"error deleting the annotation label {str(e)}")
 
+    @swagger_auto_schema(query_serializer=SpanIndexQuerySerializer)
     @action(detail=False, methods=["get"])
     def get_trace_id_by_index_spans_as_base(self, request, *args, **kwargs):
         """
@@ -3544,17 +3530,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Mirrors the query/filter logic of list_spans.
         """
         try:
-            span_id = request.query_params.get("span_id") or request.query_params.get(
-                "spanId"
-            )
-            if not span_id:
-                raise Exception("Span id is required")
-
-            project_version_id = request.query_params.get(
-                "project_version_id"
-            ) or request.query_params.get("projectVersionId")
-            if not project_version_id:
-                raise Exception("Project version id is required")
+            query_serializer = SpanIndexQuerySerializer(data=request.query_params)
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query = query_serializer.validated_data
+            span_id = query["span_id"]
+            project_version_id = str(query["project_version_id"])
 
             project_version = ProjectVersion.objects.get(
                 id=project_version_id,
@@ -3692,15 +3673,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 span_filter_kwargs={"observation_span_id": OuterRef("id")},
             )
 
-            filters = request.query_params.get("filters", [])
+            filters = query["filters"]
             if filters:
-                try:
-                    filters = json.loads(filters)
-                except json.JSONDecodeError as e:
-                    return self._gm.bad_request(
-                        f"Invalid JSON format in filters parameter: {str(e)}"
-                    )
-
                 combined_filter_conditions = Q()
 
                 system_filter_conditions = (
@@ -3782,6 +3756,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error fetching span id by index: {str(e)}")
             return self._gm.bad_request(f"error fetching the span id by index {str(e)}")
 
+    @swagger_auto_schema(query_serializer=SpanObserveIndexQuerySerializer)
     @action(detail=False, methods=["get"])
     def get_trace_id_by_index_spans_as_observe(self, request, *args, **kwargs):
         """
@@ -3789,21 +3764,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Mirrors the query/filter logic of list_spans_as_observe.
         """
         try:
-            span_id = request.query_params.get("span_id") or request.query_params.get(
-                "spanId"
+            query_serializer = SpanObserveIndexQuerySerializer(
+                data=request.query_params
             )
-            if not span_id:
-                raise Exception("Span id is required")
-
-            project_id = request.query_params.get(
-                "project_id"
-            ) or request.query_params.get("projectId")
-            if not project_id:
-                raise Exception("Project id is required")
-
-            user_id = request.query_params.get("user_id") or request.query_params.get(
-                "userId"
-            )
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query = query_serializer.validated_data
+            span_id = query["span_id"]
+            project_id = str(query["project_id"])
+            user_id = query.get("user_id") or None
 
             end_user_id = None
             if user_id:
@@ -3969,14 +3938,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 span_filter_kwargs={"observation_span_id": OuterRef("id")},
             )
 
-            filters = request.query_params.get("filters", "[]")
-            try:
-                if filters:
-                    filters = json.loads(filters)
-            except json.JSONDecodeError as e:
-                return self._gm.bad_request(
-                    f"Invalid JSON format in filters parameter: {str(e)}"
-                )
+            filters = query["filters"]
 
             if filters:
                 combined_filter_conditions = Q()

@@ -63,7 +63,10 @@ from tracer.serializers.observation_span import (
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
     TraceExportSerializer,
+    TraceIndexQuerySerializer,
     TraceListQuerySerializer,
+    TraceObserveIndexQuerySerializer,
+    TraceObserveListQuerySerializer,
     TraceSerializer,
     UserCodeExampleResponseSerializer,
     UsersQuerySerializer,
@@ -2639,23 +2642,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error comparing traces: {get_error_message('ERROR_COMPARING_TRACES')}"
             )
 
+    @swagger_auto_schema(query_serializer=TraceIndexQuerySerializer)
     @action(detail=False, methods=["get"])
     def get_trace_id_by_index(self, request, *args, **kwargs):
         """
         Get the previous and next trace id by index using efficient database queries.
         """
         try:
-            trace_id = self.request.query_params.get(
-                "trace_id"
-            ) or self.request.query_params.get("traceId")
-            project_version_id = self.request.query_params.get(
-                "project_version_id"
-            ) or self.request.query_params.get("projectVersionId")
-
-            if not trace_id:
-                raise Exception("Trace id is required")
-            if not project_version_id:
-                raise Exception("Project version id is required")
+            query_serializer = TraceIndexQuerySerializer(data=request.query_params)
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query = query_serializer.validated_data
+            trace_id = str(query["trace_id"])
+            project_version_id = str(query["project_version_id"])
 
             # Base query with annotations
             base_query = Trace.objects.filter(
@@ -2815,15 +2814,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             # Apply filters from request
-            filters = self.request.query_params.get("filters", [])
+            filters = query["filters"]
             if filters:
-                try:
-                    filters = json.loads(filters)
-                except json.JSONDecodeError as e:
-                    return self._gm.bad_request(
-                        f"Invalid JSON format in filters parameter: {str(e)}"
-                    )
-
                 system_filter_conditions = (
                     FilterEngine.get_filter_conditions_for_system_metrics(filters)
                 )
@@ -2908,6 +2900,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the trace id by index {str(e)}"
             )
 
+    @swagger_auto_schema(query_serializer=TraceObserveListQuerySerializer)
     @action(detail=False, methods=["get"])
     def list_traces_of_session(self, request, *args, **kwargs):
         """
@@ -2916,26 +2909,21 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         try:
             export = kwargs.get("export", False) if kwargs else False
 
-            # Get data from query parameters instead of request body
-            query_data = {"filters": request.query_params.get("filters", "[]")}
-
-            # Parse JSON fields from query parameters
-            try:
-                if query_data["filters"]:
-                    query_data["filters"] = json.loads(query_data["filters"])
-            except json.JSONDecodeError as e:
-                return self._gm.bad_request(
-                    f"Invalid JSON format in filters parameter: {str(e)}"
-                )
-
-            serializer = TraceExportSerializer(data=query_data)
+            serializer = TraceObserveListQuerySerializer(data=request.query_params)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
 
             validated_data = serializer.validated_data
-            project_id = request.query_params.get(
-                "project_id"
-            ) or request.query_params.get("projectId")
+            project_id = (
+                str(validated_data["project_id"])
+                if validated_data.get("project_id")
+                else None
+            )
+            session_id = (
+                str(validated_data["session_id"])
+                if validated_data.get("session_id")
+                else None
+            )
 
             org = (
                 getattr(self.request, "organization", None)
@@ -2978,19 +2966,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     )
 
             # Get pagination parameters
-            page_number = int(self.request.query_params.get("page_number", 0))
-            page_size = int(self.request.query_params.get("page_size", 30))
+            page_number = validated_data["page_number"]
+            page_size = validated_data["page_size"]
 
             base_query = (
                 Trace.objects.filter(project_id__in=org_project_ids)
                 if org_scope
                 else Trace.objects.filter(project_id=project_id)
             )
+            if session_id:
+                base_query = base_query.filter(session_id=session_id)
 
             # Optional project_version_id filter (for experiment/prototype projects)
-            project_version_id = request.query_params.get(
-                "project_version_id"
-            ) or request.query_params.get("projectVersionId")
+            project_version_id = (
+                str(validated_data["project_version_id"])
+                if validated_data.get("project_version_id")
+                else None
+            )
             # Common annotation expressions (used with and without project_version_id)
             _root_span_qs = ObservationSpan.objects.filter(
                 trace_id=OuterRef("id"), parent_span_id__isnull=True
@@ -4244,23 +4236,21 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         }
         return self._gm.success_response(response)
 
+    @swagger_auto_schema(query_serializer=TraceObserveIndexQuerySerializer)
     @action(detail=False, methods=["get"])
     def get_trace_id_by_index_observe(self, request, *args, **kwargs):
         """
         Get the previous and next trace id by index.
         """
         try:
-            trace_id = request.query_params.get("trace_id") or request.query_params.get(
-                "traceId"
+            query_serializer = TraceObserveIndexQuerySerializer(
+                data=request.query_params
             )
-            if not trace_id:
-                raise Exception("Trace id is required")
-
-            project_id = request.query_params.get(
-                "project_id"
-            ) or request.query_params.get("projectId")
-            if not project_id:
-                raise Exception("Project id is required")
+            if not query_serializer.is_valid():
+                return self._gm.bad_request(query_serializer.errors)
+            query = query_serializer.validated_data
+            trace_id = str(query["trace_id"])
+            project_id = str(query["project_id"])
 
             project = Project.objects.get(
                 id=project_id,
@@ -4270,13 +4260,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             if project.trace_type != "observe":
                 raise Exception("Project should be of type observe")
 
-            # Parse filters for CH path
-            filters = request.query_params.get("filters", "[]")
-            try:
-                if filters:
-                    filters = json.loads(filters)
-            except json.JSONDecodeError:
-                filters = []
+            filters = query["filters"]
 
             # ClickHouse dispatch — simple prev/next by start_time
             analytics = AnalyticsQueryService()
@@ -4827,8 +4811,25 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         org_scope = bool(org_project_ids)
         filters = list(validated_data.get("filters", []) or [])
-        page_number = int(request.query_params.get("page_number", 0))
-        page_size = int(request.query_params.get("page_size", 30))
+        page_number = validated_data["page_number"]
+        page_size = validated_data["page_size"]
+        session_id = (
+            str(validated_data["session_id"])
+            if validated_data.get("session_id")
+            else None
+        )
+        if session_id:
+            filters.append(
+                {
+                    "column_id": "trace_session_id",
+                    "filter_config": {
+                        "col_type": "NORMAL",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": session_id,
+                    },
+                }
+            )
 
         # Resolve user_id filter values (strings) to end_user_id UUIDs.
         # `spans` only populates `end_user_id` on the user-facing child span,

@@ -10,7 +10,12 @@ from model_hub.serializers.contracts import (
 from tracer.serializers.eval_task import EditEvalTaskSerializer
 from tracer.serializers.dashboard import DashboardFilterValuesQuerySerializer
 from tracer.serializers.filters import ObserveGraphDataRequestSerializer
-from tracer.serializers.observation_span import ObservationAttributeListQuerySerializer
+from tracer.serializers.observation_span import (
+    ObservationAttributeListQuerySerializer,
+    SpanIndexQuerySerializer,
+    SpanObserveIndexQuerySerializer,
+    SpanObserveListQuerySerializer,
+)
 from tracer.serializers.project import (
     ProjectGraphDataQuerySerializer,
     ProjectUserMetricsRequestSerializer,
@@ -18,7 +23,10 @@ from tracer.serializers.project import (
 )
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
+    TraceIndexQuerySerializer,
     TraceListQuerySerializer,
+    TraceObserveIndexQuerySerializer,
+    TraceObserveListQuerySerializer,
     UsersQuerySerializer,
 )
 from tracer.serializers.trace_session import (
@@ -336,13 +344,75 @@ class TestFilterSerializerContracts:
         serializer = TraceListQuerySerializer(
             data={
                 "projectVersionId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "sort_params": json.dumps(
+                    [{"column_id": "start_time", "direction": "asc"}]
+                ),
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "projectVersionId" in serializer.errors
+
+    def test_trace_list_query_rejects_legacy_sort_contract(self):
+        serializer = TraceListQuerySerializer(
+            data={
+                "project_version_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
                 "sort_params": json.dumps([{"columnId": "start_time", "sort": "asc"}]),
             }
         )
 
         assert not serializer.is_valid()
-        assert "project_version_id" in serializer.errors
         assert "sort_params" in serializer.errors
+
+    def test_trace_observe_list_query_accepts_canonical_filters(self):
+        serializer = TraceObserveListQuerySerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "project_version_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "filters": json.dumps([_span_attr_filter()]),
+                "page_number": "1",
+                "page_size": "50",
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["filters"][0]["column_id"] == "customer_tier"
+
+    def test_trace_observe_list_query_rejects_camel_case_aliases(self):
+        serializer = TraceObserveListQuerySerializer(
+            data={
+                "projectId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "projectVersionId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "pageNumber": "1",
+                "filters": json.dumps([_span_attr_filter()]),
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "projectId" in serializer.errors
+        assert "projectVersionId" in serializer.errors
+        assert "pageNumber" in serializer.errors
+
+    def test_trace_index_queries_reject_camel_case_aliases(self):
+        trace_index = TraceIndexQuerySerializer(
+            data={
+                "traceId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "projectVersionId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+            }
+        )
+        observe_index = TraceObserveIndexQuerySerializer(
+            data={
+                "traceId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "projectId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+            }
+        )
+
+        assert not trace_index.is_valid()
+        assert not observe_index.is_valid()
+        assert "traceId" in trace_index.errors
+        assert "projectVersionId" in trace_index.errors
+        assert "traceId" in observe_index.errors
+        assert "projectId" in observe_index.errors
 
     def test_optimize_dataset_list_query_accepts_canonical_filters(self):
         serializer = OptimizeDatasetListQuerySerializer(
@@ -414,7 +484,7 @@ class TestFilterSerializerContracts:
         )
 
         assert not serializer.is_valid()
-        assert "project_id" in serializer.errors
+        assert "projectId" in serializer.errors
 
     def test_project_user_metrics_request_rejects_legacy_filters(self):
         serializer = ProjectUserMetricsRequestSerializer(
@@ -472,6 +542,58 @@ class TestFilterSerializerContracts:
         assert not serializer.is_valid()
         assert "filters" in serializer.errors
 
+    def test_span_observe_list_query_accepts_canonical_filters(self):
+        serializer = SpanObserveListQuerySerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "user_id": "customer-1",
+                "filters": json.dumps([_span_attr_filter()]),
+                "page_number": "1",
+                "page_size": "50",
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["filters"][0]["column_id"] == "customer_tier"
+
+    def test_span_observe_list_query_rejects_camel_case_aliases(self):
+        serializer = SpanObserveListQuerySerializer(
+            data={
+                "projectId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "userId": "customer-1",
+                "pageNumber": "1",
+                "filters": json.dumps([_span_attr_filter()]),
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "projectId" in serializer.errors
+        assert "userId" in serializer.errors
+        assert "pageNumber" in serializer.errors
+
+    def test_span_index_queries_reject_camel_case_aliases(self):
+        span_index = SpanIndexQuerySerializer(
+            data={
+                "spanId": "span-1",
+                "projectVersionId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+            }
+        )
+        observe_index = SpanObserveIndexQuerySerializer(
+            data={
+                "spanId": "span-1",
+                "projectId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "userId": "customer-1",
+            }
+        )
+
+        assert not span_index.is_valid()
+        assert not observe_index.is_valid()
+        assert "spanId" in span_index.errors
+        assert "projectVersionId" in span_index.errors
+        assert "spanId" in observe_index.errors
+        assert "projectId" in observe_index.errors
+        assert "userId" in observe_index.errors
+
     def test_eval_api_log_table_query_accepts_canonical_filters(self):
         serializer = EvalApiLogTableQuerySerializer(
             data={
@@ -528,4 +650,4 @@ class TestFilterSerializerContracts:
         )
 
         assert not serializer.is_valid()
-        assert "project_id" in serializer.errors
+        assert "projectId" in serializer.errors

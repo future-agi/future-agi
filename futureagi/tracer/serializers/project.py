@@ -1,7 +1,11 @@
 from rest_framework import serializers
 
 from tracer.models.project import Project
-from tracer.serializers.filters import filter_list_field, filter_list_query_param_field
+from tracer.serializers.filters import (
+    StrictInputSerializer,
+    filter_list_field,
+    filter_list_query_param_field,
+)
 
 
 class ProjectSerializer(serializers.ModelSerializer):
@@ -38,20 +42,20 @@ class ProjectVersionExportSerializer(serializers.Serializer):
     )
 
 
-class ProjectGraphDataQuerySerializer(serializers.Serializer):
+class ProjectGraphDataQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     interval = serializers.CharField(required=False, default="hour", allow_blank=False)
     filters = filter_list_query_param_field(required=False, default=list)
 
 
-class ProjectUserMetricsRequestSerializer(serializers.Serializer):
+class ProjectUserMetricsRequestSerializer(StrictInputSerializer):
     end_user_id = serializers.UUIDField()
     project_id = serializers.UUIDField()
     interval = serializers.CharField(required=False, default="day", allow_blank=False)
     filters = filter_list_field(required=False, default=list)
 
 
-class ProjectUsersAggregateGraphDataRequestSerializer(serializers.Serializer):
+class ProjectUsersAggregateGraphDataRequestSerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     interval = serializers.CharField(required=False, default="day", allow_blank=False)
     filters = filter_list_field(required=False, default=list)

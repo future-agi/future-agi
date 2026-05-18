@@ -7,7 +7,11 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
-from tracer.serializers.filters import filter_list_field
+from tracer.serializers.filters import (
+    StrictInputSerializer,
+    filter_list_field,
+    filter_list_query_param_field,
+)
 from tracer.utils.helper import validate_filters_helper
 
 
@@ -120,6 +124,29 @@ class SpanExportSerializer(serializers.Serializer):
 
     def validate_filters(self, value):
         return validate_filters_helper(value)
+
+
+class SpanObserveListQuerySerializer(StrictInputSerializer):
+    project_id = serializers.UUIDField()
+    user_id = serializers.CharField(required=False, allow_blank=True)
+    filters = filter_list_query_param_field(required=False, default=list)
+    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    page_size = serializers.IntegerField(
+        required=False, default=30, min_value=1, max_value=500
+    )
+
+
+class SpanIndexQuerySerializer(StrictInputSerializer):
+    span_id = serializers.CharField()
+    project_version_id = serializers.UUIDField()
+    filters = filter_list_query_param_field(required=False, default=list)
+
+
+class SpanObserveIndexQuerySerializer(StrictInputSerializer):
+    span_id = serializers.CharField()
+    project_id = serializers.UUIDField()
+    user_id = serializers.CharField(required=False, allow_blank=True)
+    filters = filter_list_query_param_field(required=False, default=list)
 
 
 class SubmitFeedbackActionTypeSerializer(serializers.Serializer):

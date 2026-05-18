@@ -5,6 +5,7 @@ from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.serializers.filters import (
+    StrictInputSerializer,
     filter_list_field,
     filter_list_query_param_field,
     parse_filter_list_payload,
@@ -91,7 +92,7 @@ class SortParamListQueryParamField(serializers.CharField):
         return serializers.ListField(child=SortParamField()).run_validation(sort_params)
 
 
-class TraceListQuerySerializer(serializers.Serializer):
+class TraceListQuerySerializer(StrictInputSerializer):
     project_version_id = serializers.UUIDField(required=True)
     trace_ids = CommaSeparatedStringListField(required=False, default=list)
     filters = filter_list_query_param_field(required=False, default=list)
@@ -102,7 +103,31 @@ class TraceListQuerySerializer(serializers.Serializer):
     )
 
 
-class TraceAgentGraphQuerySerializer(serializers.Serializer):
+class TraceObserveListQuerySerializer(StrictInputSerializer):
+    project_id = serializers.UUIDField(required=False)
+    project_version_id = serializers.UUIDField(required=False)
+    session_id = serializers.UUIDField(required=False)
+    filters = filter_list_query_param_field(required=False, default=list)
+    page_number = serializers.IntegerField(required=False, default=0, min_value=0)
+    page_size = serializers.IntegerField(
+        required=False, default=30, min_value=1, max_value=500
+    )
+    interval = serializers.CharField(required=False, allow_blank=True)
+
+
+class TraceIndexQuerySerializer(StrictInputSerializer):
+    trace_id = serializers.UUIDField()
+    project_version_id = serializers.UUIDField()
+    filters = filter_list_query_param_field(required=False, default=list)
+
+
+class TraceObserveIndexQuerySerializer(StrictInputSerializer):
+    trace_id = serializers.UUIDField()
+    project_id = serializers.UUIDField()
+    filters = filter_list_query_param_field(required=False, default=list)
+
+
+class TraceAgentGraphQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     filters = filter_list_query_param_field(required=False, default=list)
 
