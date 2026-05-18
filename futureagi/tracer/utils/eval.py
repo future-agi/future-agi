@@ -38,20 +38,12 @@ EXPERIMENT = "experiment"
 OBSERVE = "observe"
 
 
-# TH-4910 — distinct ``output_str`` sentinel for eval rows that were
-# skipped because the dispatch had no input data (the span lacked the
-# attribute the mapping pointed at). Tighter than bare ``"SKIPPED"`` so
-# a customer's custom eval can't accidentally collide by emitting that
-# string itself. Read by:
-#   * ``_create_error_eval_logger`` (this file, write site)
-#   * ``tracer.views.eval_task.get_eval_task_logs`` (count aggregate)
-#   * ``tracer.views.trace.populate_call_logs_result`` (PG voice list)
-#   * ``tracer.views.trace.voice_call_detail`` (PG voice detail)
-#   * ``tracer.views.trace._voice_call_detail_clickhouse`` (CH voice detail)
-#   * ``tracer.services.clickhouse.query_builders.voice_call_list``
-#     (CH voice list builder)
-# Anyone touching the sentinel string must update all six call sites.
-EVAL_SKIPPED_OUTPUT_STR = "__SKIPPED_MISSING_ATTRIBUTE__"
+# TH-4910 — prefix written into ``EvalLogger.skipped_reason`` when the
+# dispatch had no input data (the span lacked the attribute the eval
+# mapping pointed at). Read by ``get_eval_task_logs`` aggregates and
+# the voice render paths to distinguish "Skipped" from "Fail" and to
+# exclude skipped rows from failure-rate metrics.
+EVAL_SKIPPED_REASON_PREFIX = "missing_required_attribute"
 
 
 class EvalSkippedMissingAttribute(ValueError):
@@ -1148,11 +1140,10 @@ def _create_error_eval_logger(
 
     TH-4910: when ``exc`` is a ``EvalSkippedMissingAttribute`` instance,
     the span had no value for the mapped attribute — the eval pipeline
-    never ran. That row is written as **skipped** (``output_str`` set
-    to ``EVAL_SKIPPED_OUTPUT_STR``, ``error=False``) so the read paths
-    can render "Skipped" instead of "Fail" / "Error".
-
-    All other paths keep the legacy error shape.
+    never ran. That row is written as **skipped** (``error=True`` with
+    ``skipped_reason`` set per the ticket contract) so failure-rate
+    aggregates that exclude ``skipped_reason IS NOT NULL`` ignore it
+    while the read paths still render "Skipped" instead of "Fail".
     """
     if isinstance(exc, EvalSkippedMissingAttribute):
         EvalLogger.objects.create(
@@ -1170,12 +1161,9 @@ def _create_error_eval_logger(
             results_explanation={"reason": str(exc)},
             eval_task_id=eval_task_id,
             custom_eval_config=custom_eval_config,
-            # Skipped rows are NOT eval failures — leave ``error`` /
-            # ``error_message`` empty so failure-rate aggregates and the
-            # error_groups grouping in get_eval_task_logs ignore them.
-            error=False,
-            error_message=None,
-            output_str=EVAL_SKIPPED_OUTPUT_STR,
+            error=True,
+            error_message=str(exc),
+            skipped_reason=f"{EVAL_SKIPPED_REASON_PREFIX}: {exc.attribute}",
         )
         return
 

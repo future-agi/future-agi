@@ -280,6 +280,10 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
     -- Error tracking
     error UInt8 DEFAULT 0,
     error_message Nullable(String),
+    -- TH-4910: distinguishes skipped (missing required span attr) from a
+    -- real eval failure. Skipped rows still set error=1 per the ticket
+    -- contract; read paths filter on ``skipped_reason IS NOT NULL``.
+    skipped_reason Nullable(String),
 
     -- Explanation / metadata
     eval_explanation Nullable(String),
@@ -1026,7 +1030,8 @@ SELECT
     countIf(e.output_float IS NOT NULL)                            AS float_count,
     countIf(e.output_bool = 1)                                     AS bool_pass,
     countIf(e.output_bool = 0 AND e.output_bool IS NOT NULL)       AS bool_fail,
-    countIf(e.error = 1)                                           AS error_count
+    -- TH-4910: exclude skipped rows from error_count; they're not failures.
+    countIf(e.error = 1 AND e.skipped_reason IS NULL)              AS error_count
 
 FROM tracer_eval_logger AS e
 WHERE e._peerdb_is_deleted = 0
@@ -1873,6 +1878,11 @@ POST_DDL_ALTERS: List[str] = [
     "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
     "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
     "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
+    # TH-4910: skipped vs failed distinction. Nullable column, no index —
+    # voice/eval read paths filter on ``skipped_reason IS NOT NULL`` as a
+    # coarse classifier riding on existing per-task / per-trace indexes.
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "skipped_reason Nullable(String)",
 ]
 
 
@@ -1931,7 +1941,8 @@ MV_RECREATE_MANIFEST: Dict[str, Dict[str, Optional[str]]] = {
                 countIf(e.output_float IS NOT NULL)                            AS float_count,
                 countIf(e.output_bool = 1)                                     AS bool_pass,
                 countIf(e.output_bool = 0 AND e.output_bool IS NOT NULL)       AS bool_fail,
-                countIf(e.error = 1)                                           AS error_count
+                -- TH-4910: exclude skipped rows from error_count.
+                countIf(e.error = 1 AND e.skipped_reason IS NULL)              AS error_count
 
             FROM tracer_eval_logger AS e
             WHERE e._peerdb_is_deleted = 0

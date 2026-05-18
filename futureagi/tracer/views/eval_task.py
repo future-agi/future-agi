@@ -35,10 +35,7 @@ class _RegexpReplace(Func):
 
 
 # Re-exported for back-compat; canonical definition lives in `tracer.utils.eval`.
-from tracer.utils.eval import (  # noqa: E402, F401
-    EVAL_SKIPPED_OUTPUT_STR,
-    _walk_dotted_path,
-)
+from tracer.utils.eval import _walk_dotted_path  # noqa: E402, F401
 
 
 # Per-variable size cap to keep the panel payload bounded — a single
@@ -273,21 +270,20 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             # Pass / fail / skipped counts — cheap aggregate, three
             # indexed COUNTs.
-            # TH-4910: skipped rows carry ``output_str = EVAL_SKIPPED_OUTPUT_STR``
-            # (sentinel written by ``_create_error_eval_logger`` when the
-            # span lacked the mapped attribute). They are neither a
-            # success nor a failure — they get their own bucket and are
-            # excluded from the success denominator so the failure rate
-            # doesn't get diluted.
+            # TH-4910: skipped rows carry ``skipped_reason`` and are
+            # neither a success nor a failure — excluded from both
+            # buckets so the failure rate isn't diluted.
             counts = EvalLogger.objects.filter(eval_task_id=eval_task_id).aggregate(
-                errors_count=Count("id", filter=Q(error=True)),
+                errors_count=Count(
+                    "id",
+                    filter=Q(error=True) & Q(skipped_reason__isnull=True),
+                ),
                 success_count=Count(
                     "id",
-                    filter=Q(error=False)
-                    & ~Q(output_str=EVAL_SKIPPED_OUTPUT_STR),
+                    filter=Q(error=False) & Q(skipped_reason__isnull=True),
                 ),
                 skipped_count=Count(
-                    "id", filter=Q(output_str=EVAL_SKIPPED_OUTPUT_STR)
+                    "id", filter=Q(skipped_reason__isnull=False)
                 ),
             )
 
@@ -323,7 +319,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             error_groups_qs = (
-                EvalLogger.objects.filter(eval_task_id=eval_task_id, error=True)
+                EvalLogger.objects.filter(
+                    eval_task_id=eval_task_id,
+                    error=True,
+                    skipped_reason__isnull=True,
+                )
                 .annotate(normalized=normalized_expr)
                 .values("normalized")
                 .annotate(
@@ -492,10 +492,17 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 if earliest:
                     start_date = earliest
 
-            success_count = period_qs.filter(error=False).count()
-            error_count = period_qs.filter(error=True).count()
+            # TH-4910: skipped rows (error=True + skipped_reason set) must
+            # not count toward error_count or dilute the pass_rate denominator.
+            success_count = period_qs.filter(
+                error=False, skipped_reason__isnull=True
+            ).count()
+            error_count = period_qs.filter(
+                error=True, skipped_reason__isnull=True
+            ).count()
+            denom = success_count + error_count
             pass_rate = (
-                round((success_count / runs_period * 100), 2) if runs_period > 0 else 0
+                round((success_count / denom * 100), 2) if denom > 0 else 0
             )
 
             # ── Chart data — bucket by period and aggregate ──

@@ -45,12 +45,21 @@ class GetEvalTaskLogsTool(BaseTool):
         except EvalTask.DoesNotExist:
             return ToolResult.not_found("EvalTask", str(params.eval_task_id))
 
+        # TH-4910: skipped rows have error=True + skipped_reason set; exclude
+        # them from both error_count and the error_message aggregate.
         log_stats = EvalLogger.objects.filter(
             eval_task_id=str(params.eval_task_id), deleted=False
         ).aggregate(
-            errors_count=Count("id", filter=Q(error=True)),
-            success_count=Count("id", filter=Q(error=False)),
-            errors_message=ArrayAgg("eval_explanation", filter=Q(error=True)),
+            errors_count=Count(
+                "id", filter=Q(error=True) & Q(skipped_reason__isnull=True)
+            ),
+            success_count=Count(
+                "id", filter=Q(error=False) & Q(skipped_reason__isnull=True)
+            ),
+            errors_message=ArrayAgg(
+                "eval_explanation",
+                filter=Q(error=True) & Q(skipped_reason__isnull=True),
+            ),
         )
 
         total_count = log_stats["errors_count"] + log_stats["success_count"]

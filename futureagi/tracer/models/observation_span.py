@@ -311,6 +311,12 @@ class EvalLogger(BaseModel):
     )
     error = models.BooleanField(default=False)
     error_message = models.TextField(null=True, blank=True)
+    # TH-4910 — set to "missing_required_attribute: <attr>" when an eval
+    # was skipped because the mapped span attribute was absent. Distinct
+    # from a real eval failure: read paths filter on
+    # ``skipped_reason IS NOT NULL`` to render "Skipped" instead of
+    # "Fail" and exclude these rows from failure-rate metrics.
+    skipped_reason = models.TextField(null=True, blank=True)
 
     def __str__(self):
         return f"Eval Log {self.id}"

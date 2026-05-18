@@ -1269,6 +1269,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                                 custom_eval_config_id=custom_eval_config_id,
                             )
                             .filter(Q(error=True) | Q(output_str="ERROR"))
+                            .filter(skipped_reason__isnull=True)
                             .order_by("-created_at")
                             .first()
                         )

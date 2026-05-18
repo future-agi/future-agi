@@ -429,8 +429,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             countIf(
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS success_count,
+            -- TH-4910: skipped rows have error=1; exclude so error_count
+            -- reflects real failures only ("skipped doesn't count toward
+            -- failure rate" per the ticket).
             countIf(
-                error = 1 OR ifNull(output_str, '') = 'ERROR'
+                (error = 1 OR ifNull(output_str, '') = 'ERROR')
+                AND skipped_reason IS NULL
             ) AS error_count,
             count() AS eval_count,
             groupArrayIf(
