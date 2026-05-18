@@ -401,3 +401,97 @@ def test_context_map_surfaces_persona_and_legacy_simulator_fields(
     # SimulatorAgent fallback fields under the same namespace (legacy compat).
     assert ctx["persona.voice_name"] == "marissa"
     assert ctx["persona.prompt"] == "You are a simulator"
+
+
+# ---------------------------------------------------------------------------
+# Task 1.3 — scenario.info.* + scenario.metadata.<key>
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+def test_context_map_scenario_metadata_moves_to_info_dot_namespace(persona_setup):
+    """Scenarios-row attributes shift from scenario.{name,description,type,source}
+    to scenario.info.{name,description,type,source} so bare scenario.<X> is
+    reserved for dataset-column lookups in Task 1.4.
+    """
+    from simulate.temporal.activities.xl import _build_simulation_context_map
+
+    call = persona_setup(scenario_metadata={}, row_data={})
+    scenario = call.scenario
+    scenario.name = "Customer support"
+    scenario.description = "Help with refunds"
+    scenario.scenario_type = Scenarios.ScenarioTypes.DATASET
+    scenario.source = "manual entry"
+    scenario.save()
+
+    ctx = _build_simulation_context_map(call, agent_version=None)
+
+    assert ctx["scenario.info.name"] == "Customer support"
+    assert ctx["scenario.info.description"] == "Help with refunds"
+    assert ctx["scenario.info.type"] == Scenarios.ScenarioTypes.DATASET
+    assert ctx["scenario.info.source"] == "manual entry"
+
+
+@pytest.mark.django_db
+def test_context_map_preserves_scenario_info_underscore_aliases(persona_setup):
+    """Pre-2026-04-13 saved configs referenced scenario_info_name etc.
+    directly. Those underscore aliases keep resolving.
+    """
+    from simulate.temporal.activities.xl import _build_simulation_context_map
+
+    call = persona_setup(scenario_metadata={}, row_data={})
+    scenario = call.scenario
+    scenario.name = "Help with refunds"
+    scenario.save()
+
+    ctx = _build_simulation_context_map(call, agent_version=None)
+
+    assert ctx["scenario_info_name"] == "Help with refunds"
+
+
+@pytest.mark.django_db
+def test_context_map_scenario_metadata_keys_surface_dynamically(persona_setup):
+    """Scenarios.metadata is free-form. Every user-supplied key surfaces under
+    scenario.metadata.<key>. Internal references (persona_ids, agent_definition_version_id)
+    are filtered out so they don't leak into eval prompts.
+    """
+    from simulate.temporal.activities.xl import _build_simulation_context_map
+
+    call = persona_setup(
+        scenario_metadata={
+            "custom_instruction": "Be empathetic.",
+            "campaign_id": "Q2-launch",
+            "persona_ids": ["aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"],
+            "agent_definition_version_id": "aaaaaaaa-bbbb-cccc-dddd-ffffffffffff",
+        },
+        row_data={},
+    )
+
+    ctx = _build_simulation_context_map(call, agent_version=None)
+
+    assert ctx["scenario.metadata.custom_instruction"] == "Be empathetic."
+    assert ctx["scenario.metadata.campaign_id"] == "Q2-launch"
+    # Internal-reference keys filtered out.
+    assert "scenario.metadata.persona_ids" not in ctx
+    assert "scenario.metadata.agent_definition_version_id" not in ctx
+
+
+@pytest.mark.django_db
+def test_context_map_scenario_metadata_jsonfield_flattening(persona_setup):
+    """scenario.metadata.<key> values run through flatten_jsonfield_value,
+    so lists/dicts get the same normalization as Persona attributes.
+    """
+    from simulate.temporal.activities.xl import _build_simulation_context_map
+
+    call = persona_setup(
+        scenario_metadata={
+            "tags": ["urgent", "billing"],
+            "single_tag": ["solo"],
+        },
+        row_data={},
+    )
+
+    ctx = _build_simulation_context_map(call, agent_version=None)
+
+    assert ctx["scenario.metadata.tags"] == "urgent, billing"
+    assert ctx["scenario.metadata.single_tag"] == "solo"

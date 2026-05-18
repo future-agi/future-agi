@@ -39,12 +39,17 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationOutput,
 )
 from simulate.utils.eval_context import (
+    flatten_jsonfield_value,
     flatten_persona_for_resolver,
     resolve_persona_for_call,
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
 
 logger = structlog.get_logger(__name__)
+
+_SCENARIO_METADATA_DENYLIST = frozenset(
+    {"persona_ids", "agent_definition_version_id"}
+)
 
 # ============================================================================
 # EVALUATION ACTIVITIES
@@ -379,10 +384,6 @@ CONTEXT_MAP_DOT_ALIASES = {
     "prompt_template": "prompt.name",
     "prompt_template_name": "prompt.name",
     "prompt_template_description": "prompt.description",
-    "scenario_info_name": "scenario.name",
-    "scenario_info_description": "scenario.description",
-    "scenario_info_type": "scenario.type",
-    "scenario_info_source": "scenario.source",
     "call_summary": "call.summary",
     "ended_reason": "call.ended_reason",
     "duration_seconds": "call.duration_seconds",
@@ -492,17 +493,22 @@ def _build_simulation_context_map(call_execution, agent_version):
         # Back-compat alias: the frontend flattens this as "prompt_template".
         ctx["prompt_template"] = _s(prompt_template.name)
 
-    # Scenario-row metadata (Scenarios FK on CallExecution). Dataset cell
-    # values are still resolved via the scenario-column-UUID branch in the
-    # main loop — these keys only cover the Scenarios row itself, prefixed
-    # `scenario_info_` so they don't collide with user-named dataset
-    # columns like `scenario_name`.
+    # scenario.info.* — keeps bare scenario.<X> free for dataset-column lookups.
     scenario = getattr(call_execution, "scenario", None)
     if scenario:
-        ctx["scenario_info_name"] = _s(scenario.name)
-        ctx["scenario_info_description"] = _s(scenario.description)
-        ctx["scenario_info_type"] = _s(scenario.scenario_type)
-        ctx["scenario_info_source"] = _s(scenario.source)
+        ctx["scenario.info.name"] = _s(scenario.name)
+        ctx["scenario.info.description"] = _s(scenario.description)
+        ctx["scenario.info.type"] = _s(scenario.scenario_type)
+        ctx["scenario.info.source"] = _s(scenario.source)
+        ctx["scenario_info_name"] = ctx["scenario.info.name"]
+        ctx["scenario_info_description"] = ctx["scenario.info.description"]
+        ctx["scenario_info_type"] = ctx["scenario.info.type"]
+        ctx["scenario_info_source"] = ctx["scenario.info.source"]
+
+        for _key, _value in (scenario.metadata or {}).items():
+            if _key in _SCENARIO_METADATA_DENYLIST:
+                continue
+            ctx[f"scenario.metadata.{_key}"] = flatten_jsonfield_value(_value)
 
     # Expose every entry under its dot-hierarchy alias too. This lets the
     # new frontend dropdowns persist `agent.name` style mapping values
