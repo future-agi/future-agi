@@ -44,11 +44,27 @@ import { AudioPlaybackProvider } from "./components/custom-audio/context-provide
 
 // ----------------------------------------------------------------------
 const extractErrorMessage = (result) => {
+  if (result == null) return "Something went wrong";
   if (typeof result === "string") return result;
-  if (Array.isArray(result)) return result.join(", ");
-  if (result && typeof result === "object")
-    return Object.values(result).flat().join(", ");
-  return "Something went wrong";
+  if (Array.isArray(result)) {
+    return [...new Set(result.map(extractErrorMessage).filter(Boolean))].join(
+      ", ",
+    );
+  }
+  if (typeof result === "object") {
+    if (result.details && typeof result.details === "object") {
+      return extractErrorMessage(result.details);
+    }
+    // The axios interceptor adds camelCase aliases (e.g. `datasetId` for
+    // `dataset_id`) so `Object.values` would yield each message twice.
+    // Dedupe after extraction.
+    return [
+      ...new Set(
+        Object.values(result).map(extractErrorMessage).filter(Boolean),
+      ),
+    ].join(", ");
+  }
+  return String(result);
 };
 
 const handleError = (error, variable, context, mutation) => {
