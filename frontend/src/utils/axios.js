@@ -209,6 +209,17 @@ axiosInstance.interceptors.response.use(
     return validatedResponse;
   },
   async (error) => {
+    if (error?.response) {
+      try {
+        error.response = assertContractedResponse(error.response);
+        if (error.response?.data) {
+          addCamelAliases(error.response.data, new WeakSet());
+        }
+      } catch (contractError) {
+        return Promise.reject(contractError);
+      }
+    }
+
     const currentPath = window.location.href;
     const avoid = avoidRedirect.some((item) => currentPath.includes(item));
     const originalRequest = error?.config;

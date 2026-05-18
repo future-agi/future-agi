@@ -10,6 +10,7 @@ import {
 const LIST_OP_SET = new Set(LIST_FILTER_OPS);
 const RANGE_OP_SET = new Set(RANGE_FILTER_OPS);
 const NO_VALUE_OP_SET = new Set(NO_VALUE_FILTER_OPS);
+const ARRAY_VALUE_OP_SET = new Set(["contains", "not_contains"]);
 const MULTI_VALUE_TYPES = new Set([
   "text",
   "categorical",
@@ -56,6 +57,13 @@ export const isAllowedFilterOperator = (filterType, operator) => {
 export const coerceFilterValue = (value, filterOp, filterType) => {
   const canonicalType = normalizeFilterType(filterType);
   if (NO_VALUE_OP_SET.has(filterOp)) return null;
+
+  if (canonicalType === "array" && ARRAY_VALUE_OP_SET.has(filterOp)) {
+    const values = Array.isArray(value) ? value : [value];
+    return values.filter(
+      (item) => item !== "" && item !== null && item !== undefined,
+    );
+  }
 
   if (LIST_OP_SET.has(filterOp)) {
     const values = Array.isArray(value) ? value : [value];

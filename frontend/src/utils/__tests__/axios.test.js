@@ -37,4 +37,28 @@ describe("axios response shape", () => {
       "gen_ai.usage.total_tokens",
     ]);
   });
+
+  it("runs response contract validation for documented error responses", async () => {
+    const rejected = axiosInstance.interceptors.response.handlers.find(
+      (handler) => handler.rejected,
+    )?.rejected;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const error = {
+      config: { url: "/accounts/2fa/recovery-codes/", method: "get" },
+      response: {
+        status: 400,
+        config: { url: "/accounts/2fa/recovery-codes/", method: "get" },
+        data: "not-an-error-envelope",
+      },
+    };
+
+    await expect(rejected(error)).rejects.toMatchObject({ statusCode: 400 });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("response contract validation failed"),
+      expect.any(Object),
+    );
+
+    warn.mockRestore();
+  });
 });

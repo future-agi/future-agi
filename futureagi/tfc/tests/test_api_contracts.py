@@ -43,6 +43,24 @@ class _BadResponseView(APIView):
         return Response({"status": True, "result": {"wrong": "shape"}})
 
 
+class _ListResponseView(APIView):
+    @validated_request(
+        responses={200: _DemoResultSerializer(many=True)},
+        strict_response_validation=True,
+    )
+    def get(self, request):
+        return Response([{"name": "Future AGI"}])
+
+
+class _BadListResponseView(APIView):
+    @validated_request(
+        responses={200: _DemoResultSerializer(many=True)},
+        strict_response_validation=True,
+    )
+    def get(self, request):
+        return Response([{"wrong": "shape"}])
+
+
 def _swagger():
     import json
 
@@ -90,6 +108,24 @@ def test_validated_request_can_strictly_validate_responses():
 
     assert response.status_code == 400
     assert "name" in response.data["result"]
+
+
+def test_validated_request_can_validate_many_response_serializers():
+    factory = APIRequestFactory()
+
+    response = _ListResponseView.as_view()(factory.get("/"))
+
+    assert response.status_code == 200
+    assert response.data == [{"name": "Future AGI"}]
+
+
+def test_validated_request_rejects_invalid_many_responses():
+    factory = APIRequestFactory()
+
+    response = _BadListResponseView.as_view()(factory.get("/"))
+
+    assert response.status_code == 400
+    assert "name" in response.data[0]
 
 
 def test_core_management_endpoints_have_runtime_backed_contracts():

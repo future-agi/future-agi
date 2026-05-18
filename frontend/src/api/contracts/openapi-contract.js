@@ -79,9 +79,19 @@ function normalizeRequestPath(url) {
 
 function parseUrlSearchParams(url) {
   try {
-    return Object.fromEntries(
-      new URL(String(url), "http://futureagi.local").searchParams.entries(),
+    const params = {};
+    new URL(String(url), "http://futureagi.local").searchParams.forEach(
+      (value, key) => {
+        if (Object.prototype.hasOwnProperty.call(params, key)) {
+          params[key] = Array.isArray(params[key])
+            ? [...params[key], value]
+            : [params[key], value];
+        } else {
+          params[key] = value;
+        }
+      },
     );
+    return params;
   } catch {
     return {};
   }
@@ -119,6 +129,10 @@ function resolveRef(ref) {
   };
 }
 
+function schemaCacheKey(name, options = {}) {
+  return `${name}:coercePrimitives=${Boolean(options.coercePrimitives)}`;
+}
+
 function enumSchema(values) {
   const literals = values.map((value) => z.literal(value));
   if (literals.length === 0) return z.never();
@@ -132,13 +146,14 @@ function schemaToZod(schema, options = {}) {
   if (schema.$ref) {
     const resolved = resolveRef(schema.$ref);
     if (!resolved?.schema) return z.any();
-    if (!definitionSchemaCache.has(resolved.name)) {
+    const cacheKey = schemaCacheKey(resolved.name, options);
+    if (!definitionSchemaCache.has(cacheKey)) {
       definitionSchemaCache.set(
-        resolved.name,
+        cacheKey,
         z.lazy(() => schemaToZod(resolved.schema, options)),
       );
     }
-    return nullableIfNeeded(definitionSchemaCache.get(resolved.name), schema);
+    return nullableIfNeeded(definitionSchemaCache.get(cacheKey), schema);
   }
 
   if (Array.isArray(schema.enum)) {
@@ -318,6 +333,18 @@ function refSchemaName(schema) {
   return resolveRef(schema?.$ref)?.name || null;
 }
 
+function normalizeQueryForContract(rawQuery, queryParameters) {
+  return Object.fromEntries(
+    Object.entries(rawQuery).map(([name, value]) => {
+      const schema = queryParameters?.[name]?.schema;
+      if (schema?.type === "array" && !Array.isArray(value)) {
+        return [name, [value]];
+      }
+      return [name, value];
+    }),
+  );
+}
+
 export function validateContractedRequestConfig(config) {
   const endpoint = findOpenApiEndpoint(config?.url, config?.method);
   if (!endpoint) return { ok: true, skipped: true };
@@ -340,11 +367,14 @@ export function validateContractedRequestConfig(config) {
     }
   }
 
-  if (queryParameters && Object.keys(queryParameters).length) {
-    const rawQuery = {
-      ...parseUrlSearchParams(config?.url),
-      ...(config?.params || {}),
-    };
+  const rawQuery = {
+    ...parseUrlSearchParams(config?.url),
+    ...(config?.params || {}),
+  };
+  if (
+    queryParameters &&
+    (Object.keys(queryParameters).length || Object.keys(rawQuery).length)
+  ) {
     const shape = Object.fromEntries(
       Object.entries(queryParameters).map(([name, parameter]) => {
         let schema = schemaToZod(parameter.schema, { coercePrimitives: true });
@@ -352,7 +382,10 @@ export function validateContractedRequestConfig(config) {
         return [name, schema];
       }),
     );
-    const parsed = z.object(shape).passthrough().safeParse(rawQuery);
+    const parsed = z
+      .object(shape)
+      .strict()
+      .safeParse(normalizeQueryForContract(rawQuery, queryParameters));
     if (!parsed.success) {
       return validationFailure({
         kind: "query",

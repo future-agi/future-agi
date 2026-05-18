@@ -10,34 +10,49 @@ from rest_framework.response import Response
 logger = structlog.get_logger(__name__)
 
 
-def _serializer_class(serializer):
+def _serializer_name(serializer):
     if serializer is None:
         return None
     if isinstance(serializer, openapi.Response):
-        return _serializer_class(serializer.schema)
+        return _serializer_name(serializer.schema)
     if isinstance(serializer, serializers.ListSerializer):
-        return type(serializer)
-    if isinstance(serializer, serializers.Serializer):
-        return type(serializer)
+        return f"{type(serializer.child).__name__}(many=True)"
+    if isinstance(serializer, serializers.BaseSerializer):
+        return type(serializer).__name__
     if isinstance(serializer, type) and issubclass(
         serializer, serializers.BaseSerializer
     ):
-        return serializer
+        return serializer.__name__
+    return None
+
+
+def _response_validator(serializer, data):
+    if serializer is None:
+        return None
+    if isinstance(serializer, openapi.Response):
+        return _response_validator(serializer.schema, data)
+    if isinstance(serializer, serializers.ListSerializer):
+        return type(serializer.child)(data=data, many=True)
+    if isinstance(serializer, serializers.BaseSerializer):
+        return type(serializer)(data=data)
+    if isinstance(serializer, type) and issubclass(
+        serializer, serializers.BaseSerializer
+    ):
+        return serializer(data=data)
     return None
 
 
 def _validate_response(view_name, serializer, response, strict):
-    serializer_class = _serializer_class(serializer)
-    if serializer_class is None:
+    validator = _response_validator(serializer, response.data)
+    if validator is None:
         return
 
-    validator = serializer_class(data=response.data)
     if not validator.is_valid(raise_exception=strict):
         logger.warning(
             "API response does not match declared serializer.",
             view_func=view_name,
             status_code=response.status_code,
-            serializer_class=serializer_class.__name__,
+            serializer_class=_serializer_name(serializer),
             validation_errors=validator.errors,
         )
 

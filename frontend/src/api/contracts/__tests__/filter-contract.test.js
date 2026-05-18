@@ -25,6 +25,12 @@ const valueFor = (filterType, operator) => {
     if (filterType === "annotator") return ["user-a", "user-b"];
     return ["alpha", "beta"];
   }
+  if (
+    filterType === "array" &&
+    (operator === "contains" || operator === "not_contains")
+  ) {
+    return ["alpha", "beta"];
+  }
   if (filterType === "number") return ["42"];
   if (filterType === "boolean") return "true";
   if (filterType === "thumbs") return "Thumbs Up";
@@ -67,6 +73,10 @@ describe("filter contract", () => {
     ]);
     expect(coerceFilterValue("true", "equals", "boolean")).toBe(true);
     expect(coerceFilterValue("x", "in", "text")).toEqual(["x"]);
+    expect(coerceFilterValue(["x", "y"], "contains", "array")).toEqual([
+      "x",
+      "y",
+    ]);
   });
 
   it("builds canonical API filters from observe panel rows", () => {
@@ -129,6 +139,8 @@ describe("filter contract", () => {
       } else if (operator === "in" || operator === "not_in") {
         expect(Array.isArray(output)).toBe(true);
         expect(output.length).toBeGreaterThan(0);
+      } else if (filterType === "array") {
+        expect(output).toEqual(["alpha", "beta"]);
       } else if (filterType === "number") {
         expect(output).toBe(42);
       } else if (filterType === "boolean") {
