@@ -45,6 +45,17 @@ class ApiTextErrorResponseSerializer(serializers.Serializer):
     message = serializers.CharField(required=False, allow_null=True)
 
 
+class ApiErrorWithDetailsResponseSerializer(ApiTextErrorResponseSerializer):
+    """Typed mixed legacy error shape used while older endpoints are normalized."""
+
+    error = serializers.CharField(required=False, allow_null=True)
+    details = serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField()),
+        required=False,
+        allow_empty=True,
+    )
+
+
 class ApiDetailErrorResponseSerializer(serializers.Serializer):
     """DRF authentication/permission error envelope."""
 

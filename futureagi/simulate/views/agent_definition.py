@@ -45,6 +45,7 @@ except ImportError:
     VapiService = _ee_stub("VapiService")
 from tfc.ee_gating import FeatureUnavailable
 from tfc.utils.base_viewset import BaseModelViewSetMixin
+from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -66,7 +67,12 @@ class AgentDefinitionView(APIView):
 
     @swagger_auto_schema(
         query_serializer=AgentDefinitionFilterSerializer,
-        responses={200: AgentDefinitionListResponseSerializer(many=True)},
+        responses={
+            200: AgentDefinitionListResponseSerializer(many=True),
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, *args, **kwargs):
         """
@@ -167,7 +173,11 @@ class AgentDefinitionView(APIView):
 
     @swagger_auto_schema(
         request_body=AgentDefinitionBulkDeleteRequestSerializer,
-        responses={200: AgentDefinitionBulkDeleteResponseSerializer},
+        responses={
+            200: AgentDefinitionBulkDeleteResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def delete(self, request):
         """
@@ -219,7 +229,12 @@ class CreateAgentDefinitionView(APIView):
 
     @swagger_auto_schema(
         request_body=AgentDefinitionCreateRequestSerializer,
-        responses={201: AgentDefinitionCreateResponseSerializer},
+        responses={
+            201: AgentDefinitionCreateResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def post(self, request, *args, **kwargs):
         """
@@ -352,7 +367,11 @@ class AgentDefinitionDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AgentDefinitionResponseSerializer},
+        responses={
+            200: AgentDefinitionResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, agent_id, *args, **kwargs):
         """
@@ -414,8 +433,69 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
         return super().get_queryset().select_related("credentials")
 
     @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def create(self, request, *args, **kwargs):
+        return super().create(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def retrieve(self, request, *args, **kwargs):
+        return super().retrieve(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def destroy(self, request, *args, **kwargs):
+        return super().destroy(request, *args, **kwargs)
+
+    @swagger_auto_schema(
         request_body=FetchAssistantRequestSerializer,
-        responses={200: FetchAssistantResponseSerializer},
+        responses={
+            200: FetchAssistantResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            403: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     @action(detail=False, methods=["post"])
     def fetch_assistant_from_provider(self, request):
@@ -501,7 +581,12 @@ class EditAgentDefinitionView(APIView):
 
     @swagger_auto_schema(
         request_body=AgentDefinitionEditRequestSerializer,
-        responses={200: AgentDefinitionEditResponseSerializer},
+        responses={
+            200: AgentDefinitionEditResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def put(self, request, agent_id, *args, **kwargs):
         """
@@ -604,7 +689,11 @@ class DeleteAgentDefinitionView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AgentDefinitionDeleteResponseSerializer},
+        responses={
+            200: AgentDefinitionDeleteResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def delete(self, request, agent_id, *args, **kwargs):
         """

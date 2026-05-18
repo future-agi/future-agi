@@ -30,7 +30,10 @@ from simulate.services.chat_sim import initiate_chat, send_message_to_chat
 from simulate.services.test_executor import TestExecutor
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
-from tfc.utils.api_serializers import ApiErrorResponseSerializer, EmptyRequestSerializer
+from tfc.utils.api_serializers import (
+    ApiTextErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -50,8 +53,8 @@ class RunTestNameView(APIView):
     @swagger_auto_schema(
         responses={
             200: RunTestNameResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def get(self, request, run_test_name, *args, **kwargs):
@@ -104,9 +107,9 @@ class RunTestChatExecutionView(APIView):
         request_body=EmptyRequestSerializer,
         responses={
             200: RunTestChatExecutionResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def post(self, request, run_test_id, *args, **kwargs):
@@ -190,8 +193,8 @@ class TestExecutionChatBatchView(APIView):
         request_body=EmptyRequestSerializer,
         responses={
             200: TestExecutionChatBatchResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def post(self, request, test_execution_id, *args, **kwargs):
@@ -475,8 +478,8 @@ class ChatSendMessageView(APIView):
         request_body=SendChatRequestSerializer,
         responses={
             200: ChatSendMessageResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def post(self, request, call_execution_id, *args, **kwargs):
@@ -618,8 +621,8 @@ class ChatSDKCodeView(APIView):
     @swagger_auto_schema(
         responses={
             200: ChatSDKCodeResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def get(self, request, run_test_id, *args, **kwargs):

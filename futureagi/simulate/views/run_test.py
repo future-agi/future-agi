@@ -186,7 +186,7 @@ from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.api_serializers import (
-    ApiErrorResponseSerializer,
+    ApiTextErrorResponseSerializer,
     EmptyRequestSerializer,
 )
 from tfc.utils.error_codes import get_error_message
@@ -3667,7 +3667,7 @@ class TestExecutionColumnOrderView(APIView):
         request_body=TestExecutionColumnOrderSerializer,
         responses={
             200: TestExecutionColumnOrderResponseSerializer,
-            400: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
@@ -3730,6 +3730,13 @@ class TestExecutionDeleteView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiTextErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        }
+    )
     def delete(self, request, test_execution_id, *args, **kwargs):
         """Delete a specific test execution"""
         try:
@@ -3789,7 +3796,7 @@ class TestExecutionBulkDeleteView(APIView):
         request_body=TestExecutionBulkDeleteSerializer,
         responses={
             200: TestExecutionBulkDeleteResponseSerializer,
-            400: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
@@ -3952,6 +3959,13 @@ class RunTestDeleteView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiTextErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        }
+    )
     def delete(self, request, run_test_id, *args, **kwargs):
         """Delete a specific run test"""
         try:
@@ -5374,9 +5388,9 @@ class CSVExportView(APIView):
                 "CSV export",
                 schema=openapi.Schema(type=openapi.TYPE_FILE),
             ),
-            400: ApiErrorResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def get(self, request, item_id, *args, **kwargs):
@@ -5789,8 +5803,8 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
         request_body=EmptyRequestSerializer,
         responses={
             200: EvalExplanationSummaryRefreshResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def post(self, request, test_execution_id, *args, **kwargs):
@@ -5839,8 +5853,8 @@ class TestExecutionOptimiserAnalysisView(APIView):
     @swagger_auto_schema(
         responses={
             200: OptimiserAnalysisResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def get(self, request, test_execution_id, *args, **kwargs):
@@ -5887,9 +5901,9 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
         request_body=EmptyRequestSerializer,
         responses={
             200: OptimiserAnalysisRefreshResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def post(self, request, test_execution_id, *args, **kwargs):
@@ -6665,7 +6679,7 @@ class TestExecutionRerunView(APIView):
         request_body=TestExecutionRerunSerializer,
         responses={
             200: TestExecutionRerunResponseSerializer,
-            400: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },

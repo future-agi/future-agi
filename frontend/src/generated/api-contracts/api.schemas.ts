@@ -12786,6 +12786,19 @@ export interface AgentDefinitionListResponseApi {
   readonly model?: string;
 }
 
+export type ApiErrorWithDetailsResponseApiDetails = {[key: string]: string[]};
+
+export interface ApiErrorWithDetailsResponseApi {
+  status?: boolean;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  /** @minLength 1 */
+  error?: string;
+  details?: ApiErrorWithDetailsResponseApiDetails;
+}
+
 export interface AgentDefinitionBulkDeleteRequestApi {
   /**
      * List of agent definition UUIDs to delete.
@@ -16349,6 +16362,11 @@ export interface SimulatorAgentListResponseApi {
 }
 
 export interface SimulatorAgentValidationErrorResponseApi {[key: string]: string[]}
+
+export interface SimulatorAgentDeleteResponseApi {
+  /** @minLength 1 */
+  readonly message?: string;
+}
 
 export type TestExecutionDetailResponseApiResultsItem = {[key: string]: string};
 

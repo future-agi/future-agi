@@ -78,6 +78,12 @@ class SimulatorAgentListResponseSerializer(serializers.Serializer):
     current_page = serializers.IntegerField(read_only=True)
 
 
+class SimulatorAgentDeleteResponseSerializer(serializers.Serializer):
+    """Response shape for deleting a simulator agent."""
+
+    message = serializers.CharField(read_only=True)
+
+
 class SimulatorAgentValidationErrorResponseSerializer(serializers.Serializer):
     """Field-error map returned directly from DRF serializer validation."""
 

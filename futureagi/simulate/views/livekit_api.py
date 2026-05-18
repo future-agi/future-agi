@@ -30,7 +30,7 @@ from simulate.repositories import (
     CallTranscriptRepository,
     PhoneNumberRepository,
 )
-from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observability_provider import ProviderChoices
 
@@ -458,9 +458,9 @@ class LiveCallListenerTokenView(APIView):
     @swagger_auto_schema(
         responses={
             200: LiveKitListenerTokenResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def get(self, request: Request, call_id: str) -> Response:
@@ -544,7 +544,7 @@ class ValidateLiveKitCredentialsView(APIView):
         request_body=ValidateLiveKitCredentialsRequestSerializer,
         responses={
             200: ValidateLiveKitCredentialsResponseSerializer,
-            400: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
         },
     )
     def post(self, request: Request) -> Response:

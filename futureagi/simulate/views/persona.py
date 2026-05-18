@@ -15,7 +15,10 @@ from simulate.serializers.persona import (
     PersonaListSerializer,
     PersonaSerializer,
 )
-from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorWithDetailsResponseSerializer,
+    ApiTextErrorResponseSerializer,
+)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -147,12 +150,24 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             return PersonaFieldOptionsSerializer
         return PersonaSerializer
 
+    @swagger_auto_schema(
+        responses={
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def retrieve(self, request, *args, **kwargs):
         """Retrieve a specific persona"""
         instance = self.get_object()
         serializer = self.get_serializer(instance)
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def list(self, request, *args, **kwargs):
         """List personas with pagination"""
 
@@ -168,6 +183,12 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         serializer = self.get_serializer(queryset, many=True)
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def create(self, request, *args, **kwargs):
         """Create a new workspace-level persona"""
         # Get the persona name from request
@@ -215,6 +236,14 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             output_serializer.data, status=status.HTTP_201_CREATED
         )
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            403: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def update(self, request, *args, **kwargs):
         """Update a persona (workspace-level only)"""
         instance = self.get_object()
@@ -232,6 +261,25 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            403: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
+    def partial_update(self, request, *args, **kwargs):
+        kwargs["partial"] = True
+        return self.update(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            403: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def destroy(self, request, *args, **kwargs):
         """Delete a persona (workspace-level only)"""
         instance = self.get_object()
@@ -250,6 +298,11 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             status=status.HTTP_204_NO_CONTENT,
         )
 
+    @swagger_auto_schema(
+        responses={
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     @action(detail=False, methods=["get"], url_path="system")
     def system_personas(self, request):
         """Get only system-level personas"""
@@ -260,6 +313,12 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         serializer = PersonaListSerializer(queryset, many=True)
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     @action(detail=False, methods=["get"], url_path="workspace")
     def workspace_personas(self, request):
         """Get only workspace-level personas"""
@@ -283,12 +342,25 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         serializer = PersonaListSerializer(queryset, many=True)
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        responses={
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     @action(detail=False, methods=["get"], url_path="field-options")
     def field_options(self, request):
         """Get field options/choices for persona creation"""
         serializer = PersonaFieldOptionsSerializer({})
         return self._gm.success_response(serializer.data)
 
+    @swagger_auto_schema(
+        request_body=PersonaDuplicateRequestSerializer,
+        responses={
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
+    )
     @action(detail=True, methods=["post"], url_path="duplicate")
     def duplicate(self, request, id=None):
         """Duplicate a persona (creates a workspace-level copy)"""
@@ -377,7 +449,7 @@ class PersonaDuplicateView(APIView):
         request_body=PersonaDuplicateRequestSerializer,
         responses={
             201: PersonaDuplicateResponseSerializer,
-            400: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
         },
     )
     def post(self, request, persona_id):

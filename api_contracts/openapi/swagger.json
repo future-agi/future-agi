@@ -41067,6 +41067,24 @@
                                 "$ref": "#/definitions/AgentDefinitionListResponse"
                             }
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41091,6 +41109,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionBulkDeleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -41120,6 +41150,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionCreateResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41138,6 +41186,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -41164,6 +41224,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionDeleteResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -41200,6 +41272,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionEditResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41228,6 +41318,18 @@
                             "items": {
                                 "$ref": "#/definitions/AgentVersionListResponse"
                             }
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -41264,6 +41366,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentVersionCreateResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41289,6 +41409,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentVersionResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -41331,6 +41463,18 @@
                         "schema": {
                             "$ref": "#/definitions/AgentVersionActivateResponse"
                         }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41366,6 +41510,18 @@
                                 "$ref": "#/definitions/CallExecution"
                             }
                         }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41397,6 +41553,24 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentVersionDeleteResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -41483,6 +41657,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentVersionRestoreResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41555,6 +41747,18 @@
                                 }
                             }
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41579,6 +41783,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -41608,6 +41824,24 @@
                         "schema": {
                             "$ref": "#/definitions/FetchAssistantResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41626,6 +41860,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -41652,6 +41898,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41677,6 +41941,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentDefinitionResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41690,6 +41972,18 @@
                 "responses": {
                     "204": {
                         "description": ""
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41756,6 +42050,18 @@
                                 }
                             }
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41781,6 +42087,18 @@
                         "schema": {
                             "$ref": "#/definitions/AgentPromptOptimiserRunCreate"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41799,6 +42117,24 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentPromptOptimiserRunDetailResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -41825,6 +42161,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentPromptOptimiserRunModelResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41850,6 +42204,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentPromptOptimiserRunModelResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41863,6 +42235,18 @@
                 "responses": {
                     "204": {
                         "description": ""
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41890,6 +42274,24 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentPromptOptimiserGraphResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -41919,6 +42321,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentPromptOptimiserRunStepsResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -41946,6 +42366,24 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentPromptOptimiserTrialEvaluationsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -41981,6 +42419,24 @@
                         "schema": {
                             "$ref": "#/definitions/AgentPromptOptimiserTrialPromptResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -42014,6 +42470,24 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/AgentPromptOptimiserTrialScenariosResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -42205,19 +42679,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -42378,7 +42852,7 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -42475,6 +42949,18 @@
                                 }
                             }
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -42499,6 +42985,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/PersonaCreate"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -42532,7 +43030,7 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -42600,6 +43098,12 @@
                                 }
                             }
                         }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -42658,6 +43162,12 @@
                                     }
                                 }
                             }
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -42718,6 +43228,18 @@
                                 }
                             }
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -42736,6 +43258,18 @@
                         "description": "",
                         "schema": {
                             "$ref": "#/definitions/Persona"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -42762,6 +43296,30 @@
                         "schema": {
                             "$ref": "#/definitions/Persona"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -42787,6 +43345,30 @@
                         "schema": {
                             "$ref": "#/definitions/Persona"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -42800,6 +43382,24 @@
                 "responses": {
                     "204": {
                         "description": ""
+                    },
+                    "403": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -42825,7 +43425,7 @@
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/Persona"
+                            "$ref": "#/definitions/PersonaDuplicateRequest"
                         }
                     }
                 ],
@@ -42833,7 +43433,25 @@
                     "201": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/Persona"
+                            "$ref": "#/definitions/PersonaDuplicateRequest"
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
                         }
                     }
                 },
@@ -43140,13 +43758,13 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -43394,19 +44012,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -43439,13 +44057,13 @@
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -43471,19 +44089,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -43515,19 +44133,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -43559,13 +44177,13 @@
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -43596,19 +44214,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -43623,6 +44241,18 @@
                 "responses": {
                     "204": {
                         "description": ""
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -43669,19 +44299,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -43866,13 +44496,13 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -44098,19 +44728,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -44204,7 +44834,7 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
@@ -44241,6 +44871,24 @@
                 "responses": {
                     "204": {
                         "description": ""
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -44701,7 +45349,7 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
@@ -44843,13 +45491,13 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -45392,6 +46040,18 @@
                         "schema": {
                             "$ref": "#/definitions/SimulatorAgentListResponse"
                         }
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -45445,6 +46105,18 @@
                         "schema": {
                             "$ref": "#/definitions/SimulatorAgent"
                         }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -45466,8 +46138,23 @@
                 "description": "Soft delete a simulator agent",
                 "parameters": [],
                 "responses": {
-                    "204": {
-                        "description": ""
+                    "200": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/SimulatorAgentDeleteResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -45726,13 +46413,13 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -45773,7 +46460,7 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
@@ -45810,6 +46497,24 @@
                 "responses": {
                     "204": {
                         "description": ""
+                    },
+                    "400": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ApiTextErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "",
+                        "schema": {
+                            "$ref": "#/definitions/ErrorResponse"
+                        }
                     }
                 },
                 "tags": [
@@ -45887,13 +46592,13 @@
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -45963,13 +46668,13 @@
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -46010,19 +46715,19 @@
                     "400": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "404": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     },
                     "500": {
                         "description": "",
                         "schema": {
-                            "$ref": "#/definitions/ApiErrorResponse"
+                            "$ref": "#/definitions/ApiTextErrorResponse"
                         }
                     }
                 },
@@ -96957,6 +97662,45 @@
                 }
             }
         },
+        "ApiErrorWithDetailsResponse": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "title": "Status",
+                    "type": "boolean",
+                    "default": false
+                },
+                "result": {
+                    "title": "Result",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "error": {
+                    "title": "Error",
+                    "type": "string",
+                    "minLength": 1,
+                    "x-nullable": true
+                },
+                "details": {
+                    "title": "Details",
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        }
+                    }
+                }
+            }
+        },
         "AgentDefinitionBulkDeleteRequest": {
             "required": [
                 "agent_ids"
@@ -105073,6 +105817,17 @@
                 "type": "array",
                 "items": {
                     "type": "string"
+                }
+            }
+        },
+        "SimulatorAgentDeleteResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "title": "Message",
+                    "type": "string",
+                    "readOnly": true,
+                    "minLength": 1
                 }
             }
         },

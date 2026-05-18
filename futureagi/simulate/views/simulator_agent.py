@@ -8,10 +8,12 @@ from rest_framework.views import APIView
 
 from simulate.models import SimulatorAgent
 from simulate.serializers.simulator_agent import (
+    SimulatorAgentDeleteResponseSerializer,
     SimulatorAgentListResponseSerializer,
     SimulatorAgentSerializer,
     SimulatorAgentValidationErrorResponseSerializer,
 )
+from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
 
@@ -20,7 +22,13 @@ class SimulatorAgentListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(responses={200: SimulatorAgentListResponseSerializer})
+    @swagger_auto_schema(
+        responses={
+            200: SimulatorAgentListResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def get(self, request):
         # Get query parameters
         search_query = request.GET.get("search", "").strip()
@@ -89,7 +97,13 @@ class SimulatorAgentDetailView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(responses={200: SimulatorAgentSerializer})
+    @swagger_auto_schema(
+        responses={
+            200: SimulatorAgentSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def get(self, request, agent_id):
         simulator_agent = get_object_or_404(
             SimulatorAgent,
@@ -145,6 +159,13 @@ class DeleteSimulatorAgentView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: SimulatorAgentDeleteResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def delete(self, request, agent_id):
         simulator_agent = get_object_or_404(
             SimulatorAgent,

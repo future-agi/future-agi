@@ -44,6 +44,7 @@ from simulate.utils.agent_prompt_optimiser import (
 from tfc.temporal.agent_prompt_optimiser.client import (
     start_agent_prompt_optimiser_workflow,
 )
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
@@ -178,6 +179,12 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             return AgentPromptOptimiserRunListSerializer
         return AgentPromptOptimiserRunSerializer
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     def list(self, request, *args, **kwargs):
         """
         List all agent prompt optimiser runs with table config for dynamic columns.
@@ -205,17 +212,33 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
     @swagger_auto_schema(
-        responses={200: AgentPromptOptimiserRunModelResponseSerializer}
+        responses={
+            200: AgentPromptOptimiserRunModelResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
     )
     def update(self, request, *args, **kwargs):
         return super().update(request, *args, **kwargs)
 
     @swagger_auto_schema(
-        responses={200: AgentPromptOptimiserRunModelResponseSerializer}
+        responses={
+            200: AgentPromptOptimiserRunModelResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
     )
     def partial_update(self, request, *args, **kwargs):
         return super().partial_update(request, *args, **kwargs)
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         try:
@@ -253,7 +276,12 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
     @swagger_auto_schema(
-        responses={200: AgentPromptOptimiserRunDetailResponseSerializer}
+        responses={
+            200: AgentPromptOptimiserRunDetailResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
     )
     def retrieve(self, request, *args, **kwargs):
         """
@@ -296,7 +324,12 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
     @swagger_auto_schema(
-        responses={200: AgentPromptOptimiserRunStepsResponseSerializer}
+        responses={
+            200: AgentPromptOptimiserRunStepsResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
     )
     @action(detail=True, methods=["get"])
     def steps(self, request, *args, **kwargs):
@@ -311,7 +344,14 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
-    @swagger_auto_schema(responses={200: AgentPromptOptimiserGraphResponseSerializer})
+    @swagger_auto_schema(
+        responses={
+            200: AgentPromptOptimiserGraphResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     @action(detail=True, methods=["get"])
     def graph(self, request, *args, **kwargs):
         """
@@ -349,7 +389,12 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
         }
 
     @swagger_auto_schema(
-        responses={200: AgentPromptOptimiserTrialPromptResponseSerializer}
+        responses={
+            200: AgentPromptOptimiserTrialPromptResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
     )
     @action(
         detail=True,
@@ -383,7 +428,12 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
     @swagger_auto_schema(
-        responses={200: AgentPromptOptimiserTrialEvaluationsResponseSerializer}
+        responses={
+            200: AgentPromptOptimiserTrialEvaluationsResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
     )
     @action(
         detail=True,
@@ -470,7 +520,12 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
     @swagger_auto_schema(
-        responses={200: AgentPromptOptimiserTrialScenariosResponseSerializer}
+        responses={
+            200: AgentPromptOptimiserTrialScenariosResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
     )
     @action(
         detail=True,
@@ -535,3 +590,12 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
         except Exception as e:
             logger.exception(f"Error retrieving trial scenarios: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
+
+    @swagger_auto_schema(
+        responses={
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
+    def destroy(self, request, *args, **kwargs):
+        return super().destroy(request, *args, **kwargs)

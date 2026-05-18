@@ -30,7 +30,7 @@ from simulate.serializers.requests.run_test import CreatePromptSimulationSeriali
 from simulate.serializers.run_test import RunTestSerializer
 from simulate.services.test_executor import TestExecutor
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
-from tfc.utils.api_serializers import ApiErrorResponseSerializer
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -53,9 +53,9 @@ class PromptSimulationListCreateView(APIView):
     @swagger_auto_schema(
         responses={
             200: PromptSimulationListResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def get(self, request, prompt_template_id, *args, **kwargs):
@@ -133,9 +133,9 @@ class PromptSimulationListCreateView(APIView):
         request_body=CreatePromptSimulationSerializer,
         responses={
             201: PromptSimulationRunResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def post(self, request, prompt_template_id, *args, **kwargs):
@@ -292,8 +292,8 @@ class PromptSimulationDetailView(APIView):
     @swagger_auto_schema(
         responses={
             200: PromptSimulationRunResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def get(self, request, prompt_template_id, run_test_id, *args, **kwargs):
@@ -334,9 +334,9 @@ class PromptSimulationDetailView(APIView):
         request_body=PromptSimulationUpdateRequestSerializer,
         responses={
             200: PromptSimulationRunResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def patch(self, request, prompt_template_id, run_test_id, *args, **kwargs):
@@ -415,6 +415,12 @@ class PromptSimulationDetailView(APIView):
             logger.exception("Error updating prompt simulation", error=str(e))
             return self.gm.internal_server_error_response("Failed to update simulation")
 
+    @swagger_auto_schema(
+        responses={
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     def delete(self, request, prompt_template_id, run_test_id, *args, **kwargs):
         """Soft delete a prompt simulation run."""
         try:
@@ -470,9 +476,9 @@ class ExecutePromptSimulationView(APIView):
         request_body=ExecutePromptSimulationRequestSerializer,
         responses={
             200: ExecutePromptSimulationResponseSerializer,
-            400: ApiErrorResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def post(self, request, prompt_template_id, run_test_id, *args, **kwargs):
@@ -605,8 +611,8 @@ class PromptSimulationScenariosView(APIView):
     @swagger_auto_schema(
         responses={
             200: PromptSimulationScenariosResponseSerializer,
-            404: ApiErrorResponseSerializer,
-            500: ApiErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
         },
     )
     def get(self, request, *args, **kwargs):

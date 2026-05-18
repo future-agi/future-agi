@@ -21778,6 +21778,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "items": {
               "$ref": "#/definitions/AgentDefinitionListResponse"
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       },
@@ -21790,6 +21799,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentDefinitionBulkDeleteResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21804,6 +21819,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "201": {
             "$ref": "#/definitions/AgentDefinitionCreateResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21816,6 +21840,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentDefinitionResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21828,6 +21858,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentDefinitionDeleteResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21842,6 +21878,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentDefinitionEditResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21857,6 +21902,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "items": {
               "$ref": "#/definitions/AgentVersionListResponse"
             }
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21871,6 +21922,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "201": {
             "$ref": "#/definitions/AgentVersionCreateResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21883,6 +21943,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentVersionResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21897,6 +21963,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentVersionActivateResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21912,6 +21984,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "items": {
               "$ref": "#/definitions/CallExecution"
             }
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21924,6 +22002,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentVersionDeleteResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -21956,6 +22043,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentVersionRestoreResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -22006,6 +22102,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       },
@@ -22018,6 +22120,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "201": {
             "$ref": "#/definitions/AgentDefinitionResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -22032,6 +22140,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/FetchAssistantResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -22044,6 +22161,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentDefinitionResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       },
@@ -22056,6 +22179,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentDefinitionResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       },
@@ -22068,6 +22200,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentDefinitionResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       },
@@ -22075,7 +22216,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "simulate_api_agent-definition-operations_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          }
+        }
       }
     },
     "/simulate/api/agent-prompt-optimiser/": {
@@ -22124,6 +22272,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       },
@@ -22136,6 +22290,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "201": {
             "$ref": "#/definitions/AgentPromptOptimiserRunCreate"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -22148,6 +22308,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentPromptOptimiserRunDetailResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       },
@@ -22160,6 +22329,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentPromptOptimiserRunModelResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       },
@@ -22172,6 +22350,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentPromptOptimiserRunModelResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       },
@@ -22179,7 +22366,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "simulate_api_agent-prompt-optimiser_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          }
+        }
       }
     },
     "/simulate/api/agent-prompt-optimiser/{id}/graph/": {
@@ -22190,6 +22384,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentPromptOptimiserGraphResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -22202,6 +22405,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentPromptOptimiserRunStepsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -22214,6 +22426,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentPromptOptimiserTrialEvaluationsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -22226,6 +22447,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentPromptOptimiserTrialPromptResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -22238,6 +22468,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AgentPromptOptimiserTrialScenariosResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -22345,13 +22584,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/LiveKitListenerTokenResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -22423,7 +22662,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ValidateLiveKitCredentialsResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -22492,6 +22731,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       },
@@ -22504,6 +22749,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "201": {
             "$ref": "#/definitions/PersonaCreate"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -22520,7 +22771,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/PersonaDuplicateResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -22571,6 +22822,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -22621,6 +22875,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -22671,6 +22928,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -22683,6 +22946,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/Persona"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       },
@@ -22695,6 +22964,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/Persona"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       },
@@ -22707,6 +22988,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/Persona"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       },
@@ -22714,19 +23007,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "simulate_api_personas_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "403": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          }
+        }
       }
     },
     "/simulate/api/personas/{id}/duplicate/": {
       "post": {
         "operationId": "simulate_api_personas_duplicate",
         "requestBody": {
-          "$ref": "#/definitions/Persona"
+          "$ref": "#/definitions/PersonaDuplicateRequest"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/Persona"
+            "$ref": "#/definitions/PersonaDuplicateRequest"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -22901,10 +23213,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ChatSendMessageResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -23032,13 +23344,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "file"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -23053,10 +23365,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/PromptSimulationScenariosResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -23071,13 +23383,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/PromptSimulationListResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       },
@@ -23092,13 +23404,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/PromptSimulationRunResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -23113,10 +23425,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/PromptSimulationRunResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       },
@@ -23131,13 +23443,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/PromptSimulationRunResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       },
@@ -23145,7 +23457,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "simulate_prompt-templates_simulations_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          }
+        }
       }
     },
     "/simulate/prompt-templates/{prompt_template_id}/simulations/{run_test_id}/execute/": {
@@ -23160,13 +23479,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ExecutePromptSimulationResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -23281,10 +23600,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/RunTestNameResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -23392,13 +23711,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/RunTestChatExecutionResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -23438,7 +23757,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/TestExecutionBulkDeleteResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
             "$ref": "#/definitions/ErrorResponse"
@@ -23454,7 +23773,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "simulate_run-tests_delete_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ErrorResponse"
+          }
+        }
       }
     },
     "/simulate/run-tests/{run_test_id}/eval-configs/": {
@@ -23653,7 +23982,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/TestExecutionRerunResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
             "$ref": "#/definitions/ErrorResponse"
@@ -23718,10 +24047,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ChatSDKCodeResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -24010,6 +24339,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/SimulatorAgentListResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -24039,6 +24374,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/SimulatorAgent"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
           }
         }
       }
@@ -24048,7 +24389,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "simulate_simulator-agents_delete_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/SimulatorAgentDeleteResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorWithDetailsResponse"
+          }
+        }
       }
     },
     "/simulate/simulator-agents/{agent_id}/edit/": {
@@ -24187,10 +24538,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/TestExecutionChatBatchResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -24207,7 +24558,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/TestExecutionColumnOrderResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
             "$ref": "#/definitions/ErrorResponse"
@@ -24223,7 +24574,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "operationId": "simulate_test-executions_delete_delete",
         "requestBody": null,
         "queryParameters": {},
-        "responses": {}
+        "responses": {
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ErrorResponse"
+          }
+        }
       }
     },
     "/simulate/test-executions/{test_execution_id}/eval-explanation-summary/": {
@@ -24256,10 +24617,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/EvalExplanationSummaryRefreshResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -24292,10 +24653,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/OptimiserAnalysisResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -24312,13 +24673,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/OptimiserAnalysisRefreshResponse"
           },
           "400": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "500": {
-            "$ref": "#/definitions/ApiErrorResponse"
+            "$ref": "#/definitions/ApiTextErrorResponse"
           }
         }
       }
@@ -39020,6 +39381,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Error",
           "type": "object",
           "x-nullable": true
+        }
+      }
+    },
+    "ApiErrorWithDetailsResponse": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": false
+        },
+        "result": {
+          "title": "Result",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "error": {
+          "title": "Error",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "details": {
+          "title": "Details",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
         }
       }
     },
@@ -59600,6 +60000,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Logo url",
           "type": "string",
           "readOnly": true
+        }
+      }
+    },
+    "SimulatorAgentDeleteResponse": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
         }
       }
     },

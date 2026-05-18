@@ -185,6 +185,7 @@ import type {
   AnnotationsLabelsApi,
   ApiDetailErrorResponseApi,
   ApiErrorResponseApi,
+  ApiErrorWithDetailsResponseApi,
   ApiKeyApi,
   ApiPublicOtelV1TracesCreateBodyOne,
   ApiPublicOtelV1TracesCreateBodyTwo,
@@ -996,6 +997,7 @@ import type {
   SimulateScenariosListParams,
   SimulateTestExecutionsReadParams,
   SimulatorAgentApi,
+  SimulatorAgentDeleteResponseApi,
   SimulatorAgentListResponseApi,
   SimulatorAgentValidationErrorResponseApi,
   SingleRowEvaluationRequestApi,
@@ -44994,12 +44996,29 @@ export type simulateAgentDefinitionsListResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateAgentDefinitionsListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsListResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsListResponseSuccess = (simulateAgentDefinitionsListResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsListResponseError = (simulateAgentDefinitionsListResponse400 | simulateAgentDefinitionsListResponse404 | simulateAgentDefinitionsListResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsListResponse = (simulateAgentDefinitionsListResponseSuccess)
+export type simulateAgentDefinitionsListResponse = (simulateAgentDefinitionsListResponseSuccess | simulateAgentDefinitionsListResponseError)
 
 export const getSimulateAgentDefinitionsListUrl = (params?: SimulateAgentDefinitionsListParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -45037,12 +45056,24 @@ export type simulateAgentDefinitionsDeleteResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsDeleteResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateAgentDefinitionsDeleteResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsDeleteResponseSuccess = (simulateAgentDefinitionsDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsDeleteResponseError = (simulateAgentDefinitionsDeleteResponse400 | simulateAgentDefinitionsDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsDeleteResponse = (simulateAgentDefinitionsDeleteResponseSuccess)
+export type simulateAgentDefinitionsDeleteResponse = (simulateAgentDefinitionsDeleteResponseSuccess | simulateAgentDefinitionsDeleteResponseError)
 
 export const getSimulateAgentDefinitionsDeleteUrl = () => {
 
@@ -45074,12 +45105,29 @@ export type simulateAgentDefinitionsCreateCreateResponse201 = {
   status: 201
 }
 
+export type simulateAgentDefinitionsCreateCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateAgentDefinitionsCreateCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsCreateCreateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsCreateCreateResponseSuccess = (simulateAgentDefinitionsCreateCreateResponse201) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsCreateCreateResponseError = (simulateAgentDefinitionsCreateCreateResponse400 | simulateAgentDefinitionsCreateCreateResponse404 | simulateAgentDefinitionsCreateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsCreateCreateResponse = (simulateAgentDefinitionsCreateCreateResponseSuccess)
+export type simulateAgentDefinitionsCreateCreateResponse = (simulateAgentDefinitionsCreateCreateResponseSuccess | simulateAgentDefinitionsCreateCreateResponseError)
 
 export const getSimulateAgentDefinitionsCreateCreateUrl = () => {
 
@@ -45111,12 +45159,24 @@ export type simulateAgentDefinitionsReadResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsReadResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsReadResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsReadResponseSuccess = (simulateAgentDefinitionsReadResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsReadResponseError = (simulateAgentDefinitionsReadResponse404 | simulateAgentDefinitionsReadResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsReadResponse = (simulateAgentDefinitionsReadResponseSuccess)
+export type simulateAgentDefinitionsReadResponse = (simulateAgentDefinitionsReadResponseSuccess | simulateAgentDefinitionsReadResponseError)
 
 export const getSimulateAgentDefinitionsReadUrl = (agentId: string,) => {
 
@@ -45147,12 +45207,24 @@ export type simulateAgentDefinitionsDeleteDeleteResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsDeleteDeleteResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsDeleteDeleteResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsDeleteDeleteResponseSuccess = (simulateAgentDefinitionsDeleteDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsDeleteDeleteResponseError = (simulateAgentDefinitionsDeleteDeleteResponse404 | simulateAgentDefinitionsDeleteDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsDeleteDeleteResponse = (simulateAgentDefinitionsDeleteDeleteResponseSuccess)
+export type simulateAgentDefinitionsDeleteDeleteResponse = (simulateAgentDefinitionsDeleteDeleteResponseSuccess | simulateAgentDefinitionsDeleteDeleteResponseError)
 
 export const getSimulateAgentDefinitionsDeleteDeleteUrl = (agentId: string,) => {
 
@@ -45183,12 +45255,29 @@ export type simulateAgentDefinitionsEditUpdateResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsEditUpdateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateAgentDefinitionsEditUpdateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsEditUpdateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsEditUpdateResponseSuccess = (simulateAgentDefinitionsEditUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsEditUpdateResponseError = (simulateAgentDefinitionsEditUpdateResponse400 | simulateAgentDefinitionsEditUpdateResponse404 | simulateAgentDefinitionsEditUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsEditUpdateResponse = (simulateAgentDefinitionsEditUpdateResponseSuccess)
+export type simulateAgentDefinitionsEditUpdateResponse = (simulateAgentDefinitionsEditUpdateResponseSuccess | simulateAgentDefinitionsEditUpdateResponseError)
 
 export const getSimulateAgentDefinitionsEditUpdateUrl = (agentId: string,) => {
 
@@ -45221,12 +45310,24 @@ export type simulateAgentDefinitionsVersionsListResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsVersionsListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsVersionsListResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsVersionsListResponseSuccess = (simulateAgentDefinitionsVersionsListResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsVersionsListResponseError = (simulateAgentDefinitionsVersionsListResponse404 | simulateAgentDefinitionsVersionsListResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsVersionsListResponse = (simulateAgentDefinitionsVersionsListResponseSuccess)
+export type simulateAgentDefinitionsVersionsListResponse = (simulateAgentDefinitionsVersionsListResponseSuccess | simulateAgentDefinitionsVersionsListResponseError)
 
 export const getSimulateAgentDefinitionsVersionsListUrl = (agentId: string,) => {
 
@@ -45257,12 +45358,29 @@ export type simulateAgentDefinitionsVersionsCreateCreateResponse201 = {
   status: 201
 }
 
+export type simulateAgentDefinitionsVersionsCreateCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateAgentDefinitionsVersionsCreateCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsVersionsCreateCreateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsVersionsCreateCreateResponseSuccess = (simulateAgentDefinitionsVersionsCreateCreateResponse201) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsVersionsCreateCreateResponseError = (simulateAgentDefinitionsVersionsCreateCreateResponse400 | simulateAgentDefinitionsVersionsCreateCreateResponse404 | simulateAgentDefinitionsVersionsCreateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsVersionsCreateCreateResponse = (simulateAgentDefinitionsVersionsCreateCreateResponseSuccess)
+export type simulateAgentDefinitionsVersionsCreateCreateResponse = (simulateAgentDefinitionsVersionsCreateCreateResponseSuccess | simulateAgentDefinitionsVersionsCreateCreateResponseError)
 
 export const getSimulateAgentDefinitionsVersionsCreateCreateUrl = (agentId: string,) => {
 
@@ -45295,12 +45413,24 @@ export type simulateAgentDefinitionsVersionsReadResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsVersionsReadResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsVersionsReadResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsVersionsReadResponseSuccess = (simulateAgentDefinitionsVersionsReadResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsVersionsReadResponseError = (simulateAgentDefinitionsVersionsReadResponse404 | simulateAgentDefinitionsVersionsReadResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsVersionsReadResponse = (simulateAgentDefinitionsVersionsReadResponseSuccess)
+export type simulateAgentDefinitionsVersionsReadResponse = (simulateAgentDefinitionsVersionsReadResponseSuccess | simulateAgentDefinitionsVersionsReadResponseError)
 
 export const getSimulateAgentDefinitionsVersionsReadUrl = (agentId: string,
     versionId: string,) => {
@@ -45333,12 +45463,24 @@ export type simulateAgentDefinitionsVersionsActivateCreateResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsVersionsActivateCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsVersionsActivateCreateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsVersionsActivateCreateResponseSuccess = (simulateAgentDefinitionsVersionsActivateCreateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsVersionsActivateCreateResponseError = (simulateAgentDefinitionsVersionsActivateCreateResponse404 | simulateAgentDefinitionsVersionsActivateCreateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsVersionsActivateCreateResponse = (simulateAgentDefinitionsVersionsActivateCreateResponseSuccess)
+export type simulateAgentDefinitionsVersionsActivateCreateResponse = (simulateAgentDefinitionsVersionsActivateCreateResponseSuccess | simulateAgentDefinitionsVersionsActivateCreateResponseError)
 
 export const getSimulateAgentDefinitionsVersionsActivateCreateUrl = (agentId: string,
     versionId: string,) => {
@@ -45373,12 +45515,24 @@ export type simulateAgentDefinitionsVersionsCallExecutionsListResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsVersionsCallExecutionsListResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsVersionsCallExecutionsListResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsVersionsCallExecutionsListResponseSuccess = (simulateAgentDefinitionsVersionsCallExecutionsListResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsVersionsCallExecutionsListResponseError = (simulateAgentDefinitionsVersionsCallExecutionsListResponse404 | simulateAgentDefinitionsVersionsCallExecutionsListResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsVersionsCallExecutionsListResponse = (simulateAgentDefinitionsVersionsCallExecutionsListResponseSuccess)
+export type simulateAgentDefinitionsVersionsCallExecutionsListResponse = (simulateAgentDefinitionsVersionsCallExecutionsListResponseSuccess | simulateAgentDefinitionsVersionsCallExecutionsListResponseError)
 
 export const getSimulateAgentDefinitionsVersionsCallExecutionsListUrl = (agentId: string,
     versionId: string,) => {
@@ -45411,12 +45565,29 @@ export type simulateAgentDefinitionsVersionsDeleteDeleteResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess = (simulateAgentDefinitionsVersionsDeleteDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponseError = (simulateAgentDefinitionsVersionsDeleteDeleteResponse400 | simulateAgentDefinitionsVersionsDeleteDeleteResponse404 | simulateAgentDefinitionsVersionsDeleteDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsVersionsDeleteDeleteResponse = (simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess)
+export type simulateAgentDefinitionsVersionsDeleteDeleteResponse = (simulateAgentDefinitionsVersionsDeleteDeleteResponseSuccess | simulateAgentDefinitionsVersionsDeleteDeleteResponseError)
 
 export const getSimulateAgentDefinitionsVersionsDeleteDeleteUrl = (agentId: string,
     versionId: string,) => {
@@ -45499,12 +45670,29 @@ export type simulateAgentDefinitionsVersionsRestoreCreateResponse200 = {
   status: 200
 }
 
+export type simulateAgentDefinitionsVersionsRestoreCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateAgentDefinitionsVersionsRestoreCreateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateAgentDefinitionsVersionsRestoreCreateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateAgentDefinitionsVersionsRestoreCreateResponseSuccess = (simulateAgentDefinitionsVersionsRestoreCreateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateAgentDefinitionsVersionsRestoreCreateResponseError = (simulateAgentDefinitionsVersionsRestoreCreateResponse400 | simulateAgentDefinitionsVersionsRestoreCreateResponse404 | simulateAgentDefinitionsVersionsRestoreCreateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateAgentDefinitionsVersionsRestoreCreateResponse = (simulateAgentDefinitionsVersionsRestoreCreateResponseSuccess)
+export type simulateAgentDefinitionsVersionsRestoreCreateResponse = (simulateAgentDefinitionsVersionsRestoreCreateResponseSuccess | simulateAgentDefinitionsVersionsRestoreCreateResponseError)
 
 export const getSimulateAgentDefinitionsVersionsRestoreCreateUrl = (agentId: string,
     versionId: string,) => {
@@ -45539,12 +45727,24 @@ export type simulateApiAgentDefinitionOperationsListResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentDefinitionOperationsListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiAgentDefinitionOperationsListResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiAgentDefinitionOperationsListResponseSuccess = (simulateApiAgentDefinitionOperationsListResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentDefinitionOperationsListResponseError = (simulateApiAgentDefinitionOperationsListResponse400 | simulateApiAgentDefinitionOperationsListResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentDefinitionOperationsListResponse = (simulateApiAgentDefinitionOperationsListResponseSuccess)
+export type simulateApiAgentDefinitionOperationsListResponse = (simulateApiAgentDefinitionOperationsListResponseSuccess | simulateApiAgentDefinitionOperationsListResponseError)
 
 export const getSimulateApiAgentDefinitionOperationsListUrl = (params?: SimulateApiAgentDefinitionOperationsListParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -45579,12 +45779,24 @@ export type simulateApiAgentDefinitionOperationsCreateResponse201 = {
   status: 201
 }
 
+export type simulateApiAgentDefinitionOperationsCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiAgentDefinitionOperationsCreateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiAgentDefinitionOperationsCreateResponseSuccess = (simulateApiAgentDefinitionOperationsCreateResponse201) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentDefinitionOperationsCreateResponseError = (simulateApiAgentDefinitionOperationsCreateResponse400 | simulateApiAgentDefinitionOperationsCreateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentDefinitionOperationsCreateResponse = (simulateApiAgentDefinitionOperationsCreateResponseSuccess)
+export type simulateApiAgentDefinitionOperationsCreateResponse = (simulateApiAgentDefinitionOperationsCreateResponseSuccess | simulateApiAgentDefinitionOperationsCreateResponseError)
 
 export const getSimulateApiAgentDefinitionOperationsCreateUrl = () => {
 
@@ -45613,12 +45825,29 @@ export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderRespon
   status: 200
 }
 
+export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse403 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 403
+}
+
+export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponseSuccess = (simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponseError = (simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse400 | simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse403 | simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse = (simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponseSuccess)
+export type simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponse = (simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponseSuccess | simulateApiAgentDefinitionOperationsFetchAssistantFromProviderResponseError)
 
 export const getSimulateApiAgentDefinitionOperationsFetchAssistantFromProviderUrl = () => {
 
@@ -45651,12 +45880,24 @@ export type simulateApiAgentDefinitionOperationsReadResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentDefinitionOperationsReadResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateApiAgentDefinitionOperationsReadResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiAgentDefinitionOperationsReadResponseSuccess = (simulateApiAgentDefinitionOperationsReadResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentDefinitionOperationsReadResponseError = (simulateApiAgentDefinitionOperationsReadResponse404 | simulateApiAgentDefinitionOperationsReadResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentDefinitionOperationsReadResponse = (simulateApiAgentDefinitionOperationsReadResponseSuccess)
+export type simulateApiAgentDefinitionOperationsReadResponse = (simulateApiAgentDefinitionOperationsReadResponseSuccess | simulateApiAgentDefinitionOperationsReadResponseError)
 
 export const getSimulateApiAgentDefinitionOperationsReadUrl = (id: string,) => {
 
@@ -45684,12 +45925,29 @@ export type simulateApiAgentDefinitionOperationsUpdateResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentDefinitionOperationsUpdateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiAgentDefinitionOperationsUpdateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateApiAgentDefinitionOperationsUpdateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiAgentDefinitionOperationsUpdateResponseSuccess = (simulateApiAgentDefinitionOperationsUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentDefinitionOperationsUpdateResponseError = (simulateApiAgentDefinitionOperationsUpdateResponse400 | simulateApiAgentDefinitionOperationsUpdateResponse404 | simulateApiAgentDefinitionOperationsUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentDefinitionOperationsUpdateResponse = (simulateApiAgentDefinitionOperationsUpdateResponseSuccess)
+export type simulateApiAgentDefinitionOperationsUpdateResponse = (simulateApiAgentDefinitionOperationsUpdateResponseSuccess | simulateApiAgentDefinitionOperationsUpdateResponseError)
 
 export const getSimulateApiAgentDefinitionOperationsUpdateUrl = (id: string,) => {
 
@@ -45719,12 +45977,29 @@ export type simulateApiAgentDefinitionOperationsPartialUpdateResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentDefinitionOperationsPartialUpdateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiAgentDefinitionOperationsPartialUpdateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateApiAgentDefinitionOperationsPartialUpdateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiAgentDefinitionOperationsPartialUpdateResponseSuccess = (simulateApiAgentDefinitionOperationsPartialUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentDefinitionOperationsPartialUpdateResponseError = (simulateApiAgentDefinitionOperationsPartialUpdateResponse400 | simulateApiAgentDefinitionOperationsPartialUpdateResponse404 | simulateApiAgentDefinitionOperationsPartialUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentDefinitionOperationsPartialUpdateResponse = (simulateApiAgentDefinitionOperationsPartialUpdateResponseSuccess)
+export type simulateApiAgentDefinitionOperationsPartialUpdateResponse = (simulateApiAgentDefinitionOperationsPartialUpdateResponseSuccess | simulateApiAgentDefinitionOperationsPartialUpdateResponseError)
 
 export const getSimulateApiAgentDefinitionOperationsPartialUpdateUrl = (id: string,) => {
 
@@ -45754,12 +46029,24 @@ export type simulateApiAgentDefinitionOperationsDeleteResponse204 = {
   status: 204
 }
 
+export type simulateApiAgentDefinitionOperationsDeleteResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateApiAgentDefinitionOperationsDeleteResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiAgentDefinitionOperationsDeleteResponseSuccess = (simulateApiAgentDefinitionOperationsDeleteResponse204) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentDefinitionOperationsDeleteResponseError = (simulateApiAgentDefinitionOperationsDeleteResponse404 | simulateApiAgentDefinitionOperationsDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentDefinitionOperationsDeleteResponse = (simulateApiAgentDefinitionOperationsDeleteResponseSuccess)
+export type simulateApiAgentDefinitionOperationsDeleteResponse = (simulateApiAgentDefinitionOperationsDeleteResponseSuccess | simulateApiAgentDefinitionOperationsDeleteResponseError)
 
 export const getSimulateApiAgentDefinitionOperationsDeleteUrl = (id: string,) => {
 
@@ -45787,12 +46074,24 @@ export type simulateApiAgentPromptOptimiserListResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentPromptOptimiserListResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserListResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserListResponseSuccess = (simulateApiAgentPromptOptimiserListResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserListResponseError = (simulateApiAgentPromptOptimiserListResponse400 | simulateApiAgentPromptOptimiserListResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserListResponse = (simulateApiAgentPromptOptimiserListResponseSuccess)
+export type simulateApiAgentPromptOptimiserListResponse = (simulateApiAgentPromptOptimiserListResponseSuccess | simulateApiAgentPromptOptimiserListResponseError)
 
 export const getSimulateApiAgentPromptOptimiserListUrl = (params?: SimulateApiAgentPromptOptimiserListParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -45830,12 +46129,24 @@ export type simulateApiAgentPromptOptimiserCreateResponse201 = {
   status: 201
 }
 
+export type simulateApiAgentPromptOptimiserCreateResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserCreateResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserCreateResponseSuccess = (simulateApiAgentPromptOptimiserCreateResponse201) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserCreateResponseError = (simulateApiAgentPromptOptimiserCreateResponse400 | simulateApiAgentPromptOptimiserCreateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserCreateResponse = (simulateApiAgentPromptOptimiserCreateResponseSuccess)
+export type simulateApiAgentPromptOptimiserCreateResponse = (simulateApiAgentPromptOptimiserCreateResponseSuccess | simulateApiAgentPromptOptimiserCreateResponseError)
 
 export const getSimulateApiAgentPromptOptimiserCreateUrl = () => {
 
@@ -45867,12 +46178,29 @@ export type simulateApiAgentPromptOptimiserReadResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentPromptOptimiserReadResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserReadResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAgentPromptOptimiserReadResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserReadResponseSuccess = (simulateApiAgentPromptOptimiserReadResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserReadResponseError = (simulateApiAgentPromptOptimiserReadResponse400 | simulateApiAgentPromptOptimiserReadResponse404 | simulateApiAgentPromptOptimiserReadResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserReadResponse = (simulateApiAgentPromptOptimiserReadResponseSuccess)
+export type simulateApiAgentPromptOptimiserReadResponse = (simulateApiAgentPromptOptimiserReadResponseSuccess | simulateApiAgentPromptOptimiserReadResponseError)
 
 export const getSimulateApiAgentPromptOptimiserReadUrl = (id: string,) => {
 
@@ -45903,12 +46231,29 @@ export type simulateApiAgentPromptOptimiserUpdateResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentPromptOptimiserUpdateResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserUpdateResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAgentPromptOptimiserUpdateResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserUpdateResponseSuccess = (simulateApiAgentPromptOptimiserUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserUpdateResponseError = (simulateApiAgentPromptOptimiserUpdateResponse400 | simulateApiAgentPromptOptimiserUpdateResponse404 | simulateApiAgentPromptOptimiserUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserUpdateResponse = (simulateApiAgentPromptOptimiserUpdateResponseSuccess)
+export type simulateApiAgentPromptOptimiserUpdateResponse = (simulateApiAgentPromptOptimiserUpdateResponseSuccess | simulateApiAgentPromptOptimiserUpdateResponseError)
 
 export const getSimulateApiAgentPromptOptimiserUpdateUrl = (id: string,) => {
 
@@ -45941,12 +46286,29 @@ export type simulateApiAgentPromptOptimiserPartialUpdateResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentPromptOptimiserPartialUpdateResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserPartialUpdateResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAgentPromptOptimiserPartialUpdateResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserPartialUpdateResponseSuccess = (simulateApiAgentPromptOptimiserPartialUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserPartialUpdateResponseError = (simulateApiAgentPromptOptimiserPartialUpdateResponse400 | simulateApiAgentPromptOptimiserPartialUpdateResponse404 | simulateApiAgentPromptOptimiserPartialUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserPartialUpdateResponse = (simulateApiAgentPromptOptimiserPartialUpdateResponseSuccess)
+export type simulateApiAgentPromptOptimiserPartialUpdateResponse = (simulateApiAgentPromptOptimiserPartialUpdateResponseSuccess | simulateApiAgentPromptOptimiserPartialUpdateResponseError)
 
 export const getSimulateApiAgentPromptOptimiserPartialUpdateUrl = (id: string,) => {
 
@@ -45979,12 +46341,24 @@ export type simulateApiAgentPromptOptimiserDeleteResponse204 = {
   status: 204
 }
 
+export type simulateApiAgentPromptOptimiserDeleteResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAgentPromptOptimiserDeleteResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserDeleteResponseSuccess = (simulateApiAgentPromptOptimiserDeleteResponse204) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserDeleteResponseError = (simulateApiAgentPromptOptimiserDeleteResponse404 | simulateApiAgentPromptOptimiserDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserDeleteResponse = (simulateApiAgentPromptOptimiserDeleteResponseSuccess)
+export type simulateApiAgentPromptOptimiserDeleteResponse = (simulateApiAgentPromptOptimiserDeleteResponseSuccess | simulateApiAgentPromptOptimiserDeleteResponseError)
 
 export const getSimulateApiAgentPromptOptimiserDeleteUrl = (id: string,) => {
 
@@ -46015,12 +46389,29 @@ export type simulateApiAgentPromptOptimiserGraphResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentPromptOptimiserGraphResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserGraphResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAgentPromptOptimiserGraphResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserGraphResponseSuccess = (simulateApiAgentPromptOptimiserGraphResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserGraphResponseError = (simulateApiAgentPromptOptimiserGraphResponse400 | simulateApiAgentPromptOptimiserGraphResponse404 | simulateApiAgentPromptOptimiserGraphResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserGraphResponse = (simulateApiAgentPromptOptimiserGraphResponseSuccess)
+export type simulateApiAgentPromptOptimiserGraphResponse = (simulateApiAgentPromptOptimiserGraphResponseSuccess | simulateApiAgentPromptOptimiserGraphResponseError)
 
 export const getSimulateApiAgentPromptOptimiserGraphUrl = (id: string,) => {
 
@@ -46051,12 +46442,29 @@ export type simulateApiAgentPromptOptimiserStepsResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentPromptOptimiserStepsResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserStepsResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAgentPromptOptimiserStepsResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserStepsResponseSuccess = (simulateApiAgentPromptOptimiserStepsResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserStepsResponseError = (simulateApiAgentPromptOptimiserStepsResponse400 | simulateApiAgentPromptOptimiserStepsResponse404 | simulateApiAgentPromptOptimiserStepsResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserStepsResponse = (simulateApiAgentPromptOptimiserStepsResponseSuccess)
+export type simulateApiAgentPromptOptimiserStepsResponse = (simulateApiAgentPromptOptimiserStepsResponseSuccess | simulateApiAgentPromptOptimiserStepsResponseError)
 
 export const getSimulateApiAgentPromptOptimiserStepsUrl = (id: string,) => {
 
@@ -46087,12 +46495,29 @@ export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseSuccess = (simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseError = (simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse400 | simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse404 | simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse = (simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseSuccess)
+export type simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponse = (simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseSuccess | simulateApiAgentPromptOptimiserTrialTrialEvaluationsResponseError)
 
 export const getSimulateApiAgentPromptOptimiserTrialTrialEvaluationsUrl = (id: string,
     trialId: string,) => {
@@ -46125,12 +46550,29 @@ export type simulateApiAgentPromptOptimiserTrialTrialPromptResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentPromptOptimiserTrialTrialPromptResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserTrialTrialPromptResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAgentPromptOptimiserTrialTrialPromptResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserTrialTrialPromptResponseSuccess = (simulateApiAgentPromptOptimiserTrialTrialPromptResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserTrialTrialPromptResponseError = (simulateApiAgentPromptOptimiserTrialTrialPromptResponse400 | simulateApiAgentPromptOptimiserTrialTrialPromptResponse404 | simulateApiAgentPromptOptimiserTrialTrialPromptResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserTrialTrialPromptResponse = (simulateApiAgentPromptOptimiserTrialTrialPromptResponseSuccess)
+export type simulateApiAgentPromptOptimiserTrialTrialPromptResponse = (simulateApiAgentPromptOptimiserTrialTrialPromptResponseSuccess | simulateApiAgentPromptOptimiserTrialTrialPromptResponseError)
 
 export const getSimulateApiAgentPromptOptimiserTrialTrialPromptUrl = (id: string,
     trialId: string,) => {
@@ -46163,12 +46605,29 @@ export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponse200 = {
   status: 200
 }
 
+export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponseSuccess = (simulateApiAgentPromptOptimiserTrialTrialScenariosResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponseError = (simulateApiAgentPromptOptimiserTrialTrialScenariosResponse400 | simulateApiAgentPromptOptimiserTrialTrialScenariosResponse404 | simulateApiAgentPromptOptimiserTrialTrialScenariosResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponse = (simulateApiAgentPromptOptimiserTrialTrialScenariosResponseSuccess)
+export type simulateApiAgentPromptOptimiserTrialTrialScenariosResponse = (simulateApiAgentPromptOptimiserTrialTrialScenariosResponseSuccess | simulateApiAgentPromptOptimiserTrialTrialScenariosResponseError)
 
 export const getSimulateApiAgentPromptOptimiserTrialTrialScenariosUrl = (id: string,
     trialId: string,) => {
@@ -46356,17 +46815,17 @@ export type simulateApiLivekitListenerTokenReadResponse200 = {
 }
 
 export type simulateApiLivekitListenerTokenReadResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulateApiLivekitListenerTokenReadResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulateApiLivekitListenerTokenReadResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -46556,7 +47015,7 @@ export type simulateApiLivekitValidateCredentialsCreateResponse200 = {
 }
 
 export type simulateApiLivekitValidateCredentialsCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
@@ -46652,12 +47111,24 @@ export type simulateApiPersonasListResponse200 = {
   status: 200
 }
 
+export type simulateApiPersonasListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiPersonasListResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiPersonasListResponseSuccess = (simulateApiPersonasListResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasListResponseError = (simulateApiPersonasListResponse400 | simulateApiPersonasListResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasListResponse = (simulateApiPersonasListResponseSuccess)
+export type simulateApiPersonasListResponse = (simulateApiPersonasListResponseSuccess | simulateApiPersonasListResponseError)
 
 export const getSimulateApiPersonasListUrl = (params?: SimulateApiPersonasListParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -46695,12 +47166,24 @@ export type simulateApiPersonasCreateResponse201 = {
   status: 201
 }
 
+export type simulateApiPersonasCreateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiPersonasCreateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiPersonasCreateResponseSuccess = (simulateApiPersonasCreateResponse201) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasCreateResponseError = (simulateApiPersonasCreateResponse400 | simulateApiPersonasCreateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasCreateResponse = (simulateApiPersonasCreateResponseSuccess)
+export type simulateApiPersonasCreateResponse = (simulateApiPersonasCreateResponseSuccess | simulateApiPersonasCreateResponseError)
 
 export const getSimulateApiPersonasCreateUrl = () => {
 
@@ -46733,7 +47216,7 @@ export type simulateApiPersonasDuplicateCreateResponse201 = {
 }
 
 export type simulateApiPersonasDuplicateCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
@@ -46777,12 +47260,19 @@ export type simulateApiPersonasFieldOptionsResponse200 = {
   status: 200
 }
 
+export type simulateApiPersonasFieldOptionsResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiPersonasFieldOptionsResponseSuccess = (simulateApiPersonasFieldOptionsResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasFieldOptionsResponseError = (simulateApiPersonasFieldOptionsResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasFieldOptionsResponse = (simulateApiPersonasFieldOptionsResponseSuccess)
+export type simulateApiPersonasFieldOptionsResponse = (simulateApiPersonasFieldOptionsResponseSuccess | simulateApiPersonasFieldOptionsResponseError)
 
 export const getSimulateApiPersonasFieldOptionsUrl = (params?: SimulateApiPersonasFieldOptionsParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -46820,12 +47310,19 @@ export type simulateApiPersonasSystemPersonasResponse200 = {
   status: 200
 }
 
+export type simulateApiPersonasSystemPersonasResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiPersonasSystemPersonasResponseSuccess = (simulateApiPersonasSystemPersonasResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasSystemPersonasResponseError = (simulateApiPersonasSystemPersonasResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasSystemPersonasResponse = (simulateApiPersonasSystemPersonasResponseSuccess)
+export type simulateApiPersonasSystemPersonasResponse = (simulateApiPersonasSystemPersonasResponseSuccess | simulateApiPersonasSystemPersonasResponseError)
 
 export const getSimulateApiPersonasSystemPersonasUrl = (params?: SimulateApiPersonasSystemPersonasParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -46863,12 +47360,24 @@ export type simulateApiPersonasWorkspacePersonasResponse200 = {
   status: 200
 }
 
+export type simulateApiPersonasWorkspacePersonasResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiPersonasWorkspacePersonasResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiPersonasWorkspacePersonasResponseSuccess = (simulateApiPersonasWorkspacePersonasResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasWorkspacePersonasResponseError = (simulateApiPersonasWorkspacePersonasResponse400 | simulateApiPersonasWorkspacePersonasResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasWorkspacePersonasResponse = (simulateApiPersonasWorkspacePersonasResponseSuccess)
+export type simulateApiPersonasWorkspacePersonasResponse = (simulateApiPersonasWorkspacePersonasResponseSuccess | simulateApiPersonasWorkspacePersonasResponseError)
 
 export const getSimulateApiPersonasWorkspacePersonasUrl = (params?: SimulateApiPersonasWorkspacePersonasParams,) => {
   const normalizedParams = new URLSearchParams();
@@ -46906,12 +47415,24 @@ export type simulateApiPersonasReadResponse200 = {
   status: 200
 }
 
+export type simulateApiPersonasReadResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateApiPersonasReadResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiPersonasReadResponseSuccess = (simulateApiPersonasReadResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasReadResponseError = (simulateApiPersonasReadResponse404 | simulateApiPersonasReadResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasReadResponse = (simulateApiPersonasReadResponseSuccess)
+export type simulateApiPersonasReadResponse = (simulateApiPersonasReadResponseSuccess | simulateApiPersonasReadResponseError)
 
 export const getSimulateApiPersonasReadUrl = (id: string,) => {
 
@@ -46942,12 +47463,34 @@ export type simulateApiPersonasUpdateResponse200 = {
   status: 200
 }
 
+export type simulateApiPersonasUpdateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiPersonasUpdateResponse403 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 403
+}
+
+export type simulateApiPersonasUpdateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateApiPersonasUpdateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiPersonasUpdateResponseSuccess = (simulateApiPersonasUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasUpdateResponseError = (simulateApiPersonasUpdateResponse400 | simulateApiPersonasUpdateResponse403 | simulateApiPersonasUpdateResponse404 | simulateApiPersonasUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasUpdateResponse = (simulateApiPersonasUpdateResponseSuccess)
+export type simulateApiPersonasUpdateResponse = (simulateApiPersonasUpdateResponseSuccess | simulateApiPersonasUpdateResponseError)
 
 export const getSimulateApiPersonasUpdateUrl = (id: string,) => {
 
@@ -46980,12 +47523,34 @@ export type simulateApiPersonasPartialUpdateResponse200 = {
   status: 200
 }
 
+export type simulateApiPersonasPartialUpdateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiPersonasPartialUpdateResponse403 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 403
+}
+
+export type simulateApiPersonasPartialUpdateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateApiPersonasPartialUpdateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiPersonasPartialUpdateResponseSuccess = (simulateApiPersonasPartialUpdateResponse200) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasPartialUpdateResponseError = (simulateApiPersonasPartialUpdateResponse400 | simulateApiPersonasPartialUpdateResponse403 | simulateApiPersonasPartialUpdateResponse404 | simulateApiPersonasPartialUpdateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasPartialUpdateResponse = (simulateApiPersonasPartialUpdateResponseSuccess)
+export type simulateApiPersonasPartialUpdateResponse = (simulateApiPersonasPartialUpdateResponseSuccess | simulateApiPersonasPartialUpdateResponseError)
 
 export const getSimulateApiPersonasPartialUpdateUrl = (id: string,) => {
 
@@ -47018,12 +47583,29 @@ export type simulateApiPersonasDeleteResponse204 = {
   status: 204
 }
 
+export type simulateApiPersonasDeleteResponse403 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 403
+}
+
+export type simulateApiPersonasDeleteResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateApiPersonasDeleteResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateApiPersonasDeleteResponseSuccess = (simulateApiPersonasDeleteResponse204) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasDeleteResponseError = (simulateApiPersonasDeleteResponse403 | simulateApiPersonasDeleteResponse404 | simulateApiPersonasDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasDeleteResponse = (simulateApiPersonasDeleteResponseSuccess)
+export type simulateApiPersonasDeleteResponse = (simulateApiPersonasDeleteResponseSuccess | simulateApiPersonasDeleteResponseError)
 
 export const getSimulateApiPersonasDeleteUrl = (id: string,) => {
 
@@ -47050,16 +47632,33 @@ export const simulateApiPersonasDelete = async (id: string, options?: RequestIni
 
 
 export type simulateApiPersonasDuplicateResponse201 = {
-  data: PersonaApi
+  data: PersonaDuplicateRequestApi
   status: 201
+}
+
+export type simulateApiPersonasDuplicateResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateApiPersonasDuplicateResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateApiPersonasDuplicateResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
 }
 
 export type simulateApiPersonasDuplicateResponseSuccess = (simulateApiPersonasDuplicateResponse201) & {
   headers: Headers;
 };
-;
+export type simulateApiPersonasDuplicateResponseError = (simulateApiPersonasDuplicateResponse400 | simulateApiPersonasDuplicateResponse404 | simulateApiPersonasDuplicateResponse500) & {
+  headers: Headers;
+};
 
-export type simulateApiPersonasDuplicateResponse = (simulateApiPersonasDuplicateResponseSuccess)
+export type simulateApiPersonasDuplicateResponse = (simulateApiPersonasDuplicateResponseSuccess | simulateApiPersonasDuplicateResponseError)
 
 export const getSimulateApiPersonasDuplicateUrl = (id: string,) => {
 
@@ -47073,7 +47672,7 @@ export const getSimulateApiPersonasDuplicateUrl = (id: string,) => {
  * Duplicate a persona (creates a workspace-level copy)
  */
 export const simulateApiPersonasDuplicate = async (id: string,
-    personaApi: NonReadonly<PersonaApi>, options?: RequestInit): Promise<simulateApiPersonasDuplicateResponse> => {
+    personaDuplicateRequestApi: PersonaDuplicateRequestApi, options?: RequestInit): Promise<simulateApiPersonasDuplicateResponse> => {
 
   return apiMutator<simulateApiPersonasDuplicateResponse>(getSimulateApiPersonasDuplicateUrl(id),
   {
@@ -47081,7 +47680,7 @@ export const simulateApiPersonasDuplicate = async (id: string,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      personaApi,)
+      personaDuplicateRequestApi,)
   }
 );}
 
@@ -47406,12 +48005,12 @@ export type simulateCallExecutionsChatSendMessageCreateResponse200 = {
 }
 
 export type simulateCallExecutionsChatSendMessageCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulateCallExecutionsChatSendMessageCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -47696,17 +48295,17 @@ export type simulateExportReadResponse200 = {
 }
 
 export type simulateExportReadResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulateExportReadResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulateExportReadResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -47762,12 +48361,12 @@ export type simulatePromptSimulationsScenariosListResponse200 = {
 }
 
 export type simulatePromptSimulationsScenariosListResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulatePromptSimulationsScenariosListResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -47814,17 +48413,17 @@ export type simulatePromptTemplatesSimulationsListResponse200 = {
 }
 
 export type simulatePromptTemplatesSimulationsListResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulatePromptTemplatesSimulationsListResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulatePromptTemplatesSimulationsListResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -47871,17 +48470,17 @@ export type simulatePromptTemplatesSimulationsCreateResponse201 = {
 }
 
 export type simulatePromptTemplatesSimulationsCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulatePromptTemplatesSimulationsCreateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulatePromptTemplatesSimulationsCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -47934,12 +48533,12 @@ export type simulatePromptTemplatesSimulationsReadResponse200 = {
 }
 
 export type simulatePromptTemplatesSimulationsReadResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulatePromptTemplatesSimulationsReadResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -47984,17 +48583,17 @@ export type simulatePromptTemplatesSimulationsPartialUpdateResponse200 = {
 }
 
 export type simulatePromptTemplatesSimulationsPartialUpdateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulatePromptTemplatesSimulationsPartialUpdateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulatePromptTemplatesSimulationsPartialUpdateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -48040,12 +48639,24 @@ export type simulatePromptTemplatesSimulationsDeleteResponse204 = {
   status: 204
 }
 
+export type simulatePromptTemplatesSimulationsDeleteResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type simulatePromptTemplatesSimulationsDeleteResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type simulatePromptTemplatesSimulationsDeleteResponseSuccess = (simulatePromptTemplatesSimulationsDeleteResponse204) & {
   headers: Headers;
 };
-;
+export type simulatePromptTemplatesSimulationsDeleteResponseError = (simulatePromptTemplatesSimulationsDeleteResponse404 | simulatePromptTemplatesSimulationsDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulatePromptTemplatesSimulationsDeleteResponse = (simulatePromptTemplatesSimulationsDeleteResponseSuccess)
+export type simulatePromptTemplatesSimulationsDeleteResponse = (simulatePromptTemplatesSimulationsDeleteResponseSuccess | simulatePromptTemplatesSimulationsDeleteResponseError)
 
 export const getSimulatePromptTemplatesSimulationsDeleteUrl = (promptTemplateId: string,
     runTestId: string,) => {
@@ -48079,17 +48690,17 @@ export type simulatePromptTemplatesSimulationsExecuteCreateResponse200 = {
 }
 
 export type simulatePromptTemplatesSimulationsExecuteCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulatePromptTemplatesSimulationsExecuteCreateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulatePromptTemplatesSimulationsExecuteCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -48299,12 +48910,12 @@ export type simulateRunTestsGetIdByNameReadResponse200 = {
 }
 
 export type simulateRunTestsGetIdByNameReadResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulateRunTestsGetIdByNameReadResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -48599,17 +49210,17 @@ export type simulateRunTestsChatExecuteCreateResponse200 = {
 }
 
 export type simulateRunTestsChatExecuteCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulateRunTestsChatExecuteCreateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulateRunTestsChatExecuteCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -48709,7 +49320,7 @@ export type simulateRunTestsDeleteTestExecutionsCreateResponse200 = {
 }
 
 export type simulateRunTestsDeleteTestExecutionsCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
@@ -48763,12 +49374,29 @@ export type simulateRunTestsDeleteDeleteResponse204 = {
   status: 204
 }
 
+export type simulateRunTestsDeleteDeleteResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateRunTestsDeleteDeleteResponse404 = {
+  data: ErrorResponseApi
+  status: 404
+}
+
+export type simulateRunTestsDeleteDeleteResponse500 = {
+  data: ErrorResponseApi
+  status: 500
+}
+
 export type simulateRunTestsDeleteDeleteResponseSuccess = (simulateRunTestsDeleteDeleteResponse204) & {
   headers: Headers;
 };
-;
+export type simulateRunTestsDeleteDeleteResponseError = (simulateRunTestsDeleteDeleteResponse400 | simulateRunTestsDeleteDeleteResponse404 | simulateRunTestsDeleteDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulateRunTestsDeleteDeleteResponse = (simulateRunTestsDeleteDeleteResponseSuccess)
+export type simulateRunTestsDeleteDeleteResponse = (simulateRunTestsDeleteDeleteResponseSuccess | simulateRunTestsDeleteDeleteResponseError)
 
 export const getSimulateRunTestsDeleteDeleteUrl = (runTestId: string,) => {
 
@@ -49274,7 +49902,7 @@ export type simulateRunTestsRerunTestExecutionsCreateResponse200 = {
 }
 
 export type simulateRunTestsRerunTestExecutionsCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
@@ -49443,12 +50071,12 @@ export type simulateRunTestsSdkCodeListResponse200 = {
 }
 
 export type simulateRunTestsSdkCodeListResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulateRunTestsSdkCodeListResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -50022,12 +50650,24 @@ export type simulateSimulatorAgentsListResponse200 = {
   status: 200
 }
 
+export type simulateSimulatorAgentsListResponse400 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 400
+}
+
+export type simulateSimulatorAgentsListResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateSimulatorAgentsListResponseSuccess = (simulateSimulatorAgentsListResponse200) & {
   headers: Headers;
 };
-;
+export type simulateSimulatorAgentsListResponseError = (simulateSimulatorAgentsListResponse400 | simulateSimulatorAgentsListResponse500) & {
+  headers: Headers;
+};
 
-export type simulateSimulatorAgentsListResponse = (simulateSimulatorAgentsListResponseSuccess)
+export type simulateSimulatorAgentsListResponse = (simulateSimulatorAgentsListResponseSuccess | simulateSimulatorAgentsListResponseError)
 
 export const getSimulateSimulatorAgentsListUrl = () => {
 
@@ -50102,12 +50742,24 @@ export type simulateSimulatorAgentsReadResponse200 = {
   status: 200
 }
 
+export type simulateSimulatorAgentsReadResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateSimulatorAgentsReadResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
 export type simulateSimulatorAgentsReadResponseSuccess = (simulateSimulatorAgentsReadResponse200) & {
   headers: Headers;
 };
-;
+export type simulateSimulatorAgentsReadResponseError = (simulateSimulatorAgentsReadResponse404 | simulateSimulatorAgentsReadResponse500) & {
+  headers: Headers;
+};
 
-export type simulateSimulatorAgentsReadResponse = (simulateSimulatorAgentsReadResponseSuccess)
+export type simulateSimulatorAgentsReadResponse = (simulateSimulatorAgentsReadResponseSuccess | simulateSimulatorAgentsReadResponseError)
 
 export const getSimulateSimulatorAgentsReadUrl = (agentId: string,) => {
 
@@ -50133,17 +50785,29 @@ export const simulateSimulatorAgentsRead = async (agentId: string, options?: Req
 
 
 
-export type simulateSimulatorAgentsDeleteDeleteResponse204 = {
-  data: void
-  status: 204
+export type simulateSimulatorAgentsDeleteDeleteResponse200 = {
+  data: SimulatorAgentDeleteResponseApi
+  status: 200
 }
 
-export type simulateSimulatorAgentsDeleteDeleteResponseSuccess = (simulateSimulatorAgentsDeleteDeleteResponse204) & {
+export type simulateSimulatorAgentsDeleteDeleteResponse404 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 404
+}
+
+export type simulateSimulatorAgentsDeleteDeleteResponse500 = {
+  data: ApiErrorWithDetailsResponseApi
+  status: 500
+}
+
+export type simulateSimulatorAgentsDeleteDeleteResponseSuccess = (simulateSimulatorAgentsDeleteDeleteResponse200) & {
   headers: Headers;
 };
-;
+export type simulateSimulatorAgentsDeleteDeleteResponseError = (simulateSimulatorAgentsDeleteDeleteResponse404 | simulateSimulatorAgentsDeleteDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulateSimulatorAgentsDeleteDeleteResponse = (simulateSimulatorAgentsDeleteDeleteResponseSuccess)
+export type simulateSimulatorAgentsDeleteDeleteResponse = (simulateSimulatorAgentsDeleteDeleteResponseSuccess | simulateSimulatorAgentsDeleteDeleteResponseError)
 
 export const getSimulateSimulatorAgentsDeleteDeleteUrl = (agentId: string,) => {
 
@@ -50386,12 +51050,12 @@ export type simulateTestExecutionsChatCallExecutionsBatchCreateResponse200 = {
 }
 
 export type simulateTestExecutionsChatCallExecutionsBatchCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulateTestExecutionsChatCallExecutionsBatchCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -50445,7 +51109,7 @@ export type simulateTestExecutionsColumnOrderUpdateResponse200 = {
 }
 
 export type simulateTestExecutionsColumnOrderUpdateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
@@ -50499,12 +51163,29 @@ export type simulateTestExecutionsDeleteDeleteResponse204 = {
   status: 204
 }
 
+export type simulateTestExecutionsDeleteDeleteResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type simulateTestExecutionsDeleteDeleteResponse404 = {
+  data: ErrorResponseApi
+  status: 404
+}
+
+export type simulateTestExecutionsDeleteDeleteResponse500 = {
+  data: ErrorResponseApi
+  status: 500
+}
+
 export type simulateTestExecutionsDeleteDeleteResponseSuccess = (simulateTestExecutionsDeleteDeleteResponse204) & {
   headers: Headers;
 };
-;
+export type simulateTestExecutionsDeleteDeleteResponseError = (simulateTestExecutionsDeleteDeleteResponse400 | simulateTestExecutionsDeleteDeleteResponse404 | simulateTestExecutionsDeleteDeleteResponse500) & {
+  headers: Headers;
+};
 
-export type simulateTestExecutionsDeleteDeleteResponse = (simulateTestExecutionsDeleteDeleteResponseSuccess)
+export type simulateTestExecutionsDeleteDeleteResponse = (simulateTestExecutionsDeleteDeleteResponseSuccess | simulateTestExecutionsDeleteDeleteResponseError)
 
 export const getSimulateTestExecutionsDeleteDeleteUrl = (testExecutionId: string,) => {
 
@@ -50585,12 +51266,12 @@ export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse200
 }
 
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulateTestExecutionsEvalExplanationSummaryRefreshCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -50684,12 +51365,12 @@ export type simulateTestExecutionsOptimiserAnalysisListResponse200 = {
 }
 
 export type simulateTestExecutionsOptimiserAnalysisListResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulateTestExecutionsOptimiserAnalysisListResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 
@@ -50733,17 +51414,17 @@ export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse200 = {
 }
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse400 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 400
 }
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse404 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 404
 }
 
 export type simulateTestExecutionsOptimiserAnalysisRefreshCreateResponse500 = {
-  data: ApiErrorResponseApi
+  data: ApiTextErrorResponseApi
   status: 500
 }
 

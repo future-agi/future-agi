@@ -45,6 +45,7 @@ def _response_ref(operation, status_code="200"):
 
 def test_simulate_contract_debt_is_fully_burned_down():
     report = _debt_report()
+    group_report = report["by_group"]["simulate"]
 
     assert [
         item
@@ -56,6 +57,8 @@ def test_simulate_contract_debt_is_fully_burned_down():
         for item in report["operations_without_response_schema"]
         if item["tags"] == ["simulate"]
     ] == []
+    assert group_report["operations_without_error_response_schema"] == 0
+    assert group_report["broad_error_response_schemas"] == 0
 
 
 def test_remaining_simulate_mutations_have_body_contracts():

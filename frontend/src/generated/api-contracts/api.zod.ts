@@ -29317,65 +29317,8 @@ export const simulateApiPersonasDuplicateBodyNameMax = 255;
 
 
 
-
-
 export const SimulateApiPersonasDuplicateBody = zod.object({
-  "name": zod.string().min(1).max(simulateApiPersonasDuplicateBodyNameMax).describe('Name of the persona'),
-  "description": zod.string().optional().describe('Description of the persona'),
-  "gender": zod.object({
-
-}).passthrough().optional().describe('List of genders for the persona (e.g., [\'male\'], [\'female\'])'),
-  "age_group": zod.object({
-
-}).passthrough().optional().describe('List of age groups for the persona (e.g., [\'18-25\'], [\'25-32\'])'),
-  "occupation": zod.object({
-
-}).passthrough().optional().describe('List of occupations\/professions for the persona (e.g., [\'Engineer\'], [\'Teacher\'])'),
-  "location": zod.object({
-
-}).passthrough().optional().describe('List of locations for the persona (e.g., [\'United States\'], [\'Canada\'])'),
-  "personality": zod.object({
-
-}).passthrough().optional().describe('List of personality types for the persona (e.g., [\'Friendly and cooperative\'])'),
-  "communication_style": zod.object({
-
-}).passthrough().optional().describe('List of communication styles for the persona (e.g., [\'Direct and concise\'])'),
-  "multilingual": zod.boolean().optional().describe('Whether the persona supports multiple languages'),
-  "languages": zod.object({
-
-}).passthrough().optional().describe('List of languages the persona speaks (e.g., [\'English\', \'Hindi\'])'),
-  "accent": zod.object({
-
-}).passthrough().optional().describe('List of accents for the persona (e.g., [\'American\'], [\'Australian\'])'),
-  "conversation_speed": zod.object({
-
-}).passthrough().optional().describe('List of conversation speeds (e.g., [\'1.0\'], [\'1.25\'])'),
-  "background_sound": zod.boolean().optional().describe('Whether background sound is enabled (null=not specified, True\/False for enabled\/disabled)'),
-  "finished_speaking_sensitivity": zod.object({
-
-}).passthrough().optional().describe('List of sensitivities for detecting when persona finished speaking (e.g., [\'5\'], [\'6\'])'),
-  "interrupt_sensitivity": zod.object({
-
-}).passthrough().optional().describe('List of sensitivities for allowing interruptions (e.g., [\'5\'], [\'6\'])'),
-  "keywords": zod.object({
-
-}).passthrough().optional().describe('List of keywords\/tags describing the persona (e.g., [\'Knowledgeable\', \'Patient\', \'Helpful\'])'),
-  "metadata": zod.object({
-
-}).passthrough().optional().describe('Additional metadata for the persona (speech clarity, base emotion, etc.)'),
-  "additional_instruction": zod.string().optional().describe('Additional instructions for how this persona should behave'),
-  "profession": zod.array(zod.string().min(1)).optional(),
-  "language": zod.array(zod.string().min(1)).optional(),
-  "custom_properties": zod.object({
-
-}).passthrough().optional(),
-  "punctuation": zod.enum(['clean', 'minimal', 'expressive', 'erratic']).optional().describe('Punctuation style for the persona'),
-  "slang_usage": zod.enum(['none', 'moderate', 'heavy', 'light']).optional().describe('Slang usage for the persona'),
-  "typos_frequency": zod.enum(['none', 'rare', 'occasional', 'frequent']).optional().describe('Typos frequency for the persona'),
-  "regional_mix": zod.enum(['none', 'moderate', 'heavy', 'light']).optional().describe('Regional mix for the persona'),
-  "emoji_usage": zod.enum(['never', 'light', 'regular', 'heavy']).optional().describe('Emoji usage for the persona'),
-  "tone": zod.enum(['formal', 'casual', 'neutral']).optional().describe('Tone for the persona'),
-  "verbosity": zod.enum(['brief', 'balanced', 'detailed']).optional().describe('Verbosity for the persona')
+  "name": zod.string().min(1).max(simulateApiPersonasDuplicateBodyNameMax)
 })
 
 
@@ -32267,6 +32210,13 @@ export const SimulateSimulatorAgentsReadResponse = zod.object({
  */
 export const SimulateSimulatorAgentsDeleteDeleteParams = zod.object({
   "agent_id": zod.string()
+})
+
+
+
+
+export const SimulateSimulatorAgentsDeleteDeleteResponse = zod.object({
+  "message": zod.string().min(1).optional()
 })
 
 

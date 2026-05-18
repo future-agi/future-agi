@@ -32,7 +32,10 @@ from simulate.utils.eval_summary import (
     _get_completed_call_executions_for_agent_version,
     _get_eval_config_for_agent_version,
 )
-from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.api_serializers import (
+    ApiErrorWithDetailsResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -47,7 +50,11 @@ class AgentVersionListView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AgentVersionListResponseSerializer(many=True)},
+        responses={
+            200: AgentVersionListResponseSerializer(many=True),
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, agent_id, *args, **kwargs):
         """
@@ -92,7 +99,12 @@ class CreateAgentVersionView(APIView):
 
     @swagger_auto_schema(
         request_body=AgentVersionCreateRequestSerializer,
-        responses={201: AgentVersionCreateResponseSerializer},
+        responses={
+            201: AgentVersionCreateResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def post(self, request, agent_id, *args, **kwargs):
         """
@@ -253,7 +265,11 @@ class AgentVersionDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AgentVersionResponseSerializer},
+        responses={
+            200: AgentVersionResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -297,7 +313,11 @@ class ActivateAgentVersionView(APIView):
 
     @swagger_auto_schema(
         request_body=EmptyRequestSerializer,
-        responses={200: AgentVersionActivateResponseSerializer},
+        responses={
+            200: AgentVersionActivateResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def post(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -344,7 +364,12 @@ class DeleteAgentVersionView(APIView):
     permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
-        responses={200: AgentVersionDeleteResponseSerializer},
+        responses={
+            200: AgentVersionDeleteResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def delete(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -406,7 +431,12 @@ class RestoreAgentVersionView(APIView):
 
     @swagger_auto_schema(
         request_body=EmptyRequestSerializer,
-        responses={200: AgentVersionRestoreResponseSerializer},
+        responses={
+            200: AgentVersionRestoreResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def post(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -503,7 +533,11 @@ class AgentVersionCallExecutionView(APIView):
     _gm = GeneralMethods()
 
     @swagger_auto_schema(
-        responses={200: CallExecutionSerializer(many=True)},
+        responses={
+            200: CallExecutionSerializer(many=True),
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        },
     )
     def get(self, request, agent_id, version_id, *args, **kwargs):
         """
