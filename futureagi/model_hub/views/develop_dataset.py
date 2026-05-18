@@ -210,7 +210,6 @@ from model_hub.serializers.develop_dataset import (
     FeedbackSerializer,
     FileSerializer,
     KnowledgeBaseFileSerializer,
-    UploadFileForm,
 )
 from model_hub.serializers.develop_optimisation import EvalTemplateSerializer
 from model_hub.serializers.eval_runner import UserEvalSerializer
@@ -260,6 +259,7 @@ from sdk.utils.helpers import _get_api_call_type
 from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import (
     calculate_column_average,
@@ -545,8 +545,8 @@ class AddRowsFromFile(CreateAPIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=AddRowsFromFileRequestSerializer,
+    @validated_request(
+        request_serializer=AddRowsFromFileRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -554,9 +554,8 @@ class AddRowsFromFile(CreateAPIView):
     )
     def post(self, request, *args, **kwargs):
         try:
-            form = UploadFileForm(request.POST, request.FILES)
-            file = form.files.get("file")
-            dataset_id = form.data.get("dataset_id")
+            file = request.validated_data.get("file")
+            dataset_id = request.validated_data.get("dataset_id")
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
@@ -755,8 +754,8 @@ class CloneDatasetView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=CloneDatasetRequestSerializer,
+    @validated_request(
+        request_serializer=CloneDatasetRequestSerializer,
         responses={200: DatasetCopyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
@@ -931,13 +930,13 @@ class AddAsNewDataset(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=AddAsNewDatasetRequestSerializer,
+    @validated_request(
+        request_serializer=AddAsNewDatasetRequestSerializer,
         responses={200: DatasetCopyResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:
-            dataset_id = request.data.get("dataset_id")
+            dataset_id = request.validated_data.get("dataset_id")
             call_log_row_entry = log_and_deduct_cost_for_resource_request(
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
@@ -968,10 +967,10 @@ class AddAsNewDataset(APIView):
                     experiments_datasets_created__dataset__organization=_org,
                 )
                 exp_dataset = True
-            new_dataset_name = request.data.get(
+            new_dataset_name = request.validated_data.get(
                 "name", f"Copy of {source_dataset.name}"
             )
-            columns = request.data.get("columns", {})
+            columns = request.validated_data.get("columns", {})
 
             if len(set(columns.values())) != len(columns.values()):
                 return self._gm.bad_request(get_error_message("DUPLICATE_COLUMN_NAME"))
@@ -2127,16 +2126,13 @@ class GetDatasetTableView(APIView):
 
         return filtered_rows, search_results
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=DatasetTableQuerySerializer,
         responses={200: DatasetTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
-            query_serializer = DatasetTableQuerySerializer(data=request.query_params)
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-            query_data = query_serializer.validated_data
+            query_data = request.validated_query_data
 
             filters = query_data.get("filters", [])
             sort_configs = query_data.get("sort", [])
@@ -2804,16 +2800,13 @@ class GetRowDataView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=DatasetRowDataRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetRowDataRequestSerializer,
         responses={200: DatasetRowDataResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            request_serializer = DatasetRowDataRequestSerializer(data=request.data)
-            if not request_serializer.is_valid():
-                return self._gm.bad_request(request_serializer.errors)
-            request_data = request_serializer.validated_data
+            request_data = request.validated_data
 
             filters = request_data.get("filters", [])
             sort_configs = request_data.get("sort", [])
@@ -3519,8 +3512,8 @@ class AddColumnsView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=DatasetAddColumnsRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetAddColumnsRequestSerializer,
         responses={
             200: DatasetColumnsMutationResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -3528,7 +3521,7 @@ class AddColumnsView(APIView):
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            columns_data = request.data.get("new_columns_data")
+            columns_data = request.validated_data.get("new_columns_data")
 
             if not columns_data or not isinstance(columns_data, list):
                 return self._gm.bad_request(
@@ -3642,8 +3635,8 @@ class AddEmptyColumnsView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=DatasetAddEmptyColumnsRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetAddEmptyColumnsRequestSerializer,
         responses={
             200: DatasetColumnsMutationResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -3651,7 +3644,7 @@ class AddEmptyColumnsView(APIView):
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            num_cols = request.data.get("num_cols", 0)
+            num_cols = request.validated_data.get("num_cols", 0)
 
             dataset = get_object_or_404(Dataset, id=dataset_id)
 
@@ -3709,15 +3702,15 @@ class GetCellDataView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=DatasetCellDataRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetCellDataRequestSerializer,
         responses={200: DatasetCellDataResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:
             # Get request parameters
-            row_ids = request.data.get("row_ids", [])
-            column_ids = request.data.get("column_ids", [])
+            row_ids = request.validated_data.get("row_ids", [])
+            column_ids = request.validated_data.get("column_ids", [])
 
             if not row_ids or not column_ids:
                 return self._gm.bad_request_response(
@@ -3776,8 +3769,8 @@ class AddStaticColumnView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=DatasetStaticColumnRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetStaticColumnRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -3786,9 +3779,9 @@ class AddStaticColumnView(APIView):
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             with transaction.atomic():
-                new_column_name = request.data.get("new_column_name")
-                column_type = request.data.get("column_type")
-                source = request.data.get("source")
+                new_column_name = request.validated_data.get("new_column_name")
+                column_type = request.validated_data.get("column_type")
+                source = request.validated_data.get("source")
 
                 if not new_column_name or not column_type:
                     return self._gm.bad_request(
@@ -3875,8 +3868,8 @@ class AddMultipleStaticColumnsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=DatasetMultipleStaticColumnsRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetMultipleStaticColumnsRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -3904,7 +3897,7 @@ class AddMultipleStaticColumnsView(APIView):
         """
         try:
             with transaction.atomic():
-                columns_data = request.data.get("columns", [])
+                columns_data = request.validated_data.get("columns", [])
 
                 if not columns_data or not isinstance(columns_data, list):
                     return self._gm.bad_request(
@@ -4239,8 +4232,8 @@ class AddEmptyRowsView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=DatasetAddEmptyRowsRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetAddEmptyRowsRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -4251,7 +4244,7 @@ class AddEmptyRowsView(APIView):
             from model_hub.services.dataset_validators import validate_num_rows
 
             num_rows, num_rows_err = validate_num_rows(
-                request.data.get("num_rows", 1), max_allowed=100
+                request.validated_data.get("num_rows", 1), max_allowed=100
             )
             if num_rows_err:
                 return self._gm.bad_request(num_rows_err)
@@ -4329,14 +4322,14 @@ class AddSDKRowsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=DatasetSdkRowsRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetSdkRowsRequestSerializer,
         responses={200: DatasetSdkRowsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:
-            dataset_name = request.data.get("dataset_name")
-            dataset_id = request.data.get("dataset_id")
+            dataset_name = request.validated_data.get("dataset_name")
+            dataset_id = request.validated_data.get("dataset_id")
 
             # Get dataset and verify it exists
             if not dataset_name:
@@ -4453,8 +4446,8 @@ class ManuallyCreateDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=ManualDatasetCreateRequestSerializer,
+    @validated_request(
+        request_serializer=ManualDatasetCreateRequestSerializer,
         responses={
             200: ManualDatasetCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -4463,9 +4456,9 @@ class ManuallyCreateDatasetView(APIView):
     def post(self, request, *args, **kwargs):
         try:
             # Get and validate input parameters
-            dataset_name = request.data.get("dataset_name")
-            number_of_rows = int(request.data.get("number_of_rows", 1))
-            number_of_columns = int(request.data.get("number_of_columns", 1))
+            dataset_name = request.validated_data.get("dataset_name")
+            number_of_rows = request.validated_data.get("number_of_rows", 1)
+            number_of_columns = request.validated_data.get("number_of_columns", 1)
 
             call_log_row_entry = log_and_deduct_cost_for_resource_request(
                 getattr(request, "organization", None) or request.user.organization,
@@ -4618,8 +4611,8 @@ class AddDataRowsView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=DatasetAddRowsRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetAddRowsRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -4627,7 +4620,7 @@ class AddDataRowsView(APIView):
     )
     def post(self, request, dataset_id: str, *args, **kwargs):
         try:
-            rows = request.data.get("rows", [])
+            rows = request.validated_data.get("rows", [])
             if not rows:
                 return self._gm.bad_request(get_error_message("DATA_MISSING"))
 
@@ -4831,8 +4824,8 @@ class UpdateColumnNameView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=DatasetUpdateColumnNameRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetUpdateColumnNameRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -4840,7 +4833,7 @@ class UpdateColumnNameView(APIView):
     )
     def put(self, request, dataset_id, column_id, *args, **kwargs):
         try:
-            new_column_name = request.data.get("new_column_name")
+            new_column_name = request.validated_data.get("new_column_name")
 
             if not new_column_name:
                 return self._gm.bad_request(
@@ -4956,8 +4949,8 @@ class EditDatasetBehaviorView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=DatasetBehaviorRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetBehaviorRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -4966,10 +4959,10 @@ class EditDatasetBehaviorView(APIView):
     def put(self, request, dataset_id, *args, **kwargs):
         try:
             # Get request parameters
-            dataset_name = request.data.get("dataset_name")
-            column_order = request.data.get("column_order", [])
-            column_config = request.data.get("column_config", {})
-            dataset_config = request.data.get("dataset_config", {})
+            dataset_name = request.validated_data.get("dataset_name")
+            column_order = request.validated_data.get("column_order", [])
+            column_config = request.validated_data.get("column_config", {})
+            dataset_config = request.validated_data.get("dataset_config", {})
 
             # Get dataset
             dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
@@ -5143,8 +5136,8 @@ class UpdateCellValueView(APIView):
         else:
             return None
 
-    @swagger_auto_schema(
-        request_body=DatasetUpdateCellValueRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetUpdateCellValueRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -5152,11 +5145,7 @@ class UpdateCellValueView(APIView):
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            serializer = DatasetUpdateCellValueRequestSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            payload = serializer.validated_data
+            payload = request.validated_data
             row_id = payload.get("row_id")
             column_id = payload.get("column_id")
             new_value = payload.get("new_value", "")
@@ -5540,8 +5529,8 @@ class UpdateColumnTypeView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=DatasetUpdateColumnTypeRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetUpdateColumnTypeRequestSerializer,
         responses={
             200: ColumnTypeConversionResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -5549,9 +5538,9 @@ class UpdateColumnTypeView(APIView):
     )
     def put(self, request, dataset_id, column_id, *args, **kwargs):
         try:
-            new_data_type = request.data.get("new_column_type")
-            preview = request.data.get("preview", True)
-            force_update = request.data.get("force_update", False)
+            new_data_type = request.validated_data.get("new_column_type")
+            preview = request.validated_data.get("preview", True)
+            force_update = request.validated_data.get("force_update", False)
 
             if not new_data_type:
                 return self._gm.bad_request(

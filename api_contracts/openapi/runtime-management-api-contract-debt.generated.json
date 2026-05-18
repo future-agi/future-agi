@@ -5,15 +5,16 @@
     "futureagi/tracer/views"
   ],
   "summary": {
-    "runtime_backed_validated_request_decorators": 85,
-    "direct_swagger_auto_schema_decorators": 349,
-    "doc_only_input_contract_decorators": 222,
+    "runtime_backed_validated_request_decorators": 103,
+    "direct_swagger_auto_schema_decorators": 331,
+    "doc_only_input_contract_decorators": 204,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [
     {
       "path": "futureagi/accounts/views/annotation_notifications.py",
       "line": 62,
+      "class": "UserTimezoneView",
       "function": "post",
       "serializers": [
         "TimezoneRequestSerializer"
@@ -22,6 +23,7 @@
     {
       "path": "futureagi/accounts/views/appsmith.py",
       "line": 70,
+      "class": "UserApiView",
       "function": "post",
       "serializers": [
         "UserCreateSerializer"
@@ -30,6 +32,7 @@
     {
       "path": "futureagi/accounts/views/appsmith.py",
       "line": 117,
+      "class": "UserApiView",
       "function": "patch",
       "serializers": [
         "PasswordValidationSerializer"
@@ -38,6 +41,7 @@
     {
       "path": "futureagi/accounts/views/appsmith.py",
       "line": 150,
+      "class": "SOSLoginView",
       "function": "post",
       "serializers": [
         "SOSLoginSerializer"
@@ -46,6 +50,7 @@
     {
       "path": "futureagi/accounts/views/aws_marketplace.py",
       "line": 134,
+      "class": null,
       "function": "aws_marketplace_signup",
       "serializers": [
         "AWSMarketplaceSignupRequestSerializer"
@@ -54,6 +59,7 @@
     {
       "path": "futureagi/accounts/views/aws_marketplace.py",
       "line": 170,
+      "class": null,
       "function": "aws_marketplace_launch_software",
       "serializers": [
         "AWSMarketplaceLaunchRequestSerializer"
@@ -62,6 +68,7 @@
     {
       "path": "futureagi/accounts/views/keys.py",
       "line": 174,
+      "class": "SecretKeyAPIViewSet",
       "function": "enable_key",
       "serializers": [
         "UserSecretKeySerializer"
@@ -70,6 +77,7 @@
     {
       "path": "futureagi/accounts/views/keys.py",
       "line": 212,
+      "class": "SecretKeyAPIViewSet",
       "function": "disable_key",
       "serializers": [
         "UserSecretKeySerializer"
@@ -78,6 +86,7 @@
     {
       "path": "futureagi/accounts/views/keys.py",
       "line": 250,
+      "class": "SecretKeyAPIViewSet",
       "function": "generate_secret_key",
       "serializers": [
         "CreateSecretKeySerializer"
@@ -86,6 +95,7 @@
     {
       "path": "futureagi/accounts/views/keys.py",
       "line": 292,
+      "class": "SecretKeyAPIViewSet",
       "function": "delete_secret_key",
       "serializers": [
         "UserSecretKeySerializer"
@@ -94,6 +104,7 @@
     {
       "path": "futureagi/accounts/views/organization_selection.py",
       "line": 39,
+      "class": "OrganizationSelectionView",
       "function": "post",
       "serializers": [
         "OrganizationSwitchRequestSerializer"
@@ -102,6 +113,7 @@
     {
       "path": "futureagi/accounts/views/organization_selection.py",
       "line": 173,
+      "class": "SwitchOrganizationView",
       "function": "post",
       "serializers": [
         "OrganizationSwitchRequestSerializer"
@@ -110,6 +122,7 @@
     {
       "path": "futureagi/accounts/views/organization_views.py",
       "line": 40,
+      "class": "OrganizationCreateAPIView",
       "function": "post",
       "serializers": [
         "OrganizationNameRequestSerializer"
@@ -118,6 +131,7 @@
     {
       "path": "futureagi/accounts/views/organization_views.py",
       "line": 156,
+      "class": "OrganizationUpdateAPIView",
       "function": "patch",
       "serializers": [
         "OrganizationUpdateRequestSerializer"
@@ -126,6 +140,7 @@
     {
       "path": "futureagi/accounts/views/organization_views.py",
       "line": 213,
+      "class": "CreateAdditionalOrganizationView",
       "function": "post",
       "serializers": [
         "OrganizationCreateRequestSerializer"
@@ -134,6 +149,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 97,
+      "class": "InviteCreateAPIView",
       "function": "post",
       "serializers": [
         "InviteCreateSerializer"
@@ -142,6 +158,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 373,
+      "class": "InviteResendAPIView",
       "function": "post",
       "serializers": [
         "InviteResendSerializer"
@@ -150,6 +167,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 437,
+      "class": "InviteCancelAPIView",
       "function": "delete",
       "serializers": [
         "InviteCancelSerializer"
@@ -158,6 +176,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 515,
+      "class": "MemberListAPIView",
       "function": "get",
       "serializers": [
         "MemberListRequestSerializer"
@@ -166,6 +185,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 847,
+      "class": "MemberRoleUpdateAPIView",
       "function": "post",
       "serializers": [
         "MemberRoleUpdateSerializer"
@@ -174,6 +194,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 1052,
+      "class": "MemberRemoveAPIView",
       "function": "delete",
       "serializers": [
         "MemberRemoveSerializer"
@@ -182,6 +203,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 1164,
+      "class": "MemberReactivateAPIView",
       "function": "post",
       "serializers": [
         "MemberRemoveSerializer"
@@ -190,6 +212,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 1282,
+      "class": "WorkspaceMemberListAPIView",
       "function": "get",
       "serializers": [
         "WorkspaceMemberListRequestSerializer"
@@ -198,6 +221,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 1532,
+      "class": "WorkspaceMemberRoleUpdateAPIView",
       "function": "post",
       "serializers": [
         "WorkspaceMemberRoleUpdateSerializer"
@@ -206,6 +230,7 @@
     {
       "path": "futureagi/accounts/views/rbac_views.py",
       "line": 1639,
+      "class": "WorkspaceMemberRemoveAPIView",
       "function": "delete",
       "serializers": [
         "WorkspaceMemberRemoveSerializer"
@@ -214,6 +239,7 @@
     {
       "path": "futureagi/accounts/views/signup.py",
       "line": 334,
+      "class": null,
       "function": "initiate_password_reset",
       "serializers": [
         "PasswordResetInitiateRequestSerializer"
@@ -222,6 +248,7 @@
     {
       "path": "futureagi/accounts/views/signup.py",
       "line": 409,
+      "class": null,
       "function": "reset_password_confirm",
       "serializers": [
         "PasswordResetConfirmRequestSerializer"
@@ -230,6 +257,7 @@
     {
       "path": "futureagi/accounts/views/signup.py",
       "line": 522,
+      "class": null,
       "function": "accept_invitation_mail",
       "serializers": [
         "AcceptInvitationRequestSerializer"
@@ -238,6 +266,7 @@
     {
       "path": "futureagi/accounts/views/signup.py",
       "line": 729,
+      "class": null,
       "function": "resend_invitation_emails",
       "serializers": [
         "UserIdsRequestSerializer"
@@ -246,6 +275,7 @@
     {
       "path": "futureagi/accounts/views/signup.py",
       "line": 793,
+      "class": null,
       "function": "delete_users",
       "serializers": [
         "UserIdsRequestSerializer"
@@ -254,6 +284,7 @@
     {
       "path": "futureagi/accounts/views/signup.py",
       "line": 863,
+      "class": null,
       "function": "update_user",
       "serializers": [
         "UpdateUserSerializer"
@@ -262,6 +293,7 @@
     {
       "path": "futureagi/accounts/views/signup.py",
       "line": 947,
+      "class": null,
       "function": "update_user_full_name",
       "serializers": [
         "UserFullNameUpdateRequestSerializer"
@@ -270,6 +302,7 @@
     {
       "path": "futureagi/accounts/views/two_factor_views.py",
       "line": 124,
+      "class": "TOTPSetupView",
       "function": "post",
       "serializers": [
         "AccountsEmptyRequestSerializer"
@@ -278,6 +311,7 @@
     {
       "path": "futureagi/accounts/views/two_factor_views.py",
       "line": 151,
+      "class": "TOTPConfirmView",
       "function": "post",
       "serializers": [
         "TOTPConfirmSerializer"
@@ -286,6 +320,7 @@
     {
       "path": "futureagi/accounts/views/two_factor_views.py",
       "line": 181,
+      "class": "TOTPDisableView",
       "function": "delete",
       "serializers": [
         "TOTPDisableSerializer"
@@ -294,6 +329,7 @@
     {
       "path": "futureagi/accounts/views/two_factor_views.py",
       "line": 212,
+      "class": "TwoFactorVerifyTOTPView",
       "function": "post",
       "serializers": [
         "TwoFactorVerifySerializer"
@@ -302,6 +338,7 @@
     {
       "path": "futureagi/accounts/views/two_factor_views.py",
       "line": 258,
+      "class": "TwoFactorVerifyRecoveryView",
       "function": "post",
       "serializers": [
         "TwoFactorVerifySerializer"
@@ -310,6 +347,7 @@
     {
       "path": "futureagi/accounts/views/two_factor_views.py",
       "line": 310,
+      "class": "TwoFactorVerifyPasskeyOptionsView",
       "function": "post",
       "serializers": [
         "TwoFactorChallengeTokenSerializer"
@@ -318,6 +356,7 @@
     {
       "path": "futureagi/accounts/views/two_factor_views.py",
       "line": 344,
+      "class": "TwoFactorVerifyPasskeyView",
       "function": "post",
       "serializers": [
         "TwoFactorPasskeyVerifyRequestSerializer"
@@ -326,6 +365,7 @@
     {
       "path": "futureagi/accounts/views/two_factor_views.py",
       "line": 433,
+      "class": "RecoveryCodesRegenerateView",
       "function": "post",
       "serializers": [
         "RecoveryCodesRegenerateSerializer"
@@ -334,6 +374,7 @@
     {
       "path": "futureagi/accounts/views/two_factor_views.py",
       "line": 506,
+      "class": "OrgTwoFactorPolicyView",
       "function": "put",
       "serializers": [
         "OrgTwoFactorPolicySerializer"
@@ -342,6 +383,7 @@
     {
       "path": "futureagi/accounts/views/user.py",
       "line": 66,
+      "class": null,
       "function": "manage_redis_key",
       "serializers": [
         "RedisKeyRequestSerializer"
@@ -350,6 +392,7 @@
     {
       "path": "futureagi/accounts/views/user.py",
       "line": 71,
+      "class": null,
       "function": "manage_redis_key",
       "serializers": [
         "RedisKeyRequestSerializer"
@@ -358,6 +401,7 @@
     {
       "path": "futureagi/accounts/views/user.py",
       "line": 126,
+      "class": "CustomTokenObtainPairView",
       "function": "post",
       "serializers": [
         "LoginRequestSerializer"
@@ -366,6 +410,7 @@
     {
       "path": "futureagi/accounts/views/user.py",
       "line": 437,
+      "class": "CustomTokenRefreshView",
       "function": "post",
       "serializers": [
         "TokenRefreshRequestSerializer"
@@ -374,6 +419,7 @@
     {
       "path": "futureagi/accounts/views/user.py",
       "line": 871,
+      "class": null,
       "function": "user_onboarding",
       "serializers": [
         "UserOnboardingSerializer"
@@ -382,6 +428,7 @@
     {
       "path": "futureagi/accounts/views/webauthn_views.py",
       "line": 44,
+      "class": "PasskeyRegisterOptionsView",
       "function": "post",
       "serializers": [
         "AccountsEmptyRequestSerializer"
@@ -390,6 +437,7 @@
     {
       "path": "futureagi/accounts/views/webauthn_views.py",
       "line": 65,
+      "class": "PasskeyRegisterVerifyView",
       "function": "post",
       "serializers": [
         "PasskeyRegisterVerifySerializer"
@@ -398,6 +446,7 @@
     {
       "path": "futureagi/accounts/views/webauthn_views.py",
       "line": 146,
+      "class": "PasskeyDetailView",
       "function": "patch",
       "serializers": [
         "PasskeyRenameSerializer"
@@ -406,6 +455,7 @@
     {
       "path": "futureagi/accounts/views/webauthn_views.py",
       "line": 197,
+      "class": "PasskeyAuthenticateOptionsView",
       "function": "post",
       "serializers": [
         "AccountsEmptyRequestSerializer"
@@ -414,6 +464,7 @@
     {
       "path": "futureagi/accounts/views/webauthn_views.py",
       "line": 219,
+      "class": "PasskeyAuthenticateVerifyView",
       "function": "post",
       "serializers": [
         "PasskeyCredentialRequestSerializer"
@@ -422,6 +473,7 @@
     {
       "path": "futureagi/accounts/views/workspace.py",
       "line": 115,
+      "class": "WorkspaceManagementView",
       "function": "post",
       "serializers": [
         "WorkspaceCreateRequestSerializer"
@@ -430,6 +482,7 @@
     {
       "path": "futureagi/accounts/views/workspace.py",
       "line": 438,
+      "class": "WorkspaceManagementView",
       "function": "put",
       "serializers": [
         "WorkspaceUpdateRequestSerializer"
@@ -438,6 +491,7 @@
     {
       "path": "futureagi/accounts/views/workspace.py",
       "line": 621,
+      "class": "WorkspaceMembershipView",
       "function": "post",
       "serializers": [
         "WorkspaceMembersRequestSerializer"
@@ -446,6 +500,7 @@
     {
       "path": "futureagi/accounts/views/workspace_management.py",
       "line": 158,
+      "class": "WorkspaceListAPIView",
       "function": "get",
       "serializers": [
         "WorkspaceListRequestSerializer"
@@ -454,6 +509,7 @@
     {
       "path": "futureagi/accounts/views/workspace_management.py",
       "line": 272,
+      "class": "WorkspaceInviteAPIView",
       "function": "post",
       "serializers": [
         "WorkspaceInviteSerializer"
@@ -462,6 +518,7 @@
     {
       "path": "futureagi/accounts/views/workspace_management.py",
       "line": 641,
+      "class": "UserListAPIView",
       "function": "get",
       "serializers": [
         "UserListRequestSerializer"
@@ -470,6 +527,7 @@
     {
       "path": "futureagi/accounts/views/workspace_management.py",
       "line": 1083,
+      "class": "UserRoleUpdateAPIView",
       "function": "post",
       "serializers": [
         "UserRoleUpdateSerializer"
@@ -478,6 +536,7 @@
     {
       "path": "futureagi/accounts/views/workspace_management.py",
       "line": 1373,
+      "class": "ResendInviteAPIView",
       "function": "post",
       "serializers": [
         "ResendInviteSerializer"
@@ -486,6 +545,7 @@
     {
       "path": "futureagi/accounts/views/workspace_management.py",
       "line": 1483,
+      "class": "DeleteUserAPIView",
       "function": "post",
       "serializers": [
         "DeleteUserSerializer"
@@ -494,6 +554,7 @@
     {
       "path": "futureagi/accounts/views/workspace_management.py",
       "line": 1623,
+      "class": "DeactivateUserAPIView",
       "function": "post",
       "serializers": [
         "DeactivateUserSerializer"
@@ -502,6 +563,7 @@
     {
       "path": "futureagi/accounts/views/workspace_management.py",
       "line": 1744,
+      "class": "SwitchWorkspaceAPIView",
       "function": "post",
       "serializers": [
         "SwitchWorkspaceSerializer"
@@ -510,6 +572,7 @@
     {
       "path": "futureagi/accounts/views/workspace_management.py",
       "line": 1999,
+      "class": "ManageTeamView",
       "function": "post",
       "serializers": [
         "CreateMemberSerializer"
@@ -518,6 +581,7 @@
     {
       "path": "futureagi/model_hub/views/ai_eval_writer.py",
       "line": 98,
+      "class": "AIEvalWriterView",
       "function": "post",
       "serializers": [
         "AIEvalWriterRequestSerializer"
@@ -526,6 +590,7 @@
     {
       "path": "futureagi/model_hub/views/custom_model.py",
       "line": 117,
+      "class": "CustomAIModelCreateView",
       "function": "post",
       "serializers": [
         "CustomAIModelCreateRequestSerializer"
@@ -534,6 +599,7 @@
     {
       "path": "futureagi/model_hub/views/custom_model.py",
       "line": 273,
+      "class": "CustomAIModelDetailsView",
       "function": "post",
       "serializers": [
         "CustomAIModelUpdateRequestSerializer"
@@ -542,6 +608,7 @@
     {
       "path": "futureagi/model_hub/views/custom_model.py",
       "line": 322,
+      "class": "UpdateMetricCustomAIModelView",
       "function": "post",
       "serializers": [
         "CustomAIModelDefaultMetricRequestSerializer"
@@ -550,6 +617,7 @@
     {
       "path": "futureagi/model_hub/views/custom_model.py",
       "line": 361,
+      "class": "UpdateBaselineDatasetCustomAIModelView",
       "function": "post",
       "serializers": [
         "CustomAIModelBaselineRequestSerializer"
@@ -558,6 +626,7 @@
     {
       "path": "futureagi/model_hub/views/custom_model.py",
       "line": 430,
+      "class": "DeleteCustomAIModelView",
       "function": "delete",
       "serializers": [
         "CustomAIModelDeleteRequestSerializer"
@@ -566,6 +635,7 @@
     {
       "path": "futureagi/model_hub/views/custom_model.py",
       "line": 497,
+      "class": "EditCustomModel",
       "function": "patch",
       "serializers": [
         "CustomAIModelEditRequestSerializer"
@@ -574,6 +644,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/add_rows/existing_dataset.py",
       "line": 44,
+      "class": "AddRowsFromExistingView",
       "function": "post",
       "serializers": [
         "DatasetAddRowsFromExistingRequestSerializer"
@@ -582,6 +653,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/add_rows/huggingface.py",
       "line": 51,
+      "class": "AddRowsFromHuggingFaceView",
       "function": "post",
       "serializers": [
         "HuggingFaceAddRowsRequestSerializer"
@@ -590,6 +662,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/add_rows/synthetic.py",
       "line": 33,
+      "class": "AddSyntheticData",
       "function": "post",
       "serializers": [
         "SyntheticDataSerializer"
@@ -598,6 +671,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/create/dataset_from_experiment.py",
       "line": 56,
+      "class": "CreateDatasetFromExpView",
       "function": "post",
       "serializers": [
         "CreateDatasetFromExperimentRequestSerializer"
@@ -606,6 +680,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/create/empty_dataset.py",
       "line": 48,
+      "class": "CreateEmptyDatasetView",
       "function": "post",
       "serializers": [
         "CreateEmptyDatasetRequestSerializer"
@@ -614,6 +689,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/create/file_upload.py",
       "line": 938,
+      "class": "CreateDatasetFromLocalFileView",
       "function": "post",
       "serializers": [
         "CreateDatasetFromLocalFileRequestSerializer"
@@ -622,6 +698,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/create/huggingface.py",
       "line": 71,
+      "class": "GetHuggingFaceDatasetConfigView",
       "function": "post",
       "serializers": [
         "HuggingFaceDatasetConfigRequestSerializer"
@@ -630,6 +707,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/create/huggingface.py",
       "line": 158,
+      "class": "CreateDatasetFromHuggingFaceView",
       "function": "post",
       "serializers": [
         "HuggingFaceDatasetCreateRequestSerializer"
@@ -638,6 +716,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/create/synthetic.py",
       "line": 54,
+      "class": "CreateSyntheticDataset",
       "function": "post",
       "serializers": [
         "SyntheticDatasetCreationSerializer"
@@ -646,6 +725,7 @@
     {
       "path": "futureagi/model_hub/views/datasets/create/synthetic.py",
       "line": 300,
+      "class": "UpdateSyntheticDatasetConfigView",
       "function": "put",
       "serializers": [
         "SyntheticDatasetConfigSerializer"
@@ -654,6 +734,7 @@
     {
       "path": "futureagi/model_hub/views/derived_variables.py",
       "line": 178,
+      "class": null,
       "function": "extract_derived_variables",
       "serializers": [
         "DerivedVariableExtractRequestSerializer"
@@ -662,6 +743,7 @@
     {
       "path": "futureagi/model_hub/views/derived_variables.py",
       "line": 248,
+      "class": null,
       "function": "preview_derived_variables",
       "serializers": [
         "DerivedVariablePreviewRequestSerializer"
@@ -669,151 +751,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 548,
-      "function": "post",
-      "serializers": [
-        "AddRowsFromFileRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 758,
-      "function": "post",
-      "serializers": [
-        "CloneDatasetRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 934,
-      "function": "post",
-      "serializers": [
-        "AddAsNewDatasetRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 2130,
-      "function": "get",
-      "serializers": [
-        "DatasetTableQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 2807,
-      "function": "post",
-      "serializers": [
-        "DatasetRowDataRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 3522,
-      "function": "post",
-      "serializers": [
-        "DatasetAddColumnsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 3645,
-      "function": "post",
-      "serializers": [
-        "DatasetAddEmptyColumnsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 3712,
-      "function": "post",
-      "serializers": [
-        "DatasetCellDataRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 3779,
-      "function": "post",
-      "serializers": [
-        "DatasetStaticColumnRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 3878,
-      "function": "post",
-      "serializers": [
-        "DatasetMultipleStaticColumnsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 4242,
-      "function": "post",
-      "serializers": [
-        "DatasetAddEmptyRowsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 4332,
-      "function": "post",
-      "serializers": [
-        "DatasetSdkRowsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 4456,
-      "function": "post",
-      "serializers": [
-        "ManualDatasetCreateRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 4621,
-      "function": "post",
-      "serializers": [
-        "DatasetAddRowsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 4834,
-      "function": "put",
-      "serializers": [
-        "DatasetUpdateColumnNameRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 4959,
-      "function": "put",
-      "serializers": [
-        "DatasetBehaviorRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 5146,
-      "function": "post",
-      "serializers": [
-        "DatasetUpdateCellValueRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 5543,
-      "function": "put",
-      "serializers": [
-        "DatasetUpdateColumnTypeRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 6985,
+      "line": 6974,
+      "class": "GetEvalConfigView",
       "function": "get",
       "serializers": [
         "EvalConfigQuerySerializer"
@@ -821,7 +760,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 7155,
+      "line": 7144,
+      "class": "GetEvalStructureView",
       "function": "get",
       "serializers": [
         "EvalStructureQuerySerializer"
@@ -829,7 +769,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 7323,
+      "line": 7312,
+      "class": "StartEvalsProcess",
       "function": "post",
       "serializers": [
         "StartEvalsProcessRequestSerializer"
@@ -837,7 +778,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 7668,
+      "line": 7657,
+      "class": "EditAndRunUserEvalView",
       "function": "post",
       "serializers": [
         "UserEvalMutationRequestSerializer"
@@ -845,7 +787,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 7937,
+      "line": 7926,
+      "class": "AddUserEvalView",
       "function": "post",
       "serializers": [
         "UserEvalMutationRequestSerializer"
@@ -853,7 +796,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 8172,
+      "line": 8161,
+      "class": "StopUserEvalView",
       "function": "post",
       "serializers": [
         "StopUserEvalRequestSerializer"
@@ -861,7 +805,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 8246,
+      "line": 8235,
+      "class": "PreviewRunEvalView",
       "function": "post",
       "serializers": [
         "PreviewRunEvalRequestSerializer"
@@ -869,7 +814,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 8422,
+      "line": 8411,
+      "class": "GetHuggingFaceDatasetListView",
       "function": "post",
       "serializers": [
         "HuggingFaceDatasetListRequestSerializer"
@@ -877,7 +823,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 8626,
+      "line": 8615,
+      "class": "GetHuggingFaceDatasetDetailView",
       "function": "post",
       "serializers": [
         "HuggingFaceDatasetDetailRequestSerializer"
@@ -885,7 +832,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 11073,
+      "line": 11062,
+      "class": "SingleRowEvaluationView",
       "function": "post",
       "serializers": [
         "SingleRowEvaluationRequestSerializer"
@@ -893,7 +841,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 11322,
+      "line": 11311,
+      "class": "DuplicateRowsView",
       "function": "post",
       "serializers": [
         "DuplicateRowsRequestSerializer"
@@ -901,7 +850,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 11453,
+      "line": 11442,
+      "class": "DuplicateDatasetView",
       "function": "post",
       "serializers": [
         "DuplicateDatasetRequestSerializer"
@@ -909,7 +859,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 11668,
+      "line": 11657,
+      "class": "MergeDatasetView",
       "function": "post",
       "serializers": [
         "MergeDatasetRequestSerializer"
@@ -917,7 +868,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 12902,
+      "line": 12891,
+      "class": "CompareDatasetsView",
       "function": "post",
       "serializers": [
         "CompareDatasetSerializer"
@@ -925,7 +877,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 13351,
+      "line": 13340,
+      "class": "DownloadComparisonDatasetView",
       "function": "post",
       "serializers": [
         "CompareDatasetSerializer"
@@ -933,7 +886,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 13476,
+      "line": 13465,
+      "class": "CompareDatasetsStatsView",
       "function": "post",
       "serializers": [
         "CompareDatasetStatsRequestSerializer"
@@ -941,7 +895,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 13593,
+      "line": 13582,
+      "class": "AddCompareExperimentEvalView",
       "function": "post",
       "serializers": [
         "UserEvalSerializer"
@@ -949,7 +904,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 13783,
+      "line": 13772,
+      "class": "CompareDatasetsStartEvalsProcess",
       "function": "post",
       "serializers": [
         "CompareStartEvalsRequestSerializer"
@@ -957,7 +913,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 13892,
+      "line": 13881,
+      "class": "GetCompareEvalsListView",
       "function": "post",
       "serializers": [
         "CompareEvalsListRequestSerializer"
@@ -965,7 +922,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 13985,
+      "line": 13974,
+      "class": "ComparePreviewRunEvalView",
       "function": "post",
       "serializers": [
         "ComparePreviewRunEvalRequestSerializer"
@@ -973,7 +931,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 14491,
+      "line": 14480,
+      "class": "CreateKnowledgeBaseView",
       "function": "post",
       "serializers": [
         "LegacyKnowledgeBaseMutationRequestSerializer"
@@ -981,7 +940,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 14632,
+      "line": 14621,
+      "class": "CreateKnowledgeBaseView",
       "function": "patch",
       "serializers": [
         "LegacyKnowledgeBaseMutationRequestSerializer"
@@ -989,7 +949,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 14998,
+      "line": 14987,
+      "class": "ExistingKnowledgeBaseView",
       "function": "post",
       "serializers": [
         "LegacyKnowledgeBaseFilesRequestSerializer"
@@ -997,7 +958,8 @@
     },
     {
       "path": "futureagi/model_hub/views/develop_dataset.py",
-      "line": 15259,
+      "line": 15248,
+      "class": "RefreshDatasetExplanationSummary",
       "function": "post",
       "serializers": [
         "ModelHubEmptyRequestSerializer"
@@ -1006,6 +968,7 @@
     {
       "path": "futureagi/model_hub/views/develop_optimisation.py",
       "line": 39,
+      "class": "OptimisationCreateView",
       "function": "post",
       "serializers": [
         "OptimizationDatasetSerializer"
@@ -1014,6 +977,7 @@
     {
       "path": "futureagi/model_hub/views/develop_optimisation.py",
       "line": 91,
+      "class": "OptimisationCreateView",
       "function": "put",
       "serializers": [
         "OptimizationDatasetSerializer"
@@ -1022,6 +986,7 @@
     {
       "path": "futureagi/model_hub/views/dynamic_columns.py",
       "line": 393,
+      "class": "AddVectorDBColumnView",
       "function": "post",
       "serializers": [
         "VectorDBColumnRequestSerializer"
@@ -1030,6 +995,7 @@
     {
       "path": "futureagi/model_hub/views/dynamic_columns.py",
       "line": 535,
+      "class": "ExtractJsonColumnView",
       "function": "post",
       "serializers": [
         "ExtractJsonColumnRequestSerializer"
@@ -1038,6 +1004,7 @@
     {
       "path": "futureagi/model_hub/views/dynamic_columns.py",
       "line": 691,
+      "class": "ClassifyColumnView",
       "function": "post",
       "serializers": [
         "ClassifyColumnRequestSerializer"
@@ -1046,6 +1013,7 @@
     {
       "path": "futureagi/model_hub/views/dynamic_columns.py",
       "line": 872,
+      "class": "ExtractEntitiesView",
       "function": "post",
       "serializers": [
         "ExtractEntitiesRequestSerializer"
@@ -1054,6 +1022,7 @@
     {
       "path": "futureagi/model_hub/views/dynamic_columns.py",
       "line": 1085,
+      "class": "AddApiColumnView",
       "function": "post",
       "serializers": [
         "AddApiColumnRequestSerializer"
@@ -1062,6 +1031,7 @@
     {
       "path": "futureagi/model_hub/views/dynamic_columns.py",
       "line": 1263,
+      "class": "ExecutePythonCodeView",
       "function": "post",
       "serializers": [
         "PythonCodeColumnRequestSerializer"
@@ -1070,6 +1040,7 @@
     {
       "path": "futureagi/model_hub/views/dynamic_columns.py",
       "line": 1588,
+      "class": "ConditionalColumnView",
       "function": "post",
       "serializers": [
         "ConditionalColumnRequestSerializer"
@@ -1078,6 +1049,7 @@
     {
       "path": "futureagi/model_hub/views/dynamic_columns.py",
       "line": 1705,
+      "class": "RerunOperationView",
       "function": "post",
       "serializers": [
         "RerunOperationRequestSerializer"
@@ -1086,6 +1058,7 @@
     {
       "path": "futureagi/model_hub/views/dynamic_columns.py",
       "line": 3104,
+      "class": "PreviewDatasetOperationView",
       "function": "post",
       "serializers": [
         "PreviewDatasetOperationRequestSerializer"
@@ -1094,6 +1067,7 @@
     {
       "path": "futureagi/model_hub/views/eval_runner.py",
       "line": 3130,
+      "class": "CustomEvalTemplateCreateView",
       "function": "post",
       "serializers": [
         "CustomEvalTemplateCreateSerializer"
@@ -1102,6 +1076,7 @@
     {
       "path": "futureagi/model_hub/views/eval_runner.py",
       "line": 3223,
+      "class": "EvalTemplateCreateView",
       "function": "post",
       "serializers": [
         "EvalTemplateSerializer"
@@ -1110,6 +1085,7 @@
     {
       "path": "futureagi/model_hub/views/eval_runner.py",
       "line": 3260,
+      "class": "EvalUserTemplateCreateView",
       "function": "post",
       "serializers": [
         "EvalUserTemplateSerializer"
@@ -1118,6 +1094,7 @@
     {
       "path": "futureagi/model_hub/views/eval_summary_templates.py",
       "line": 84,
+      "class": "EvalSummaryTemplateListView",
       "function": "post",
       "serializers": [
         "EvalSummaryTemplateMutationRequestSerializer"
@@ -1126,6 +1103,7 @@
     {
       "path": "futureagi/model_hub/views/eval_summary_templates.py",
       "line": 128,
+      "class": "EvalSummaryTemplateDetailView",
       "function": "put",
       "serializers": [
         "EvalSummaryTemplateMutationRequestSerializer"
@@ -1134,6 +1112,7 @@
     {
       "path": "futureagi/model_hub/views/experiment_feedback_v2.py",
       "line": 135,
+      "class": "ExperimentFeedbackCreateV2View",
       "function": "post",
       "serializers": [
         "FeedbackSerializer"
@@ -1142,6 +1121,7 @@
     {
       "path": "futureagi/model_hub/views/experiment_feedback_v2.py",
       "line": 230,
+      "class": "ExperimentFeedbackSubmitV2View",
       "function": "post",
       "serializers": [
         "ExperimentFeedbackSubmitRequestSerializer"
@@ -1150,6 +1130,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 387,
+      "class": "ExperimentsTableView",
       "function": "post",
       "serializers": [
         "ExperimentsTableSerializer"
@@ -1158,6 +1139,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 439,
+      "class": "ExperimentsTableView",
       "function": "put",
       "serializers": [
         "ExperimentsTableSerializer"
@@ -1166,6 +1148,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 1416,
+      "class": "GetRowDiffView",
       "function": "post",
       "serializers": [
         "DatasetRowDiffRequestSerializer"
@@ -1174,6 +1157,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 1494,
+      "class": "GetRowDiffV2View",
       "function": "post",
       "serializers": [
         "DatasetRowDiffRequestSerializer"
@@ -1182,6 +1166,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 2630,
+      "class": "ExperimentDatasetComparisonView",
       "function": "post",
       "serializers": [
         "ExperimentComparisonWeightsRequestSerializer"
@@ -1190,6 +1175,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 2852,
+      "class": "ExperimentDatasetComparisonV2View",
       "function": "post",
       "serializers": [
         "ExperimentComparisonWeightsRequestSerializer"
@@ -1198,6 +1184,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 2948,
+      "class": "RunAdditionalEvaluationsView",
       "function": "post",
       "serializers": [
         "ExperimentAdditionalEvaluationsRequestSerializer"
@@ -1206,6 +1193,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 3016,
+      "class": "AddExperimentEvalView",
       "function": "post",
       "serializers": [
         "UserEvalSerializer"
@@ -1214,6 +1202,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 3279,
+      "class": "ExperimentRerunView",
       "function": "post",
       "serializers": [
         "ExperimentRerunRequestSerializer"
@@ -1222,6 +1211,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 3515,
+      "class": "ExperimentsTableV2View",
       "function": "post",
       "serializers": [
         "ExperimentCreateV2Serializer"
@@ -1230,6 +1220,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 3830,
+      "class": "ExperimentsTableV2View",
       "function": "put",
       "serializers": [
         "ExperimentUpdateV2Serializer"
@@ -1238,6 +1229,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 5033,
+      "class": "ExperimentRerunV2View",
       "function": "post",
       "serializers": [
         "ExperimentRerunRequestSerializer"
@@ -1246,6 +1238,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 5089,
+      "class": "ExperimentRerunCellsV2View",
       "function": "post",
       "serializers": [
         "ExperimentRerunCellsSerializer"
@@ -1254,6 +1247,7 @@
     {
       "path": "futureagi/model_hub/views/experiments.py",
       "line": 5630,
+      "class": "ExperimentStopV2View",
       "function": "post",
       "serializers": [
         "ModelHubEmptyRequestSerializer"
@@ -1262,6 +1256,7 @@
     {
       "path": "futureagi/model_hub/views/kb.py",
       "line": 59,
+      "class": "KnowledgeBaseViewSet",
       "function": "create",
       "serializers": [
         "KnowledgeBaseCreateSerializer"
@@ -1270,6 +1265,7 @@
     {
       "path": "futureagi/model_hub/views/kb.py",
       "line": 115,
+      "class": "KnowledgeBaseViewSet",
       "function": "update",
       "serializers": [
         "KnowledgeBaseSerializer"
@@ -1278,6 +1274,7 @@
     {
       "path": "futureagi/model_hub/views/metric.py",
       "line": 144,
+      "class": "CreateMetricApiView",
       "function": "post",
       "serializers": [
         "CustomMetricMutationRequestSerializer"
@@ -1286,6 +1283,7 @@
     {
       "path": "futureagi/model_hub/views/metric.py",
       "line": 220,
+      "class": "EditMetricApiView",
       "function": "post",
       "serializers": [
         "CustomMetricMutationRequestSerializer"
@@ -1294,6 +1292,7 @@
     {
       "path": "futureagi/model_hub/views/metric.py",
       "line": 346,
+      "class": "TestMetric",
       "function": "post",
       "serializers": [
         "CustomMetricTestRequestSerializer"
@@ -1302,6 +1301,7 @@
     {
       "path": "futureagi/model_hub/views/optimize_dataset.py",
       "line": 115,
+      "class": "OptimizedDatasetView",
       "function": "get",
       "serializers": [
         "OptimizeDatasetListQuerySerializer"
@@ -1310,6 +1310,7 @@
     {
       "path": "futureagi/model_hub/views/optimize_dataset.py",
       "line": 169,
+      "class": "OptimizedDatasetView",
       "function": "post",
       "serializers": [
         "OptimizeDatasetMutationRequestSerializer"
@@ -1318,6 +1319,7 @@
     {
       "path": "futureagi/model_hub/views/optimize_dataset.py",
       "line": 533,
+      "class": "RightAnswerResultsView",
       "function": "post",
       "serializers": [
         "OptimizeDatasetPageRequestSerializer"
@@ -1326,6 +1328,7 @@
     {
       "path": "futureagi/model_hub/views/optimize_dataset.py",
       "line": 802,
+      "class": "TemplateResultsView",
       "function": "post",
       "serializers": [
         "ModelHubEmptyRequestSerializer"
@@ -1334,6 +1337,7 @@
     {
       "path": "futureagi/model_hub/views/optimize_dataset.py",
       "line": 1039,
+      "class": "TemplateExploreView",
       "function": "post",
       "serializers": [
         "OptimizeDatasetPageRequestSerializer"
@@ -1342,6 +1346,7 @@
     {
       "path": "futureagi/model_hub/views/optimize_dataset.py",
       "line": 1230,
+      "class": "OptimizeDatasetColumnConfig",
       "function": "post",
       "serializers": [
         "OptimizeDatasetColumnConfigUpdateRequestSerializer"
@@ -1350,6 +1355,7 @@
     {
       "path": "futureagi/model_hub/views/optimize_dataset.py",
       "line": 1336,
+      "class": "OptimizeDatasetRightColumnConfig",
       "function": "post",
       "serializers": [
         "OptimizeDatasetColumnConfigUpdateRequestSerializer"
@@ -1358,6 +1364,7 @@
     {
       "path": "futureagi/model_hub/views/optimize_dataset.py",
       "line": 1450,
+      "class": "OptimizeDatasetPromptExploreColumnConfig",
       "function": "post",
       "serializers": [
         "OptimizeDatasetColumnConfigUpdateRequestSerializer"
@@ -1366,6 +1373,7 @@
     {
       "path": "futureagi/model_hub/views/optimize_dataset.py",
       "line": 1492,
+      "class": "OptimizedDatasetKbView",
       "function": "post",
       "serializers": [
         "OptimizeDatasetKnowledgeBaseRequestSerializer"
@@ -1374,6 +1382,7 @@
     {
       "path": "futureagi/model_hub/views/performance.py",
       "line": 82,
+      "class": "PerformanceView",
       "function": "post",
       "serializers": [
         "PerformanceQueryRequestSerializer"
@@ -1382,6 +1391,7 @@
     {
       "path": "futureagi/model_hub/views/performance.py",
       "line": 194,
+      "class": "PerformanceDetailsView",
       "function": "post",
       "serializers": [
         "PerformanceDetailsRequestSerializer"
@@ -1390,6 +1400,7 @@
     {
       "path": "futureagi/model_hub/views/performance.py",
       "line": 414,
+      "class": "PerformanceDetailsExport",
       "function": "post",
       "serializers": [
         "PerformanceExportRequestSerializer"
@@ -1398,6 +1409,7 @@
     {
       "path": "futureagi/model_hub/views/performance.py",
       "line": 593,
+      "class": "GetPerformanceTagDistributionView",
       "function": "post",
       "serializers": [
         "PerformanceTagDistributionRequestSerializer"
@@ -1406,6 +1418,7 @@
     {
       "path": "futureagi/model_hub/views/performance_report.py",
       "line": 50,
+      "class": "PerformanceReportApiView",
       "function": "post",
       "serializers": [
         "PerformanceReportCreateSerializer"
@@ -1414,6 +1427,7 @@
     {
       "path": "futureagi/model_hub/views/prompt_metrics.py",
       "line": 28,
+      "class": "FetchPromptObserveMetricsView",
       "function": "get",
       "serializers": [
         "PromptMetricsQuerySerializer"
@@ -1422,6 +1436,7 @@
     {
       "path": "futureagi/model_hub/views/prompt_metrics.py",
       "line": 66,
+      "class": "FetchPromptMetricsSpanView",
       "function": "get",
       "serializers": [
         "PromptMetricsQuerySerializer"
@@ -1430,6 +1445,7 @@
     {
       "path": "futureagi/model_hub/views/prompt_template.py",
       "line": 544,
+      "class": "UploadFileView",
       "function": "post",
       "serializers": [
         "UploadFileSerializer"
@@ -1438,6 +1454,7 @@
     {
       "path": "futureagi/model_hub/views/prompt_template.py",
       "line": 3713,
+      "class": "ColumnValuesAPIView",
       "function": "post",
       "serializers": [
         "ColumnValuesRequestSerializer"
@@ -1446,6 +1463,7 @@
     {
       "path": "futureagi/model_hub/views/run_prompt.py",
       "line": 868,
+      "class": "LitellmAPIView",
       "function": "post",
       "serializers": [
         "LitellmSerializer"
@@ -1454,6 +1472,7 @@
     {
       "path": "futureagi/model_hub/views/run_prompt.py",
       "line": 1504,
+      "class": "AddRunPromptColumnView",
       "function": "post",
       "serializers": [
         "AddRunPromptSerializer"
@@ -1462,6 +1481,7 @@
     {
       "path": "futureagi/model_hub/views/run_prompt.py",
       "line": 1643,
+      "class": "PreviewRunPromptColumnView",
       "function": "post",
       "serializers": [
         "PreviewRunPromptSerializer"
@@ -1470,6 +1490,7 @@
     {
       "path": "futureagi/model_hub/views/run_prompt.py",
       "line": 1787,
+      "class": "EditRunPromptColumnView",
       "function": "post",
       "serializers": [
         "EditRunPromptColumnSerializer"
@@ -1478,6 +1499,7 @@
     {
       "path": "futureagi/model_hub/views/run_prompt.py",
       "line": 2519,
+      "class": "RunPromptForRowsView",
       "function": "post",
       "serializers": [
         "RunPromptForRowsRequestSerializer"
@@ -1486,6 +1508,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 424,
+      "class": "GetAPICallLogDetailsView",
       "function": "get",
       "serializers": [
         "EvalApiLogTableQuerySerializer"
@@ -1494,6 +1517,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 670,
+      "class": "GetAPICallLogView",
       "function": "patch",
       "serializers": [
         "UpdateColumnConfigSerializer"
@@ -1502,6 +1526,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 760,
+      "class": "CellErrorLocalizerView",
       "function": "post",
       "serializers": [
         "ModelHubEmptyRequestSerializer"
@@ -1510,6 +1535,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 1036,
+      "class": "EvalMetricView",
       "function": "get",
       "serializers": [
         "EvalMetricQuerySerializer"
@@ -1518,6 +1544,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 1065,
+      "class": "EvalMetricView",
       "function": "post",
       "serializers": [
         "EvalMetricRequestSerializer"
@@ -1526,6 +1553,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 1099,
+      "class": "GetEvalTemplateNameView",
       "function": "post",
       "serializers": [
         "EvalTemplateNamesRequestSerializer"
@@ -1534,6 +1562,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 1275,
+      "class": "GetEvalTemplates",
       "function": "post",
       "serializers": [
         "LegacyEvalTemplatesRequestSerializer"
@@ -1542,6 +1571,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 1428,
+      "class": "EvalTemplateListView",
       "function": "post",
       "serializers": [
         "EvalListRequestSerializer"
@@ -1550,6 +1580,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 1601,
+      "class": "EvalTemplateListChartsView",
       "function": "post",
       "serializers": [
         "EvalTemplateListChartsRequestSerializer"
@@ -1558,6 +1589,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 1727,
+      "class": "EvalTemplateBulkDeleteView",
       "function": "post",
       "serializers": [
         "EvalTemplateBulkDeleteRequestSerializer"
@@ -1566,6 +1598,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 1777,
+      "class": "EvalTemplateCreateV2View",
       "function": "post",
       "serializers": [
         "EvalTemplateCreateV2RequestSerializer"
@@ -1574,6 +1607,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 2278,
+      "class": "EvalTemplateUpdateView",
       "function": "put",
       "serializers": [
         "EvalTemplateUpdateV2RequestSerializer"
@@ -1582,6 +1616,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 2652,
+      "class": "EvalTemplateVersionCreateView",
       "function": "post",
       "serializers": [
         "EvalTemplateVersionCreateRequestSerializer"
@@ -1590,6 +1625,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 2786,
+      "class": "SetDefaultVersionView",
       "function": "put",
       "serializers": [
         "ModelHubEmptyRequestSerializer"
@@ -1598,6 +1634,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 2856,
+      "class": "RestoreVersionView",
       "function": "post",
       "serializers": [
         "ModelHubEmptyRequestSerializer"
@@ -1606,6 +1643,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 3018,
+      "class": "CompositeEvalCreateView",
       "function": "post",
       "serializers": [
         "CompositeEvalCreateRequestSerializer"
@@ -1614,6 +1652,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 3271,
+      "class": "CompositeEvalDetailView",
       "function": "patch",
       "serializers": [
         "CompositeEvalUpdateRequestSerializer"
@@ -1622,6 +1661,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 3651,
+      "class": "CompositeEvalExecuteView",
       "function": "post",
       "serializers": [
         "CompositeEvalExecuteRequestSerializer"
@@ -1630,6 +1670,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 3782,
+      "class": "CompositeEvalAdhocExecuteView",
       "function": "post",
       "serializers": [
         "CompositeEvalAdhocExecuteRequestSerializer"
@@ -1638,6 +1679,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 3990,
+      "class": "GroundTruthUploadView",
       "function": "post",
       "serializers": [
         "GroundTruthUploadRequestSerializer"
@@ -1646,6 +1688,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 4116,
+      "class": "GroundTruthMappingView",
       "function": "put",
       "serializers": [
         "GroundTruthMappingRequestSerializer"
@@ -1654,6 +1697,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 4160,
+      "class": "GroundTruthRoleMappingView",
       "function": "put",
       "serializers": [
         "GroundTruthRoleMappingRequestSerializer"
@@ -1662,6 +1706,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 4386,
+      "class": "GroundTruthConfigView",
       "function": "put",
       "serializers": [
         "GroundTruthConfigRequestSerializer"
@@ -1670,6 +1715,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 4449,
+      "class": "GroundTruthSearchView",
       "function": "post",
       "serializers": [
         "GroundTruthSearchRequestSerializer"
@@ -1678,6 +1724,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 4513,
+      "class": "GroundTruthTriggerEmbeddingView",
       "function": "post",
       "serializers": [
         "ModelHubEmptyRequestSerializer"
@@ -1686,6 +1733,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 5411,
+      "class": "EvalPlayGroundAPIView",
       "function": "post",
       "serializers": [
         "EvalPlayGroundSerializer"
@@ -1694,6 +1742,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 5901,
+      "class": "EvalPlayGroundFeedbackAPIView",
       "function": "post",
       "serializers": [
         "EvalPlayGroundFeedbackSerializer"
@@ -1702,6 +1751,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 6053,
+      "class": "UpdateEvalTemplateView",
       "function": "post",
       "serializers": [
         "UpdateEvalTemplateSerializer"
@@ -1710,6 +1760,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 6162,
+      "class": "DeleteEvalTemplateView",
       "function": "post",
       "serializers": [
         "DeleteEvalTemplateSerializer"
@@ -1718,6 +1769,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 6231,
+      "class": "DuplicateEvalTemplateView",
       "function": "post",
       "serializers": [
         "DuplicateEvalTemplateSerializer"
@@ -1726,6 +1778,7 @@
     {
       "path": "futureagi/model_hub/views/separate_evals.py",
       "line": 6297,
+      "class": "TestEvaluationTemplateAPIView",
       "function": "post",
       "serializers": [
         "TestEvalTemplateSerializer"
@@ -1734,6 +1787,7 @@
     {
       "path": "futureagi/tracer/views/dashboard.py",
       "line": 345,
+      "class": "DashboardViewSet",
       "function": "query",
       "serializers": [
         "DashboardQuerySerializer"
@@ -1742,6 +1796,7 @@
     {
       "path": "futureagi/tracer/views/dashboard.py",
       "line": 2713,
+      "class": "DashboardWidgetViewSet",
       "function": "execute_query",
       "serializers": [
         "EmptyRequestSerializer"
@@ -1750,6 +1805,7 @@
     {
       "path": "futureagi/tracer/views/dashboard.py",
       "line": 2739,
+      "class": "DashboardWidgetViewSet",
       "function": "preview_query",
       "serializers": [
         "DashboardPreviewQuerySerializer"
@@ -1758,6 +1814,7 @@
     {
       "path": "futureagi/tracer/views/http_otlp.py",
       "line": 49,
+      "class": "OTLPTraceHTTPView",
       "function": "post",
       "serializers": [
         "OTLP_HTTP_REQUEST_SCHEMA"
@@ -1766,6 +1823,7 @@
     {
       "path": "futureagi/tracer/views/langfuse_ingestion.py",
       "line": 132,
+      "class": "LangfuseIngestionView",
       "function": "post",
       "serializers": [
         "LangfuseIngestionRequestSerializer"
@@ -1774,6 +1832,7 @@
     {
       "path": "futureagi/tracer/views/monitor.py",
       "line": 431,
+      "class": "UserAlertMonitorView",
       "function": "duplicate",
       "serializers": [
         "UserAlertMonitorDuplicateSerializer"
@@ -1782,6 +1841,7 @@
     {
       "path": "futureagi/tracer/views/otlp.py",
       "line": 112,
+      "class": "OTLPTraceView",
       "function": "post",
       "serializers": [
         "OTLP_TRACE_REQUEST_SCHEMA"

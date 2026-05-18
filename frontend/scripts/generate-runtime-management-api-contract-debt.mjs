@@ -22,6 +22,7 @@ const FOCUS_DIRS = [
 const HTTP_DECORATOR_RE =
   /^\s*@(swagger_auto_schema|validated_request|validated_api_request)\s*\((?<inline>.*)$/;
 const DEF_RE = /^\s*def\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(/;
+const CLASS_RE = /^\s*class\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*[\(:]/;
 const BROAD_REQUEST_SERIALIZERS = new Set(["AccountsJSONRequestSerializer"]);
 
 function walkPythonFiles(dir) {
@@ -89,10 +90,20 @@ function readDecorator(lines, startIndex) {
   };
 }
 
-function nextFunctionName(lines, startIndex) {
+function lineIndent(line) {
+  return line.match(/^(\s*)/)?.[1].length || 0;
+}
+
+function nextFunctionInfo(lines, startIndex) {
   for (let i = startIndex; i < lines.length; i += 1) {
     const match = lines[i].match(DEF_RE);
-    if (match) return match.groups.name;
+    if (match) {
+      return {
+        name: match.groups.name,
+        lineIndex: i,
+        indent: lineIndent(lines[i]),
+      };
+    }
     const trimmed = lines[i].trim();
     if (!trimmed) continue;
     if (trimmed.startsWith("@")) {
@@ -104,6 +115,16 @@ function nextFunctionName(lines, startIndex) {
       continue;
     }
     return null;
+  }
+  return null;
+}
+
+function enclosingClassName(lines, functionInfo) {
+  if (!functionInfo) return null;
+  for (let i = functionInfo.lineIndex - 1; i >= 0; i -= 1) {
+    if (lineIndent(lines[i]) >= functionInfo.indent) continue;
+    const match = lines[i].match(CLASS_RE);
+    if (match) return match.groups.name;
   }
   return null;
 }
@@ -146,9 +167,12 @@ function analyzeFile(filePath) {
   for (let i = 0; i < lines.length; i += 1) {
     const record = readDecorator(lines, i);
     if (!record) continue;
+    const functionInfo = nextFunctionInfo(lines, record.nextIndex);
+    const className = enclosingClassName(lines, functionInfo);
     decorators.push({
       ...record,
-      functionName: nextFunctionName(lines, record.nextIndex),
+      className,
+      functionName: functionInfo?.name || null,
       serializers: serializerNames(record.text),
       rel,
     });
@@ -168,12 +192,17 @@ const directSwagger = decorators.filter(
 const runtimeInputContractKeys = new Set(
   validated
     .filter(decoratorHasInputContract)
-    .map((record) => `${record.rel}:${record.functionName || ""}`),
+    .map(
+      (record) =>
+        `${record.rel}:${record.className || ""}.${record.functionName || ""}`,
+    ),
 );
 const docOnlyInputContracts = directSwagger.filter(
   (record) =>
     decoratorHasInputContract(record) &&
-    !runtimeInputContractKeys.has(`${record.rel}:${record.functionName || ""}`),
+    !runtimeInputContractKeys.has(
+      `${record.rel}:${record.className || ""}.${record.functionName || ""}`,
+    ),
 );
 const broadRequestContracts = decorators.filter((record) =>
   record.serializers.some((name) => BROAD_REQUEST_SERIALIZERS.has(name)),
@@ -190,12 +219,14 @@ const report = {
   doc_only_input_contract_decorators: docOnlyInputContracts.map((record) => ({
     path: record.rel,
     line: record.startLine,
+    class: record.className,
     function: record.functionName,
     serializers: record.serializers,
   })),
   broad_request_contract_decorators: broadRequestContracts.map((record) => ({
     path: record.rel,
     line: record.startLine,
+    class: record.className,
     function: record.functionName,
     serializers: record.serializers,
   })),
