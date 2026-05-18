@@ -107,6 +107,19 @@ FILTER_CONFIG_REQUIRED_KEYS = set(FILTER_CONFIG_SCHEMA["required"])
 EVAL_TASK_FILTER_ALLOWED_KEYS = set(EVAL_TASK_FILTERS_SCHEMA["properties"])
 
 
+class StrictInputSerializer(serializers.Serializer):
+    """Reject unknown request fields so aliases cannot drift back in silently."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            unknown = sorted(set(data.keys()) - set(self.fields.keys()))
+            if unknown:
+                raise serializers.ValidationError(
+                    {key: ["Unknown field."] for key in unknown}
+                )
+        return super().to_internal_value(data)
+
+
 def parse_filter_list_payload(data):
     """Decode the canonical filter-list payload from body or query params."""
     if data in (None, ""):

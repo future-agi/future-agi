@@ -20,7 +20,11 @@ from tracer.serializers.trace import (
     TraceListQuerySerializer,
     UsersQuerySerializer,
 )
-from tracer.serializers.trace_session import TraceSessionFilterValuesQuerySerializer
+from tracer.serializers.trace_session import (
+    TraceSessionFilterValuesQuerySerializer,
+    TraceSessionGraphDataRequestSerializer,
+    TraceSessionListQuerySerializer,
+)
 
 
 def _span_attr_filter(filter_op="equals", filter_value="alpha"):
@@ -175,6 +179,82 @@ class TestFilterSerializerContracts:
 
         assert not serializer.is_valid()
         assert "column" in serializer.errors
+
+    def test_session_list_query_accepts_canonical_filters_and_sort(self):
+        serializer = TraceSessionListQuerySerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "user_id": "customer-1",
+                "filters": json.dumps([_span_attr_filter()]),
+                "sort_params": json.dumps(
+                    [{"column_id": "start_time", "direction": "desc"}]
+                ),
+                "page_number": "1",
+                "page_size": "75",
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["filters"][0]["column_id"] == "customer_tier"
+        assert serializer.validated_data["sort_params"] == [
+            {"column_id": "start_time", "direction": "desc"}
+        ]
+        assert serializer.validated_data["page_size"] == 75
+
+    def test_session_list_query_rejects_legacy_query_and_filter_aliases(self):
+        serializer = TraceSessionListQuerySerializer(
+            data={
+                "projectId": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "userId": "customer-1",
+                "sortParams": json.dumps(
+                    [{"column_id": "start_time", "direction": "desc"}]
+                ),
+                "filters": json.dumps([_span_attr_filter()]),
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "projectId" in serializer.errors
+        assert "userId" in serializer.errors
+        assert "sortParams" in serializer.errors
+
+    def test_session_list_query_rejects_legacy_filter_shape(self):
+        payload = _span_attr_filter()
+        payload["filterConfig"] = payload.pop("filter_config")
+        serializer = TraceSessionListQuerySerializer(
+            data={"filters": json.dumps([payload])}
+        )
+
+        assert not serializer.is_valid()
+        assert "filters" in serializer.errors
+
+    def test_session_graph_request_accepts_canonical_filters(self):
+        serializer = TraceSessionGraphDataRequestSerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "interval": "day",
+                "property": "average",
+                "req_data_config": {"id": "session_count", "type": "SYSTEM_METRIC"},
+                "filters": [_span_attr_filter()],
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["req_data_config"]["id"] == "session_count"
+
+    def test_session_graph_request_rejects_legacy_filter_shape(self):
+        serializer = TraceSessionGraphDataRequestSerializer(
+            data={
+                "project_id": "1372e742-a10b-4d98-9ca4-31ef4d67115f",
+                "req_data_config": {"id": "session_count", "type": "SYSTEM_METRIC"},
+                "filters": [
+                    {"column": "duration", "operator": "greater_than", "value": 1}
+                ],
+            }
+        )
+
+        assert not serializer.is_valid()
+        assert "filters" in serializer.errors
 
     def test_prompt_metrics_query_accepts_canonical_filters(self):
         serializer = PromptMetricsQuerySerializer(

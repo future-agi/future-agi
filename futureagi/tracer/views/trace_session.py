@@ -14,6 +14,7 @@ except ImportError:
 
 import pandas as pd
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 
 logger = structlog.get_logger(__name__)
 from django.db import models
@@ -64,8 +65,9 @@ from tracer.models.trace_session import TraceSession
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.serializers.eval_task import PaginationQuerySerializer
 from tracer.serializers.trace_session import (
+    TraceSessionGraphDataRequestSerializer,
     TraceSessionFilterValuesQuerySerializer,
-    TraceSessionExportSerializer,
+    TraceSessionListQuerySerializer,
     TraceSessionSerializer,
 )
 from tracer.utils.filters import FilterEngine, apply_created_at_filters
@@ -731,6 +733,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             session_logger.exception(f"Error in get_session_filter_values: {e}")
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(request_body=TraceSessionGraphDataRequestSerializer)
     @action(detail=False, methods=["post"])
     def get_session_graph_data(self, request, *args, **kwargs):
         """
@@ -745,7 +748,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         Response shape matches trace graph: {metric_name, data: [{timestamp, value, primary_traffic}]}
         """
         try:
-            project_id = request.data.get("project_id")
+            body_serializer = TraceSessionGraphDataRequestSerializer(data=request.data)
+            if not body_serializer.is_valid():
+                return self._gm.bad_request(body_serializer.errors)
+            body = body_serializer.validated_data
+            project_id = str(body["project_id"])
             project = Project.objects.get(
                 id=project_id,
                 organization=getattr(request, "organization", None)
@@ -755,9 +762,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             if not project_id or not project:
                 return self._gm.bad_request("project_id is required")
 
-            filters = request.data.get("filters", [])
-            interval = request.data.get("interval", "day")
-            req_data_config = request.data.get("req_data_config", {})
+            filters = body["filters"]
+            interval = body["interval"]
+            req_data_config = body["req_data_config"]
             metric_type = req_data_config.get("type", "SYSTEM_METRIC")
             metric_id = req_data_config.get("id", "session_count")
 
@@ -835,7 +842,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     graph_data = get_eval_graph_data(
                         interval=interval,
                         filters=filters,
-                        property=request.data.get("property", "average"),
+                        property=body["property"],
                         observe_type="trace",
                         req_data_config=req_data_config,
                         eval_logger_filters={"trace_ids_queryset": session_trace_qs},
@@ -844,7 +851,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     graph_data = get_annotation_graph_data(
                         interval=interval,
                         filters=filters,
-                        property=request.data.get("property", "average"),
+                        property=body["property"],
                         observe_type="trace",
                         req_data_config=req_data_config,
                         annotation_logger_filters={
@@ -864,30 +871,24 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             session_logger.exception(f"Error in get_session_graph_data: {str(e)}")
             return self._gm.bad_request(f"Error fetching session graph data: {str(e)}")
 
+    @swagger_auto_schema(query_serializer=TraceSessionListQuerySerializer)
     @action(detail=False, methods=["get"])
     def list_sessions(self, request, *args, **kwargs):
         """
         List traces filtered by project ID and project version ID with optimized queries.
         """
         try:
-            query_data = {
-                "filters": request.query_params.get("filters", "[]"),
-                "sort_params": request.query_params.get("sort_params", "[]")
-                or request.query_params.get("sortParams", "[]"),
-            }
-            if query_data["filters"]:
-                query_data["filters"] = json.loads(query_data["filters"])
-            if query_data["sort_params"]:
-                query_data["sort_params"] = json.loads(query_data["sort_params"])
-            serializer = TraceSessionExportSerializer(data=query_data)
+            serializer = TraceSessionListQuerySerializer(data=request.query_params)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
 
             validated_data = serializer.validated_data
             export = kwargs.get("export", False) if kwargs else False
-            project_id = self.request.query_params.get(
-                "project_id"
-            ) or self.request.query_params.get("projectId")
+            project_id = (
+                str(validated_data["project_id"])
+                if validated_data.get("project_id")
+                else None
+            )
 
             org = (
                 getattr(self.request, "organization", None)
@@ -976,9 +977,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             session_ids = trace_sessions_qs.values("id")
 
-            user_id = self.request.query_params.get(
-                "user_id"
-            ) or self.request.query_params.get("userId")
+            user_id = validated_data.get("user_id") or None
 
             end_user_filter = {}
             if user_id:
@@ -1153,8 +1152,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                             # Unknown op — fall back to existence check
                             base_query = base_query.filter(Exists(base_score_q))
 
-            page_number = int(request.query_params.get("page_number", 0))
-            page_size = int(request.query_params.get("page_size", 30))
+            page_number = validated_data["page_number"]
+            page_size = validated_data["page_size"]
             start = page_number * page_size
             end_idx = start + page_size
 
@@ -1380,12 +1379,10 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         org_scope = bool(org_project_ids)
         filters = list(validated_data.get("filters", []) or [])
         sort_params = validated_data.get("sort_params", [])
-        page_number = int(request.query_params.get("page_number", 0))
-        page_size = int(request.query_params.get("page_size", 30))
+        page_number = validated_data["page_number"]
+        page_size = validated_data["page_size"]
         org = getattr(request, "organization", None) or request.user.organization
-        user_id_qp = request.query_params.get("user_id") or request.query_params.get(
-            "userId"
-        )
+        user_id_qp = validated_data.get("user_id")
 
         # Support user_id injected as a structural filter (the cross-project
         # user detail page prepends one). Extract the raw user_id string from
