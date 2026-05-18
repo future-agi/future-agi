@@ -1017,6 +1017,62 @@ class TestAutomationRules:
         assert resp.data["name"] == "Low quality filter"
         assert resp.data["enabled"] is True
 
+    def test_create_automation_rule_rejects_legacy_filters_key(
+        self, auth_client, organization, workspace
+    ):
+        queue_id = _create_queue(auth_client, name="Auto Q legacy filters")
+        resp = auth_client.post(
+            self._rules_url(queue_id),
+            {
+                "name": "Legacy filters key",
+                "source_type": "trace",
+                "conditions": {
+                    "filters": [
+                        {
+                            "column_id": "created_at",
+                            "filter_config": {
+                                "filter_type": "datetime",
+                                "filter_op": "greater_than",
+                                "filter_value": "2020-01-01T00:00:00Z",
+                            },
+                        }
+                    ]
+                },
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "conditions" in resp.data
+
+    def test_create_automation_rule_rejects_legacy_filter_shape(
+        self, auth_client, organization, workspace
+    ):
+        queue_id = _create_queue(auth_client, name="Auto Q legacy filter shape")
+        resp = auth_client.post(
+            self._rules_url(queue_id),
+            {
+                "name": "Legacy filterConfig",
+                "source_type": "trace",
+                "conditions": {
+                    "filter": [
+                        {
+                            "column_id": "created_at",
+                            "filterConfig": {
+                                "filter_type": "datetime",
+                                "filter_op": "greater_than",
+                                "filter_value": "2020-01-01T00:00:00Z",
+                            },
+                        }
+                    ]
+                },
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "conditions" in resp.data
+
     def test_list_automation_rules(self, auth_client, organization, workspace):
         queue_id = _create_queue(auth_client, name="Auto Q2")
         auth_client.post(

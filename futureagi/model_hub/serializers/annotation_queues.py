@@ -1544,3 +1544,20 @@ class AutomationRuleSerializer(serializers.ModelSerializer):
             "trigger_count",
             "last_triggered_at",
         ]
+
+    def validate_conditions(self, value):
+        if value in (None, ""):
+            return {}
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("conditions must be an object.")
+        if "filters" in value:
+            raise serializers.ValidationError(
+                "Use conditions.filter with the canonical filter list."
+            )
+
+        conditions = dict(value)
+        if "filter" in conditions:
+            conditions["filter"] = filter_list_field().run_validation(
+                conditions["filter"]
+            )
+        return conditions
