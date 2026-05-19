@@ -424,8 +424,12 @@ def resolve_shared_widget_data(request, token, widget_id):
     # execute_ch_query_config reports some failures (e.g. invalid project_ids)
     # by *returning* a 4xx Response rather than raising, so the status of the
     # returned Response must be inspected, not just the try/except.
-    def _generic_error(detail):
-        logger.error(
+    def _generic_error(detail, *, exc_info=False):
+        # exc_info=True only when called from inside an except block, so the
+        # traceback is captured; the returned-error-Response path has no
+        # active exception and uses a plain error log.
+        log = logger.exception if exc_info else logger.error
+        log(
             "Shared widget query failed",
             link_id=str(link.id),
             widget_id=str(widget_id),
@@ -441,12 +445,7 @@ def resolve_shared_widget_data(request, token, widget_id):
         # so it is safe to reuse here for the public share-token path.
         result = DashboardViewSet().execute_ch_query_config(query_config, workspace)
     except Exception as exc:
-        logger.exception(
-            "Shared widget query raised",
-            link_id=str(link.id),
-            widget_id=str(widget_id),
-        )
-        return _generic_error(str(exc))
+        return _generic_error(str(exc), exc_info=True)
 
     status_code = getattr(result, "status_code", None)
     if status_code is not None and status_code >= 400:
