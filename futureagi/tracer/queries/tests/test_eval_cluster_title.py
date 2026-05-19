@@ -1,63 +1,75 @@
 """
-_eval_cluster_title gating + fallback contract.
+_eval_cluster_meta gating + fallback contract.
 
-The cheap-LLM title is EE-only and best-effort. The load-bearing
-guarantee is that cluster creation NEVER breaks on its account:
+The cheap-LLM metadata (title / fix_layer / severity) is EE-only and
+best-effort. The load-bearing guarantee: cluster creation NEVER breaks
+on its account, and every field degrades independently.
 
-  * EE present + good title  -> use it
-  * EE present + None        -> deterministic _extract_title
-  * EE present + raises      -> deterministic _extract_title
-  * EE absent (OSS)          -> deterministic _extract_title
-
-The last is the OSS-safety contract: no ee module, no crash.
+  * EE present + full meta   -> use it
+  * EE present + None        -> deterministic title, null fix_layer/severity
+  * EE present + raises      -> same fallback
+  * EE absent (OSS)          -> same fallback   (no crash)
+  * EE present + partial     -> per-field fallback (title backfilled)
 """
 
 import sys
 from unittest.mock import patch
 
-from tracer.queries.eval_clustering import _eval_cluster_title, _extract_title
+from tracer.queries.eval_clustering import _eval_cluster_meta, _extract_title
+from tracer.types.eval_cluster_types import EvalClusterMeta
 
 REASONING = (
     "The verdict is Fail because the speech has an unnatural, robotic "
     "rhythm and pacing throughout the call."
 )
+_PATCH = "ee.agenthub.trace_scanner.eval_cluster_title.generate_eval_cluster_meta"
 
 
-def test_uses_llm_title_when_available():
+def test_uses_full_meta_when_available():
     with patch(
-        "ee.agenthub.trace_scanner.eval_cluster_title.generate_eval_cluster_title",
-        return_value="Robotic, unnatural speech rhythm",
+        _PATCH,
+        return_value=EvalClusterMeta(
+            title="Robotic, unnatural speech rhythm",
+            fix_layer="Prompt",
+            severity="high",
+        ),
     ):
-        assert (
-            _eval_cluster_title("prosody_and_intonation", REASONING)
-            == "Robotic, unnatural speech rhythm"
-        )
+        m = _eval_cluster_meta("prosody_and_intonation", REASONING)
+    assert m.title == "Robotic, unnatural speech rhythm"
+    assert m.fix_layer == "Prompt"
+    assert m.severity == "high"
 
 
-def test_falls_back_when_llm_returns_none():
+def test_partial_meta_backfills_title_only():
+    """Null title -> deterministic title; fix_layer/severity stay as given."""
     with patch(
-        "ee.agenthub.trace_scanner.eval_cluster_title.generate_eval_cluster_title",
-        return_value=None,
+        _PATCH,
+        return_value=EvalClusterMeta(
+            title=None, fix_layer="Guardrails", severity="critical"
+        ),
     ):
-        assert _eval_cluster_title("prosody_and_intonation", REASONING) == _extract_title(
-            REASONING
-        )
+        m = _eval_cluster_meta("pii_leak", REASONING)
+    assert m.title == _extract_title(REASONING)
+    assert m.fix_layer == "Guardrails"
+    assert m.severity == "critical"
 
 
-def test_falls_back_when_llm_raises():
-    with patch(
-        "ee.agenthub.trace_scanner.eval_cluster_title.generate_eval_cluster_title",
-        side_effect=RuntimeError("gateway down"),
-    ):
-        assert _eval_cluster_title("prosody_and_intonation", REASONING) == _extract_title(
-            REASONING
-        )
+def test_falls_back_when_meta_none():
+    with patch(_PATCH, return_value=None):
+        m = _eval_cluster_meta("prosody_and_intonation", REASONING)
+    assert m == EvalClusterMeta(title=_extract_title(REASONING))
+
+
+def test_falls_back_when_meta_raises():
+    with patch(_PATCH, side_effect=RuntimeError("gateway down")):
+        m = _eval_cluster_meta("prosody_and_intonation", REASONING)
+    assert m.title == _extract_title(REASONING)
+    assert m.fix_layer is None and m.severity is None
 
 
 def test_oss_safety_no_ee_module_no_crash():
-    # Setting the module to None in sys.modules makes `import` raise
-    # ImportError — simulates an OSS deployment with no ee package.
+    # Module set to None in sys.modules makes `import` raise ImportError —
+    # simulates an OSS deployment with no ee package.
     with patch.dict(sys.modules, {"ee.agenthub.trace_scanner.eval_cluster_title": None}):
-        assert _eval_cluster_title("prosody_and_intonation", REASONING) == _extract_title(
-            REASONING
-        )
+        m = _eval_cluster_meta("prosody_and_intonation", REASONING)
+    assert m == EvalClusterMeta(title=_extract_title(REASONING))

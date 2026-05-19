@@ -26,7 +26,7 @@ from tracer.models.trace_error_analysis import (
     FeedIssueStatus,
     TraceErrorGroup,
 )
-from tracer.types.eval_cluster_types import ClusterableEvalResult
+from tracer.types.eval_cluster_types import ClusterableEvalResult, EvalClusterMeta
 
 logger = structlog.get_logger(__name__)
 
@@ -232,16 +232,19 @@ def _extract_title(explanation: str) -> str:
     return first_line[:200] if first_line else text[:200]
 
 
-def _eval_cluster_title(eval_name: str, reasoning: str) -> str:
-    """Sentry-style cluster title via the cheap-LLM EE helper, with a
-    deterministic fallback.
+def _eval_cluster_meta(eval_name: str, reasoning: str) -> EvalClusterMeta:
+    """Title + fix_layer + severity for an eval cluster via the cheap-LLM
+    EE helper, with deterministic fallback.
 
-    EE absent (OSS) or any LLM failure → the first-sentence extraction.
-    A title is low-stakes; it must never break cluster creation.
+    EE absent (OSS) or any LLM failure → first-sentence title, null
+    fix_layer, null severity (caller defaults priority). Each field
+    degrades independently; metadata is best-effort and must never break
+    cluster creation.
     """
+    fallback = EvalClusterMeta(title=_extract_title(reasoning))
     try:
         from ee.agenthub.trace_scanner.eval_cluster_title import (
-            generate_eval_cluster_title,
+            generate_eval_cluster_meta,
         )
     except ImportError:
         if settings.DEBUG:
@@ -249,15 +252,21 @@ def _eval_cluster_title(eval_name: str, reasoning: str) -> str:
                 "Could not import ee.agenthub.trace_scanner.eval_cluster_title",
                 exc_info=True,
             )
-        return _extract_title(reasoning)
+        return fallback
 
     try:
-        title = generate_eval_cluster_title(eval_name, reasoning)
+        meta = generate_eval_cluster_meta(eval_name, reasoning)
     except Exception:
-        logger.warning("eval_cluster_title_llm_failed", exc_info=True)
-        title = None
+        logger.warning("eval_cluster_meta_llm_failed", exc_info=True)
+        meta = None
 
-    return title or _extract_title(reasoning)
+    if not meta:
+        return fallback
+    return EvalClusterMeta(
+        title=meta.title or _extract_title(reasoning),
+        fix_layer=meta.fix_layer,
+        severity=meta.severity,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -288,7 +297,10 @@ def create_cluster(
         ).hexdigest()[:8]
         cluster_id = f"E-{h2.upper()}"
 
-    title = _eval_cluster_title(result.eval_name, result.explanation)
+    meta = _eval_cluster_meta(result.eval_name, result.explanation)
+    # Lazy import avoids a query-module import cycle; severity_to_priority
+    # returns "medium" when severity is None (the fallback default).
+    from tracer.queries.feed import severity_to_priority
 
     cluster = TraceErrorGroup.objects.create(
         project_id=project_id,
@@ -296,11 +308,12 @@ def create_cluster(
         source=ClusterSource.EVAL,
         issue_group=result.eval_name,
         issue_category=None,
-        fix_layer=None,
-        title=title,
+        fix_layer=meta.fix_layer,
+        title=meta.title,
         combined_description=result.explanation,
         combined_impact=_score_to_impact(result.score),
         status=FeedIssueStatus.ESCALATING,
+        priority=severity_to_priority(meta.severity),
         error_type=result.eval_name,
         eval_config_id=result.eval_config_id,
         total_events=1,
@@ -344,7 +357,9 @@ def create_cluster(
         "eval_cluster_created",
         cluster_id=cluster_id,
         eval_name=result.eval_name,
-        title=title[:80],
+        title=(meta.title or "")[:80],
+        fix_layer=meta.fix_layer,
+        severity=meta.severity,
     )
     return cluster_id
 
