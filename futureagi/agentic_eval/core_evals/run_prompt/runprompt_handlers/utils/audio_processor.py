@@ -29,7 +29,7 @@ from tfc.utils.storage import (
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens
 except ImportError:
-    count_tiktoken_tokens = None
+    from tfc.oss_stubs.usage import count_tiktoken_tokens
 
 logger = structlog.get_logger(__name__)
 

@@ -30,12 +30,12 @@ def _check_resource_limit(organization, workspace, api_call_type, config=None):
         try:
             from ee.usage.models import APICallStatusChoices, APICallTypeChoices
         except ImportError:
-            APICallStatusChoices = None
-            APICallTypeChoices = None
+            from tfc.oss_stubs.usage import APICallStatusChoices
+            from tfc.oss_stubs.usage import APICallTypeChoices
         try:
             from ee.usage.utils import log_and_deduct_cost_for_resource_request
         except ImportError:
-            log_and_deduct_cost_for_resource_request = None
+            from tfc.oss_stubs.usage import log_and_deduct_cost_for_resource_request
 
         call_log = log_and_deduct_cost_for_resource_request(
             organization,

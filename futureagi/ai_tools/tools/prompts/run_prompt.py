@@ -63,8 +63,8 @@ class RunPromptTool(BaseTool):
         try:
             from ee.usage.utils.usage_entries import APICallTypeChoices, log_and_deduct_cost_for_api_request
         except ImportError:
-            APICallTypeChoices = None
-            log_and_deduct_cost_for_api_request = None
+            from tfc.oss_stubs.usage import APICallTypeChoices
+            from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
 
         template_obj, err = resolve_prompt_template(
             params.template_id, context.organization, context.workspace

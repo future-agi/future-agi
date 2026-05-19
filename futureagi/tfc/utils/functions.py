@@ -17,7 +17,7 @@ from tfc.utils.clickhouse import ClickHouseClientSingleton
 try:
     from ee.usage.models.usage import APICallStatusChoices
 except ImportError:
-    APICallStatusChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
 
 
 def add_one_day_in_date(date_str):

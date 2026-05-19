@@ -72,14 +72,14 @@ try:
         SubscriptionTierChoices,
     )
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
-    OrganizationSubscription = None
-    SubscriptionTierChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
+    from tfc.oss_stubs.usage import APICallTypeChoices
+    from tfc.oss_stubs.usage import OrganizationSubscription
+    from tfc.oss_stubs.usage import SubscriptionTierChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 except ImportError:
-    log_and_deduct_cost_for_resource_request = None
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_resource_request
 
 
 def clear_user_redis_cache(user_id):

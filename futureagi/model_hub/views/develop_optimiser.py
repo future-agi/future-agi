@@ -48,12 +48,12 @@ from model_hub.views.prompt_template import replace_ids_with_column_name
 try:
     from ee.usage.models.usage import APICallTypeChoices
 except ImportError:
-    APICallTypeChoices = None
+    from tfc.oss_stubs.usage import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    count_tiktoken_tokens = None
-    log_and_deduct_cost_for_api_request = None
+    from tfc.oss_stubs.usage import count_tiktoken_tokens
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
 
 
 class DevelopOptimizer:
@@ -161,11 +161,11 @@ class DevelopOptimizer:
                 from ee.usage.models.usage import APICallLog, APICallStatusChoices
             except ImportError:
                 APICallLog = None
-                APICallStatusChoices = None
+                from tfc.oss_stubs.usage import APICallStatusChoices
             try:
                 from ee.usage.utils.usage_entries import refund_cost_for_api_call
             except ImportError:
-                refund_cost_for_api_call = None
+                from tfc.oss_stubs.usage import refund_cost_for_api_call
 
             optimizer_row = OptimizationDataset.objects.get(id=self.optimize_dataset.id)
             optimisation_id = str(optimizer_row.id)

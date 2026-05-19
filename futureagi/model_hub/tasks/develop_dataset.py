@@ -54,13 +54,13 @@ from tfc.utils.storage import (
 try:
     from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+    from tfc.oss_stubs.usage import APICallStatusChoices
+    from tfc.oss_stubs.usage import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    count_text_tokens = None
-    log_and_deduct_cost_for_api_request = None
+    from tfc.oss_stubs.usage import count_text_tokens
+    from tfc.oss_stubs.usage import log_and_deduct_cost_for_api_request
 
 
 def run_generate_new_rows_test(
@@ -367,7 +367,7 @@ def create_synthetic_dataset(
         try:
             from ee.usage.models.usage import APICallTypeChoices
         except ImportError:
-            APICallTypeChoices = None
+            from tfc.oss_stubs.usage import APICallTypeChoices
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:

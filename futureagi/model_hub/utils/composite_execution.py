@@ -201,7 +201,7 @@ def _log_composite_usage(
             from ee.usage.models.usage import APICallLog, APICallStatusChoices, APICallType
         except ImportError:
             APICallLog = None
-            APICallStatusChoices = None
+            from tfc.oss_stubs.usage import APICallStatusChoices
             APICallType = None
 
         api_call_type_name = _get_api_call_type(model)

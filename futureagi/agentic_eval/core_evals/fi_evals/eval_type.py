@@ -102,6 +102,7 @@ class FunctionEvalTypeId(Enum):
     IS_REFUSAL = "IsRefusal"
     LATENCY_CHECK = "LatencyCheck"
     FLEISS_KAPPA = "FleissKappa"
+    FORMAL_CONSTRAINT_EVAL = "FormalConstraintEvaluator"
 
 
 class GroundedEvalTypeId(Enum):
