@@ -279,6 +279,36 @@ class AIFilterViewContractTests(unittest.TestCase):
         self.assertIn("query", response.data["details"])
         self.assertIn("query", response.data["result"])
 
+    def test_unknown_request_fields_are_rejected(self):
+        from model_hub.views.ai_filter import AIFilterView
+
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/model-hub/ai-filter/",
+            {
+                "mode": "select_fields",
+                "query": "show failed rows",
+                "schema": [
+                    {
+                        "field": "status",
+                        "label": "Status",
+                        "type": "enum",
+                    }
+                ],
+                "projectId": "legacy camel alias",
+            },
+            format="json",
+        )
+        force_authenticate(
+            request,
+            user=SimpleNamespace(is_authenticated=True),
+        )
+
+        response = AIFilterView.as_view()(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["details"]["projectId"], ["Unknown field."])
+
 
 if __name__ == "__main__":
     unittest.main()

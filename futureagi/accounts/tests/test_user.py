@@ -10,6 +10,11 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 
+def assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["details"][field_name] == ["Unknown field."]
+
+
 @pytest.fixture
 def clear_cache():
     """Clear cache before and after tests."""
@@ -270,6 +275,19 @@ class TestUserOnboardingAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_post_onboarding_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/onboarding/",
+            {
+                "role": "developer",
+                "goals": ["Build AI apps"],
+                "selectedGoals": ["legacy camel alias"],
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "selectedGoals")
+
     def test_post_onboarding_updates_user(self, auth_client, user):
         """Onboarding data is saved to user model."""
         auth_client.post(
@@ -335,6 +353,20 @@ class TestManageRedisKeyAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_manage_redis_key_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/redis-key/",
+            {
+                "access_token_id": "invalid-token",
+                "key": "test_key",
+                "value": "test_value",
+                "accessTokenId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "accessTokenId")
 
     def test_manage_redis_key_missing_key(self, auth_client):
         """Request without key fails."""

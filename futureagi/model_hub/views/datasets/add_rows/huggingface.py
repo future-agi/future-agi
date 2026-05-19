@@ -4,7 +4,6 @@ import uuid
 import structlog
 from django.db import transaction
 from django.shortcuts import get_object_or_404
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -25,6 +24,7 @@ from model_hub.utils.utils import (
 )
 from model_hub.views.datasets.create.huggingface import CreateDatasetFromHuggingFaceView
 from model_hub.views.utils.hugginface import process_huggingface_dataset
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
@@ -48,19 +48,21 @@ class AddRowsFromHuggingFaceView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=HuggingFaceAddRowsRequestSerializer,
+    @validated_request(
+        request_serializer=HuggingFaceAddRowsRequestSerializer,
         responses={
             200: DatasetRowsImportMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            num_rows = request.data.get("num_rows")
-            dataset_name = request.data.get("huggingface_dataset_name")
-            config_name = request.data.get("huggingface_dataset_config")
-            split = request.data.get("huggingface_dataset_split")
+            data = request.validated_data
+            num_rows = data.get("num_rows")
+            dataset_name = data.get("huggingface_dataset_name")
+            config_name = data.get("huggingface_dataset_config")
+            split = data.get("huggingface_dataset_split")
 
             # Validate required fields (matching UI Zod schema)
             if not config_name or not str(config_name).strip():

@@ -1,5 +1,6 @@
 //
 import axios, { endpoints } from "src/utils/axios";
+import { paramsSerializer } from "src/utils/utils";
 
 export const getUserQueryKey = (
   pageNumber,
@@ -44,6 +45,7 @@ export const getUserQueryOptions = (
           filter_status: filterStatus || [],
           filter_role: filterRole || [],
         },
+        paramsSerializer: paramsSerializer(),
         headers: workspaceId ? { "X-Workspace-Id": workspaceId } : {}, // Consistent casing: X-Workspace-Id
       }),
     staleTime: Infinity,

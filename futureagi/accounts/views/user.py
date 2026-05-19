@@ -56,6 +56,7 @@ from model_hub.models.develop_dataset import Dataset
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.experiments import ExperimentsTable
 from tfc.settings import settings
+from tfc.utils.api_contracts import validated_api_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project
@@ -75,25 +76,35 @@ logger = structlog.get_logger(__name__)
 )
 @api_view(["POST", "DELETE"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=RedisKeyRequestSerializer,
+    responses={
+        200: AccountsRedisSetResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def manage_redis_key(request):
     gm = GeneralMethods()
     try:
         # Verify access token
-        access_token_id = request.data.get("access_token_id")
+        data = request.validated_data
+        access_token_id = data.get("access_token_id")
         if access_token_id != settings.SECRET_KEY:
             return gm.bad_request("Invalid or expired token")
 
-        key = request.data.get("key")
+        key = data.get("key")
         if not key:
             return gm.bad_request("Key is required")
 
         if request.method == "POST":
-            value = request.data.get("value")
+            value = data.get("value")
             if value is None:
                 return gm.bad_request("Value is required")
 
             # Optional: Set expiration time in seconds
-            expiry = request.data.get("expiry")
+            expiry = data.get("expiry")
             if expiry:
                 cache.set(key, value, timeout=int(expiry))
             else:
@@ -875,6 +886,16 @@ class FirstChecksView(APIView):
 )
 @api_view(["POST", "GET"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=UserOnboardingSerializer,
+    responses={
+        200: UserOnboardingSaveResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    request_methods=["POST"],
+    document=False,
+    reject_unknown_fields=True,
+)
 def user_onboarding(request):
     """
     Handle user onboarding data (role and goals)
@@ -915,12 +936,7 @@ def user_onboarding(request):
 
     elif request.method == "POST":
         try:
-            # Validate the incoming data
-            serializer = UserOnboardingSerializer(data=request.data)
-            if not serializer.is_valid():
-                return _gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
 
             # Get the user
             user = User.objects.get(id=request.user.id)

@@ -30,6 +30,7 @@ from model_hub.serializers.contracts import (
 )
 from model_hub.serializers.metric import MetricSerializer
 from model_hub.utils.utils import check_valid_metrics, get_evaluation_type
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 
@@ -141,14 +142,15 @@ class CreateMetricApiView(APIView):
     permission_classes = [IsAuthenticated]
     gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=CustomMetricMutationRequestSerializer,
+    @validated_request(
+        request_serializer=CustomMetricMutationRequestSerializer,
         responses={200: ModelHubStatusResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         user_organization = get_request_organization(self.request)
 
-        data = request.data
+        data = request.validated_data
 
         try:
             # Check if a non-deleted PromptChecker with the specified user prompt and no ambiguity exists
@@ -217,12 +219,13 @@ class CreateMetricApiView(APIView):
 class EditMetricApiView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=CustomMetricMutationRequestSerializer,
+    @validated_request(
+        request_serializer=CustomMetricMutationRequestSerializer,
         responses={200: ModelHubStatusResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        data = request.data
+        data = request.validated_data
 
         try:
             metric = Metric.objects.get(
@@ -343,12 +346,13 @@ class GetMetricTagOptions(APIView):
 
 
 class TestMetric(APIView):
-    @swagger_auto_schema(
-        request_body=CustomMetricTestRequestSerializer,
+    @validated_request(
+        request_serializer=CustomMetricTestRequestSerializer,
         responses={200: CustomMetricTestResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        data = request.data
+        data = request.validated_data
 
         try:
             # Check if a non-deleted PromptChecker with the specified user prompt and no ambiguity exists

@@ -337,8 +337,14 @@ def activate_account(request, uidb64, token):
     responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST"])
+@validated_api_request(
+    request_serializer=PasswordResetInitiateRequestSerializer,
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    document=False,
+    reject_unknown_fields=True,
+)
 def initiate_password_reset(request):
-    email = request.data.get("email", None)
+    email = request.validated_data.get("email", None)
     if not email:
         return _gm.bad_request("Email is required.")
     email = email.lower()
@@ -412,9 +418,15 @@ def initiate_password_reset(request):
     responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["POST"])
+@validated_api_request(
+    request_serializer=PasswordResetConfirmRequestSerializer,
+    responses={200: AccountsMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    document=False,
+    reject_unknown_fields=True,
+)
 def reset_password_confirm(request, uidb64, token):
-    new_password = request.data.get("new_password")
-    repeat_password = request.data.get("repeat_password")
+    new_password = request.validated_data.get("new_password")
+    repeat_password = request.validated_data.get("repeat_password")
 
     if new_password != repeat_password:
         return _gm.bad_request("Passwords do not match.")
@@ -525,6 +537,13 @@ def _activate_memberships(user):
     responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
 )
 @api_view(["GET", "POST"])
+@validated_api_request(
+    request_serializer=AcceptInvitationRequestSerializer,
+    responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    request_methods=["POST"],
+    document=False,
+    reject_unknown_fields=True,
+)
 def accept_invitation_mail(request, uidb64, token):
     """Accept an invitation link.
 
@@ -609,8 +628,8 @@ def accept_invitation_mail(request, uidb64, token):
         # ------------------------------------------------------------------
         # POST — set password, activate, accept invite, return JWT tokens.
         # ------------------------------------------------------------------
-        new_password = request.data.get("new_password")
-        repeat_password = request.data.get("repeat_password")
+        new_password = request.validated_data.get("new_password")
+        repeat_password = request.validated_data.get("repeat_password")
 
         if not new_password or not repeat_password:
             return Response(
@@ -736,8 +755,17 @@ def accept_invitation_mail(request, uidb64, token):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated, IsOrganizationAdmin])
+@validated_api_request(
+    request_serializer=UserIdsRequestSerializer,
+    responses={
+        200: AccountsBulkUserMutationItemSerializer(many=True),
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def resend_invitation_emails(request):
-    user_ids = request.data.get("user_ids", [])
+    user_ids = [str(user_id) for user_id in request.validated_data.get("user_ids", [])]
     responses = []
 
     # Resolve the actor's current organization for scoping
@@ -800,12 +828,21 @@ def resend_invitation_emails(request):
 )
 @api_view(["DELETE"])
 @permission_classes([IsAuthenticated, IsOrganizationAdmin])
+@validated_api_request(
+    request_serializer=UserIdsRequestSerializer,
+    responses={
+        200: AccountsBulkUserMutationItemSerializer(many=True),
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def delete_users(request):
     from accounts.models.organization_membership import OrganizationMembership
     from tfc.constants.levels import Level
     from tfc.permissions.utils import get_org_membership
 
-    user_ids = request.data.get("user_ids", [])
+    user_ids = [str(user_id) for user_id in request.validated_data.get("user_ids", [])]
     responses = []
 
     # Validate that user is not trying to delete themselves
@@ -870,11 +907,18 @@ def delete_users(request):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=UpdateUserSerializer,
+    responses={
+        200: AccountsStringResultResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def update_user(request):
     _gm = GeneralMethods()
-    serializer = UpdateUserSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    data = serializer.validated_data
+    data = request.validated_data
 
     try:
         user = User.objects.get(
@@ -954,6 +998,15 @@ def update_user(request):
 )
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    request_serializer=UserFullNameUpdateRequestSerializer,
+    responses={
+        200: AccountsDirectMessageResponseSerializer,
+        **ACCOUNTS_ERROR_RESPONSES,
+    },
+    document=False,
+    reject_unknown_fields=True,
+)
 def update_user_full_name(request):
     try:
         user = User.objects.get(pk=request.user.id)
@@ -963,7 +1016,7 @@ def update_user_full_name(request):
         )
 
     # Extract data from the request
-    name = request.data.get("name")
+    name = request.validated_data.get("name")
 
     # Update user fields if provided
     if name:

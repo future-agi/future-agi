@@ -5,7 +5,7 @@ Type definitions and dataclasses for model_hub
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -106,17 +106,7 @@ class EvalCreateRequest(BaseModel):
         extra = "forbid"
 
     name: str = Field(min_length=0, max_length=255, default="")
-    # Accept camelCase `isDraft` as an alias. The frontend's response
-    # interceptor installs enumerable camelCase twins on every response
-    # object; if a caller spreads response-derived state into a request
-    # body without also setting `is_draft`, the twin `isDraft` is what
-    # arrives here. Treating the two names as equivalent keeps the draft
-    # intent intact and stops the "Instructions are required" 400 from
-    # firing at mount time (TH-4076).
-    is_draft: bool = Field(
-        default=False,
-        validation_alias=AliasChoices("is_draft", "isDraft"),
-    )
+    is_draft: bool = False
     eval_type: Literal["llm", "code", "agent"] = "llm"
     instructions: str = Field(default="", max_length=100000)
     model: str = Field(default="turing_large", max_length=255)

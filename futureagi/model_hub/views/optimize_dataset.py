@@ -55,6 +55,7 @@ from model_hub.utils.optimize import (
 )
 from model_hub.utils.utils import check_valid_metrics
 from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -112,21 +113,17 @@ class OptimizedDatasetView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=OptimizeDatasetListQuerySerializer,
         responses={
             200: OptimizeDatasetPaginatedResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, model_id, *args, **kwarg):
         try:
-            query_serializer = OptimizeDatasetListQuerySerializer(
-                data=request.query_params
-            )
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-            filters = query_serializer.validated_data["filters"]
+            filters = request.validated_query_data["filters"]
 
             model = AIModel.objects.only("id").get(id=model_id)
 
@@ -166,21 +163,17 @@ class OptimizedDatasetView(APIView):
                 status=500,
             )
 
-    @swagger_auto_schema(
-        request_body=OptimizeDatasetMutationRequestSerializer,
+    @validated_request(
+        request_serializer=OptimizeDatasetMutationRequestSerializer,
         responses={
             200: OptimizeDatasetCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         try:
-            data, error_response = _validate_request(
-                OptimizeDatasetMutationRequestSerializer,
-                request.data,
-            )
-            if error_response is not None:
-                return error_response
+            data = request.validated_data
             name = data.get("name")
             start_date = data.get("start_date").split("T")[0]
             end_date = data.get("end_date").split("T")[0]
@@ -530,20 +523,16 @@ class RightAnswerResultsView(APIView):
 
         return result
 
-    @swagger_auto_schema(
-        request_body=OptimizeDatasetPageRequestSerializer,
+    @validated_request(
+        request_serializer=OptimizeDatasetPageRequestSerializer,
         responses={
             200: OPTIMIZE_DATASET_DYNAMIC_ROWS_RESPONSE_SCHEMA,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, model_id, optimization_id):
-        payload, error_response = _validate_request(
-            OptimizeDatasetPageRequestSerializer,
-            request.data,
-        )
-        if error_response is not None:
-            return error_response
+        payload = request.validated_data
 
         optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
             id=optimization_id
@@ -799,22 +788,16 @@ class TemplateResultsView(APIView):
 
         return query
 
-    @swagger_auto_schema(
-        request_body=ModelHubEmptyRequestSerializer,
+    @validated_request(
+        request_serializer=ModelHubEmptyRequestSerializer,
         responses={
             200: OptimizeDatasetTemplateResultsResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, model_id, optimization_id, *args, **kwarg):
         try:
-            _payload, error_response = _validate_request(
-                ModelHubEmptyRequestSerializer,
-                request.data,
-            )
-            if error_response is not None:
-                return error_response
-
             optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
                 id=optimization_id
             )
@@ -1036,20 +1019,16 @@ class TemplateExploreView(APIView):
 
         return result
 
-    @swagger_auto_schema(
-        request_body=OptimizeDatasetPageRequestSerializer,
+    @validated_request(
+        request_serializer=OptimizeDatasetPageRequestSerializer,
         responses={
             200: OPTIMIZE_DATASET_DYNAMIC_ROWS_RESPONSE_SCHEMA,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, model_id, optimization_id):
-        payload, error_response = _validate_request(
-            OptimizeDatasetPageRequestSerializer,
-            request.data,
-        )
-        if error_response is not None:
-            return error_response
+        payload = request.validated_data
 
         optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
             id=optimization_id
@@ -1227,20 +1206,16 @@ class OptimizeDatasetColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
-    @swagger_auto_schema(
-        request_body=OptimizeDatasetColumnConfigUpdateRequestSerializer,
+    @validated_request(
+        request_serializer=OptimizeDatasetColumnConfigUpdateRequestSerializer,
         responses={
             200: OptimizeDatasetColumnConfigUpdateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, model_id):
-        payload, error_response = _validate_request(
-            OptimizeDatasetColumnConfigUpdateRequestSerializer,
-            request.data,
-        )
-        if error_response is not None:
-            return error_response
+        payload = request.validated_data
 
         user_organization = (
             getattr(self.request, "organization", None)
@@ -1333,12 +1308,13 @@ class OptimizeDatasetRightColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
-    @swagger_auto_schema(
-        request_body=OptimizeDatasetColumnConfigUpdateRequestSerializer,
+    @validated_request(
+        request_serializer=OptimizeDatasetColumnConfigUpdateRequestSerializer,
         responses={
             200: OptimizeDatasetColumnConfigUpdateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(
         self,
@@ -1346,12 +1322,7 @@ class OptimizeDatasetRightColumnConfig(APIView):
         model_id,
         optimization_id,
     ):
-        payload, error_response = _validate_request(
-            OptimizeDatasetColumnConfigUpdateRequestSerializer,
-            request.data,
-        )
-        if error_response is not None:
-            return error_response
+        payload = request.validated_data
 
         user_organization = (
             getattr(self.request, "organization", None)
@@ -1447,12 +1418,13 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
-    @swagger_auto_schema(
-        request_body=OptimizeDatasetColumnConfigUpdateRequestSerializer,
+    @validated_request(
+        request_serializer=OptimizeDatasetColumnConfigUpdateRequestSerializer,
         responses={
             200: OptimizeDatasetColumnConfigUpdateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(
         self,
@@ -1460,12 +1432,7 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
         model_id,
         optimization_id,
     ):
-        payload, error_response = _validate_request(
-            OptimizeDatasetColumnConfigUpdateRequestSerializer,
-            request.data,
-        )
-        if error_response is not None:
-            return error_response
+        payload = request.validated_data
 
         user_organization = (
             getattr(self.request, "organization", None)
@@ -1489,24 +1456,20 @@ class OptimizedDatasetKbView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=OptimizeDatasetKnowledgeBaseRequestSerializer,
+    @validated_request(
+        request_serializer=OptimizeDatasetKnowledgeBaseRequestSerializer,
         responses={
             200: OptimizeDatasetKnowledgeBaseCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         return self.create(request, *args, **kwargs)
 
     def create(self, request, *args, **kwargs):
         try:
-            data, error_response = _validate_request(
-                OptimizeDatasetKnowledgeBaseRequestSerializer,
-                request.data,
-            )
-            if error_response is not None:
-                return error_response
+            data = request.validated_data
             name = data.get("name")
             knowledge_base_metrics = data.get("knowledge_base_metrics")
             knowledge_base_filters = data.get("knowledge_base_filters")

@@ -65,6 +65,7 @@ from model_hub.views.run_prompt import populate_placeholders
 # Define a Celery task for running the evaluation
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
@@ -390,16 +391,17 @@ class AddVectorDBColumnView(APIView):
             logger.error(f"Error processing row: {str(e)}")
             return str(e), {"reason": str(e)}
 
-    @swagger_auto_schema(
-        request_body=VectorDBColumnRequestSerializer,
+    @validated_request(
+        request_serializer=VectorDBColumnRequestSerializer,
         responses={
             200: DynamicColumnCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            config = request.data
+            config = request.validated_data
             self.organization_id = (
                 getattr(request, "organization", None) or request.user.organization.id
             )
@@ -532,19 +534,21 @@ class ExtractJsonColumnView(APIView):
         finally:
             close_old_connections()
 
-    @swagger_auto_schema(
-        request_body=ExtractJsonColumnRequestSerializer,
+    @validated_request(
+        request_serializer=ExtractJsonColumnRequestSerializer,
         responses={
             200: DynamicColumnCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            column_id = request.data.get("column_id")
-            json_key = request.data.get("json_key")
-            new_column_name = request.data.get("new_column_name")
-            concurrency = request.data.get(
+            data = request.validated_data
+            column_id = data.get("column_id")
+            json_key = data.get("json_key")
+            new_column_name = data.get("new_column_name")
+            concurrency = data.get(
                 "concurrency", 5
             )  # Default to 5 concurrent workers
 
@@ -688,20 +692,22 @@ class ClassifyColumnView(APIView):
         finally:
             close_old_connections()
 
-    @swagger_auto_schema(
-        request_body=ClassifyColumnRequestSerializer,
+    @validated_request(
+        request_serializer=ClassifyColumnRequestSerializer,
         responses={
             200: DynamicColumnCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            column_id = request.data.get("column_id")
-            labels = request.data.get("labels", [])
-            model = request.data.get("language_model_id", "gpt-4o")
-            concurrency = request.data.get("concurrency", 5)
-            new_column_name = request.data.get("new_column_name")
+            data = request.validated_data
+            column_id = data.get("column_id")
+            labels = data.get("labels", [])
+            model = data.get("language_model_id", "gpt-4o")
+            concurrency = data.get("concurrency", 5)
+            new_column_name = data.get("new_column_name")
 
             # Validation
             if not column_id or not labels:
@@ -869,20 +875,22 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
         finally:
             close_old_connections()
 
-    @swagger_auto_schema(
-        request_body=ExtractEntitiesRequestSerializer,
+    @validated_request(
+        request_serializer=ExtractEntitiesRequestSerializer,
         responses={
             200: DynamicColumnMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            column_id = request.data.get("column_id")
-            instruction = request.data.get("instruction")
-            model = request.data.get("language_model_id", "gpt-4")
-            concurrency = request.data.get("concurrency", 5)
-            new_column_name = request.data.get("new_column_name")
+            data = request.validated_data
+            column_id = data.get("column_id")
+            instruction = data.get("instruction")
+            model = data.get("language_model_id", "gpt-4")
+            concurrency = data.get("concurrency", 5)
+            new_column_name = data.get("new_column_name")
 
             # Validation
             if not all([column_id, instruction]):
@@ -1082,18 +1090,20 @@ class AddApiColumnView(APIView):
             logger.exception(f"API call error: {str(e)}")
             return str(e), {"response_status": 400}
 
-    @swagger_auto_schema(
-        request_body=AddApiColumnRequestSerializer,
+    @validated_request(
+        request_serializer=AddApiColumnRequestSerializer,
         responses={
             200: DynamicColumnCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            column_name = request.data.get("column_name")
-            config = request.data.get("config")  # URL, method, params, headers, body
-            concurrency = request.data.get("concurrency", 5)
+            data = request.validated_data
+            column_name = data.get("column_name")
+            config = data.get("config")  # URL, method, params, headers, body
+            concurrency = data.get("concurrency", 5)
 
             if not all([column_name, config]):
                 return self._gm.bad_request(
@@ -1260,18 +1270,20 @@ class ExecutePythonCodeView(APIView):
             traceback.format_exc()
             return str(e), {"reason": str(e)}
 
-    @swagger_auto_schema(
-        request_body=PythonCodeColumnRequestSerializer,
+    @validated_request(
+        request_serializer=PythonCodeColumnRequestSerializer,
         responses={
             200: DynamicColumnCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            code = request.data.get("code")
-            new_column_name = request.data.get("new_column_name")
-            concurrency = request.data.get("concurrency", 5)
+            data = request.validated_data
+            code = data.get("code")
+            new_column_name = data.get("new_column_name")
+            concurrency = data.get("concurrency", 5)
 
             # Validation
             if not all([code]):
@@ -1585,18 +1597,20 @@ class ConditionalColumnView(APIView):
             logger.error(f"Error processing row: {str(e)}")
             return str(e), {"reason": str(e)}
 
-    @swagger_auto_schema(
-        request_body=ConditionalColumnRequestSerializer,
+    @validated_request(
+        request_serializer=ConditionalColumnRequestSerializer,
         responses={
             200: DynamicColumnCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            config = request.data.get("config", [])
-            new_column_name = request.data.get("new_column_name")
-            concurrency = request.data.get("concurrency", 5)
+            data = request.validated_data
+            config = data.get("config", [])
+            new_column_name = data.get("new_column_name")
+            concurrency = data.get("concurrency", 5)
             self.organization_id = (
                 getattr(request, "organization", None) or request.user.organization.id
             )
@@ -1702,15 +1716,17 @@ class RerunOperationView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=RerunOperationRequestSerializer,
+    @validated_request(
+        request_serializer=RerunOperationRequestSerializer,
         responses={200: RerunOperationResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, column_id, *args, **kwargs):
         """Rerun a specific operation with its stored configuration"""
         try:
-            operation_type = request.data.get("operation_type")
-            metadata = request.data.get("config", {})
+            data = request.validated_data
+            operation_type = data.get("operation_type")
+            metadata = data.get("config", {})
 
             if not operation_type:
                 return self._gm.bad_request(get_error_message("MISSING_OPERATION_TYPE"))
@@ -3101,12 +3117,13 @@ class PreviewDatasetOperationView(APIView):
             "created_at"
         )[:sample_size]
 
-    @swagger_auto_schema(
-        request_body=PreviewDatasetOperationRequestSerializer,
+    @validated_request(
+        request_serializer=PreviewDatasetOperationRequestSerializer,
         responses={
             200: PreviewDatasetOperationResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, operation_type):
         try:
@@ -3132,7 +3149,9 @@ class PreviewDatasetOperationView(APIView):
                 return self._gm.bad_request(f"Invalid operation type: {operation_type}")
 
             # Execute preview
-            preview_results = handler(request.data, sample_rows, organization_id)
+            preview_results = handler(
+                request.validated_data, sample_rows, organization_id
+            )
 
             return self._gm.success_response(
                 {

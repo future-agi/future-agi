@@ -989,6 +989,7 @@ class AIFilterView(APIView):
     @validated_request(
         request_serializer=AIFilterRequestSerializer,
         responses={200: AIFilterResponseSerializer, **ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         mode = "build_filters"  # default — referenced by except blocks below

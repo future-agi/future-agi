@@ -33,7 +33,6 @@ from accounts.serializers.two_factor import (
     TOTPDisableSerializer,
     TwoFactorChallengeTokenSerializer,
     TwoFactorStatusSerializer,
-    TwoFactorVerifyPasskeySerializer,
     TwoFactorVerifySerializer,
 )
 from accounts.services.recovery_service import (
@@ -57,6 +56,7 @@ from accounts.services.webauthn_service import (
     get_authentication_options,
     verify_authentication,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -121,9 +121,10 @@ class TOTPSetupView(APIView):
     throttle_classes = [TOTPRateThrottle]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=AccountsEmptyRequestSerializer,
+    @validated_request(
+        request_serializer=AccountsEmptyRequestSerializer,
         responses={200: TOTPSetupResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         try:
@@ -148,16 +149,13 @@ class TOTPConfirmView(APIView):
     throttle_classes = [TOTPRateThrottle]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=TOTPConfirmSerializer,
+    @validated_request(
+        request_serializer=TOTPConfirmSerializer,
         responses={200: TOTPConfirmResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
-        serializer = TOTPConfirmSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        code = serializer.validated_data["code"]
+        code = request.validated_data["code"]
         if not confirm_totp_device(request.user, code):
             return self._gm.bad_request("Invalid code. Please try again.")
 
@@ -178,16 +176,13 @@ class TOTPDisableView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=TOTPDisableSerializer,
+    @validated_request(
+        request_serializer=TOTPDisableSerializer,
         responses={200: TOTPDisableResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def delete(self, request):
-        serializer = TOTPDisableSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        code = serializer.validated_data["code"]
+        code = request.validated_data["code"]
 
         # Verify with TOTP or recovery code
         if not (
@@ -209,20 +204,17 @@ class TwoFactorVerifyTOTPView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=TwoFactorVerifySerializer,
+    @validated_request(
+        request_serializer=TwoFactorVerifySerializer,
         responses={
             200: AccountsTokenPairResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
-        serializer = TwoFactorVerifySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        challenge_id = str(serializer.validated_data["challenge_token"])
-        code = serializer.validated_data["code"]
+        challenge_id = str(request.validated_data["challenge_token"])
+        code = request.validated_data["code"]
 
         # Validate challenge
         challenge_data = validate_challenge(challenge_id)
@@ -255,20 +247,17 @@ class TwoFactorVerifyRecoveryView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=TwoFactorVerifySerializer,
+    @validated_request(
+        request_serializer=TwoFactorVerifySerializer,
         responses={
             200: AccountsTokenPairResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
-        serializer = TwoFactorVerifySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        challenge_id = str(serializer.validated_data["challenge_token"])
-        code = serializer.validated_data["code"]
+        challenge_id = str(request.validated_data["challenge_token"])
+        code = request.validated_data["code"]
 
         challenge_data = validate_challenge(challenge_id)
         if not challenge_data:
@@ -307,16 +296,13 @@ class TwoFactorVerifyPasskeyOptionsView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=TwoFactorChallengeTokenSerializer,
+    @validated_request(
+        request_serializer=TwoFactorChallengeTokenSerializer,
         responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
-        serializer = TwoFactorChallengeTokenSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        challenge_id = str(serializer.validated_data["challenge_token"])
+        challenge_id = str(request.validated_data["challenge_token"])
 
         challenge_data = validate_challenge(challenge_id, count_attempt=False)
         if not challenge_data:
@@ -341,20 +327,17 @@ class TwoFactorVerifyPasskeyView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=TwoFactorPasskeyVerifyRequestSerializer,
+    @validated_request(
+        request_serializer=TwoFactorPasskeyVerifyRequestSerializer,
         responses={
             200: AccountsTokenPairResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
-        serializer = TwoFactorVerifyPasskeySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        challenge_id = str(serializer.validated_data["challenge_token"])
-        credential_response = serializer.validated_data["credential"]
+        challenge_id = str(request.validated_data["challenge_token"])
+        credential_response = request.validated_data["credential"]
 
         challenge_data = validate_challenge(challenge_id)
         if not challenge_data:
@@ -379,9 +362,9 @@ class TwoFactorVerifyPasskeyView(APIView):
         # ``session_id`` keys the one-time WebAuthn challenge in Redis.
         # Clients send it at the top level; the ``_session_id`` fallback
         # inside ``credential`` exists for an older client shape.
-        session_id = request.data.get("session_id", "") or credential_response.pop(
-            "_session_id", ""
-        )
+        session_id = request.validated_data.get(
+            "session_id", ""
+        ) or credential_response.pop("_session_id", "")
         challenge_cache_key = WEBAUTHN_AUTH_CHALLENGE_KEY.format(session_id)
         raw_challenge_data = cache.get(challenge_cache_key)
         if not raw_challenge_data:
@@ -430,12 +413,13 @@ class RecoveryCodesRegenerateView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=RecoveryCodesRegenerateSerializer,
+    @validated_request(
+        request_serializer=RecoveryCodesRegenerateSerializer,
         responses={
             200: RecoveryCodesRegenerateResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
         user = request.user
@@ -445,12 +429,8 @@ class RecoveryCodesRegenerateView(APIView):
         except ObjectDoesNotExist:
             pass
 
-        serializer = RecoveryCodesRegenerateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        code = serializer.validated_data.get("code")
-        password = serializer.validated_data.get("password")
+        code = request.validated_data.get("code")
+        password = request.validated_data.get("password")
 
         if has_totp:
             # User has TOTP — require code verification
@@ -503,12 +483,13 @@ class OrgTwoFactorPolicyView(APIView):
             }
         )
 
-    @swagger_auto_schema(
-        request_body=OrgTwoFactorPolicySerializer,
+    @validated_request(
+        request_serializer=OrgTwoFactorPolicySerializer,
         responses={
             200: OrgTwoFactorPolicyResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def put(self, request):
         org = getattr(request, "organization", None)
@@ -525,11 +506,7 @@ class OrgTwoFactorPolicyView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        serializer = OrgTwoFactorPolicySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        require_2fa = serializer.validated_data["require_2fa"]
+        require_2fa = request.validated_data["require_2fa"]
 
         # Cannot enforce 2FA for the org unless your own 2FA is enabled
         if require_2fa and not request.user.has_2fa_enabled:
@@ -539,7 +516,7 @@ class OrgTwoFactorPolicyView(APIView):
                 },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        grace_days = serializer.validated_data.get("require_2fa_grace_period_days")
+        grace_days = request.validated_data.get("require_2fa_grace_period_days")
 
         update_fields = ["require_2fa"]
 

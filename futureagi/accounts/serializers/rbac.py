@@ -7,6 +7,30 @@ from rest_framework import serializers
 from tfc.constants.levels import Level
 
 
+class _StrictSerializer(serializers.Serializer):
+    """Reject unknown keys at nested contract boundaries."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            unknown = sorted(set(data.keys()) - set(self.fields.keys()))
+            if unknown:
+                raise serializers.ValidationError(
+                    {key: ["Unknown field."] for key in unknown}
+                )
+        return super().to_internal_value(data)
+
+
+class WorkspaceAccessInputSerializer(_StrictSerializer):
+    workspace_id = serializers.UUIDField()
+    level = serializers.ChoiceField(
+        choices=Level.WORKSPACE_CHOICES,
+        required=False,
+    )
+
+    def validate_workspace_id(self, value):
+        return str(value)
+
+
 class InviteCreateSerializer(serializers.Serializer):
     """
     POST /accounts/organization/invite/
@@ -22,8 +46,8 @@ class InviteCreateSerializer(serializers.Serializer):
         choices=Level.CHOICES,
         help_text="Integer org level to grant (Owner=15, Admin=8, Member=3, Viewer=1).",
     )
-    workspace_access = serializers.ListField(
-        child=serializers.DictField(),
+    workspace_access = WorkspaceAccessInputSerializer(
+        many=True,
         required=False,
         default=list,
         help_text='List of {"workspace_id": "<uuid>", "level": <int>}.',
@@ -42,7 +66,6 @@ class InviteCreateSerializer(serializers.Serializer):
                     f"Invalid workspace level: {ws_level}. "
                     f"Valid: {[c[0] for c in Level.WORKSPACE_CHOICES]}"
                 )
-            # Issue 3 fix: strip to only allowed keys
             sanitized.append(
                 {
                     "workspace_id": entry["workspace_id"],
@@ -114,8 +137,8 @@ class MemberRoleUpdateSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Required when updating ws_level.",
     )
-    workspace_access = serializers.ListField(
-        child=serializers.DictField(),
+    workspace_access = WorkspaceAccessInputSerializer(
+        many=True,
         required=False,
         default=list,
         help_text="List of {workspace_id, level} for explicit workspace grants on demotion.",

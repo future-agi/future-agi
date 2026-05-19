@@ -93,6 +93,36 @@ class TestGroundTruthUploadAPI:
         assert result["row_count"] == 2
         assert set(result["columns"]) == {"question", "answer", "score"}
 
+    def test_upload_csv_file_with_multipart_json_mapping(
+        self, auth_client, eval_template
+    ):
+        csv_content = "question,answer\nWhat is 1+1?,2\n"
+        csv_file = io.BytesIO(csv_content.encode("utf-8"))
+        csv_file.name = "mapped_data.csv"
+
+        response = auth_client.post(
+            self._url(eval_template.id),
+            {
+                "file": csv_file,
+                "name": "mapped-upload",
+                "variable_mapping": json.dumps(
+                    {"input": "question", "expected": "answer"}
+                ),
+                "role_mapping": json.dumps(
+                    {"input": "question", "expected_output": "answer"}
+                ),
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == 200, response.data
+        gt = EvalGroundTruth.objects.get(id=response.data["result"]["id"])
+        assert gt.variable_mapping == {"input": "question", "expected": "answer"}
+        assert gt.role_mapping == {
+            "input": "question",
+            "expected_output": "answer",
+        }
+
     def test_upload_json_file(self, auth_client, eval_template):
         json_data = [
             {"input": "hello", "output": "world"},

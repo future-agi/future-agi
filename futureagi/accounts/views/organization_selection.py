@@ -18,6 +18,7 @@ from accounts.serializers.contracts import (
     OrganizationSwitchResponseSerializer,
 )
 from tfc.constants.roles import RoleMapping
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = logging.getLogger(__name__)
@@ -36,22 +37,18 @@ class OrganizationSelectionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=OrganizationSwitchRequestSerializer,
+    @validated_request(
+        request_serializer=OrganizationSwitchRequestSerializer,
         responses={
             200: OrganizationSelectResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         """Select an organization for the current session."""
         try:
-            organization_id = request.data.get("organization_id")
-            if not organization_id:
-                return self._gm.bad_request("Organization ID is required")
-
-            if not _validate_uuid(organization_id):
-                return self._gm.bad_request("Invalid organization ID format")
+            organization_id = request.validated_data["organization_id"]
 
             try:
                 selected_org = Organization.objects.get(id=organization_id)
@@ -170,12 +167,13 @@ class SwitchOrganizationView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=OrganizationSwitchRequestSerializer,
+    @validated_request(
+        request_serializer=OrganizationSwitchRequestSerializer,
         responses={
             200: OrganizationSwitchResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         """Switch to a different organization.
@@ -184,12 +182,7 @@ class SwitchOrganizationView(APIView):
         or its default workspace, so the frontend can update both contexts.
         """
         try:
-            organization_id = request.data.get("organization_id")
-            if not organization_id:
-                return self._gm.bad_request("Organization ID is required")
-
-            if not _validate_uuid(organization_id):
-                return self._gm.bad_request("Invalid organization ID format")
+            organization_id = request.validated_data["organization_id"]
 
             try:
                 selected_org = Organization.objects.get(id=organization_id)

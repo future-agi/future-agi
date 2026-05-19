@@ -4,6 +4,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiErrorResponseSerializer,
     EmptyRequestSerializer,
@@ -342,12 +343,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     # Query endpoint — routes each metric to the right builder by source
     # ------------------------------------------------------------------
 
-    @swagger_auto_schema(
-        request_body=DashboardQuerySerializer,
+    @validated_request(
+        request_serializer=DashboardQuerySerializer,
         responses={
             200: DashboardQueryApiResponseSerializer,
             400: ApiErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"])
     def query(self, request):
@@ -360,10 +362,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         Each metric is validated against the canonical query contract before
         it reaches any query builder.
         """
-        serializer = DashboardQuerySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(f"Invalid query config: {serializer.errors}")
-        query_config = _normalize_dashboard_query_filters(serializer.validated_data)
+        query_config = _normalize_dashboard_query_filters(request.validated_data)
 
         query_config["metrics"] = self._normalize_metric_sources(
             query_config["metrics"]
@@ -2710,12 +2709,13 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response(formatted)
 
-    @swagger_auto_schema(
-        request_body=EmptyRequestSerializer,
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             200: DashboardQueryApiResponseSerializer,
             400: ApiErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     @action(detail=True, methods=["post"], url_path="query")
     def execute_query(self, request, *args, **kwargs):
@@ -2736,12 +2736,13 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error("widget_query_execution_failed", error=str(e), exc_info=True)
             return self._gm.bad_request(f"Query execution failed: {str(e)}")
 
-    @swagger_auto_schema(
-        request_body=DashboardPreviewQuerySerializer,
+    @validated_request(
+        request_serializer=DashboardPreviewQuerySerializer,
         responses={
             200: DashboardQueryApiResponseSerializer,
             400: ApiErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     @action(detail=False, methods=["post"], url_path="preview")
     def preview_query(self, request, *args, **kwargs):
@@ -2750,12 +2751,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             if not is_clickhouse_enabled():
                 return self._gm.bad_request("ClickHouse is not enabled.")
 
-            serializer = DashboardPreviewQuerySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(
-                    f"Invalid query config: {serializer.errors}"
-                )
-            query_config = serializer.validated_data["query_config"]
+            query_config = request.validated_data["query_config"]
 
             return self._execute_ch_query_config(query_config, request.workspace)
         except Exception as e:

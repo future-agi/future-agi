@@ -46,6 +46,20 @@ class TestOrgTwoFactorEnforcement:
         assert data["require_2fa_grace_period_days"] == 14
         assert data["require_2fa_enforced_at"] is not None
 
+    def test_2fa_policy_rejects_camel_case_request_fields(self, auth_client):
+        response = auth_client.put(
+            "/accounts/organization/2fa-policy/",
+            {"require2fa": True, "gracePeriodDays": 14},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 400
+        assert response.json()["details"] == {
+            "require_2fa": ["This field is required."],
+            "gracePeriodDays": ["Unknown field."],
+            "require2fa": ["Unknown field."],
+        }
+
     def test_2fa_policy_grace_period(self, user, organization):
         """Access allowed during grace period with headers."""
         organization.require_2fa = True

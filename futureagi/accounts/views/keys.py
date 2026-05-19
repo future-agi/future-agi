@@ -29,6 +29,7 @@ from analytics.utils import (
 )
 from model_hub.models.api_key import mask_key
 from tfc.constants.roles import RolePermissions
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
@@ -171,22 +172,18 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_KEYS"))
 
-    @swagger_auto_schema(
-        request_body=UserSecretKeySerializer,
+    @validated_request(
+        request_serializer=UserSecretKeySerializer,
         responses={
             200: AccountsStringResultResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     @action(detail=False, methods=["POST"])
     def enable_key(self, request, *args, **kwargs):
         try:
-            serializer = UserSecretKeySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
-            key_id = validated_data.get("key_id")
+            key_id = request.validated_data.get("key_id")
             if not key_id:
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
 
@@ -209,22 +206,18 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("SECRET_KEY_NOT_ENABLED"))
 
-    @swagger_auto_schema(
-        request_body=UserSecretKeySerializer,
+    @validated_request(
+        request_serializer=UserSecretKeySerializer,
         responses={
             200: AccountsStringResultResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     @action(detail=False, methods=["POST"])
     def disable_key(self, request, *args, **kwargs):
         try:
-            serializer = UserSecretKeySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
-            key_id = validated_data.get("key_id")
+            key_id = request.validated_data.get("key_id")
             if not key_id:
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
 
@@ -247,19 +240,15 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("SECRET_KEY_NOT_DISABLED"))
 
-    @swagger_auto_schema(
-        request_body=CreateSecretKeySerializer,
+    @validated_request(
+        request_serializer=CreateSecretKeySerializer,
         responses={200: SecretKeyCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     @action(detail=False, methods=["POST"])
     def generate_secret_key(self, request, *args, **kwargs):
         try:
-            serializer = CreateSecretKeySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
-            key_name = validated_data.get("key_name")
+            key_name = request.validated_data.get("key_name")
 
             if OrgApiKey.objects.filter(
                 name=key_name,
@@ -289,20 +278,17 @@ class SecretKeyAPIViewSet(ViewSet):
             traceback.print_exc()
             return self._gm.bad_request(get_error_message("UNABLE_TO_GENERATE_KEY"))
 
-    @swagger_auto_schema(
-        request_body=UserSecretKeySerializer,
+    @validated_request(
+        request_serializer=UserSecretKeySerializer,
         responses={
             200: AccountsStringResultResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     @action(detail=False, methods=["DELETE"])
     def delete_secret_key(self, request, *args, **kwargs):
         try:
-            serializer = UserSecretKeySerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
             # Check role in the current org (membership first, FK fallback)
             _current_org = (
                 getattr(request, "organization", None) or request.user.organization
@@ -320,8 +306,7 @@ class SecretKeyAPIViewSet(ViewSet):
             if _role not in RolePermissions.OWNER_ROLES:
                 return self._gm.bad_request(get_error_message("UNAUTHORIZED_ACCESS"))
 
-            validated_data = serializer.validated_data
-            key_id = validated_data.get("key_id")
+            key_id = request.validated_data.get("key_id")
             if not key_id:
                 return self._gm.bad_request(get_error_message("KEY_ID_REQUIRED"))
             org_key = OrgApiKey.objects.get(

@@ -32,6 +32,7 @@ from accounts.utils import generate_password, resolve_org, resolve_org_role
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.settings import settings
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.email import email_helper
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -112,9 +113,10 @@ class WorkspaceManagementView(APIView):
 
         return self._gm.success_response(response)
 
-    @swagger_auto_schema(
-        request_body=WorkspaceCreateRequestSerializer,
+    @validated_request(
+        request_serializer=WorkspaceCreateRequestSerializer,
         responses={201: WorkspaceCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     @transaction.atomic
     def post(self, request, *args, **kwargs):
@@ -137,7 +139,7 @@ class WorkspaceManagementView(APIView):
         if not has_org_permission:
             return self._gm.forbidden_response(get_error_message("UNAUTHORIZED_ACCESS"))
 
-        workspace_name = request.data.get("name")
+        workspace_name = request.validated_data.get("name")
         if not workspace_name:
             return self._gm.bad_request("Workspace name is required")
 
@@ -148,8 +150,8 @@ class WorkspaceManagementView(APIView):
             return self._gm.bad_request("Workspace with this name already exists")
 
         # Validate emails and role
-        emails = request.data.get("emails", [])
-        role = request.data.get("role", "")
+        emails = request.validated_data.get("emails", [])
+        role = request.validated_data.get("role", "")
 
         if not isinstance(emails, list):
             return self._gm.bad_request("Emails must be a list")
@@ -193,8 +195,10 @@ class WorkspaceManagementView(APIView):
             # Create new workspace
             workspace = Workspace.objects.create(
                 name=workspace_name,
-                display_name=request.data.get("display_name", workspace_name),
-                description=request.data.get("description", ""),
+                display_name=request.validated_data.get(
+                    "display_name", workspace_name
+                ),
+                description=request.validated_data.get("description", ""),
                 organization=organization,
                 created_by=user,
             )
@@ -435,9 +439,10 @@ class WorkspaceManagementView(APIView):
             logger.exception(f"Failed to create workspace: {str(e)}")
             return self._gm.bad_request("Failed to create workspace")
 
-    @swagger_auto_schema(
-        request_body=WorkspaceUpdateRequestSerializer,
+    @validated_request(
+        request_serializer=WorkspaceUpdateRequestSerializer,
         responses={200: WorkspaceUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def put(self, request, workspace_id, *args, **kwargs):
         """Update workspace details"""
@@ -478,10 +483,10 @@ class WorkspaceManagementView(APIView):
             return self._gm.forbidden_response(get_error_message("UNAUTHORIZED_ACCESS"))
 
         # Update workspace fields
-        if "display_name" in request.data:
-            workspace.display_name = request.data["display_name"]
-        if "description" in request.data:
-            workspace.description = request.data["description"]
+        if "display_name" in request.validated_data:
+            workspace.display_name = request.validated_data["display_name"]
+        if "description" in request.validated_data:
+            workspace.description = request.validated_data["description"]
 
         workspace.save()
 
@@ -618,12 +623,13 @@ class WorkspaceMembershipView(APIView):
 
         return self._gm.success_response(response)
 
-    @swagger_auto_schema(
-        request_body=WorkspaceMembersRequestSerializer,
+    @validated_request(
+        request_serializer=WorkspaceMembersRequestSerializer,
         responses={
             201: WorkspaceMembersAddResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     @transaction.atomic
     def post(self, request, workspace_id, *args, **kwargs):
@@ -664,7 +670,7 @@ class WorkspaceMembershipView(APIView):
         if not (has_org_permission or has_workspace_permission):
             return self._gm.forbidden_response(get_error_message("UNAUTHORIZED_ACCESS"))
 
-        users_data = request.data.get("users", [])
+        users_data = request.validated_data.get("users", [])
         if not isinstance(users_data, list):
             return self._gm.bad_request("Users data must be a list")
 

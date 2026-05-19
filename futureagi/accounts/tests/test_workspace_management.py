@@ -21,6 +21,12 @@ from accounts.models.workspace import Workspace, WorkspaceMembership
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 
+
+def assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["details"][field_name] == ["Unknown field."]
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -186,6 +192,21 @@ class TestWorkspaceListAPIView:
 @pytest.mark.api
 class TestWorkspaceInviteAPIView:
     """Tests for POST /accounts/workspace/invite/ endpoint."""
+
+    def test_invite_rejects_unknown_request_fields(self, auth_client, workspace):
+        response = auth_client.post(
+            "/accounts/workspace/invite/",
+            {
+                "emails": ["newinvite@futureagi.com"],
+                "role": OrganizationRoles.WORKSPACE_MEMBER,
+                "workspace_ids": [str(workspace.id)],
+                "select_all": False,
+                "selectAll": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "selectAll")
 
     def test_invite_user_as_owner(self, auth_client, workspace):
         """Owner can invite users to workspace."""
@@ -372,6 +393,21 @@ class TestUserListAPIView:
 class TestUserRoleUpdateAPIView:
     """Tests for POST /accounts/user/role/update/ endpoint."""
 
+    def test_update_role_rejects_unknown_request_fields(
+        self, auth_client, member_user
+    ):
+        response = auth_client.post(
+            "/accounts/user/role/update/",
+            {
+                "user_id": str(member_user.id),
+                "new_role": OrganizationRoles.WORKSPACE_ADMIN,
+                "userId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userId")
+
     def test_update_role_as_owner(self, auth_client, member_user):
         """Owner can update user roles."""
         response = auth_client.post(
@@ -469,6 +505,18 @@ class TestUserRoleUpdateAPIView:
 class TestResendInviteAPIView:
     """Tests for POST /accounts/user/resend-invite/ endpoint."""
 
+    def test_resend_invite_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/user/resend-invite/",
+            {
+                "user_id": "00000000-0000-0000-0000-000000000000",
+                "userId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userId")
+
     def test_resend_invite_as_owner(self, auth_client, inactive_user):
         """Owner can resend invite to inactive user."""
         response = auth_client.post(
@@ -533,6 +581,18 @@ class TestResendInviteAPIView:
 @pytest.mark.api
 class TestDeleteUserAPIView:
     """Tests for POST /accounts/user/delete/ endpoint."""
+
+    def test_delete_user_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/user/delete/",
+            {
+                "user_id": "00000000-0000-0000-0000-000000000000",
+                "userId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userId")
 
     def test_delete_user_as_owner(self, auth_client, member_user):
         """Owner can delete users."""
@@ -604,6 +664,18 @@ class TestDeleteUserAPIView:
 @pytest.mark.api
 class TestDeactivateUserAPIView:
     """Tests for POST /accounts/user/deactivate/ endpoint."""
+
+    def test_deactivate_user_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/user/deactivate/",
+            {
+                "user_id": "00000000-0000-0000-0000-000000000000",
+                "userId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userId")
 
     def test_deactivate_user_as_owner(self, auth_client, member_user):
         """Owner can deactivate users."""
@@ -677,6 +749,20 @@ class TestDeactivateUserAPIView:
 @pytest.mark.api
 class TestSwitchWorkspaceAPIView:
     """Tests for POST /accounts/workspace/switch/ endpoint."""
+
+    def test_switch_workspace_rejects_unknown_request_fields(
+        self, auth_client, workspace
+    ):
+        response = auth_client.post(
+            "/accounts/workspace/switch/",
+            {
+                "new_workspace_id": str(workspace.id),
+                "newWorkspaceId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "newWorkspaceId")
 
     def test_switch_workspace_as_owner(self, auth_client, second_workspace):
         """Owner can switch to workspace."""

@@ -33,6 +33,7 @@ from accounts.serializers.contracts import (
     TimezoneRequestSerializer,
     TimezoneResponseSerializer,
 )
+from tfc.utils.api_contracts import validated_request
 
 logger = structlog.get_logger(__name__)
 
@@ -59,12 +60,13 @@ class UserTimezoneView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=TimezoneRequestSerializer,
+    @validated_request(
+        request_serializer=TimezoneRequestSerializer,
         responses={200: TimezoneResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
-        tz_name = (request.data or {}).get("timezone")
+        tz_name = request.validated_data["timezone"]
         if not _is_valid_iana_tz(tz_name):
             return Response(
                 {"detail": "Invalid timezone."},

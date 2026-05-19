@@ -35,6 +35,7 @@ from model_hub.utils.performance_ch import (
     get_performance_details_query,
     get_top_tags_distribution,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
@@ -79,12 +80,13 @@ class PerformanceView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=PerformanceQueryRequestSerializer,
+    @validated_request(
+        request_serializer=PerformanceQueryRequestSerializer,
         responses={
             200: PERFORMANCE_GRAPH_RESPONSE_SCHEMA,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, id, *args, **kwargs):
         user = request.user
@@ -95,10 +97,7 @@ class PerformanceView(APIView):
         if not model:
             return self._gm.not_found(get_error_message("AI_MODEL_NOT_FOUND"))
 
-        serializer = PerformanceQueryRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-        query_data = serializer.validated_data
+        query_data = request.validated_data
 
         datasets = query_data["datasets"]
         filters = query_data.get("filters", [])
@@ -191,22 +190,20 @@ class PerformanceDetailsView(APIView):
 
         return result
 
-    @swagger_auto_schema(
-        request_body=PerformanceDetailsRequestSerializer,
+    @validated_request(
+        request_serializer=PerformanceDetailsRequestSerializer,
         responses={
             200: PerformanceDetailsResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, id, *args, **kwargs):
         user = request.user
         organization = user.organization
 
         limit = 30
-        serializer = PerformanceDetailsRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-        query_data = serializer.validated_data
+        query_data = request.validated_data
 
         page = query_data["page"]
         offset = (int(page) - 1) * limit
@@ -411,8 +408,8 @@ class PerformanceDetailsExport(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=PerformanceExportRequestSerializer,
+    @validated_request(
+        request_serializer=PerformanceExportRequestSerializer,
         responses={
             200: openapi.Schema(
                 type=openapi.TYPE_STRING,
@@ -420,15 +417,13 @@ class PerformanceDetailsExport(APIView):
             ),
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, id, *args, **kwargs):
         user = request.user
         organization = user.organization
 
-        serializer = PerformanceExportRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-        query_data = serializer.validated_data
+        query_data = request.validated_data
 
         dataset = query_data["dataset"]
         filters = query_data.get("filters", [])
@@ -590,19 +585,17 @@ class GetPerformanceTagDistributionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=PerformanceTagDistributionRequestSerializer,
+    @validated_request(
+        request_serializer=PerformanceTagDistributionRequestSerializer,
         responses={
             200: PERFORMANCE_TAG_DISTRIBUTION_RESPONSE_SCHEMA,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, model_id, *args, **kwargs):
         user_organization = get_request_organization(self.request)
-        serializer = PerformanceTagDistributionRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-        query_data = serializer.validated_data
+        query_data = request.validated_data
 
         datasets = query_data["dataset"]
         filters = query_data.get("filters", [])

@@ -5,7 +5,6 @@ import uuid
 import structlog
 from django.forms import model_to_dict
 from django.shortcuts import get_object_or_404
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -26,6 +25,7 @@ from model_hub.serializers.develop_dataset_contracts import (
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.utils.utils import get_recommendations, update_column_id
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -53,17 +53,19 @@ class CreateDatasetFromExpView(APIView):
         except (ValueError, AttributeError, TypeError):
             return False
 
-    @swagger_auto_schema(
-        request_body=CreateDatasetFromExperimentRequestSerializer,
+    @validated_request(
+        request_serializer=CreateDatasetFromExperimentRequestSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, exp_dataset_id, *args, **kwargs):
         try:
-            new_dataset_name = request.data.get("name")
-            model_type = request.data.get("model_type", ModelTypes.GENERATIVE_LLM.value)
+            data = request.validated_data
+            new_dataset_name = data.get("name")
+            model_type = data.get("model_type", ModelTypes.GENERATIVE_LLM.value)
 
             _org = getattr(request, "organization", None) or request.user.organization
             experiment_dataset = get_object_or_404(

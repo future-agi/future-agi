@@ -25,6 +25,7 @@ from model_hub.serializers.experiment_contracts import (
 )
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.utils.constants import EVAL_OUTPUT_TYPES
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
@@ -132,9 +133,10 @@ class ExperimentFeedbackCreateV2View(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=FeedbackSerializer,
+    @validated_request(
+        request_serializer=FeedbackSerializer,
         responses={200: ExperimentFeedbackCreateResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, experiment_id):
         try:
@@ -147,8 +149,7 @@ class ExperimentFeedbackCreateV2View(APIView):
             if err:
                 return err
 
-            serializer = FeedbackSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
+            serializer = request.validated_serializer
             feedback = serializer.save(
                 user=request.user,
                 organization=organization,
@@ -227,9 +228,10 @@ class ExperimentFeedbackSubmitV2View(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=ExperimentFeedbackSubmitRequestSerializer,
+    @validated_request(
+        request_serializer=ExperimentFeedbackSubmitRequestSerializer,
         responses={200: ExperimentFeedbackSubmitResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, experiment_id):
         try:
@@ -242,15 +244,12 @@ class ExperimentFeedbackSubmitV2View(APIView):
             if err:
                 return err
 
-            action_type = request.data.get("action_type")
-            feedback_id = request.data.get("feedback_id")
-            user_eval_metric_id = request.data.get("user_eval_metric_id")
-            value = request.data.get("value") if request.data.get("value") else None
-            explanation = (
-                request.data.get("explanation")
-                if request.data.get("explanation")
-                else None
-            )
+            data = request.validated_data
+            action_type = data.get("action_type")
+            feedback_id = data.get("feedback_id")
+            user_eval_metric_id = data.get("user_eval_metric_id")
+            value = data.get("value") if data.get("value") else None
+            explanation = data.get("explanation") if data.get("explanation") else None
 
             if not action_type or not user_eval_metric_id or not feedback_id:
                 return self._gm.bad_request(

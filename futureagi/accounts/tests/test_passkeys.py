@@ -83,6 +83,11 @@ def _create_passkey_for_user(user, name="My Passkey", credential_id=None):
     )
 
 
+def _assert_unknown_field(response, field_name):
+    assert response.status_code == 400
+    assert field_name in response.json()["details"]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -127,6 +132,15 @@ class TestPasskeyRegisterOptions:
         client = APIClient()
         response = client.post("/accounts/passkey/register/options/")
         assert response.status_code in (401, 403)
+
+    def test_register_options_rejects_unknown_request_fields(self, auth_client):
+        """Empty request contracts should not accept stray body fields."""
+        response = auth_client.post(
+            "/accounts/passkey/register/options/",
+            {"unexpected": True},
+            format="json",
+        )
+        _assert_unknown_field(response, "unexpected")
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +251,21 @@ class TestPasskeyRegisterVerify:
             format="json",
         )
         assert response.status_code == 400
+
+    def test_register_verify_rejects_unknown_request_fields(self, auth_client, user):
+        """Registration verify accepts the documented credential/name shape only."""
+        self._setup_challenge(user)
+
+        response = auth_client.post(
+            "/accounts/passkey/register/verify/",
+            {
+                "credential": {"id": "test", "type": "public-key"},
+                "name": "My Laptop Key",
+                "deviceName": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "deviceName")
 
     def test_register_verify_unauthenticated(self):
         """Unauthenticated request is rejected."""
@@ -361,6 +390,17 @@ class TestPasskeyRename:
         )
         assert response.status_code == 404
 
+    def test_rename_rejects_unknown_request_fields(self, auth_client, user):
+        """Passkey rename should reject fields outside the request serializer."""
+        passkey = _create_passkey_for_user(user, name="Old Name")
+
+        response = auth_client.patch(
+            f"/accounts/passkeys/{passkey.id}/",
+            {"name": "New Name", "displayName": "legacy camel alias"},
+            format="json",
+        )
+        _assert_unknown_field(response, "displayName")
+
 
 # ---------------------------------------------------------------------------
 # F. Authenticate Options (passwordless)
@@ -385,6 +425,16 @@ class TestPasskeyAuthenticateOptions:
         data = response.json()
         assert "challenge" in data
         assert "session_id" in data
+
+    def test_authenticate_options_rejects_unknown_request_fields(self):
+        """Passwordless auth options are an empty-body API."""
+        client = APIClient()
+        response = client.post(
+            "/accounts/passkey/authenticate/options/",
+            {"email": "someone@example.com"},
+            format="json",
+        )
+        _assert_unknown_field(response, "email")
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +518,26 @@ class TestPasskeyAuthenticateVerify:
             format="json",
         )
         assert response.status_code == 400
+
+    def test_authenticate_verify_rejects_unknown_request_fields(self, user):
+        """Passwordless auth verify accepts only credential/session_id/name."""
+        _create_passkey_for_user(user)
+
+        client = APIClient()
+        response = client.post(
+            "/accounts/passkey/authenticate/verify/",
+            {
+                "session_id": "test",
+                "credential": {
+                    "id": FAKE_CREDENTIAL_ID_B64,
+                    "rawId": FAKE_CREDENTIAL_ID_B64,
+                    "type": "public-key",
+                },
+                "sessionId": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "sessionId")
 
     @patch(
         "accounts.services.webauthn_service.verify_authentication_response",

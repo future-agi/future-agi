@@ -27,6 +27,7 @@ from model_hub.serializers.contracts import (
     EvalSummaryTemplateResponseSerializer,
     MODEL_HUB_ERROR_RESPONSES,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -81,19 +82,20 @@ class EvalSummaryTemplateListView(APIView):
         ]
         return self._gm.success_response({"templates": items})
 
-    @swagger_auto_schema(
-        request_body=EvalSummaryTemplateMutationRequestSerializer,
+    @validated_request(
+        request_serializer=EvalSummaryTemplateMutationRequestSerializer,
         responses={
             200: EvalSummaryTemplateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
         try:
             org = getattr(request, "organization", None) or request.user.organization
-            name = request.data.get("name", "").strip()
-            description = request.data.get("description", "").strip()
-            criteria = request.data.get("criteria", "").strip()
+            name = request.validated_data.get("name", "").strip()
+            description = request.validated_data.get("description", "").strip()
+            criteria = request.validated_data.get("criteria", "").strip()
 
             if not name:
                 return self._gm.bad_request("Name is required")
@@ -125,12 +127,13 @@ class EvalSummaryTemplateDetailView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalSummaryTemplateMutationRequestSerializer,
+    @validated_request(
+        request_serializer=EvalSummaryTemplateMutationRequestSerializer,
         responses={
             200: EvalSummaryTemplateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def put(self, request, template_id):
         try:
@@ -142,9 +145,9 @@ class EvalSummaryTemplateDetailView(APIView):
             except EvalSummaryTemplate.DoesNotExist:
                 return self._gm.not_found("Template not found")
 
-            name = request.data.get("name")
-            description = request.data.get("description")
-            criteria = request.data.get("criteria")
+            name = request.validated_data.get("name")
+            description = request.validated_data.get("description")
+            criteria = request.validated_data.get("criteria")
 
             if name is not None:
                 template.name = name.strip()

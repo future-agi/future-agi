@@ -445,6 +445,7 @@ class PasskeyOptionsResponseSerializer(serializers.Serializer):
 
 class PasskeyCredentialRequestSerializer(serializers.Serializer):
     credential = serializers.JSONField()
+    session_id = serializers.CharField(required=False, allow_blank=True)
     name = serializers.CharField(max_length=255, required=False, allow_blank=True)
 
 

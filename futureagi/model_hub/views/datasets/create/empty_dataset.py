@@ -1,7 +1,6 @@
 import uuid
 
 import structlog
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -26,6 +25,7 @@ from model_hub.validators.dataset_validators import (
     validate_dataset_name_unique,
     validate_empty_dataset_row_bound,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -45,15 +45,17 @@ class CreateEmptyDatasetView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
-    @swagger_auto_schema(
-        request_body=CreateEmptyDatasetRequestSerializer,
+    @validated_request(
+        request_serializer=CreateEmptyDatasetRequestSerializer,
         responses={
             200: DatasetCreateStartedResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         try:
+            data = request.validated_data
             call_log_row_entry = log_and_deduct_cost_for_resource_request(
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
@@ -71,12 +73,12 @@ class CreateEmptyDatasetView(APIView):
             call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
             call_log_row_entry.save()
 
-            dataset_name = request.data.get("new_dataset_name")
-            model_type = request.data.get("model_type")
+            dataset_name = data.get("new_dataset_name")
+            model_type = data.get("model_type")
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            is_sdk = request.data.get("is_sdk", False)
+            is_sdk = data.get("is_sdk", False)
 
             if not dataset_name:
                 return self._gm.bad_request(
@@ -84,7 +86,7 @@ class CreateEmptyDatasetView(APIView):
                 )
 
             # Enforce upper bound on row count (aligned with UI: max 10)
-            row_count = request.data.get("row", None)
+            row_count = data.get("row", None)
             if row_count is not None:
                 try:
                     row_count = int(row_count)

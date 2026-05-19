@@ -4,6 +4,11 @@ from rest_framework import status
 from model_hub.views.eval_summary_templates import EvalSummaryTemplate
 
 
+def _assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert field_name in response.json()["details"]
+
+
 @pytest.mark.django_db
 class TestEvalSummaryTemplateResponseContracts:
     def test_list_returns_typed_result(self, auth_client, user):
@@ -46,6 +51,20 @@ class TestEvalSummaryTemplateResponseContracts:
         assert result["criteria"] == "Group low scores by reason"
         assert EvalSummaryTemplate.objects.filter(id=result["id"]).exists()
 
+    def test_create_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/model-hub/eval-summary-templates/",
+            {
+                "name": "Quality summary",
+                "description": "Summarize quality issues",
+                "criteria": "Group low scores by reason",
+                "templateName": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        _assert_unknown_field(response, "templateName")
+
     def test_update_returns_typed_template_result(self, auth_client, user):
         template = EvalSummaryTemplate.objects.create(
             name="Old summary",
@@ -71,6 +90,27 @@ class TestEvalSummaryTemplateResponseContracts:
             "description": "Updated description",
             "criteria": "Updated criteria",
         }
+
+    def test_update_rejects_unknown_request_fields(self, auth_client, user):
+        template = EvalSummaryTemplate.objects.create(
+            name="Old summary",
+            description="Old description",
+            criteria="Old criteria",
+            organization=user.organization,
+        )
+
+        response = auth_client.put(
+            f"/model-hub/eval-summary-templates/{template.id}/",
+            {
+                "name": "Updated summary",
+                "description": "Updated description",
+                "criteria": "Updated criteria",
+                "templateName": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        _assert_unknown_field(response, "templateName")
 
     def test_delete_returns_typed_result(self, auth_client, user):
         template = EvalSummaryTemplate.objects.create(

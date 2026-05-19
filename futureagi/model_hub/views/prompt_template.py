@@ -128,6 +128,7 @@ from tfc.utils.base_viewset import (
     BaseModelViewSetMixin,
     BaseModelViewSetMixinWithUserOrg,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -3710,14 +3711,16 @@ class ColumnValuesAPIView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=ColumnValuesRequestSerializer,
+    @validated_request(
+        request_serializer=ColumnValuesRequestSerializer,
         responses={200: ColumnValuesResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         try:
-            dataset_id = request.data.get("dataset_id")
-            column_placeholders = request.data.get("column_placeholders")
+            data = request.validated_data
+            dataset_id = data.get("dataset_id")
+            column_placeholders = data.get("column_placeholders")
 
             # Ensure dataset_id and column_placeholders are provided
             if not dataset_id or not column_placeholders:

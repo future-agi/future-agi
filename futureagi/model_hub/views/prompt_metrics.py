@@ -16,6 +16,7 @@ from model_hub.services.prompt_metrics import (
     fetch_prompt_metrics,
     fetch_prompt_metrics_span_view,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -25,17 +26,14 @@ class FetchPromptObserveMetricsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=PromptMetricsQuerySerializer,
         responses={200: PromptMetricsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def get(self, request):
         try:
-            serializer = PromptMetricsQuerySerializer(data=request.query_params)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            query = serializer.validated_data
+            query = request.validated_query_data
 
             request_data = FetchPromptMetricsRequest(
                 prompt_template_id=str(query["prompt_template_id"]),
@@ -63,17 +61,14 @@ class FetchPromptMetricsSpanView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=PromptMetricsQuerySerializer,
         responses={200: PromptMetricsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def get(self, request):
         try:
-            serializer = PromptMetricsQuerySerializer(data=request.query_params)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            query = serializer.validated_data
+            query = request.validated_query_data
 
             request_data = FetchPromptMetricsRequest(
                 prompt_template_id=str(query["prompt_template_id"]),

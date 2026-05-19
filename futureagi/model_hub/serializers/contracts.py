@@ -53,6 +53,29 @@ class ModelHubTextErrorResponseSerializer(serializers.Serializer):
     detail = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
+class JsonObjectRequestField(serializers.JSONField):
+    class Meta:
+        swagger_schema_fields = {
+            "type": "object",
+            "additionalProperties": True,
+        }
+
+    def to_internal_value(self, data):
+        if data in (None, ""):
+            return None if self.allow_null else {}
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError("Value must be valid JSON.") from exc
+        value = super().to_internal_value(data)
+        if value is None and self.allow_null:
+            return None
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Value must be an object.")
+        return value
+
+
 MODEL_HUB_ERROR_RESPONSES = {
     400: ModelHubErrorResponseSerializer,
     403: ModelHubErrorResponseSerializer,
@@ -1929,6 +1952,7 @@ class EvalTemplateCreateV2RequestSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
         max_length=100000,
+        trim_whitespace=False,
     )
     model = serializers.CharField(required=False, default="turing_large")
     output_type = serializers.ChoiceField(
@@ -1939,7 +1963,7 @@ class EvalTemplateCreateV2RequestSerializer(serializers.Serializer):
     pass_threshold = serializers.FloatField(required=False, min_value=0, max_value=1)
     choice_scores = serializers.JSONField(required=False, allow_null=True)
     description = serializers.CharField(
-        required=False, allow_blank=True, allow_null=True
+        required=False, allow_blank=True, allow_null=True, trim_whitespace=False
     )
     tags = serializers.ListField(
         child=serializers.CharField(),
@@ -1952,6 +1976,7 @@ class EvalTemplateCreateV2RequestSerializer(serializers.Serializer):
         allow_blank=True,
         allow_null=True,
         max_length=100000,
+        trim_whitespace=False,
     )
     code_language = serializers.ChoiceField(
         choices=["python", "javascript"],
@@ -1996,7 +2021,11 @@ class EvalTemplateUpdateV2RequestSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
-    instructions = serializers.CharField(required=False, allow_null=True)
+    instructions = serializers.CharField(
+        required=False,
+        allow_null=True,
+        trim_whitespace=False,
+    )
     model = serializers.CharField(required=False, allow_null=True)
     output_type = serializers.ChoiceField(
         choices=["pass_fail", "percentage", "deterministic"],
@@ -2012,7 +2041,10 @@ class EvalTemplateUpdateV2RequestSerializer(serializers.Serializer):
     choice_scores = serializers.JSONField(required=False, allow_null=True)
     multi_choice = serializers.BooleanField(required=False, allow_null=True)
     description = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        trim_whitespace=False,
     )
     tags = serializers.ListField(
         child=serializers.CharField(),
@@ -2020,7 +2052,12 @@ class EvalTemplateUpdateV2RequestSerializer(serializers.Serializer):
         allow_null=True,
     )
     check_internet = serializers.BooleanField(required=False, allow_null=True)
-    code = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    code = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        trim_whitespace=False,
+    )
     code_language = serializers.ChoiceField(
         choices=["python", "javascript"],
         required=False,
@@ -2059,7 +2096,12 @@ class EvalTemplateUpdateV2RequestSerializer(serializers.Serializer):
 
 
 class EvalTemplateVersionCreateRequestSerializer(serializers.Serializer):
-    criteria = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+    criteria = serializers.CharField(
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        trim_whitespace=False,
+    )
     model = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     config_snapshot = serializers.JSONField(required=False, allow_null=True)
 
@@ -2111,7 +2153,10 @@ class EvalTemplateVersionRestoreResponseSerializer(serializers.Serializer):
 class CompositeEvalCreateRequestSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     description = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        trim_whitespace=False,
     )
     tags = serializers.ListField(
         child=serializers.CharField(),
@@ -2137,7 +2182,10 @@ class CompositeEvalCreateRequestSerializer(serializers.Serializer):
 class CompositeEvalUpdateRequestSerializer(serializers.Serializer):
     name = serializers.CharField(required=False, allow_null=True, max_length=255)
     description = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        trim_whitespace=False,
     )
     tags = serializers.ListField(
         child=serializers.CharField(),
@@ -2288,13 +2336,47 @@ class CompositeEvalExecuteResponseSerializer(serializers.Serializer):
 
 
 class GroundTruthUploadRequestSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=255)
-    description = serializers.CharField(required=False, allow_blank=True, default="")
-    file_name = serializers.CharField(required=False, allow_blank=True, default="")
-    columns = serializers.ListField(child=serializers.CharField())
-    data = serializers.ListField(child=serializers.JSONField())
-    variable_mapping = serializers.JSONField(required=False, allow_null=True)
-    role_mapping = serializers.JSONField(required=False, allow_null=True)
+    file = serializers.FileField(required=False, write_only=True)
+    name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=255,
+        trim_whitespace=False,
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        trim_whitespace=False,
+    )
+    file_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        trim_whitespace=False,
+    )
+    columns = serializers.ListField(
+        child=serializers.CharField(trim_whitespace=False),
+        required=False,
+    )
+    data = serializers.ListField(child=serializers.JSONField(), required=False)
+    variable_mapping = JsonObjectRequestField(required=False, allow_null=True)
+    role_mapping = JsonObjectRequestField(required=False, allow_null=True)
+
+    def validate(self, attrs):
+        if attrs.get("file") is not None:
+            return attrs
+
+        errors = {}
+        if not attrs.get("name"):
+            errors["name"] = ["This field is required."]
+        if not attrs.get("columns"):
+            errors["columns"] = ["Columns list is required."]
+        if "data" not in attrs:
+            errors["data"] = ["This field is required."]
+        if errors:
+            raise serializers.ValidationError(errors)
+        return attrs
 
 
 class GroundTruthMappingRequestSerializer(serializers.Serializer):
@@ -2327,7 +2409,7 @@ class GroundTruthConfigRequestSerializer(serializers.Serializer):
 
 
 class GroundTruthSearchRequestSerializer(serializers.Serializer):
-    query = serializers.CharField()
+    query = serializers.CharField(trim_whitespace=False)
     max_results = serializers.IntegerField(required=False, min_value=1, max_value=20)
 
 

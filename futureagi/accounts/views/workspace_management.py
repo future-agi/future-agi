@@ -72,6 +72,7 @@ from tfc.middleware.workspace_context import get_current_workspace
 from tfc.permissions.utils import can_invite_at_level
 from tfc.settings import settings
 from tfc.settings.settings import ssl
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.email import email_helper
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -269,18 +270,16 @@ class WorkspaceInviteAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=WorkspaceInviteSerializer,
+    @validated_request(
+        request_serializer=WorkspaceInviteSerializer,
         responses={200: WorkspaceInviteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     @transaction.atomic
     def post(self, request):
         """Invite users to workspaces"""
         try:
-            # Validate request data
-            serializer = WorkspaceInviteSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1080,17 +1079,15 @@ class UserRoleUpdateAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=UserRoleUpdateSerializer,
+    @validated_request(
+        request_serializer=UserRoleUpdateSerializer,
         responses={200: UserRoleUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         """Update user role at organization or workspace level"""
         try:
-            # Validate request data
-            serializer = UserRoleUpdateSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1370,17 +1367,15 @@ class ResendInviteAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=ResendInviteSerializer,
+    @validated_request(
+        request_serializer=ResendInviteSerializer,
         responses={200: ResendInviteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         """Resend invitation email with workspace context"""
         try:
-            # Validate request data
-            serializer = ResendInviteSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1480,17 +1475,15 @@ class DeleteUserAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=DeleteUserSerializer,
+    @validated_request(
+        request_serializer=DeleteUserSerializer,
         responses={200: DeleteUserResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         """Delete user or remove invite at organization or workspace level"""
         try:
-            # Validate request data
-            serializer = DeleteUserSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1620,17 +1613,15 @@ class DeactivateUserAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=DeactivateUserSerializer,
+    @validated_request(
+        request_serializer=DeactivateUserSerializer,
         responses={200: DeactivateUserResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         """Deactivate user by marking is_active as False"""
         try:
-            # Validate request data
-            serializer = DeactivateUserSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)
@@ -1741,17 +1732,15 @@ class SwitchWorkspaceAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=SwitchWorkspaceSerializer,
+    @validated_request(
+        request_serializer=SwitchWorkspaceSerializer,
         responses={200: SwitchWorkspaceResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         """Switch to a different workspace with proper validation"""
         try:
-            # Validate request data
-            serializer = SwitchWorkspaceSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            data = serializer.validated_data
+            data = request.validated_data
 
             user = request.user
             organization = resolve_org(request)

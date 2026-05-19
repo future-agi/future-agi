@@ -75,6 +75,31 @@ def _response_validator(serializer, data):
     return None
 
 
+def _unknown_fields(data, serializer):
+    if not hasattr(data, "keys") or not hasattr(serializer, "fields"):
+        return []
+    return sorted(set(data.keys()) - set(serializer.fields.keys()))
+
+
+def _validate_serializer(
+    serializer_class,
+    data,
+    *,
+    reject_unknown_fields=False,
+    partial=False,
+):
+    serializer = serializer_class(data=data, partial=partial)
+    if reject_unknown_fields:
+        unknown = _unknown_fields(data, serializer)
+        if unknown:
+            serializer.is_valid()
+            errors = dict(serializer.errors)
+            errors.update({key: ["Unknown field."] for key in unknown})
+            return serializer, errors, False
+    is_valid = serializer.is_valid()
+    return serializer, serializer.errors, is_valid
+
+
 def _validate_response(view_name, serializer, response, strict):
     validator = _response_validator(serializer, response.data)
     if validator is None:
@@ -106,6 +131,15 @@ def validate_query_params(request, serializer_class):
     return serializer.validated_data
 
 
+def _request_from_call(args):
+    """Return the DRF request from either a function view or APIView method call."""
+    if args and hasattr(args[0], "method") and hasattr(args[0], "data"):
+        return args[0]
+    if len(args) >= 2 and hasattr(args[1], "method") and hasattr(args[1], "data"):
+        return args[1]
+    raise TypeError("validated_request could not locate a DRF request argument.")
+
+
 def validated_request(
     request_serializer=None,
     *,
@@ -114,6 +148,8 @@ def validated_request(
     request_methods=None,
     strict_request_validation=True,
     strict_response_validation=False,
+    partial_request_validation=False,
+    reject_unknown_fields=False,
     **swagger_kwargs,
 ):
     """Document and validate a DRF view method from the same serializers.
@@ -137,16 +173,24 @@ def validated_request(
 
         @swagger_auto_schema(**swagger_options)
         @wraps(view_func)
-        def wrapper(self, request, *args, **kwargs):
+        def wrapper(*args, **kwargs):
+            request = _request_from_call(args)
             request.validated_data = {}
             request.validated_query_data = {}
+            request.validated_serializer = None
+            request.validated_query_serializer = None
             gm = GeneralMethods(request=request)
 
             if query_serializer is not None:
-                serializer = query_serializer(data=request.query_params)
-                if not serializer.is_valid():
-                    return gm.bad_request(serializer.errors)
+                serializer, errors, is_valid = _validate_serializer(
+                    query_serializer,
+                    request.query_params,
+                    reject_unknown_fields=reject_unknown_fields,
+                )
+                if not is_valid:
+                    return gm.bad_request(errors)
                 request.validated_query_data = serializer.validated_data
+                request.validated_query_serializer = serializer
 
             should_validate_body = (
                 request_serializer is not None
@@ -156,21 +200,26 @@ def validated_request(
                 )
             )
             if should_validate_body:
-                serializer = request_serializer(data=request.data)
-                is_valid = serializer.is_valid()
+                serializer, errors, is_valid = _validate_serializer(
+                    request_serializer,
+                    request.data,
+                    reject_unknown_fields=reject_unknown_fields,
+                    partial=partial_request_validation,
+                )
                 if not is_valid:
                     if strict_request_validation:
-                        return gm.bad_request(serializer.errors)
+                        return gm.bad_request(errors)
                     if settings.DEBUG:
                         logger.warning(
                             "API request does not match declared serializer.",
                             view_func=view_func.__name__,
                             serializer_class=request_serializer.__name__,
-                            validation_errors=serializer.errors,
+                            validation_errors=errors,
                         )
                 request.validated_data = serializer.validated_data
+                request.validated_serializer = serializer
 
-            response = view_func(self, request, *args, **kwargs)
+            response = view_func(*args, **kwargs)
 
             if not responses or not isinstance(response, Response):
                 return response
@@ -212,12 +261,20 @@ def validated_api_request(
     query_serializer=None,
     responses=None,
     method=None,
+    request_methods=None,
     document=True,
     strict_request_validation=True,
     strict_response_validation=False,
+    partial_request_validation=False,
+    reject_unknown_fields=False,
     **swagger_kwargs,
 ):
     """Document and validate a function-based DRF view from one serializer set."""
+    request_method_set = (
+        {request_method.upper() for request_method in request_methods}
+        if request_methods
+        else None
+    )
 
     def decorator(view_func):
         swagger_options = dict(swagger_kwargs)
@@ -234,28 +291,47 @@ def validated_api_request(
         def wrapper(request, *args, **kwargs):
             request.validated_data = {}
             request.validated_query_data = {}
+            request.validated_serializer = None
+            request.validated_query_serializer = None
             gm = GeneralMethods(request=request)
 
             if query_serializer is not None:
-                serializer = query_serializer(data=request.query_params)
-                if not serializer.is_valid():
-                    return gm.bad_request(serializer.errors)
+                serializer, errors, is_valid = _validate_serializer(
+                    query_serializer,
+                    request.query_params,
+                    reject_unknown_fields=reject_unknown_fields,
+                )
+                if not is_valid:
+                    return gm.bad_request(errors)
                 request.validated_query_data = serializer.validated_data
+                request.validated_query_serializer = serializer
 
-            if request_serializer is not None:
-                serializer = request_serializer(data=request.data)
-                is_valid = serializer.is_valid()
+            should_validate_body = (
+                request_serializer is not None
+                and (
+                    request_method_set is None
+                    or request.method.upper() in request_method_set
+                )
+            )
+            if should_validate_body:
+                serializer, errors, is_valid = _validate_serializer(
+                    request_serializer,
+                    request.data,
+                    reject_unknown_fields=reject_unknown_fields,
+                    partial=partial_request_validation,
+                )
                 if not is_valid:
                     if strict_request_validation:
-                        return gm.bad_request(serializer.errors)
+                        return gm.bad_request(errors)
                     if settings.DEBUG:
                         logger.warning(
                             "API request does not match declared serializer.",
                             view_func=view_func.__name__,
                             serializer_class=request_serializer.__name__,
-                            validation_errors=serializer.errors,
+                            validation_errors=errors,
                         )
                 request.validated_data = serializer.validated_data
+                request.validated_serializer = serializer
 
             response = view_func(request, *args, **kwargs)
 

@@ -76,6 +76,7 @@ from tfc.utils.error_codes import (
     get_error_message,
     get_specific_error_message,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -3127,86 +3128,83 @@ class CustomEvalTemplateCreateView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=CustomEvalTemplateCreateSerializer,
+    @validated_request(
+        request_serializer=CustomEvalTemplateCreateSerializer,
         responses={
             200: CustomEvalTemplateCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
         try:
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            serializer = CustomEvalTemplateCreateSerializer(data=request.data)
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
-                if (
-                    EvalTemplate.objects.filter(
-                        name=validated_data.get("name"),
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                        deleted=False,
-                    ).exists()
-                    or EvalTemplate.no_workspace_objects.filter(
-                        name=request.data.get("name"),
-                        owner=OwnerChoices.SYSTEM.value,
-                        deleted=False,
-                    ).exists()
-                ):
-                    return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
-
-                validated_data = prepare_user_eval_config(validated_data, bypass=False)
-                logger.debug(f"Prepared eval config: {validated_data}")
-                eval_template = EvalTemplate.objects.create(
+            validated_data = request.validated_data
+            if (
+                EvalTemplate.objects.filter(
                     name=validated_data.get("name"),
-                    organization=organization,
-                    owner=OwnerChoices.USER.value,
-                    eval_tags=validated_data.get("eval_tags"),
-                    config=(
-                        validated_data.get("configuration")
-                        if validated_data.get("configuration", None)
-                        else validated_data.get("config")
-                    ),
-                    choices=validated_data.get("choices"),
-                    description=validated_data.get("description"),
-                    criteria=validated_data.get("criteria"),
-                    multi_choice=validated_data.get("multi_choice"),
-                    proxy_agi=validated_data.get("config", {}).get("proxy_agi", True),
-                    visible_ui=validated_data.get("config", {}).get("visible_ui", True),
-                    model=validated_data.get("config", {}).get("model", "turing_large"),
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    deleted=False,
+                ).exists()
+                or EvalTemplate.no_workspace_objects.filter(
+                    name=validated_data.get("name"),
+                    owner=OwnerChoices.SYSTEM.value,
+                    deleted=False,
+                ).exists()
+            ):
+                return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
+
+            validated_data = prepare_user_eval_config(validated_data, bypass=False)
+            logger.debug(f"Prepared eval config: {validated_data}")
+            eval_template = EvalTemplate.objects.create(
+                name=validated_data.get("name"),
+                organization=organization,
+                owner=OwnerChoices.USER.value,
+                eval_tags=validated_data.get("eval_tags"),
+                config=(
+                    validated_data.get("configuration")
+                    if validated_data.get("configuration", None)
+                    else validated_data.get("config")
+                ),
+                choices=validated_data.get("choices"),
+                description=validated_data.get("description"),
+                criteria=validated_data.get("criteria"),
+                multi_choice=validated_data.get("multi_choice"),
+                proxy_agi=validated_data.get("config", {}).get("proxy_agi", True),
+                visible_ui=validated_data.get("config", {}).get("visible_ui", True),
+                model=validated_data.get("config", {}).get("model", "turing_large"),
+            )
+
+            # Create v0 version for the new template
+            try:
+                from model_hub.models.evals_metric import EvalTemplateVersion
+                from model_hub.utils.prompt_migration import (
+                    config_to_prompt_messages,
                 )
 
-                # Create v0 version for the new template
-                try:
-                    from model_hub.models.evals_metric import EvalTemplateVersion
-                    from model_hub.utils.prompt_migration import (
-                        config_to_prompt_messages,
+                template_config = eval_template.config or {}
+                prompt_messages = validated_data.get("prompt_messages")
+                if not prompt_messages:
+                    prompt_messages = config_to_prompt_messages(
+                        template_config,
+                        eval_template.criteria,
+                        template_config.get("eval_type_id"),
                     )
-
-                    template_config = eval_template.config or {}
-                    prompt_messages = validated_data.get("prompt_messages")
-                    if not prompt_messages:
-                        prompt_messages = config_to_prompt_messages(
-                            template_config,
-                            eval_template.criteria,
-                            template_config.get("eval_type_id"),
-                        )
-                    EvalTemplateVersion.objects.create_version(
-                        eval_template=eval_template,
-                        prompt_messages=prompt_messages,
-                        config_snapshot=template_config,
-                        criteria=eval_template.criteria,
-                        model=eval_template.model,
-                        user=request.user,
-                        organization=organization,
-                        workspace=getattr(eval_template, "workspace", None),
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create v0 for custom eval: {e}")
-            else:
-                return self._gm.bad_request(parse_serialized_errors(serializer))
+                EvalTemplateVersion.objects.create_version(
+                    eval_template=eval_template,
+                    prompt_messages=prompt_messages,
+                    config_snapshot=template_config,
+                    criteria=eval_template.criteria,
+                    model=eval_template.model,
+                    user=request.user,
+                    organization=organization,
+                    workspace=getattr(eval_template, "workspace", None),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create v0 for custom eval: {e}")
 
             return self._gm.success_response({"eval_template_id": eval_template.id})
         except Exception as e:
@@ -3220,32 +3218,29 @@ class EvalTemplateCreateView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalTemplateSerializer,
+    @validated_request(
+        request_serializer=EvalTemplateSerializer,
         responses={
             200: ModelHubStringResultResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
         try:
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            serializer = EvalTemplateSerializer(data=request.data)
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
+            validated_data = request.validated_data
+            EvalTemplate.objects.create(
+                name=validated_data.get("name"),
+                organization=organization,
+                owner=validated_data.get("owner"),
+                eval_tags=validated_data.get("eval_tags"),
+                config=validated_data.get("config"),
+            )
 
-                EvalTemplate.objects.create(
-                    name=validated_data.get("name"),
-                    organization=organization,
-                    owner=validated_data.get("owner"),
-                    eval_tags=validated_data.get("eval_tags"),
-                    config=validated_data.get("config"),
-                )
-
-                return self._gm.success_response("success")
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+            return self._gm.success_response("success")
         except Exception as e:
             logger.exception(f"Error in creation of eval template: {str(e)}")
             return self._gm.bad_request(
@@ -3257,34 +3252,31 @@ class EvalUserTemplateCreateView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalUserTemplateSerializer,
+    @validated_request(
+        request_serializer=EvalUserTemplateSerializer,
         responses={
             200: ModelHubStringResultResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
         try:
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            serializer = EvalUserTemplateSerializer(data=request.data)
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
+            validated_data = request.validated_data
+            UserEvalMetric.objects.create(
+                name=validated_data.get("name"),
+                organization=organization,
+                dataset_id=validated_data.get("dataset_id"),
+                template_id=validated_data.get("template_id"),
+                config=validated_data.get("config"),
+                user=request.user,
+                model=validated_data.get("model", ModelChoices.TURING_LARGE.value),
+            )
 
-                UserEvalMetric.objects.create(
-                    name=validated_data.get("name"),
-                    organization=organization,
-                    dataset_id=validated_data.get("dataset_id"),
-                    template_id=validated_data.get("template_id"),
-                    config=validated_data.get("config"),
-                    user=request.user,
-                    model=validated_data.get("model", ModelChoices.TURING_LARGE.value),
-                )
-
-                return self._gm.success_response("success")
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+            return self._gm.success_response("success")
         except Exception as e:
             logger.exception(f"Error in creation of user eval template: {str(e)}")
             return self._gm.bad_request(

@@ -30,6 +30,7 @@ from accounts.services.webauthn_service import (
     verify_authentication,
     verify_registration,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -41,9 +42,10 @@ class PasskeyRegisterOptionsView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=AccountsEmptyRequestSerializer,
+    @validated_request(
+        request_serializer=AccountsEmptyRequestSerializer,
         responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         try:
@@ -62,20 +64,17 @@ class PasskeyRegisterVerifyView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=PasskeyRegisterVerifySerializer,
+    @validated_request(
+        request_serializer=PasskeyRegisterVerifySerializer,
         responses={
             201: PasskeyRegisterVerifyResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
-        serializer = PasskeyRegisterVerifySerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        credential_response = serializer.validated_data["credential"]
-        name = serializer.validated_data.get("name", "")
+        credential_response = request.validated_data["credential"]
+        name = request.validated_data.get("name", "")
 
         try:
             # Retrieve the stored challenge
@@ -143,9 +142,10 @@ class PasskeyDetailView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=PasskeyRenameSerializer,
+    @validated_request(
+        request_serializer=PasskeyRenameSerializer,
         responses={200: PasskeyRenameResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def patch(self, request, pk):
         try:
@@ -156,11 +156,7 @@ class PasskeyDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        serializer = PasskeyRenameSerializer(data=request.data)
-        if not serializer.is_valid():
-            return self._gm.bad_request(serializer.errors)
-
-        passkey.name = serializer.validated_data["name"]
+        passkey.name = request.validated_data["name"]
         passkey.save(update_fields=["name", "updated_at"])
 
         return Response({"id": str(passkey.id), "name": passkey.name})
@@ -194,9 +190,10 @@ class PasskeyAuthenticateOptionsView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=AccountsEmptyRequestSerializer,
+    @validated_request(
+        request_serializer=AccountsEmptyRequestSerializer,
         responses={200: PasskeyOptionsResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         try:
@@ -216,15 +213,16 @@ class PasskeyAuthenticateVerifyView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=PasskeyCredentialRequestSerializer,
+    @validated_request(
+        request_serializer=PasskeyCredentialRequestSerializer,
         responses={
             200: AccountsTokenPairResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
-        credential_response = request.data.get("credential")
+        credential_response = request.validated_data.get("credential")
         if not credential_response:
             return self._gm.bad_request("Credential data is required.")
 
@@ -237,9 +235,9 @@ class PasskeyAuthenticateVerifyView(APIView):
 
         try:
             # Get stored challenge — session_id at top level of request
-            session_id = request.data.get("session_id", "") or credential_response.pop(
-                "_session_id", ""
-            )
+            session_id = request.validated_data.get(
+                "session_id", ""
+            ) or credential_response.pop("_session_id", "")
             raw_data = cache.get(f"webauthn_auth_challenge:{session_id}")
             if not raw_data:
                 return self._gm.bad_request(

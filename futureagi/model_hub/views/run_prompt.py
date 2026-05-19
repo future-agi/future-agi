@@ -92,6 +92,7 @@ from tfc.utils.error_codes import (
     get_error_message,
     get_specific_error_message,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_prompt_stats
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -865,89 +866,84 @@ class LitellmAPIView(CreateAPIView):
             },
         )
 
-    @swagger_auto_schema(
-        request_body=LitellmSerializer,
+    @validated_request(
+        request_serializer=LitellmSerializer,
         responses={
             200: ModelHubStringResultResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
-        # Validate incoming data with the serializer
-        serializer = LitellmSerializer(data=request.data)
+        validated_data = request.validated_data
+        # `validated_request` owns request-shape validation; from here the view
+        # handles only domain execution errors.
+        dataset = Dataset.objects.filter(id=validated_data.get("dataset_id")).get()
+        # Retrieve tools based on the IDs from the validated data
+        tool_ids = validated_data.get("tools", [])
+        tools = Tools.objects.filter(id__in=tool_ids)
 
-        # Check if data is valid
-        if serializer.is_valid():
-            # Extract validated data
-            validated_data = serializer.validated_data
-            dataset = Dataset.objects.filter(id=validated_data.get("dataset_id")).get()
-            # Retrieve tools based on the IDs from the validated data
-            tool_ids = validated_data.get("tools", [])
-            tools = Tools.objects.filter(id__in=tool_ids)
+        # Use transaction to ensure atomicity
+        with transaction.atomic():
+            run_prompter = RunPrompter.objects.create(
+                name=validated_data.get("name"),
+                model=validated_data.get("model"),
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                messages=validated_data.get("messages"),
+                temperature=validated_data.get("temperature"),
+                frequency_penalty=validated_data.get("frequency_penalty"),
+                presence_penalty=validated_data.get("presence_penalty"),
+                max_tokens=validated_data.get("max_tokens"),
+                top_p=validated_data.get("top_p"),
+                response_format=validated_data.get("response_format"),
+                tool_choice=validated_data.get("tool_choice"),
+                output_format=validated_data.get("output_format"),
+                dataset=dataset,
+                concurrency=validated_data.get("concurrency"),
+                run_prompt_config=validated_data.get("run_prompt_config"),
+                status=StatusType.NOT_STARTED.value,  # Start with NOT_STARTED
+            )
+            if tools:
+                # Associate the tools with the RunPrompter instance
+                run_prompter.tools.set(tools)
 
-            # Use transaction to ensure atomicity
-            with transaction.atomic():
-                run_prompter = RunPrompter.objects.create(
-                    name=validated_data.get("name"),
-                    model=validated_data.get("model"),
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    messages=validated_data.get("messages"),
-                    temperature=validated_data.get("temperature"),
-                    frequency_penalty=validated_data.get("frequency_penalty"),
-                    presence_penalty=validated_data.get("presence_penalty"),
-                    max_tokens=validated_data.get("max_tokens"),
-                    top_p=validated_data.get("top_p"),
-                    response_format=validated_data.get("response_format"),
-                    tool_choice=validated_data.get("tool_choice"),
-                    output_format=validated_data.get("output_format"),
-                    dataset=dataset,
-                    concurrency=validated_data.get("concurrency"),
-                    run_prompt_config=validated_data.get("run_prompt_config"),
-                    status=StatusType.NOT_STARTED.value,  # Start with NOT_STARTED
-                )
-                if tools:
-                    # Associate the tools with the RunPrompter instance
-                    run_prompter.tools.set(tools)
+            run_prompter_id = str(run_prompter.id)
 
-                run_prompter_id = str(run_prompter.id)
+        # After transaction commits, trigger workflow and update status
+        from model_hub.tasks.run_prompt import process_prompts_single
 
-            # After transaction commits, trigger workflow and update status
-            from model_hub.tasks.run_prompt import process_prompts_single
+        try:
+            # Set status to RUNNING before triggering workflow
+            RunPrompter.objects.filter(id=run_prompter_id).update(
+                status=StatusType.RUNNING.value
+            )
 
-            try:
-                # Set status to RUNNING before triggering workflow
-                RunPrompter.objects.filter(id=run_prompter_id).update(
-                    status=StatusType.RUNNING.value
-                )
+            result = process_prompts_single.apply_async(
+                args=({"type": "not_started", "prompt_id": run_prompter_id},)
+            )
+            logger.info(
+                "run_prompt_workflow_started",
+                run_prompt_id=run_prompter_id,
+                workflow_id=str(result.id) if result else "None",
+            )
+        except Exception as e:
+            logger.exception(
+                "run_prompt_workflow_start_failed",
+                run_prompt_id=run_prompter_id,
+                error=str(e),
+            )
+            # Set status to FAILED if workflow couldn't start
+            RunPrompter.objects.filter(id=run_prompter_id).update(
+                status=StatusType.FAILED.value
+            )
+            return self._gm.internal_server_error_response(
+                "Failed to start run prompt workflow"
+            )
 
-                result = process_prompts_single.apply_async(
-                    args=({"type": "not_started", "prompt_id": run_prompter_id},)
-                )
-                logger.info(
-                    "run_prompt_workflow_started",
-                    run_prompt_id=run_prompter_id,
-                    workflow_id=str(result.id) if result else "None",
-                )
-            except Exception as e:
-                logger.exception(
-                    "run_prompt_workflow_start_failed",
-                    run_prompt_id=run_prompter_id,
-                    error=str(e),
-                )
-                # Set status to FAILED if workflow couldn't start
-                RunPrompter.objects.filter(id=run_prompter_id).update(
-                    status=StatusType.FAILED.value
-                )
-                return self._gm.internal_server_error_response(
-                    "Failed to start run prompt workflow"
-                )
-
-            return self._gm.success_response("success")
-        else:
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+        return self._gm.success_response("success")
 
 
 class RunPrompts:
@@ -1501,22 +1497,19 @@ class AddRunPromptColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=AddRunPromptSerializer,
+    @validated_request(
+        request_serializer=AddRunPromptSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
         try:
-            serializer = AddRunPromptSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(serializer))
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             name = validated_data["name"]
             config = validated_data[
@@ -1640,21 +1633,17 @@ class PreviewRunPromptColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=PreviewRunPromptSerializer,
+    @validated_request(
+        request_serializer=PreviewRunPromptSerializer,
         responses={
             200: RunPromptColumnPreviewResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         try:
-            # Validate incoming data
-            serializer = PreviewRunPromptSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(serializer))
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             config = validated_data["config"]
 
@@ -1784,22 +1773,19 @@ class EditRunPromptColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EditRunPromptColumnSerializer,
+    @validated_request(
+        request_serializer=EditRunPromptColumnSerializer,
         responses={
             200: DevelopDatasetMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
         try:
-            serializer = EditRunPromptColumnSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(serializer))
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             column_id = validated_data["column_id"]
             config = validated_data["config"]
@@ -2516,20 +2502,20 @@ class RunPromptForRowsView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=RunPromptForRowsRequestSerializer,
+    @validated_request(
+        request_serializer=RunPromptForRowsRequestSerializer,
         responses={
             200: ModelHubSuccessMessageResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
         try:
-            # Extract the run_prompt_ids and row_ids from the request data
-            run_prompt_ids = request.data.get("run_prompt_ids", [])
-            row_ids = request.data.get("row_ids", [])
-
-            selected_all_rows = request.data.get("selected_all_rows", False)
+            data = request.validated_data
+            run_prompt_ids = data.get("run_prompt_ids", [])
+            row_ids = data.get("row_ids", [])
+            selected_all_rows = data.get("selected_all_rows", False)
 
             if not run_prompt_ids:
                 return self._gm.bad_request(

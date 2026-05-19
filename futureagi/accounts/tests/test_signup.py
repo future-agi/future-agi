@@ -9,6 +9,11 @@ from rest_framework import status
 from rest_framework.test import APIClient
 
 
+def assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["details"][field_name] == ["Unknown field."]
+
+
 @pytest.fixture
 def second_user(organization, db):
     """Create a second user in the same organization for testing."""
@@ -247,6 +252,20 @@ class TestPasswordResetAPI:
             status.HTTP_400_BAD_REQUEST,
         ]
 
+    def test_initiate_password_reset_rejects_unknown_request_fields(
+        self, api_client, db
+    ):
+        response = api_client.post(
+            "/accounts/password-reset-initiate/",
+            {
+                "email": "person@example.com",
+                "emailAddress": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "emailAddress")
+
     def test_password_reset_confirm_invalid_token(self, api_client, db):
         """Password reset confirm with invalid token fails."""
         response = api_client.post(
@@ -258,6 +277,38 @@ class TestPasswordResetAPI:
             status.HTTP_400_BAD_REQUEST,
             status.HTTP_404_NOT_FOUND,
         ]
+
+    def test_password_reset_confirm_rejects_unknown_request_fields(self, api_client, db):
+        response = api_client.post(
+            "/accounts/password-reset-confirm/invalid-uid/invalid-token/",
+            {
+                "new_password": "NewSecurePass123!",
+                "repeat_password": "NewSecurePass123!",
+                "newPassword": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "newPassword")
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestAcceptInvitationAPI:
+    """Tests for /accounts/accept-invitation/<uid>/<token>/ endpoint."""
+
+    def test_accept_invitation_rejects_unknown_request_fields(self, api_client, db):
+        response = api_client.post(
+            "/accounts/accept-invitation/invalid-uid/invalid-token/",
+            {
+                "new_password": "NewSecurePass123!",
+                "repeat_password": "NewSecurePass123!",
+                "newPassword": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "newPassword")
 
 
 @pytest.mark.integration
@@ -362,6 +413,18 @@ class TestSignupEmailValidation:
 class TestDeleteUsersAPI:
     """Tests for /accounts/delete-users/ endpoint."""
 
+    def test_delete_users_rejects_unknown_request_fields(self, owner_client):
+        response = owner_client.delete(
+            "/accounts/delete-users/",
+            {
+                "user_ids": [],
+                "userIds": ["legacy camel alias"],
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userIds")
+
     def test_delete_users_unauthenticated(self, api_client, second_user):
         """Unauthenticated request fails."""
         response = api_client.delete(
@@ -422,6 +485,19 @@ class TestDeleteUsersAPI:
 @pytest.mark.api
 class TestUpdateUserRoles:
     """Tests for role updates in /accounts/update-user/ endpoint."""
+
+    def test_update_user_rejects_unknown_request_fields(self, owner_client, second_user):
+        response = owner_client.post(
+            "/accounts/update-user/",
+            {
+                "user_id": str(second_user.id),
+                "name": "Updated Name",
+                "userId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userId")
 
     def test_owner_can_change_roles(self, owner_client, second_user):
         """Owner can change another user's role."""
@@ -499,6 +575,18 @@ class TestUpdateUserRoles:
 class TestUpdateUserFullName:
     """Tests for /accounts/update-user-full-name/ endpoint."""
 
+    def test_update_full_name_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/update-user-full-name/",
+            {
+                "name": "New Full Name",
+                "fullName": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "fullName")
+
     def test_update_full_name_authenticated(self, auth_client, user):
         """Authenticated user can update their full name."""
         response = auth_client.post(
@@ -575,6 +663,18 @@ class TestPasswordResetValidation:
 @pytest.mark.api
 class TestResendInvitationEmails:
     """Tests for /accounts/resend-invitation-emails/ endpoint."""
+
+    def test_resend_invitation_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/resend-invitation-emails/",
+            {
+                "user_ids": [],
+                "userIds": ["legacy camel alias"],
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "userIds")
 
     def test_resend_invitation_unauthenticated(self, api_client, second_user):
         """Unauthenticated request fails."""

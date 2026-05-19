@@ -118,6 +118,7 @@ from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
 from tfc.settings.settings import BASE_URL
 from tfc.telemetry import wrap_for_thread
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import calculate_eval_average
 from tfc.utils.general_methods import GeneralMethods
@@ -421,16 +422,13 @@ class GetAPICallLogDetailsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=EvalApiLogTableQuerySerializer,
         responses={200: EvalApiLogTableResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, *args, **kwargs):
         try:
-            query_serializer = EvalApiLogTableQuerySerializer(data=request.query_params)
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-            query = query_serializer.validated_data
+            query = request.validated_query_data
             eval_template_id = str(query["eval_template_id"])
             page_size = query["page_size"]
             current_page = query["current_page_index"]
@@ -667,8 +665,8 @@ class GetAPICallLogView(APIView):
             logger.exception("Error fetching log row")
             return self._gm.bad_request(get_error_message("LOG_ROW_FETCHING_FAILED"))
 
-    @swagger_auto_schema(
-        request_body=UpdateColumnConfigSerializer,
+    @validated_request(
+        request_serializer=UpdateColumnConfigSerializer,
         responses={
             200: ModelHubStringResultResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -676,10 +674,7 @@ class GetAPICallLogView(APIView):
     )
     def patch(self, request, *args, **kwargs):
         try:
-            serializer = UpdateColumnConfigSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             eval_id = validated_data.get("eval_id")
             if not eval_id:
                 return self._gm.bad_request(get_error_message("EVAL_ID_REQUIRED."))
@@ -757,8 +752,8 @@ class CellErrorLocalizerView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=ModelHubEmptyRequestSerializer,
+    @validated_request(
+        request_serializer=ModelHubEmptyRequestSerializer,
         responses={
             200: CellErrorLocalizerResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -1033,16 +1028,13 @@ class EvalMetricView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=EvalMetricQuerySerializer,
         responses={200: EvalMetricResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, *args, **kwargs):
         try:
-            query_serializer = EvalMetricQuerySerializer(data=request.query_params)
-            if not query_serializer.is_valid():
-                return self._gm.bad_request(query_serializer.errors)
-            query = query_serializer.validated_data
+            query = request.validated_query_data
             eval_template_id = str(query["eval_template_id"])
             filters = query["filters"]
 
@@ -1062,16 +1054,13 @@ class EvalMetricView(APIView):
             logger.exception(f"Error in EvalMetricView.get: {str(e)}")
             return self._gm.bad_request(str(e))
 
-    @swagger_auto_schema(
-        request_body=EvalMetricRequestSerializer,
+    @validated_request(
+        request_serializer=EvalMetricRequestSerializer,
         responses={200: EvalMetricResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def post(self, request, *args, **kwargs):
         try:
-            body_serializer = EvalMetricRequestSerializer(data=request.data)
-            if not body_serializer.is_valid():
-                return self._gm.bad_request(body_serializer.errors)
-            body = body_serializer.validated_data
+            body = request.validated_data
             eval_template_id = str(body["eval_template_id"])
             filters = body["filters"]
 
@@ -1096,8 +1085,8 @@ class GetEvalTemplateNameView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalTemplateNamesRequestSerializer,
+    @validated_request(
+        request_serializer=EvalTemplateNamesRequestSerializer,
         responses={
             200: EvalTemplateNamesResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -1122,7 +1111,7 @@ class GetEvalTemplateNameView(APIView):
             eval_ids = [eval.id for eval in eval_ids]
             log_ids += eval_ids
 
-            search_text = request.data.get("search_text", "")
+            search_text = request.validated_data.get("search_text", "")
             eval_templates = EvalTemplate.no_workspace_objects.filter(id__in=log_ids)
             if search_text:
                 eval_templates = eval_templates.filter(name__icontains=search_text)
@@ -1272,8 +1261,8 @@ class GetEvalTemplates(APIView):
 
         return template_data
 
-    @swagger_auto_schema(
-        request_body=LegacyEvalTemplatesRequestSerializer,
+    @validated_request(
+        request_serializer=LegacyEvalTemplatesRequestSerializer,
         responses={
             200: LegacyEvalTemplatesResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -1281,10 +1270,11 @@ class GetEvalTemplates(APIView):
     )
     def post(self, request, *args, **kwargs):
         try:
-            page_size = request.data.get("page_size", 10)
-            current_page = request.data.get("current_page_index", 0)
-            search_text = request.data.get("search_text", "")
-            sort_config_list = request.data.get("sort", [])
+            request_data = request.validated_data
+            page_size = request_data.get("page_size", 10)
+            current_page = request_data.get("current_page_index", 0)
+            search_text = request_data.get("search_text", "")
+            sort_config_list = request_data.get("sort", [])
             sort_config = sort_config_list[0] if len(sort_config_list) > 0 else {}
             # Calculate date range
             end_date = timezone.now()
@@ -1425,8 +1415,8 @@ class EvalTemplateListView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalListRequestSerializer,
+    @validated_request(
+        request_serializer=EvalListRequestSerializer,
         responses={
             200: EvalTemplateListResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -1444,10 +1434,7 @@ class EvalTemplateListView(APIView):
         )
 
         try:
-            # 1. Validate request via DRF serializer (errors auto-handled)
-            serializer = EvalListRequestSerializer(data=request.data)
-            serializer.is_valid(raise_exception=True)
-            req = serializer.validated_data
+            req = request.validated_data
 
             organization = (
                 getattr(request, "organization", None) or request.user.organization
@@ -1598,8 +1585,8 @@ class EvalTemplateListChartsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalTemplateListChartsRequestSerializer,
+    @validated_request(
+        request_serializer=EvalTemplateListChartsRequestSerializer,
         responses={
             200: EvalTemplateListChartsResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
@@ -1607,7 +1594,7 @@ class EvalTemplateListChartsView(APIView):
     )
     def post(self, request, *args, **kwargs):
         try:
-            template_ids = request.data.get("template_ids", [])
+            template_ids = request.validated_data.get("template_ids", [])
             if not template_ids:
                 return self._gm.success_response({"charts": {}})
 
@@ -1724,19 +1711,25 @@ class EvalTemplateBulkDeleteView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalTemplateBulkDeleteRequestSerializer,
+    @validated_request(
+        request_serializer=EvalTemplateBulkDeleteRequestSerializer,
         responses={
             200: EvalTemplateBulkDeleteResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         from model_hub.types import BulkDeleteRequest, BulkDeleteResponse
 
         try:
             try:
-                req = BulkDeleteRequest(**request.data)
+                req = BulkDeleteRequest(
+                    template_ids=[
+                        str(template_id)
+                        for template_id in request.validated_data["template_ids"]
+                    ]
+                )
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -1774,12 +1767,13 @@ class EvalTemplateCreateV2View(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalTemplateCreateV2RequestSerializer,
+    @validated_request(
+        request_serializer=EvalTemplateCreateV2RequestSerializer,
         responses={
             200: EvalTemplateCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         import re
@@ -1793,7 +1787,7 @@ class EvalTemplateCreateV2View(APIView):
         try:
             # 1. Validate request
             try:
-                req = EvalCreateRequest(**request.data)
+                req = EvalCreateRequest(**request.validated_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -1880,12 +1874,6 @@ class EvalTemplateCreateV2View(APIView):
                             "enable data injection to evaluate without mapping."
                         )
                     if not req.instructions:
-                        # Diagnostic: log the raw payload keys so any future
-                        # mis-cased caller (e.g. `isDraft` without `is_draft`)
-                        # is visible. We already alias `isDraft` → `is_draft`
-                        # on the model, so this branch only fires when the
-                        # caller genuinely omitted both draft intent and
-                        # instructions. See TH-4076.
                         logger.warning(
                             "create-v2 rejecting empty instructions; payload_keys=%s",
                             sorted((request.data or {}).keys()),
@@ -2275,12 +2263,13 @@ class EvalTemplateUpdateView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalTemplateUpdateV2RequestSerializer,
+    @validated_request(
+        request_serializer=EvalTemplateUpdateV2RequestSerializer,
         responses={
             200: EvalTemplateUpdateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def put(self, request, template_id, *args, **kwargs):
         import re
@@ -2293,7 +2282,7 @@ class EvalTemplateUpdateView(APIView):
 
         try:
             try:
-                req = EvalUpdateRequest(**request.data)
+                req = EvalUpdateRequest(**request.validated_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -2425,7 +2414,7 @@ class EvalTemplateUpdateView(APIView):
                     return self._gm.bad_request("; ".join(errors))
                 template.pass_threshold = req.pass_threshold
 
-            if "choice_scores" in (request.data or {}):
+            if "choice_scores" in request.validated_data:
                 if req.choice_scores:
                     errors = validate_choice_scores(req.choice_scores)
                     if errors:
@@ -2649,12 +2638,13 @@ class EvalTemplateVersionCreateView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalTemplateVersionCreateRequestSerializer,
+    @validated_request(
+        request_serializer=EvalTemplateVersionCreateRequestSerializer,
         responses={
             200: EvalTemplateVersionResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, template_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalTemplateVersion
@@ -2662,7 +2652,7 @@ class EvalTemplateVersionCreateView(APIView):
 
         try:
             try:
-                req = CreateVersionRequest(**request.data)
+                req = CreateVersionRequest(**request.validated_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -2783,12 +2773,13 @@ class SetDefaultVersionView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=ModelHubEmptyRequestSerializer,
+    @validated_request(
+        request_serializer=ModelHubEmptyRequestSerializer,
         responses={
             200: EvalTemplateVersionResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def put(self, request, template_id, version_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalTemplateVersion
@@ -2853,12 +2844,13 @@ class RestoreVersionView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=ModelHubEmptyRequestSerializer,
+    @validated_request(
+        request_serializer=ModelHubEmptyRequestSerializer,
         responses={
             200: EvalTemplateVersionRestoreResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, template_id, version_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalTemplateVersion
@@ -3015,12 +3007,13 @@ class CompositeEvalCreateView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=CompositeEvalCreateRequestSerializer,
+    @validated_request(
+        request_serializer=CompositeEvalCreateRequestSerializer,
         responses={
             200: CompositeEvalCreateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         import re
@@ -3038,7 +3031,12 @@ class CompositeEvalCreateView(APIView):
 
         try:
             try:
-                req = CompositeCreateRequest(**request.data)
+                request_data = dict(request.validated_data)
+                request_data["child_template_ids"] = [
+                    str(child_id)
+                    for child_id in request_data["child_template_ids"]
+                ]
+                req = CompositeCreateRequest(**request_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -3268,12 +3266,13 @@ class CompositeEvalDetailView(APIView):
             )
             return self._gm.bad_request(str(e))
 
-    @swagger_auto_schema(
-        request_body=CompositeEvalUpdateRequestSerializer,
+    @validated_request(
+        request_serializer=CompositeEvalUpdateRequestSerializer,
         responses={
             200: CompositeEvalDetailResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def patch(self, request, template_id, *args, **kwargs):
         """PATCH — partial update of a composite eval.
@@ -3301,7 +3300,13 @@ class CompositeEvalDetailView(APIView):
 
         try:
             try:
-                req = CompositeUpdateRequest(**request.data)
+                request_data = dict(request.validated_data)
+                if request_data.get("child_template_ids") is not None:
+                    request_data["child_template_ids"] = [
+                        str(child_id)
+                        for child_id in request_data["child_template_ids"]
+                    ]
+                req = CompositeUpdateRequest(**request_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -3648,12 +3653,13 @@ class CompositeEvalExecuteView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=CompositeEvalExecuteRequestSerializer,
+    @validated_request(
+        request_serializer=CompositeEvalExecuteRequestSerializer,
         responses={
             200: CompositeEvalExecuteResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, template_id, *args, **kwargs):
         from model_hub.models.evals_metric import CompositeEvalChild
@@ -3664,7 +3670,7 @@ class CompositeEvalExecuteView(APIView):
 
         try:
             try:
-                req = CompositeExecuteRequest(**request.data)
+                req = CompositeExecuteRequest(**request.validated_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -3779,12 +3785,13 @@ class CompositeEvalAdhocExecuteView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=CompositeEvalAdhocExecuteRequestSerializer,
+    @validated_request(
+        request_serializer=CompositeEvalAdhocExecuteRequestSerializer,
         responses={
             200: CompositeEvalExecuteResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         from model_hub.models.evals_metric import CompositeEvalChild
@@ -3800,7 +3807,12 @@ class CompositeEvalAdhocExecuteView(APIView):
 
         try:
             try:
-                req = CompositeAdhocExecuteRequest(**request.data)
+                request_data = dict(request.validated_data)
+                request_data["child_template_ids"] = [
+                    str(child_id)
+                    for child_id in request_data["child_template_ids"]
+                ]
+                req = CompositeAdhocExecuteRequest(**request_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -3987,12 +3999,13 @@ class GroundTruthUploadView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=GroundTruthUploadRequestSerializer,
+    @validated_request(
+        request_serializer=GroundTruthUploadRequestSerializer,
         responses={
             200: GroundTruthUploadResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, template_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth
@@ -4010,7 +4023,8 @@ class GroundTruthUploadView(APIView):
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found.")
 
-            uploaded_file = request.FILES.get("file")
+            request_data = request.validated_data
+            uploaded_file = request_data.get("file")
 
             if uploaded_file:
                 # --- File upload mode ---
@@ -4022,8 +4036,10 @@ class GroundTruthUploadView(APIView):
                 if uploaded_file.size > MAX_FILE_SIZE_BYTES:
                     return self._gm.bad_request("File exceeds maximum size of 50MB.")
 
-                name = request.data.get("name", uploaded_file.name.rsplit(".", 1)[0])
-                description = request.data.get("description", "")
+                name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[
+                    0
+                ]
+                description = request_data.get("description", "")
 
                 try:
                     columns, data = parse_ground_truth_file(
@@ -4033,33 +4049,14 @@ class GroundTruthUploadView(APIView):
                     return self._gm.bad_request(str(e))
 
                 file_name = uploaded_file.name
-                variable_mapping = None
-                role_mapping = None
-
-                # Parse optional JSON fields from multipart
-                vm_raw = request.data.get("variable_mapping")
-                if vm_raw and isinstance(vm_raw, str):
-                    try:
-                        variable_mapping = json.loads(vm_raw)
-                    except json.JSONDecodeError:
-                        pass
-                elif isinstance(vm_raw, dict):
-                    variable_mapping = vm_raw
-
-                rm_raw = request.data.get("role_mapping")
-                if rm_raw and isinstance(rm_raw, str):
-                    try:
-                        role_mapping = json.loads(rm_raw)
-                    except json.JSONDecodeError:
-                        pass
-                elif isinstance(rm_raw, dict):
-                    role_mapping = rm_raw
+                variable_mapping = request_data.get("variable_mapping")
+                role_mapping = request_data.get("role_mapping")
             else:
                 # --- JSON body mode (backwards compatible) ---
                 from model_hub.types import GroundTruthUploadRequest
 
                 try:
-                    req = GroundTruthUploadRequest(**request.data)
+                    req = GroundTruthUploadRequest(**request_data)
                 except Exception as e:
                     from tfc.utils.errors import format_request_error
 
@@ -4113,12 +4110,13 @@ class GroundTruthMappingView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=GroundTruthMappingRequestSerializer,
+    @validated_request(
+        request_serializer=GroundTruthMappingRequestSerializer,
         responses={
             200: GroundTruthMappingResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def put(self, request, ground_truth_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth
@@ -4126,7 +4124,7 @@ class GroundTruthMappingView(APIView):
 
         try:
             try:
-                req = VariableMappingRequest(**request.data)
+                req = VariableMappingRequest(**request.validated_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -4157,12 +4155,13 @@ class GroundTruthRoleMappingView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=GroundTruthRoleMappingRequestSerializer,
+    @validated_request(
+        request_serializer=GroundTruthRoleMappingRequestSerializer,
         responses={
             200: GroundTruthRoleMappingResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def put(self, request, ground_truth_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth
@@ -4170,7 +4169,7 @@ class GroundTruthRoleMappingView(APIView):
 
         try:
             try:
-                req = RoleMappingRequest(**request.data)
+                req = RoleMappingRequest(**request.validated_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -4383,19 +4382,25 @@ class GroundTruthConfigView(APIView):
             )
             return self._gm.bad_request(str(e))
 
-    @swagger_auto_schema(
-        request_body=GroundTruthConfigRequestSerializer,
+    @validated_request(
+        request_serializer=GroundTruthConfigRequestSerializer,
         responses={
             200: GroundTruthConfigResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def put(self, request, template_id, *args, **kwargs):
         from model_hub.types import GroundTruthConfigRequest
 
         try:
             try:
-                req = GroundTruthConfigRequest(**request.data)
+                request_data = dict(request.validated_data)
+                if request_data.get("ground_truth_id") is not None:
+                    request_data["ground_truth_id"] = str(
+                        request_data["ground_truth_id"]
+                    )
+                req = GroundTruthConfigRequest(**request_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -4446,12 +4451,13 @@ class GroundTruthSearchView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=GroundTruthSearchRequestSerializer,
+    @validated_request(
+        request_serializer=GroundTruthSearchRequestSerializer,
         responses={
             200: GroundTruthSearchResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, ground_truth_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth
@@ -4463,7 +4469,7 @@ class GroundTruthSearchView(APIView):
 
         try:
             try:
-                req = GroundTruthSearchRequest(**request.data)
+                req = GroundTruthSearchRequest(**request.validated_data)
             except Exception as e:
                 from tfc.utils.errors import format_request_error
 
@@ -4510,12 +4516,13 @@ class GroundTruthTriggerEmbeddingView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=ModelHubEmptyRequestSerializer,
+    @validated_request(
+        request_serializer=ModelHubEmptyRequestSerializer,
         responses={
             200: GroundTruthEmbedResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, ground_truth_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth
@@ -5408,412 +5415,406 @@ class EvalPlayGroundAPIView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalPlayGroundSerializer,
+    @validated_request(
+        request_serializer=EvalPlayGroundSerializer,
         responses={200: EvalExecutionResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         from tfc.ee_gates import turing_oss_gate_for_template
 
+        validated_data = request.validated_data
         gate = turing_oss_gate_for_template(
-            request.data.get("model"), request.data.get("template_id")
+            validated_data.get("model"), validated_data.get("template_id")
         )
         if gate is not None:
             return gate
 
         try:
             org = getattr(request, "organization", None) or request.user.organization
-            serializer = EvalPlayGroundSerializer(data=request.data)
 
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
+            model = validated_data.get("model", None)
+            kb_id = validated_data.get("kb_id", None)
+            error_localizer = validated_data.get("error_localizer", False)
+            runtime_config = validated_data.get("config", {}) or {}
+            top_level_params = validated_data.get("params", {}) or {}
+            mapping = validated_data.get("mapping", {})
+            if not mapping and isinstance(runtime_config, dict):
+                mapping = runtime_config.get("mapping", {})
+            mapping_paths = validated_data.get("mapping_paths") or {}
+            if not mapping_paths and isinstance(runtime_config, dict):
+                mapping_paths = runtime_config.get("mapping_paths", {}) or {}
+            template_id = validated_data.get("template_id", None)
+            input_data_types = validated_data.get("input_data_types", {})
+            if not input_data_types and isinstance(runtime_config, dict):
+                input_data_types = runtime_config.get("input_data_types", {})
 
-                model = validated_data.get("model", None)
-                kb_id = validated_data.get("kb_id", None)
-                error_localizer = validated_data.get("error_localizer", False)
-                runtime_config = validated_data.get("config", {}) or {}
-                top_level_params = validated_data.get("params", {}) or {}
-                mapping = validated_data.get("mapping", {})
-                if not mapping and isinstance(runtime_config, dict):
-                    mapping = runtime_config.get("mapping", {})
-                mapping_paths = validated_data.get("mapping_paths") or {}
-                if not mapping_paths and isinstance(runtime_config, dict):
-                    mapping_paths = runtime_config.get("mapping_paths", {}) or {}
-                template_id = validated_data.get("template_id", None)
-                input_data_types = validated_data.get("input_data_types", {})
-                if not input_data_types and isinstance(runtime_config, dict):
-                    input_data_types = runtime_config.get("input_data_types", {})
+            # Auto-context payloads. Caller may supply the dicts
+            # directly, or IDs that we resolve server-side.
+            row_context = validated_data.get("row_context")
+            span_context = validated_data.get("span_context")
+            trace_context = validated_data.get("trace_context")
+            session_context = validated_data.get("session_context")
+            call_context = validated_data.get("call_context")
+            _span_id = validated_data.get("span_id")
+            _trace_id = validated_data.get("trace_id")
+            _session_id = validated_data.get("session_id")
+            _call_id = validated_data.get("call_id")
+            if span_context is None and _span_id:
+                try:
+                    from tracer.models.observation_span import ObservationSpan
 
-                # Auto-context payloads. Caller may supply the dicts
-                # directly, or IDs that we resolve server-side.
-                row_context = validated_data.get("row_context")
-                span_context = validated_data.get("span_context")
-                trace_context = validated_data.get("trace_context")
-                session_context = validated_data.get("session_context")
-                call_context = validated_data.get("call_context")
-                _span_id = validated_data.get("span_id")
-                _trace_id = validated_data.get("trace_id")
-                _session_id = validated_data.get("session_id")
-                _call_id = validated_data.get("call_id")
-                if span_context is None and _span_id:
-                    try:
-                        from tracer.models.observation_span import ObservationSpan
+                    _s = ObservationSpan.objects.filter(id=str(_span_id)).first()
+                    if _s:
+                        span_context = _build_span_context(_s)
+                except Exception as _e:
+                    logger.warning(f"Failed to fetch span {_span_id}: {_e}")
+            if trace_context is None and _trace_id:
+                try:
+                    from django.db.models import Count, Sum, Min, Max, Q
+                    from tracer.models.trace import Trace
+                    from tracer.models.observation_span import ObservationSpan
 
-                        _s = ObservationSpan.objects.filter(id=str(_span_id)).first()
-                        if _s:
-                            span_context = _build_span_context(_s)
-                    except Exception as _e:
-                        logger.warning(f"Failed to fetch span {_span_id}: {_e}")
-                if trace_context is None and _trace_id:
-                    try:
-                        from django.db.models import Count, Sum, Min, Max, Q
-                        from tracer.models.trace import Trace
-                        from tracer.models.observation_span import ObservationSpan
+                    _t = Trace.objects.filter(id=_trace_id).first()
+                    if _t:
+                        # Aggregate stats from child spans (single query)
+                        _span_agg = ObservationSpan.objects.filter(
+                            trace=_t, deleted=False
+                        ).aggregate(
+                            span_count=Count("id"),
+                            error_count=Count("id", filter=Q(status="ERROR")),
+                            total_tokens=Sum("total_tokens"),
+                            total_cost=Sum("cost"),
+                            start_time=Min("start_time"),
+                            end_time=Max("end_time"),
+                            total_latency=Sum("latency_ms"),
+                        )
 
-                        _t = Trace.objects.filter(id=_trace_id).first()
-                        if _t:
-                            # Aggregate stats from child spans (single query)
-                            _span_agg = ObservationSpan.objects.filter(
-                                trace=_t, deleted=False
-                            ).aggregate(
-                                span_count=Count("id"),
-                                error_count=Count("id", filter=Q(status="ERROR")),
-                                total_tokens=Sum("total_tokens"),
-                                total_cost=Sum("cost"),
-                                start_time=Min("start_time"),
-                                end_time=Max("end_time"),
-                                total_latency=Sum("latency_ms"),
-                            )
+                        # Lightweight span summaries for the agent to
+                        # browse and decide which to drill into.
+                        # Only fetch essential fields, cap at 200 spans.
+                        _span_summaries = list(
+                            ObservationSpan.objects.filter(trace=_t, deleted=False)
+                            .order_by("start_time")
+                            .values(
+                                "id",
+                                "name",
+                                "observation_type",
+                                "status",
+                                "status_message",
+                                "latency_ms",
+                                "model",
+                                "total_tokens",
+                                "cost",
+                                "parent_span_id",
+                            )[:200]
+                        )
 
-                            # Lightweight span summaries for the agent to
-                            # browse and decide which to drill into.
-                            # Only fetch essential fields, cap at 200 spans.
-                            _span_summaries = list(
-                                ObservationSpan.objects.filter(trace=_t, deleted=False)
-                                .order_by("start_time")
-                                .values(
-                                    "id",
-                                    "name",
-                                    "observation_type",
-                                    "status",
-                                    "status_message",
-                                    "latency_ms",
-                                    "model",
-                                    "total_tokens",
-                                    "cost",
-                                    "parent_span_id",
-                                )[:200]
-                            )
-
-                            trace_context = {
-                                "id": str(_t.id),
-                                "project_id": (
-                                    str(_t.project_id) if _t.project_id else None
-                                ),
-                                "name": _t.name,
-                                "session_id": (
-                                    str(_t.session_id) if _t.session_id else None
-                                ),
-                                "metadata": _t.metadata or {},
-                                "tags": _t.tags or [],
-                                "input": _t.input,
-                                "output": _t.output,
-                                "error": _t.error,
-                                "created_at": (
-                                    _t.created_at.isoformat() if _t.created_at else None
-                                ),
-                                "span_count": _span_agg["span_count"] or 0,
-                                "error_count": _span_agg["error_count"] or 0,
-                                "total_tokens": _span_agg["total_tokens"] or 0,
-                                "total_cost": (
-                                    float(round(_span_agg["total_cost"], 6))
-                                    if _span_agg["total_cost"]
-                                    else 0
-                                ),
-                                "total_latency_ms": _span_agg["total_latency"] or 0,
-                                "start_time": (
-                                    str(_span_agg["start_time"])
-                                    if _span_agg["start_time"]
-                                    else None
-                                ),
-                                "end_time": (
-                                    str(_span_agg["end_time"])
-                                    if _span_agg["end_time"]
-                                    else None
-                                ),
-                                "spans": _span_summaries,
-                            }
-                    except Exception as _e:
-                        logger.warning(f"Failed to fetch trace {_trace_id}: {_e}")
-                if session_context is None and _session_id:
-                    try:
-                        from django.db.models import Count, Sum, Min, Max, Q
-                        from tracer.models.trace import Trace
-                        from tracer.models.trace_session import TraceSession
-                        from tracer.models.observation_span import ObservationSpan
-
-                        _ss = TraceSession.objects.filter(id=_session_id).first()
-                        if _ss:
-                            # Get trace IDs for this session
-                            _trace_qs = Trace.objects.filter(session=_ss, deleted=False)
-
-                            # Aggregate stats across all spans in session
-                            _sess_agg = ObservationSpan.objects.filter(
-                                trace__in=_trace_qs, deleted=False
-                            ).aggregate(
-                                total_spans=Count("id"),
-                                error_count=Count("id", filter=Q(status="ERROR")),
-                                total_tokens=Sum("total_tokens"),
-                                total_cost=Sum("cost"),
-                                start_time=Min("start_time"),
-                                end_time=Max("end_time"),
-                            )
-
-                            # Lightweight trace summaries for the agent to
-                            # browse and decide which to drill into. Use one
-                            # grouped aggregate instead of N+1 per-trace queries.
-                            _traces_page = list(_trace_qs.order_by("created_at")[:100])
-                            _trace_ids = [_tr.id for _tr in _traces_page]
-                            _per_trace = {
-                                _row["trace_id"]: _row
-                                for _row in (
-                                    ObservationSpan.objects.filter(
-                                        trace_id__in=_trace_ids, deleted=False
-                                    )
-                                    .values("trace_id")
-                                    .annotate(
-                                        span_count=Count("id"),
-                                        error_count=Count(
-                                            "id", filter=Q(status="ERROR")
-                                        ),
-                                        total_tokens=Sum("total_tokens"),
-                                        total_latency=Sum("latency_ms"),
-                                    )
-                                )
-                            }
-                            _trace_summaries = []
-                            for _tr in _traces_page:
-                                _agg = _per_trace.get(_tr.id, {})
-                                _err_count = _agg.get("error_count") or 0
-                                _trace_summaries.append(
-                                    {
-                                        "id": str(_tr.id),
-                                        "name": _tr.name,
-                                        "created_at": (
-                                            _tr.created_at.isoformat()
-                                            if _tr.created_at
-                                            else None
-                                        ),
-                                        "span_count": _agg.get("span_count") or 0,
-                                        "error_count": _err_count,
-                                        "total_tokens": _agg.get("total_tokens") or 0,
-                                        "total_latency_ms": _agg.get("total_latency")
-                                        or 0,
-                                        "has_error": bool(_tr.error or _err_count > 0),
-                                    }
-                                )
-
-                            _start = _sess_agg["start_time"]
-                            _end = _sess_agg["end_time"]
-                            _duration = None
-                            if _start and _end:
-                                _duration = (_end - _start).total_seconds()
-
-                            session_context = {
-                                "id": str(_ss.id),
-                                "name": _ss.name,
-                                "project_id": (
-                                    str(_ss.project_id) if _ss.project_id else None
-                                ),
-                                "bookmarked": _ss.bookmarked,
-                                "created_at": (
-                                    _ss.created_at.isoformat()
-                                    if _ss.created_at
-                                    else None
-                                ),
-                                "trace_count": _trace_qs.count(),
-                                "total_spans": _sess_agg["total_spans"] or 0,
-                                "error_count": _sess_agg["error_count"] or 0,
-                                "total_tokens": _sess_agg["total_tokens"] or 0,
-                                "total_cost": (
-                                    float(round(_sess_agg["total_cost"], 6))
-                                    if _sess_agg["total_cost"]
-                                    else 0
-                                ),
-                                "start_time": (str(_start) if _start else None),
-                                "end_time": (str(_end) if _end else None),
-                                "duration_seconds": _duration,
-                                "traces": _trace_summaries,
-                            }
-                    except Exception as _e:
-                        logger.warning(f"Failed to fetch session {_session_id}: {_e}")
-
-                # Resolve session-level dotted-path mapping server-side.
-                # The TaskLivePreview session branch sends `mapping_paths`
-                # (variable -> dotted path) because its lazy fetch only
-                # populates the first trace's spans, so local resolution
-                # would silently drop deeper mappings. `_process_session_mapping`
-                # walks the real DB models — same code path as the
-                # eval-task runtime, so preview results match prod.
-                logger.info(
-                    "eval_playground_session_mapping_inputs",
-                    extra={
-                        "session_id": str(_session_id) if _session_id else None,
-                        "mapping_paths_keys": (
-                            list(mapping_paths.keys())
-                            if isinstance(mapping_paths, dict)
-                            else None
-                        ),
-                        "incoming_mapping_keys": (
-                            list(mapping.keys()) if isinstance(mapping, dict) else None
-                        ),
-                    },
-                )
-                if _session_id and isinstance(mapping_paths, dict) and mapping_paths:
+                        trace_context = {
+                            "id": str(_t.id),
+                            "project_id": (
+                                str(_t.project_id) if _t.project_id else None
+                            ),
+                            "name": _t.name,
+                            "session_id": (
+                                str(_t.session_id) if _t.session_id else None
+                            ),
+                            "metadata": _t.metadata or {},
+                            "tags": _t.tags or [],
+                            "input": _t.input,
+                            "output": _t.output,
+                            "error": _t.error,
+                            "created_at": (
+                                _t.created_at.isoformat() if _t.created_at else None
+                            ),
+                            "span_count": _span_agg["span_count"] or 0,
+                            "error_count": _span_agg["error_count"] or 0,
+                            "total_tokens": _span_agg["total_tokens"] or 0,
+                            "total_cost": (
+                                float(round(_span_agg["total_cost"], 6))
+                                if _span_agg["total_cost"]
+                                else 0
+                            ),
+                            "total_latency_ms": _span_agg["total_latency"] or 0,
+                            "start_time": (
+                                str(_span_agg["start_time"])
+                                if _span_agg["start_time"]
+                                else None
+                            ),
+                            "end_time": (
+                                str(_span_agg["end_time"])
+                                if _span_agg["end_time"]
+                                else None
+                            ),
+                            "spans": _span_summaries,
+                        }
+                except Exception as _e:
+                    logger.warning(f"Failed to fetch trace {_trace_id}: {_e}")
+            if session_context is None and _session_id:
+                try:
+                    from django.db.models import Count, Sum, Min, Max, Q
+                    from tracer.models.trace import Trace
                     from tracer.models.trace_session import TraceSession
-                    from tracer.utils.eval import _process_session_mapping
+                    from tracer.models.observation_span import ObservationSpan
 
-                    _ss_for_mapping = TraceSession.objects.filter(
-                        id=_session_id
-                    ).first()
-                    if _ss_for_mapping is None:
-                        return self._gm.bad_request(f"Session {_session_id} not found")
-                    try:
-                        resolved_session_mapping = _process_session_mapping(
-                            dict(mapping_paths),
-                            _ss_for_mapping,
-                            template_id,
-                        )
-                    except ValueError as ve:
-                        return self._gm.bad_request(str(ve))
-                    logger.info(
-                        "eval_playground_session_mapping_resolved",
-                        extra={
-                            "session_id": str(_session_id),
-                            "resolved_keys": list(resolved_session_mapping.keys()),
-                        },
-                    )
-                    # FE-supplied resolved `mapping` wins over the
-                    # server-side resolution on key collision — lets the
-                    # caller force a value for a variable if they need to.
-                    _merged = dict(resolved_session_mapping)
-                    _merged.update(mapping or {})
-                    mapping = _merged
+                    _ss = TraceSession.objects.filter(id=_session_id).first()
+                    if _ss:
+                        # Get trace IDs for this session
+                        _trace_qs = Trace.objects.filter(session=_ss, deleted=False)
 
-                if call_context is None and _call_id:
-                    try:
-                        from simulate.models.test_execution import (
-                            CallExecution,
-                            CallTranscript,
+                        # Aggregate stats across all spans in session
+                        _sess_agg = ObservationSpan.objects.filter(
+                            trace__in=_trace_qs, deleted=False
+                        ).aggregate(
+                            total_spans=Count("id"),
+                            error_count=Count("id", filter=Q(status="ERROR")),
+                            total_tokens=Sum("total_tokens"),
+                            total_cost=Sum("cost"),
+                            start_time=Min("start_time"),
+                            end_time=Max("end_time"),
                         )
 
-                        _ce = CallExecution.objects.filter(id=_call_id).first()
-                        if _ce:
-                            call_context = {
-                                "id": str(_ce.id),
-                                "status": _ce.status,
-                                "call_type": _ce.call_type,
-                                "simulation_call_type": _ce.simulation_call_type,
-                                "phone_number": _ce.phone_number,
-                                "started_at": (
-                                    str(_ce.started_at) if _ce.started_at else None
-                                ),
-                                "ended_at": str(_ce.ended_at) if _ce.ended_at else None,
-                                "duration_seconds": _ce.duration_seconds,
-                                "recording_url": _ce.recording_url,
-                                "call_summary": _ce.call_summary,
-                                "ended_reason": _ce.ended_reason,
-                                "overall_score": (
-                                    float(_ce.overall_score)
-                                    if _ce.overall_score is not None
-                                    else None
-                                ),
-                                "error_message": _ce.error_message,
-                                "message_count": _ce.message_count,
-                                "response_time_ms": _ce.response_time_ms,
-                                "call_metadata": _ce.call_metadata or {},
-                                "analysis_data": _ce.analysis_data or {},
-                                "evaluation_data": _ce.evaluation_data or {},
-                                "eval_outputs": _ce.eval_outputs or {},
-                                "logs_summary": _ce.logs_summary,
-                                "scenario": build_eval_playground_scenario_context(_ce),
-                                "transcript": [
-                                    {
-                                        "speaker": t.speaker_role,
-                                        "content": t.content,
-                                        "start_ms": t.start_time_ms,
-                                    }
-                                    for t in CallTranscript.objects.filter(
-                                        call_execution_id=_ce.id
-                                    ).order_by("start_time_ms")[:200]
-                                ],
-                            }
-                    except Exception as _e:
-                        logger.warning(f"Failed to fetch call {_call_id}: {_e}")
+                        # Lightweight trace summaries for the agent to
+                        # browse and decide which to drill into. Use one
+                        # grouped aggregate instead of N+1 per-trace queries.
+                        _traces_page = list(_trace_qs.order_by("created_at")[:100])
+                        _trace_ids = [_tr.id for _tr in _traces_page]
+                        _per_trace = {
+                            _row["trace_id"]: _row
+                            for _row in (
+                                ObservationSpan.objects.filter(
+                                    trace_id__in=_trace_ids, deleted=False
+                                )
+                                .values("trace_id")
+                                .annotate(
+                                    span_count=Count("id"),
+                                    error_count=Count(
+                                        "id", filter=Q(status="ERROR")
+                                    ),
+                                    total_tokens=Sum("total_tokens"),
+                                    total_latency=Sum("latency_ms"),
+                                )
+                            )
+                        }
+                        _trace_summaries = []
+                        for _tr in _traces_page:
+                            _agg = _per_trace.get(_tr.id, {})
+                            _err_count = _agg.get("error_count") or 0
+                            _trace_summaries.append(
+                                {
+                                    "id": str(_tr.id),
+                                    "name": _tr.name,
+                                    "created_at": (
+                                        _tr.created_at.isoformat()
+                                        if _tr.created_at
+                                        else None
+                                    ),
+                                    "span_count": _agg.get("span_count") or 0,
+                                    "error_count": _err_count,
+                                    "total_tokens": _agg.get("total_tokens") or 0,
+                                    "total_latency_ms": _agg.get("total_latency")
+                                    or 0,
+                                    "has_error": bool(_tr.error or _err_count > 0),
+                                }
+                            )
 
-                if isinstance(runtime_config, dict):
-                    config_params = runtime_config.get("params", {})
-                    if (
-                        not isinstance(config_params, dict) or not config_params
-                    ) and isinstance(top_level_params, dict):
-                        runtime_config["params"] = top_level_params
+                        _start = _sess_agg["start_time"]
+                        _end = _sess_agg["end_time"]
+                        _duration = None
+                        if _start and _end:
+                            _duration = (_end - _start).total_seconds()
 
+                        session_context = {
+                            "id": str(_ss.id),
+                            "name": _ss.name,
+                            "project_id": (
+                                str(_ss.project_id) if _ss.project_id else None
+                            ),
+                            "bookmarked": _ss.bookmarked,
+                            "created_at": (
+                                _ss.created_at.isoformat()
+                                if _ss.created_at
+                                else None
+                            ),
+                            "trace_count": _trace_qs.count(),
+                            "total_spans": _sess_agg["total_spans"] or 0,
+                            "error_count": _sess_agg["error_count"] or 0,
+                            "total_tokens": _sess_agg["total_tokens"] or 0,
+                            "total_cost": (
+                                float(round(_sess_agg["total_cost"], 6))
+                                if _sess_agg["total_cost"]
+                                else 0
+                            ),
+                            "start_time": (str(_start) if _start else None),
+                            "end_time": (str(_end) if _end else None),
+                            "duration_seconds": _duration,
+                            "traces": _trace_summaries,
+                        }
+                except Exception as _e:
+                    logger.warning(f"Failed to fetch session {_session_id}: {_e}")
+
+            # Resolve session-level dotted-path mapping server-side.
+            # The TaskLivePreview session branch sends `mapping_paths`
+            # (variable -> dotted path) because its lazy fetch only
+            # populates the first trace's spans, so local resolution
+            # would silently drop deeper mappings. `_process_session_mapping`
+            # walks the real DB models — same code path as the
+            # eval-task runtime, so preview results match prod.
+            logger.info(
+                "eval_playground_session_mapping_inputs",
+                extra={
+                    "session_id": str(_session_id) if _session_id else None,
+                    "mapping_paths_keys": (
+                        list(mapping_paths.keys())
+                        if isinstance(mapping_paths, dict)
+                        else None
+                    ),
+                    "incoming_mapping_keys": (
+                        list(mapping.keys()) if isinstance(mapping, dict) else None
+                    ),
+                },
+            )
+            if _session_id and isinstance(mapping_paths, dict) and mapping_paths:
+                from tracer.models.trace_session import TraceSession
+                from tracer.utils.eval import _process_session_mapping
+
+                _ss_for_mapping = TraceSession.objects.filter(
+                    id=_session_id
+                ).first()
+                if _ss_for_mapping is None:
+                    return self._gm.bad_request(f"Session {_session_id} not found")
                 try:
-                    eval_template = EvalTemplate.no_workspace_objects.get(
-                        id=template_id, deleted=False
-                    )
-                except EvalTemplate.DoesNotExist:
-                    return self._gm.bad_request(
-                        get_error_message("MISSING_EVAL_TEMPLATE")
-                    )
-
-                # Validate + coerce function params (matches Dataset / Experiments
-                # paths). Without this, FE-sent blank strings flow straight into
-                # int()/float() inside eval bodies and crash with cryptic errors.
-                try:
-                    runtime_config = normalize_eval_runtime_config(
-                        eval_template.config, runtime_config
+                    resolved_session_mapping = _process_session_mapping(
+                        dict(mapping_paths),
+                        _ss_for_mapping,
+                        template_id,
                     )
                 except ValueError as ve:
                     return self._gm.bad_request(str(ve))
+                logger.info(
+                    "eval_playground_session_mapping_resolved",
+                    extra={
+                        "session_id": str(_session_id),
+                        "resolved_keys": list(resolved_session_mapping.keys()),
+                    },
+                )
+                # FE-supplied resolved `mapping` wins over the
+                # server-side resolution on key collision — lets the
+                # caller force a value for a variable if they need to.
+                _merged = dict(resolved_session_mapping)
+                _merged.update(mapping or {})
+                mapping = _merged
 
+            if call_context is None and _call_id:
                 try:
-                    # Run the evaluation with the provided config
-                    response = run_eval_func(
-                        runtime_config,
-                        mapping,
-                        eval_template,
-                        org,
-                        model=model,
-                        error_localizer=error_localizer,
-                        source=SourceChoices.EVAL_PLAYGROUND.value,
-                        kb_id=kb_id,
-                        workspace=request.workspace,
-                        input_data_types=input_data_types,
-                        row_context=row_context,
-                        span_context=span_context,
-                        trace_context=trace_context,
-                        session_context=session_context,
-                        call_context=call_context,
+                    from simulate.models.test_execution import (
+                        CallExecution,
+                        CallTranscript,
                     )
 
-                    return self._gm.success_response(
-                        response if response else "Evaluation has been updated."
-                    )
-                except Exception as e:
-                    if UsageLimitExceeded is not None and isinstance(
-                        e, UsageLimitExceeded
-                    ):
-                        logger.warning(f"Eval playground usage limit: {str(e)}")
-                        return self._gm.usage_limit_response(e.check_result)
-                    logger.error(f"Error in run_eval_func: {str(e)}")
-                    return self._gm.bad_request(
-                        f"Failed to run Eval due to the reason: {str(e)}"
-                    )
+                    _ce = CallExecution.objects.filter(id=_call_id).first()
+                    if _ce:
+                        call_context = {
+                            "id": str(_ce.id),
+                            "status": _ce.status,
+                            "call_type": _ce.call_type,
+                            "simulation_call_type": _ce.simulation_call_type,
+                            "phone_number": _ce.phone_number,
+                            "started_at": (
+                                str(_ce.started_at) if _ce.started_at else None
+                            ),
+                            "ended_at": str(_ce.ended_at) if _ce.ended_at else None,
+                            "duration_seconds": _ce.duration_seconds,
+                            "recording_url": _ce.recording_url,
+                            "call_summary": _ce.call_summary,
+                            "ended_reason": _ce.ended_reason,
+                            "overall_score": (
+                                float(_ce.overall_score)
+                                if _ce.overall_score is not None
+                                else None
+                            ),
+                            "error_message": _ce.error_message,
+                            "message_count": _ce.message_count,
+                            "response_time_ms": _ce.response_time_ms,
+                            "call_metadata": _ce.call_metadata or {},
+                            "analysis_data": _ce.analysis_data or {},
+                            "evaluation_data": _ce.evaluation_data or {},
+                            "eval_outputs": _ce.eval_outputs or {},
+                            "logs_summary": _ce.logs_summary,
+                            "scenario": build_eval_playground_scenario_context(_ce),
+                            "transcript": [
+                                {
+                                    "speaker": t.speaker_role,
+                                    "content": t.content,
+                                    "start_ms": t.start_time_ms,
+                                }
+                                for t in CallTranscript.objects.filter(
+                                    call_execution_id=_ce.id
+                                ).order_by("start_time_ms")[:200]
+                            ],
+                        }
+                except Exception as _e:
+                    logger.warning(f"Failed to fetch call {_call_id}: {_e}")
 
-            else:
-                logger.info(f"serializer error: {serializer.errors}")
-                return self._gm.bad_request(serializer.errors)
+            if isinstance(runtime_config, dict):
+                config_params = runtime_config.get("params", {})
+                if (
+                    not isinstance(config_params, dict) or not config_params
+                ) and isinstance(top_level_params, dict):
+                    runtime_config["params"] = top_level_params
+
+            try:
+                eval_template = EvalTemplate.no_workspace_objects.get(
+                    id=template_id, deleted=False
+                )
+            except EvalTemplate.DoesNotExist:
+                return self._gm.bad_request(
+                    get_error_message("MISSING_EVAL_TEMPLATE")
+                )
+
+            # Validate + coerce function params (matches Dataset / Experiments
+            # paths). Without this, FE-sent blank strings flow straight into
+            # int()/float() inside eval bodies and crash with cryptic errors.
+            try:
+                runtime_config = normalize_eval_runtime_config(
+                    eval_template.config, runtime_config
+                )
+            except ValueError as ve:
+                return self._gm.bad_request(str(ve))
+
+            try:
+                # Run the evaluation with the provided config
+                response = run_eval_func(
+                    runtime_config,
+                    mapping,
+                    eval_template,
+                    org,
+                    model=model,
+                    error_localizer=error_localizer,
+                    source=SourceChoices.EVAL_PLAYGROUND.value,
+                    kb_id=kb_id,
+                    workspace=request.workspace,
+                    input_data_types=input_data_types,
+                    row_context=row_context,
+                    span_context=span_context,
+                    trace_context=trace_context,
+                    session_context=session_context,
+                    call_context=call_context,
+                )
+
+                return self._gm.success_response(
+                    response if response else "Evaluation has been updated."
+                )
+            except Exception as e:
+                if UsageLimitExceeded is not None and isinstance(
+                    e, UsageLimitExceeded
+                ):
+                    logger.warning(f"Eval playground usage limit: {str(e)}")
+                    return self._gm.usage_limit_response(e.check_result)
+                logger.error(f"Error in run_eval_func: {str(e)}")
+                return self._gm.bad_request(
+                    f"Failed to run Eval due to the reason: {str(e)}"
+                )
 
         except Exception as e:
             logger.exception(f"Error in EvalPlayGroundAPIView: {str(e)}")
@@ -5898,20 +5899,17 @@ class EvalPlayGroundFeedbackAPIView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EvalPlayGroundFeedbackSerializer,
+    @validated_request(
+        request_serializer=EvalPlayGroundFeedbackSerializer,
         responses={
             200: EvalPlaygroundFeedbackResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         try:
-            serializer = EvalPlayGroundFeedbackSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             log_id = validated_data.get("log_id", None)
             action_type = validated_data.get("action_type", None)
             value = validated_data.get("value", None)
@@ -6050,22 +6048,19 @@ class UpdateEvalTemplateView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=UpdateEvalTemplateSerializer,
+    @validated_request(
+        request_serializer=UpdateEvalTemplateSerializer,
         responses={
             200: LegacyEvalTemplateUpdateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization
 
-            serializer = UpdateEvalTemplateSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
 
             name = validated_data.get("name", None)
             function_eval = validated_data.get("function_eval", None)
@@ -6078,6 +6073,8 @@ class UpdateEvalTemplateView(APIView):
             eval_template_id = validated_data.get("eval_template_id", None)
             check_internet = validated_data.get("check_internet", False)
             required_keys = validated_data.get("required_keys", [])
+            eval_type_id = validated_data.get("eval_type_id")
+            error_localizer_enabled = validated_data.get("error_localizer_enabled")
 
             try:
                 eval_template = EvalTemplate.objects.get(
@@ -6132,6 +6129,12 @@ class UpdateEvalTemplateView(APIView):
                 configuration["config"] = validated_data.get("config", {}).get("config")
                 config = configuration
 
+            if eval_type_id:
+                config["eval_type_id"] = eval_type_id
+
+            if error_localizer_enabled is not None:
+                eval_template.error_localizer_enabled = error_localizer_enabled
+
             eval_template.config = config
             eval_template.updated_at = timezone.now()
             eval_template.save(
@@ -6143,6 +6146,7 @@ class UpdateEvalTemplateView(APIView):
                     "model",
                     "choices",
                     "config",
+                    "error_localizer_enabled",
                     "updated_at",
                     "name",
                 ]
@@ -6159,22 +6163,19 @@ class DeleteEvalTemplateView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=DeleteEvalTemplateSerializer,
+    @validated_request(
+        request_serializer=DeleteEvalTemplateSerializer,
         responses={
             200: ModelHubStringResultResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization
 
-            serializer = DeleteEvalTemplateSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             eval_template_id = validated_data.get("eval_template_id", None)
 
             try:
@@ -6228,22 +6229,19 @@ class DuplicateEvalTemplateView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=DuplicateEvalTemplateSerializer,
+    @validated_request(
+        request_serializer=DuplicateEvalTemplateSerializer,
         responses={
             200: DuplicateEvalTemplateResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         try:
             org = getattr(request, "organization", None) or request.user.organization
 
-            serializer = DuplicateEvalTemplateSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             eval_template_id = validated_data.get("eval_template_id", None)
             name = validated_data.get("name", None)
 
@@ -6294,28 +6292,24 @@ class TestEvaluationTemplateAPIView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=TestEvalTemplateSerializer,
+    @validated_request(
+        request_serializer=TestEvalTemplateSerializer,
         responses={200: EvalExecutionResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
         from tfc.ee_gates import turing_oss_gate_for_template
 
+        validated_data = request.validated_data
         gate = turing_oss_gate_for_template(
-            request.data.get("model"),
-            template_id=request.data.get("template_id"),
-            eval_type=request.data.get("eval_type"),
+            validated_data.get("model"),
+            template_id=validated_data.get("template_id"),
+            eval_type=validated_data.get("eval_type"),
         )
         if gate is not None:
             return gate
 
         try:
-            serializer = TestEvalTemplateSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
-
             template_type = validated_data.get("template_type", None)
             mappings = validated_data["config"].get("mapping", {})
             input_data_types = validated_data.get("input_data_types", {})

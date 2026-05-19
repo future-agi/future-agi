@@ -8,6 +8,41 @@ import axiosInstance from "../axios";
 import { canonicalKeys } from "../utils";
 
 describe("axios response shape", () => {
+  it("strips response-added camelCase aliases before sending request bodies", () => {
+    const fulfilled = axiosInstance.interceptors.request.handlers.find(
+      (handler) => handler.fulfilled,
+    )?.fulfilled;
+    const choiceScores = { yes_no: 1 };
+
+    const config = {
+      url: "/model-hub/eval-templates/create-v2/",
+      method: "post",
+      data: {
+        is_draft: true,
+        isDraft: true,
+        output_type: "pass_fail",
+        outputType: "pass_fail",
+        choice_scores: choiceScores,
+        choiceScores,
+        nested: {
+          pass_threshold: 0.5,
+          passThreshold: 0.5,
+        },
+      },
+    };
+
+    const result = fulfilled(config);
+
+    expect(result.data).toEqual({
+      is_draft: true,
+      output_type: "pass_fail",
+      choice_scores: { yes_no: 1 },
+      nested: {
+        pass_threshold: 0.5,
+      },
+    });
+  });
+
   it("adds camelCase aliases while canonicalKeys still hides duplicates", () => {
     const fulfilled = axiosInstance.interceptors.response.handlers.find(
       (handler) => handler.fulfilled,

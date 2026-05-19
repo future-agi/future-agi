@@ -1,136 +1,127 @@
-import json
+import uuid
 
-from model_hub.serializers.contracts import (
-    ModelHubEmptyRequestSerializer,
-    OptimizeDatasetColumnConfigUpdateRequestSerializer,
-    OptimizeDatasetKnowledgeBaseRequestSerializer,
-    OptimizeDatasetListQuerySerializer,
-    OptimizeDatasetMutationRequestSerializer,
-    OptimizeDatasetPageRequestSerializer,
-)
+import pytest
+from rest_framework import status
 
 
-def test_optimize_dataset_list_query_accepts_canonical_pagination_and_filters():
-    serializer = OptimizeDatasetListQuerySerializer(
-        data={
-            "page": "2",
-            "limit": "25",
-            "filters": json.dumps(
-                [
-                    {
-                        "key": "status",
-                        "operator": "equals",
-                        "value": ["completed"],
-                    }
-                ]
-            ),
-        }
+def assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["details"][field_name] == ["Unknown field."]
+
+
+@pytest.mark.django_db
+def test_optimize_dataset_list_rejects_unknown_query_fields(auth_client):
+    response = auth_client.get(
+        f"/model-hub/optimize-dataset/{uuid.uuid4()}/",
+        {"filterConfig": "legacy camel alias"},
     )
 
-    assert serializer.is_valid(), serializer.errors
-    assert serializer.validated_data["page"] == 2
-    assert serializer.validated_data["limit"] == 25
-    assert serializer.validated_data["filters"][0]["key"] == "status"
+    assert_unknown_field(response, "filterConfig")
 
 
-def test_optimize_dataset_list_query_rejects_legacy_aliases():
-    serializer = OptimizeDatasetListQuerySerializer(
-        data={
-            "pageSize": "25",
-            "filters": json.dumps(
-                [
-                    {
-                        "filterConfig": {
-                            "filter_type": "text",
-                            "filter_op": "equals",
-                            "filter_value": "completed",
-                        }
-                    }
-                ]
-            ),
-        }
+@pytest.mark.django_db
+def test_optimize_dataset_create_rejects_unknown_request_fields(auth_client):
+    response = auth_client.post(
+        f"/model-hub/optimize-dataset/{uuid.uuid4()}/",
+        {
+            "name": "Optimize responses",
+            "start_date": "2026-01-01T00:00:00",
+            "end_date": "2026-01-02T00:00:00",
+            "model": str(uuid.uuid4()),
+            "optimize_type": "template",
+            "environment": "production",
+            "version": "v1",
+            "metrics": [str(uuid.uuid4())],
+            "optimizeType": "legacy camel alias",
+        },
+        format="json",
     )
 
-    assert not serializer.is_valid()
-    assert "pageSize" in serializer.errors
+    assert_unknown_field(response, "optimizeType")
 
 
-def test_optimize_dataset_page_request_rejects_page_number_aliases():
-    serializer = OptimizeDatasetPageRequestSerializer(
-        data={"page_number": 0, "page_size": 10}
+@pytest.mark.django_db
+def test_optimize_right_answer_results_rejects_unknown_request_fields(auth_client):
+    response = auth_client.post(
+        f"/model-hub/optimize-dataset/{uuid.uuid4()}/right-answers/{uuid.uuid4()}/",
+        {"page": 1, "limit": 10, "pageSize": 10},
+        format="json",
     )
 
-    assert not serializer.is_valid()
-    assert "page_number" in serializer.errors
-    assert "page_size" in serializer.errors
+    assert_unknown_field(response, "pageSize")
 
 
-def test_optimize_dataset_column_config_request_is_exact():
-    serializer = OptimizeDatasetColumnConfigUpdateRequestSerializer(
-        data={"columns": [{"value": "input", "label": "Input"}]}
+@pytest.mark.django_db
+def test_optimize_template_results_rejects_unknown_request_fields(auth_client):
+    response = auth_client.post(
+        f"/model-hub/optimize-dataset/{uuid.uuid4()}/prompt-template-result/{uuid.uuid4()}/",
+        {"unexpected": "legacy field"},
+        format="json",
     )
 
-    assert serializer.is_valid(), serializer.errors
+    assert_unknown_field(response, "unexpected")
 
-    serializer = OptimizeDatasetColumnConfigUpdateRequestSerializer(
-        data={"columnConfig": [{"value": "input"}]}
+
+@pytest.mark.django_db
+def test_optimize_template_explore_rejects_unknown_request_fields(auth_client):
+    response = auth_client.post(
+        f"/model-hub/optimize-dataset/{uuid.uuid4()}/prompt-template-explore/{uuid.uuid4()}/",
+        {"page": 1, "limit": 10, "pageSize": 10},
+        format="json",
     )
 
-    assert not serializer.is_valid()
-    assert "columnConfig" in serializer.errors
+    assert_unknown_field(response, "pageSize")
 
 
-def test_optimize_dataset_create_rejects_camel_case_fields():
-    serializer = OptimizeDatasetMutationRequestSerializer(
-        data={
-            "startDate": "2026-01-01T00:00:00Z",
-            "endDate": "2026-01-02T00:00:00Z",
-            "optimizeType": "template",
-        }
+@pytest.mark.django_db
+def test_optimize_column_config_rejects_unknown_request_fields(auth_client):
+    response = auth_client.post(
+        f"/model-hub/optimize-dataset/{uuid.uuid4()}/column-config/",
+        {"columns": [], "columnConfig": []},
+        format="json",
     )
 
-    assert not serializer.is_valid()
-    assert "startDate" in serializer.errors
-    assert "endDate" in serializer.errors
-    assert "optimizeType" in serializer.errors
+    assert_unknown_field(response, "columnConfig")
 
 
-def test_optimize_dataset_kb_request_rejects_camel_case_fields():
-    serializer = OptimizeDatasetKnowledgeBaseRequestSerializer(
-        data={"knowledgeBaseFilters": {"source": "docs"}}
+@pytest.mark.django_db
+def test_optimize_right_answer_column_config_rejects_unknown_request_fields(
+    auth_client,
+):
+    response = auth_client.post(
+        f"/model-hub/optimize-dataset/{uuid.uuid4()}/column-config/right-answers/{uuid.uuid4()}/",
+        {"columns": [], "columnConfig": []},
+        format="json",
     )
 
-    assert not serializer.is_valid()
-    assert "knowledgeBaseFilters" in serializer.errors
+    assert_unknown_field(response, "columnConfig")
 
 
-def test_optimize_dataset_kb_request_accepts_filter_key_list():
-    serializer = OptimizeDatasetKnowledgeBaseRequestSerializer(
-        data={
-            "name": "kb prompt",
-            "knowledge_base_filters": ["source", "document_type"],
-            "knowledge_base_metrics": {"coverage": "high"},
-        }
+@pytest.mark.django_db
+def test_optimize_prompt_explore_column_config_rejects_unknown_request_fields(
+    auth_client,
+):
+    response = auth_client.post(
+        f"/model-hub/optimize-dataset/{uuid.uuid4()}/column-config/prompt-template-explore/{uuid.uuid4()}/",
+        {"columns": [], "columnConfig": []},
+        format="json",
     )
 
-    assert serializer.is_valid(), serializer.errors
-    assert serializer.validated_data["knowledge_base_filters"] == [
-        "source",
-        "document_type",
-    ]
+    assert_unknown_field(response, "columnConfig")
 
 
-def test_optimize_dataset_kb_request_rejects_filter_object():
-    serializer = OptimizeDatasetKnowledgeBaseRequestSerializer(
-        data={"knowledge_base_filters": {"source": "docs"}}
+@pytest.mark.django_db
+def test_optimize_knowledge_base_rejects_unknown_request_fields(auth_client):
+    response = auth_client.post(
+        "/model-hub/optimize-dataset/knowledge-base/",
+        {
+            "name": "Optimize RAG",
+            "knowledge_base_metrics": {},
+            "knowledge_base_filters": [],
+            "prompt": "Improve retrieval",
+            "knowledgeBaseMetrics": "legacy camel alias",
+        },
+        format="json",
     )
 
-    assert not serializer.is_valid()
-    assert "knowledge_base_filters" in serializer.errors
-
-
-def test_empty_request_serializer_rejects_body_fields():
-    serializer = ModelHubEmptyRequestSerializer(data={"page": 1})
-
-    assert not serializer.is_valid()
-    assert "page" in serializer.errors
+    assert_unknown_field(response, "knowledgeBaseMetrics")

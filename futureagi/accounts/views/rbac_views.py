@@ -5,12 +5,9 @@ These run alongside the old endpoints during transition.
 Old endpoints remain untouched until Phase 4 cutover.
 """
 
-import json
-
 import structlog
 from django.db import IntegrityError, models, transaction
 from django.utils import timezone
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -53,6 +50,7 @@ from tfc.permissions.utils import (
     get_effective_workspace_level,
     get_org_membership,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.audit import log_audit
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -94,17 +92,15 @@ class InviteCreateAPIView(APIView):
 
     permission_classes = [IsAuthenticated, IsOrganizationAdminOrWorkspaceAdmin]
 
-    @swagger_auto_schema(
-        request_body=InviteCreateSerializer,
+    @validated_request(
+        request_serializer=InviteCreateSerializer,
         responses={200: InviteCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         gm = GeneralMethods()
-        serializer = InviteCreateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
 
-        data = serializer.validated_data
+        data = request.validated_data
         user = request.user
         organization = resolve_org(request)
 
@@ -370,20 +366,18 @@ class InviteResendAPIView(APIView):
 
     permission_classes = [IsAuthenticated, IsOrganizationAdminOrWorkspaceAdmin]
 
-    @swagger_auto_schema(
-        request_body=InviteResendSerializer,
+    @validated_request(
+        request_serializer=InviteResendSerializer,
         responses={200: RBACMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         gm = GeneralMethods()
-        serializer = InviteResendSerializer(data=request.data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
 
         organization = resolve_org(request)
         try:
             invite = OrganizationInvite.objects.get(
-                id=serializer.validated_data["invite_id"],
+                id=request.validated_data["invite_id"],
                 organization=organization,
                 status=InviteStatus.PENDING,
             )
@@ -399,7 +393,7 @@ class InviteResendAPIView(APIView):
                 )
 
         # Optionally update org level if provided — with escalation guard
-        new_org_level = serializer.validated_data.get("org_level")
+        new_org_level = request.validated_data.get("org_level")
         if new_org_level is not None:
             actor_membership = get_org_membership(request.user)
             if not actor_membership:
@@ -434,20 +428,18 @@ class InviteCancelAPIView(APIView):
 
     permission_classes = [IsAuthenticated, IsOrganizationAdminOrWorkspaceAdmin]
 
-    @swagger_auto_schema(
-        request_body=InviteCancelSerializer,
+    @validated_request(
+        request_serializer=InviteCancelSerializer,
         responses={200: RBACMessageResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def delete(self, request):
         gm = GeneralMethods()
-        serializer = InviteCancelSerializer(data=request.data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
 
         organization = resolve_org(request)
         try:
             invite = OrganizationInvite.objects.get(
-                id=serializer.validated_data["invite_id"],
+                id=request.validated_data["invite_id"],
                 organization=organization,
                 status=InviteStatus.PENDING,
             )
@@ -512,38 +504,14 @@ class MemberListAPIView(APIView):
 
     permission_classes = [IsAuthenticated, IsOrganizationAdmin]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=MemberListRequestSerializer,
         responses={200: MemberListResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def get(self, request):
         gm = GeneralMethods()
-
-        # Pre-process query params: parse JSON-encoded list params
-        query_data = request.query_params.copy()
-        for list_field in (
-            "filter_status",
-            "filterStatus",
-            "filter_role",
-            "filterRole",
-        ):
-            raw = query_data.get(list_field)
-            if raw and isinstance(raw, str) and raw.startswith("["):
-                try:
-                    query_data.setlist(list_field, json.loads(raw))
-                except (ValueError, TypeError):
-                    pass
-        # Normalize camelCase → snake_case for query params
-        if "filterStatus" in query_data and "filter_status" not in query_data:
-            query_data.setlist("filter_status", query_data.getlist("filterStatus"))
-        if "filterRole" in query_data and "filter_role" not in query_data:
-            query_data.setlist("filter_role", query_data.getlist("filterRole"))
-
-        serializer = MemberListRequestSerializer(data=query_data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
-
-        params = serializer.validated_data
+        params = request.validated_query_data
         organization = resolve_org(request)
 
         if not organization:
@@ -844,17 +812,15 @@ class MemberRoleUpdateAPIView(APIView):
         CanManageTargetUser,
     ]
 
-    @swagger_auto_schema(
-        request_body=MemberRoleUpdateSerializer,
+    @validated_request(
+        request_serializer=MemberRoleUpdateSerializer,
         responses={200: MemberRoleUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         gm = GeneralMethods()
-        serializer = MemberRoleUpdateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
 
-        data = serializer.validated_data
+        data = request.validated_data
         organization = resolve_org(request)
 
         if organization:
@@ -1049,18 +1015,16 @@ class MemberRemoveAPIView(APIView):
         CanManageTargetUser,
     ]
 
-    @swagger_auto_schema(
-        request_body=MemberRemoveSerializer,
+    @validated_request(
+        request_serializer=MemberRemoveSerializer,
         responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def delete(self, request):
         gm = GeneralMethods()
-        serializer = MemberRemoveSerializer(data=request.data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
 
         organization = resolve_org(request)
-        user_id = serializer.validated_data["user_id"]
+        user_id = request.validated_data["user_id"]
 
         # Cannot remove yourself
         if str(request.user.id) == str(user_id):
@@ -1161,18 +1125,16 @@ class MemberReactivateAPIView(APIView):
         CanManageTargetUser,
     ]
 
-    @swagger_auto_schema(
-        request_body=MemberRemoveSerializer,
+    @validated_request(
+        request_serializer=MemberRemoveSerializer,
         responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def post(self, request):
         gm = GeneralMethods()
-        serializer = MemberRemoveSerializer(data=request.data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
 
         organization = resolve_org(request)
-        user_id = serializer.validated_data["user_id"]
+        user_id = request.validated_data["user_id"]
 
         # Cannot reactivate yourself
         if str(request.user.id) == str(user_id):
@@ -1279,9 +1241,10 @@ class WorkspaceMemberListAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=WorkspaceMemberListRequestSerializer,
         responses={200: MemberListResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def get(self, request, workspace_id):
         gm = GeneralMethods()
@@ -1305,30 +1268,7 @@ class WorkspaceMemberListAPIView(APIView):
             if ws_level is None or ws_level < Level.WORKSPACE_ADMIN:
                 return gm.forbidden_response(get_error_message("WS_ADMIN_REQUIRED"))
 
-        # Pre-process query params: parse JSON-encoded list params
-        query_data = request.query_params.copy()
-        for list_field in (
-            "filter_status",
-            "filterStatus",
-            "filter_role",
-            "filterRole",
-        ):
-            raw = query_data.get(list_field)
-            if raw and isinstance(raw, str) and raw.startswith("["):
-                try:
-                    query_data.setlist(list_field, json.loads(raw))
-                except (ValueError, TypeError):
-                    pass
-        # Normalize camelCase → snake_case for query params
-        if "filterStatus" in query_data and "filter_status" not in query_data:
-            query_data.setlist("filter_status", query_data.getlist("filterStatus"))
-        if "filterRole" in query_data and "filter_role" not in query_data:
-            query_data.setlist("filter_role", query_data.getlist("filterRole"))
-
-        serializer = WorkspaceMemberListRequestSerializer(data=query_data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
-        params = serializer.validated_data
+        params = request.validated_query_data
 
         # 1. Get explicit workspace members
         # Filter on org membership active status to exclude users who were
@@ -1529,12 +1469,13 @@ class WorkspaceMemberRoleUpdateAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=WorkspaceMemberRoleUpdateSerializer,
+    @validated_request(
+        request_serializer=WorkspaceMemberRoleUpdateSerializer,
         responses={
             200: WorkspaceMemberRoleUpdateResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, workspace_id):
         gm = GeneralMethods()
@@ -1562,11 +1503,7 @@ class WorkspaceMemberRoleUpdateAPIView(APIView):
             if actor_ws_level is None or actor_ws_level < Level.WORKSPACE_ADMIN:
                 return gm.forbidden_response(get_error_message("WS_ADMIN_REQUIRED"))
 
-        serializer = WorkspaceMemberRoleUpdateSerializer(data=request.data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
-
-        data = serializer.validated_data
+        data = request.validated_data
         user_id = data["user_id"]
         new_ws_level = data["ws_level"]
 
@@ -1636,9 +1573,10 @@ class WorkspaceMemberRemoveAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=WorkspaceMemberRemoveSerializer,
+    @validated_request(
+        request_serializer=WorkspaceMemberRemoveSerializer,
         responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
     )
     def delete(self, request, workspace_id):
         gm = GeneralMethods()
@@ -1662,11 +1600,7 @@ class WorkspaceMemberRemoveAPIView(APIView):
             if actor_ws_level is None or actor_ws_level < Level.WORKSPACE_ADMIN:
                 return gm.forbidden_response(get_error_message("WS_ADMIN_REQUIRED"))
 
-        serializer = WorkspaceMemberRemoveSerializer(data=request.data)
-        if not serializer.is_valid():
-            return gm.bad_request(serializer.errors)
-
-        user_id = serializer.validated_data["user_id"]
+        user_id = request.validated_data["user_id"]
 
         # Cannot remove yourself
         if str(request.user.id) == str(user_id):

@@ -25,6 +25,7 @@ from model_hub.services.derived_variable_service import (
     get_derived_variable_schema,
     update_prompt_version_derived_variables,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -175,16 +176,16 @@ def get_derived_variable_schema_view(request, prompt_id, column_name):
         )
 
 
-@swagger_auto_schema(
-    method="post",
-    request_body=DerivedVariableExtractRequestSerializer,
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@validated_request(
+    request_serializer=DerivedVariableExtractRequestSerializer,
     responses={
         200: DerivedVariableDetailResponseSerializer,
         **MODEL_HUB_ERROR_RESPONSES,
     },
+    reject_unknown_fields=True,
 )
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
 def extract_derived_variables(request, prompt_id):
     """
     Manually trigger extraction of derived variables from outputs.
@@ -208,10 +209,10 @@ def extract_derived_variables(request, prompt_id):
         }
     """
     try:
-        version = request.data.get("version")
-        column_name = request.data.get("column_name", "output")
-        output_index = request.data.get("output_index", 0)
-        response_format_type = request.data.get("response_format_type")
+        version = request.validated_data.get("version")
+        column_name = request.validated_data.get("column_name", "output")
+        output_index = request.validated_data.get("output_index", 0)
+        response_format_type = request.validated_data.get("response_format_type")
 
         if not version:
             return _gm.bad_request("Version is required")
@@ -245,16 +246,16 @@ def extract_derived_variables(request, prompt_id):
         return _gm.internal_server_error_response("Failed to extract derived variables")
 
 
-@swagger_auto_schema(
-    method="post",
-    request_body=DerivedVariablePreviewRequestSerializer,
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+@validated_request(
+    request_serializer=DerivedVariablePreviewRequestSerializer,
     responses={
         200: DerivedVariableDetailResponseSerializer,
         **MODEL_HUB_ERROR_RESPONSES,
     },
+    reject_unknown_fields=True,
 )
-@api_view(["POST"])
-@permission_classes([IsAuthenticated])
 def preview_derived_variables(request):
     """
     Preview derived variables from JSON content without saving.
@@ -275,8 +276,8 @@ def preview_derived_variables(request):
         }
     """
     try:
-        content = request.data.get("content")
-        column_name = request.data.get("column_name", "output")
+        content = request.validated_data.get("content")
+        column_name = request.validated_data.get("column_name", "output")
 
         if not content:
             return _gm.bad_request("Content is required")

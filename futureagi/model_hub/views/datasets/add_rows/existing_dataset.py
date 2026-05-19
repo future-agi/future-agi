@@ -4,7 +4,6 @@ import uuid
 
 import structlog
 from django.shortcuts import get_object_or_404
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -17,6 +16,7 @@ from model_hub.serializers.contracts import (
 from model_hub.serializers.develop_dataset_contracts import (
     DatasetRowsImportedResponseSerializer,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
@@ -41,17 +41,19 @@ class AddRowsFromExistingView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=DatasetAddRowsFromExistingRequestSerializer,
+    @validated_request(
+        request_serializer=DatasetAddRowsFromExistingRequestSerializer,
         responses={
             200: DatasetRowsImportedResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            source_dataset_id = request.data.get("source_dataset_id")
-            column_mapping = request.data.get("column_mapping")
+            data = request.validated_data
+            source_dataset_id = data.get("source_dataset_id")
+            column_mapping = data.get("column_mapping")
 
             if source_dataset_id == dataset_id:
                 return self._gm.bad_request(

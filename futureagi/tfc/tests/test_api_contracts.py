@@ -1,11 +1,12 @@
 from pathlib import Path
 
+from rest_framework.decorators import api_view
 from rest_framework import serializers
 from rest_framework.response import Response
 from rest_framework.test import APIRequestFactory
 from rest_framework.views import APIView
 
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import validated_api_request, validated_request
 
 
 class _DemoRequestSerializer(serializers.Serializer):
@@ -35,6 +36,39 @@ class _DemoView(APIView):
         return Response(
             {"status": True, "result": {"name": request.validated_data["name"]}}
         )
+
+
+class _StrictRequestView(APIView):
+    @validated_request(
+        request_serializer=_DemoRequestSerializer,
+        reject_unknown_fields=True,
+    )
+    def post(self, request):
+        return Response({"status": True, "result": request.validated_data})
+
+
+class _SerializerAccessView(APIView):
+    @validated_request(
+        request_serializer=_DemoRequestSerializer,
+        query_serializer=_DemoQuerySerializer,
+    )
+    def post(self, request):
+        return Response(
+            {
+                "request_serializer": type(request.validated_serializer).__name__,
+                "query_serializer": type(request.validated_query_serializer).__name__,
+            }
+        )
+
+
+class _PartialRequestView(APIView):
+    @validated_request(
+        request_serializer=_DemoRequestSerializer,
+        partial_request_validation=True,
+        reject_unknown_fields=True,
+    )
+    def patch(self, request):
+        return Response({"status": True, "result": request.validated_data})
 
 
 class _BadResponseView(APIView):
@@ -69,6 +103,31 @@ class _BadListResponseView(APIView):
     )
     def get(self, request):
         return Response([{"wrong": "shape"}])
+
+
+@api_view(["POST"])
+@validated_request(
+    request_serializer=_DemoRequestSerializer,
+    responses={200: _DemoResponseSerializer},
+    reject_unknown_fields=True,
+)
+def _demo_function_view(request):
+    return Response(
+        {"status": True, "result": {"name": request.validated_data["name"]}}
+    )
+
+
+@api_view(["GET", "POST"])
+@validated_api_request(
+    request_serializer=_DemoRequestSerializer,
+    request_methods=["POST"],
+    reject_unknown_fields=True,
+    document=False,
+)
+def _demo_method_scoped_function_view(request):
+    return Response(
+        {"method": request.method, "validated_data": request.validated_data}
+    )
 
 
 def _swagger():
@@ -127,6 +186,62 @@ def test_validated_request_rejects_invalid_body():
     assert response.data["details"] == {"name": ["This field is required."]}
 
 
+def test_validated_request_can_reject_unknown_body_fields():
+    factory = APIRequestFactory()
+
+    response = _StrictRequestView.as_view()(
+        factory.post("/", {"name": "Future AGI", "displayName": "Future AGI"})
+    )
+
+    assert response.status_code == 400
+    assert response.data["status"] is False
+    assert response.data["message"] == "displayName: Unknown field."
+    assert response.data["details"] == {"displayName": ["Unknown field."]}
+
+
+def test_validated_request_exposes_validated_serializers_to_views():
+    factory = APIRequestFactory()
+
+    response = _SerializerAccessView.as_view()(
+        factory.post("/?page=1", {"name": "Future AGI"})
+    )
+
+    assert response.status_code == 200
+    assert response.data == {
+        "request_serializer": "_DemoRequestSerializer",
+        "query_serializer": "_DemoQuerySerializer",
+    }
+
+
+def test_validated_request_supports_partial_body_validation():
+    factory = APIRequestFactory()
+
+    response = _PartialRequestView.as_view()(factory.patch("/", {}, format="json"))
+    unknown_response = _PartialRequestView.as_view()(
+        factory.patch("/", {"displayName": "Future AGI"}, format="json")
+    )
+
+    assert response.status_code == 200
+    assert response.data == {"status": True, "result": {}}
+    assert unknown_response.status_code == 400
+    assert unknown_response.data["details"] == {"displayName": ["Unknown field."]}
+
+
+def test_validated_request_reports_unknown_and_normal_validation_errors():
+    factory = APIRequestFactory()
+
+    response = _StrictRequestView.as_view()(
+        factory.post("/", {"displayName": "Future AGI"})
+    )
+
+    assert response.status_code == 400
+    assert response.data["status"] is False
+    assert response.data["details"] == {
+        "name": ["This field is required."],
+        "displayName": ["Unknown field."],
+    }
+
+
 def test_validated_request_rejects_invalid_query_with_error_envelope():
     factory = APIRequestFactory()
 
@@ -137,6 +252,40 @@ def test_validated_request_rejects_invalid_query_with_error_envelope():
     assert response.data["result"] == "page: A valid integer is required."
     assert response.data["message"] == "page: A valid integer is required."
     assert response.data["details"] == {"page": ["A valid integer is required."]}
+
+
+def test_validated_request_supports_function_based_views():
+    factory = APIRequestFactory()
+
+    response = _demo_function_view(factory.post("/", {"name": "Future AGI"}))
+
+    assert response.status_code == 200
+    assert response.data == {"status": True, "result": {"name": "Future AGI"}}
+
+
+def test_validated_request_function_based_views_reject_unknown_fields():
+    factory = APIRequestFactory()
+
+    response = _demo_function_view(
+        factory.post("/", {"name": "Future AGI", "displayName": "Future AGI"})
+    )
+
+    assert response.status_code == 400
+    assert response.data["details"] == {"displayName": ["Unknown field."]}
+
+
+def test_validated_api_request_can_scope_body_validation_by_method():
+    factory = APIRequestFactory()
+
+    get_response = _demo_method_scoped_function_view(factory.get("/"))
+    post_response = _demo_method_scoped_function_view(
+        factory.post("/", {"name": "Future AGI", "displayName": "Future AGI"})
+    )
+
+    assert get_response.status_code == 200
+    assert get_response.data == {"method": "GET", "validated_data": {}}
+    assert post_response.status_code == 400
+    assert post_response.data["details"] == {"displayName": ["Unknown field."]}
 
 
 def test_validated_request_can_strictly_validate_responses():

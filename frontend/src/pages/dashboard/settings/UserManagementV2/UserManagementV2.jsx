@@ -165,10 +165,8 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
               pageNumber,
               sort,
               search: search,
-              filterStatus: selectedStatus
-                ? JSON.stringify([selectedStatus])
-                : [],
-              filterRole: selectedRole ? JSON.stringify([selectedRole]) : [],
+              filterStatus: selectedStatus ? [selectedStatus] : [],
+              filterRole: selectedRole ? [selectedRole] : [],
               workspaceId,
               endpoint: wsEndpoint,
             },
