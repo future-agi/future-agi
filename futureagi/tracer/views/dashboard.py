@@ -2403,10 +2403,14 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to duplicate widget: {e}", exc_info=True)
             return self._gm.bad_request("Failed to duplicate widget.")
 
-    def _execute_ch_query_config(self, query_config, workspace):
+    def execute_ch_query_config(self, query_config, workspace):
         """Execute a query_config against ClickHouse and return formatted results.
 
         Routes each metric to the appropriate builder based on source.
+
+        Public, request-independent: given (query_config, workspace) it reads
+        no auth/request state, so it is safe to call from other views — e.g.
+        the public shared-dashboard widget endpoint.
         """
         # Infer source from workflow for backward compat
         workflow = query_config.get("workflow", "")
@@ -2512,7 +2516,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "Widget has no query configuration or metrics defined."
                 )
 
-            return self._execute_ch_query_config(query_config, request.workspace)
+            return self.execute_ch_query_config(query_config, request.workspace)
         except Exception as e:
             logger.error("widget_query_execution_failed", error=str(e), exc_info=True)
             return self._gm.bad_request(f"Query execution failed: {str(e)}")
@@ -2528,7 +2532,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             if not query_config or not query_config.get("metrics"):
                 return self._gm.bad_request("query_config with metrics is required.")
 
-            return self._execute_ch_query_config(query_config, request.workspace)
+            return self.execute_ch_query_config(query_config, request.workspace)
         except Exception as e:
             logger.error("query_preview_failed", error=str(e), exc_info=True)
             return self._gm.bad_request(f"Query preview failed: {str(e)}")

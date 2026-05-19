@@ -1360,6 +1360,8 @@ export const endpoints = {
     removeAccess: (id, accessId) =>
       `/tracer/shared-links/${id}/access/${accessId}/`,
     resolve: (token) => `/tracer/shared/${token}/`,
+    widgetData: (token, widgetId) =>
+      `/tracer/shared/${token}/widget/${widgetId}/data/`,
   },
   organizations: {
     list: "/accounts/organizations/",

@@ -1,8 +1,13 @@
+/* eslint-disable react/prop-types */
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
-import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
+import { Alert, Box, CircularProgress, Typography } from "@mui/material";
 import { Helmet } from "react-helmet-async";
-import { useResolveSharedLink } from "src/api/shared-links";
+import {
+  useResolveSharedLink,
+  useResolveSharedWidgetData,
+} from "src/api/shared-links";
+import WidgetChart from "src/sections/dashboards/WidgetChart";
 import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
 import TraceTreeV2 from "src/components/traceDetail/TraceTreeV2";
 import SpanDetailPane from "src/components/traceDetail/SpanDetailPane";
@@ -21,17 +26,63 @@ function getSpan(entry) {
 }
 
 /**
- * Read-only dashboard view for shared links. Renders the dashboard's
- * widget layout (titles, descriptions, chart type) but not live data —
- * widget queries require workspace auth, which public viewers lack.
- * Recipients see structure plus a hint to sign in for live data.
+ * A single widget inside a shared dashboard. Fetches its data through the
+ * public, share-token-authorized endpoint (no workspace auth) and renders it
+ * with the same WidgetChart component the authenticated dashboard uses.
  */
-function SharedDashboardView({ dashboard }) {
-  const widgets = dashboard?.widgets || [];
-  const sortedWidgets = useMemo(
-    () => [...widgets].sort((a, b) => (a.position || 0) - (b.position || 0)),
-    [widgets],
+function SharedWidget({ token, widget }) {
+  const { data, isLoading, isError } = useResolveSharedWidgetData(
+    token,
+    widget.id,
   );
+
+  return (
+    <Box
+      sx={{
+        gridColumn: `span ${Math.min(12, Math.max(1, widget.width || 12))}`,
+        minHeight: 220,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
+        p: 2,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <Typography
+        sx={{ fontSize: 13, fontWeight: 600, color: "text.primary", mb: 0.5 }}
+      >
+        {widget.name || "Untitled widget"}
+      </Typography>
+      {widget.description && (
+        <Typography sx={{ fontSize: 11, color: "text.disabled", mb: 1 }}>
+          {widget.description}
+        </Typography>
+      )}
+      <Box sx={{ flex: 1, minHeight: 160 }}>
+        <WidgetChart
+          widget={widget}
+          sharedData={{ result: data?.result ?? data, isLoading, isError }}
+        />
+      </Box>
+    </Box>
+  );
+}
+
+/**
+ * Read-only dashboard view for shared links. Renders the dashboard's widgets
+ * with live data — each widget loads through the share-token-authorized
+ * endpoint, so public recipients see real charts without an auth wall.
+ */
+function SharedDashboardView({ token, dashboard }) {
+  const sortedWidgets = useMemo(() => {
+    const widgets = dashboard?.widgets || [];
+    return [...widgets].sort((a, b) => (a.position || 0) - (b.position || 0));
+  }, [dashboard?.widgets]);
+  const signInHref = `/auth/jwt/login?returnTo=${encodeURIComponent(
+    window.location.pathname,
+  )}`;
 
   return (
     <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
@@ -49,13 +100,27 @@ function SharedDashboardView({ dashboard }) {
       </Box>
 
       <Alert severity="info" sx={{ mb: 3 }}>
-        View only — sign in to load live widget data.
+        Read-only view —{" "}
+        <Box
+          component="a"
+          href={signInHref}
+          sx={{
+            color: "inherit",
+            fontWeight: 600,
+            textDecoration: "underline",
+          }}
+        >
+          sign in
+        </Box>{" "}
+        to open this dashboard in your workspace.
       </Alert>
 
       {sortedWidgets.length === 0 ? (
         <Box sx={{ textAlign: "center", py: 6, color: "text.disabled" }}>
           <Iconify icon="mdi:view-dashboard-outline" width={48} sx={{ mb: 1 }} />
-          <Typography sx={{ fontSize: 13 }}>No widgets in this dashboard.</Typography>
+          <Typography sx={{ fontSize: 13 }}>
+            No widgets in this dashboard.
+          </Typography>
         </Box>
       ) : (
         <Box
@@ -65,81 +130,9 @@ function SharedDashboardView({ dashboard }) {
             gap: 2,
           }}
         >
-          {sortedWidgets.map((w) => {
-            const chartType = w.chart_config?.type || w.chart_config?.chart_type;
-            const iconMap = {
-              line: "mdi:chart-line",
-              stacked_line: "mdi:chart-areaspline",
-              column: "mdi:chart-bar",
-              stacked_column: "mdi:chart-bar-stacked",
-              bar: "mdi:chart-bar",
-              stacked_bar: "mdi:chart-bar-stacked",
-              pie: "mdi:chart-pie",
-              table: "mdi:table",
-            };
-            const widgetIcon = iconMap[chartType] || "mdi:chart-box-outline";
-            return (
-              <Box
-                key={w.id}
-                sx={{
-                  gridColumn: `span ${Math.min(12, Math.max(1, w.width || 12))}`,
-                  minHeight: 160,
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: "8px",
-                  bgcolor: "background.paper",
-                  p: 2,
-                  display: "flex",
-                  flexDirection: "column",
-                }}
-              >
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1, mb: 0.5 }}>
-                  <Iconify
-                    icon={widgetIcon}
-                    width={16}
-                    sx={{ color: "primary.main" }}
-                  />
-                  <Typography
-                    sx={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: "text.primary",
-                    }}
-                  >
-                    {w.name || "Untitled widget"}
-                  </Typography>
-                </Box>
-                {w.description && (
-                  <Typography
-                    sx={{ fontSize: 11, color: "text.disabled", mb: 1 }}
-                  >
-                    {w.description}
-                  </Typography>
-                )}
-                <Box
-                  sx={{
-                    flex: 1,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "text.disabled",
-                    bgcolor: "background.default",
-                    borderRadius: "6px",
-                    minHeight: 100,
-                  }}
-                >
-                  <Stack alignItems="center" spacing={0.5}>
-                    <Iconify icon={widgetIcon} width={28} sx={{ opacity: 0.4 }} />
-                    <Typography sx={{ fontSize: 11 }}>
-                      {chartType
-                        ? `${chartType.replace("_", " ")} chart`
-                        : "Chart preview"}
-                    </Typography>
-                  </Stack>
-                </Box>
-              </Box>
-            );
-          })}
+          {sortedWidgets.map((w) => (
+            <SharedWidget key={w.id} token={token} widget={w} />
+          ))}
         </Box>
       )}
     </Box>
@@ -495,8 +488,8 @@ export default function SharedView() {
             </Box>
           </Box>
         ) : resourceType === "dashboard" ? (
-          /* Dashboard view — read-only structure (widget data requires auth) */
-          <SharedDashboardView dashboard={resourceData} />
+          /* Dashboard view — read-only, widgets load live via share token */
+          <SharedDashboardView token={token} dashboard={resourceData} />
         ) : (
           /* Other resource types — fall back to raw data dump */
           <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>

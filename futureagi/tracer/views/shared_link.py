@@ -149,6 +149,61 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
 # --------------------------------------------------------------------------
 
 
+def _get_accessible_link(token):
+    """
+    Look up a SharedLink by token and verify it is still usable.
+
+    Returns (link, error_response). Exactly one is non-None: on success
+    `link` is set, otherwise `error_response` carries the DRF Response.
+    """
+    try:
+        link = SharedLink.objects.get(token=token, deleted=False)
+    except SharedLink.DoesNotExist:
+        return None, Response(
+            {"error": "Shared link not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not link.is_accessible:
+        reason = "expired" if link.is_expired else "revoked"
+        return None, Response(
+            {"error": f"This shared link has been {reason}"},
+            status=status.HTTP_410_GONE,
+        )
+
+    return link, None
+
+
+def _check_link_access(link, request):
+    """
+    Enforce the ACL for restricted links.
+
+    Public links are always accessible. Restricted links require an
+    authenticated user whose email is in the ACL (or who created the link).
+    Returns a DRF Response to short-circuit with, or None if access is granted.
+    """
+    if link.access_type != AccessType.RESTRICTED:
+        return None
+
+    if not request.user or not request.user.is_authenticated:
+        return Response(
+            {"error": "Authentication required to access this link"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    has_access = link.access_list.filter(
+        email=request.user.email, deleted=False
+    ).exists()
+    # Also allow the creator
+    if not has_access and request.user != link.created_by:
+        return Response(
+            {"error": "You don't have access to this shared resource"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    return None
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def resolve_shared_link(request, token):
@@ -157,37 +212,14 @@ def resolve_shared_link(request, token):
     - Public links: no auth needed
     - Restricted links: user must be authenticated + email in ACL
     """
-    try:
-        link = SharedLink.objects.get(token=token, deleted=False)
-    except SharedLink.DoesNotExist:
-        return Response(
-            {"error": "Shared link not found"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    if not link.is_accessible:
-        reason = "expired" if link.is_expired else "revoked"
-        return Response(
-            {"error": f"This shared link has been {reason}"},
-            status=status.HTTP_410_GONE,
-        )
+    link, error = _get_accessible_link(token)
+    if error is not None:
+        return error
 
     # Check access for restricted links
-    if link.access_type == AccessType.RESTRICTED:
-        if not request.user or not request.user.is_authenticated:
-            return Response(
-                {"error": "Authentication required to access this link"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        has_access = link.access_list.filter(
-            email=request.user.email, deleted=False
-        ).exists()
-        # Also allow the creator
-        if not has_access and request.user != link.created_by:
-            return Response(
-                {"error": "You don't have access to this shared resource"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    access_error = _check_link_access(link, request)
+    if access_error is not None:
+        return access_error
 
     # Resolve the resource
     resource_data = _resolve_resource(link)
@@ -295,3 +327,87 @@ def _resolve_resource(link):
     except Exception:
         logger.exception("Failed to resolve shared resource", link_id=str(link.id))
         return None
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def resolve_shared_widget_data(request, token, widget_id):
+    """
+    Execute one dashboard widget's query for a share token and return results.
+
+    Lets a public viewer of a shared dashboard load live widget data without
+    an auth wall: the share token authorizes the read, and the query runs
+    scoped to the link's workspace (the viewer has no workspace of their own).
+
+    - Public links: no auth needed
+    - Restricted links: same ACL as resolve_shared_link
+    """
+    link, error = _get_accessible_link(token)
+    if error is not None:
+        return error
+
+    access_error = _check_link_access(link, request)
+    if access_error is not None:
+        return access_error
+
+    # Widget data only makes sense for shared dashboards.
+    if link.resource_type != "dashboard":
+        return Response(
+            {"error": "This shared link is not a dashboard"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from tracer.models.dashboard import DashboardWidget
+    from tracer.services.clickhouse.client import is_clickhouse_enabled
+    from tracer.views.dashboard import DashboardWidgetViewSet
+
+    if not is_clickhouse_enabled():
+        return Response(
+            {"error": "ClickHouse is not enabled"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # The widget must belong to the dashboard this link shares — never trust
+    # the widget_id alone, or any token would unlock any widget.
+    widget = (
+        DashboardWidget.objects.filter(
+            id=widget_id,
+            dashboard_id=link.resource_id,
+            deleted=False,
+        )
+        .select_related("dashboard")
+        .first()
+    )
+    if not widget:
+        return Response(
+            {"error": "Widget not found in this shared dashboard"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    query_config = widget.query_config
+    if not query_config or not query_config.get("metrics"):
+        return Response(
+            {"error": "Widget has no query configuration"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # The link's workspace owns the data; fall back to the dashboard's own
+    # workspace for older links created before workspace was recorded.
+    workspace = link.workspace or widget.dashboard.workspace
+
+    try:
+        # execute_ch_query_config is request-independent (see its docstring),
+        # so it is safe to reuse here for the public share-token path.
+        return DashboardWidgetViewSet().execute_ch_query_config(
+            query_config, workspace
+        )
+    except Exception as e:
+        logger.exception(
+            "Failed to execute shared widget query",
+            link_id=str(link.id),
+            widget_id=str(widget_id),
+        )
+        return Response(
+            {"error": f"Query execution failed: {str(e)}"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
