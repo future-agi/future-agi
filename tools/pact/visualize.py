@@ -69,9 +69,10 @@ def _style_class(n_violations: int) -> str:
     return "fire"
 
 
-# Safe Mermaid node ID: alphanumeric + underscore only
+# Safe Mermaid node ID: dots become __ (so Foo.bar→Foo__bar != Foo_bar),
+# other non-alnum chars become _
 def _node_id(name: str) -> str:
-    return re.sub(r"[^A-Za-z0-9_]", "_", name)
+    return re.sub(r"[^A-Za-z0-9_]", "_", name.replace(".", "__"))
 
 
 # ---------------------------------------------------------------------------
