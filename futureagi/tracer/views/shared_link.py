@@ -359,7 +359,7 @@ def resolve_shared_widget_data(request, token, widget_id):
 
     from tracer.models.dashboard import DashboardWidget
     from tracer.services.clickhouse.client import is_clickhouse_enabled
-    from tracer.views.dashboard import DashboardWidgetViewSet
+    from tracer.views.dashboard import DashboardViewSet
 
     if not is_clickhouse_enabled():
         return Response(
@@ -398,9 +398,7 @@ def resolve_shared_widget_data(request, token, widget_id):
     try:
         # execute_ch_query_config is request-independent (see its docstring),
         # so it is safe to reuse here for the public share-token path.
-        return DashboardWidgetViewSet().execute_ch_query_config(
-            query_config, workspace
-        )
+        return DashboardViewSet().execute_ch_query_config(query_config, workspace)
     except Exception as e:
         logger.exception(
             "Failed to execute shared widget query",
