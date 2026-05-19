@@ -360,6 +360,24 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     # response shape of `EvalUsageStatsView` so the frontend can reuse
     # `UsageChart`, `DataTable`, and `DataTablePagination` directly.
     # ──────────────────────────────────────────────────────────────────
+    _ATTR_FILTER_PREFIX = "attr."
+
+    @staticmethod
+    def _parse_attr_filters(query_params):
+        """Pull ``?attr.<key>=<value>`` pairs from the request query string.
+
+        Returns a flat ``{key: value}`` dict suitable for the
+        ``span_attributes__contains`` JSONField lookup. Multiple
+        ``attr.*`` params are AND-ed (every pair must match). Empty
+        suffix (``?attr.=foo``) is ignored.
+        """
+        prefix = EvalTaskView._ATTR_FILTER_PREFIX
+        return {
+            k[len(prefix):]: v
+            for k, v in query_params.items()
+            if k.startswith(prefix) and len(k) > len(prefix)
+        }
+
     _USAGE_PERIOD_MAP = {
         "30m": timedelta(minutes=30),
         "6h": timedelta(hours=6),
@@ -446,17 +464,15 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             if eval_id_filter:
                 base_qs = base_qs.filter(custom_eval_config_id=eval_id_filter)
 
-            # Optional span-attribute filter. Customers pass
-            # ``?attr.<key>=<value>`` (repeatable) to scope the entire
-            # response — stats, chart, per-eval breakdown, and logs — to
-            # rows whose ObservationSpan's ``span_attributes`` JSONField
-            # contains every requested pair. Session-target rows have no
-            # span, so they're naturally dropped when any attr is set.
-            attr_filters = {
-                k[len("attr."):]: v
-                for k, v in self.request.query_params.items()
-                if k.startswith("attr.") and len(k) > len("attr.")
-            }
+            # Optional span-attribute filter — see
+            # ``_parse_attr_filters`` for the ``?attr.<key>=<value>``
+            # syntax. Applied via the same ``span_attributes__contains``
+            # JSONField lookup ``FilterEngine`` uses for its ``equals``
+            # span-attribute operator (tracer/utils/filters.py), so this
+            # is a thin shortcut over the same PG path — not a parallel
+            # filter system. Session-target rows have no span, so they're
+            # naturally dropped when any attr is set.
+            attr_filters = self._parse_attr_filters(self.request.query_params)
             if attr_filters:
                 base_qs = base_qs.filter(
                     observation_span__span_attributes__contains=attr_filters
@@ -568,10 +584,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "choices": "list",
                 }
                 span_aggregation = defaultdict(dict)
+                # EvalLogger has no unique constraint on (observation_span_id,
+                # custom_eval_config_id) — re-evaluated spans produce multiple
+                # rows. Order ascending so the LATEST row wins the last-write
+                # in the dict overwrite below; otherwise the score for a
+                # span × eval pair would be whichever row PG returned last,
+                # which is undefined across queries.
                 for log in period_qs.filter(
                     target_type="span",
                     observation_span_id__isnull=False,
-                ).values(
+                ).order_by("created_at").values(
                     "observation_span_id",
                     "custom_eval_config_id",
                     "output_bool",
