@@ -1,3 +1,5 @@
+import json
+
 import structlog
 from django.db.models import Q
 from rest_framework import status, viewsets
@@ -103,14 +105,6 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             # If no organization context, only show system personas
             queryset = queryset.filter(persona_type=Persona.PersonaType.SYSTEM)
 
-        # Apply type filter (prebuilt/custom)
-        persona_type_param = self.request.query_params.get("type", None)
-        if persona_type_param:
-            if persona_type_param.lower() == "prebuilt":
-                queryset = queryset.filter(persona_type=Persona.PersonaType.SYSTEM)
-            elif persona_type_param.lower() == "custom":
-                queryset = queryset.filter(persona_type=Persona.PersonaType.WORKSPACE)
-
         # Apply search filter
         search_param = self.request.query_params.get("search", None)
         if search_param:
@@ -120,15 +114,62 @@ class PersonaViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 | Q(keywords__icontains=search_param)
             )
 
-        simulation_type_param = self.request.query_params.get("simulation_type", None)
-        if simulation_type_param:
-            simulation_type_param = simulation_type_param.lower()
-            if simulation_type_param not in [
-                choice[0] for choice in Persona.SimulationTypeChoices.choices
-            ]:
-                return self._gm.bad_request("Invalid simulation type")
+        # `filters` is a JSON array of {column_id, filter_config: {filter_op,
+        # filter_value}}. Unknown columns/ops are skipped silently so a bad
+        # clause can't make get_queryset return a non-QuerySet.
+        persona_type_map = {
+            "prebuilt": Persona.PersonaType.SYSTEM,
+            "custom": Persona.PersonaType.WORKSPACE,
+        }
+        valid_simulation_choices = {
+            choice[0] for choice in Persona.SimulationTypeChoices.choices
+        }
+        try:
+            clauses = json.loads(self.request.query_params.get("filters", "[]"))
+            if not isinstance(clauses, list):
+                clauses = []
+        except (TypeError, ValueError):
+            clauses = []
+        for clause in clauses:
+            if not isinstance(clause, dict):
+                continue
+            column_id = clause.get("column_id")
+            cfg = clause.get("filter_config") or {}
+            op = cfg.get("filter_op")
+            raw_value = cfg.get("filter_value")
+            values = (
+                raw_value
+                if isinstance(raw_value, list)
+                else [raw_value]
+                if raw_value
+                else []
+            )
 
-            queryset = queryset.filter(simulation_type=simulation_type_param)
+            if column_id == "type":
+                mapped = [
+                    persona_type_map[v.lower()]
+                    for v in values
+                    if isinstance(v, str) and v.lower() in persona_type_map
+                ]
+                if not mapped:
+                    continue
+                if op == "is":
+                    queryset = queryset.filter(persona_type__in=mapped)
+                elif op == "is_not":
+                    queryset = queryset.exclude(persona_type__in=mapped)
+            elif column_id == "simulation_type":
+                valid = [
+                    v.lower()
+                    for v in values
+                    if isinstance(v, str)
+                    and v.lower() in valid_simulation_choices
+                ]
+                if not valid:
+                    continue
+                if op == "is":
+                    queryset = queryset.filter(simulation_type__in=valid)
+                elif op == "is_not":
+                    queryset = queryset.exclude(simulation_type__in=valid)
 
         return queryset.select_related("organization", "workspace").order_by(
             "-created_at"

@@ -43,28 +43,22 @@ export const useGetPersonasPaginated = ({
   page = 1,
   pageSize = 25,
   search = null,
-  type = null,
-  simulationType = null,
+  // Array of {column_id, filter_config: {filter_op, filter_value}}.
+  filterClauses = null,
   enabled = true,
 } = {}) => {
+  const clauses =
+    Array.isArray(filterClauses) && filterClauses.length ? filterClauses : null;
+  const filtersJson = clauses ? JSON.stringify(clauses) : null;
   return useQuery({
-    queryKey: [
-      "personas",
-      "paginated",
-      page,
-      pageSize,
-      search,
-      type,
-      simulationType,
-    ],
+    queryKey: ["personas", "paginated", page, pageSize, search, filtersJson],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.persona.list, {
         params: {
           page,
           limit: pageSize,
           search: search || undefined,
-          type: type || undefined,
-          simulation_type: simulationType || undefined,
+          filters: filtersJson || undefined,
         },
       });
       return data?.result;

@@ -86,13 +86,16 @@ const PersonaListView = ({
   const { role } = useAuthContext();
   const canCreate = RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
 
-  // State
+  // Each filter holds `is` (include) and `is_not` (exclude) buckets so a
+  // field can carry both clauses at once.
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  const [typeFilter, setTypeFilter] = useState(null);
+  const [typeFilter, setTypeFilter] = useState({ is: [], is_not: [] });
   const [simulationFilter, setSimulationFilter] = useState(
-    isSelectable ? personaCreateEditType : null,
+    isSelectable && personaCreateEditType
+      ? { is: [personaCreateEditType], is_not: [] }
+      : { is: [], is_not: [] },
   );
   const [rowSelection, setRowSelection] = useState({});
   const [columnVisibility, setColumnVisibility] = useState({});
@@ -109,12 +112,33 @@ const PersonaListView = ({
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
 
+  // Canonical clause shape shared with ComplexFilter / _apply_filters / FilterEngine.
+  const filterClauses = useMemo(() => {
+    const out = [];
+    const push = (columnId, state) => {
+      if (state.is.length) {
+        out.push({
+          column_id: columnId,
+          filter_config: { filter_op: "is", filter_value: state.is },
+        });
+      }
+      if (state.is_not.length) {
+        out.push({
+          column_id: columnId,
+          filter_config: { filter_op: "is_not", filter_value: state.is_not },
+        });
+      }
+    };
+    push("type", typeFilter);
+    push("simulation_type", simulationFilter);
+    return out;
+  }, [typeFilter, simulationFilter]);
+
   const { data, isLoading, isFetching } = useGetPersonasPaginated({
     page: page + 1,
     pageSize,
     search: debouncedSearch || null,
-    type: typeFilter,
-    simulationType: simulationFilter,
+    filterClauses,
   });
 
   const items = useMemo(() => data?.results || [], [data]);
@@ -436,42 +460,67 @@ const PersonaListView = ({
     return fields;
   }, [isSelectable, personaCreateEditType]);
 
+  // Rows shape preserves the operator dropdown selection across reopens.
   const currentFilters = useMemo(() => {
-    const f = {};
-    if (typeFilter) f.type = [typeFilter];
-    if (simulationFilter) f.simulation_type = [simulationFilter];
-    return Object.keys(f).length ? f : null;
+    const rows = [];
+    const push = (field, state) => {
+      if (state.is.length) {
+        rows.push({ field, operator: "is", value: state.is });
+      }
+      if (state.is_not.length) {
+        rows.push({ field, operator: "is_not", value: state.is_not });
+      }
+    };
+    push("type", typeFilter);
+    push("simulation_type", simulationFilter);
+    return rows.length ? rows : null;
   }, [typeFilter, simulationFilter]);
 
-  const activeFilterCount = (typeFilter ? 1 : 0) + (simulationFilter ? 1 : 0);
+  const activeFilterCount =
+    (typeFilter.is.length || typeFilter.is_not.length ? 1 : 0) +
+    (simulationFilter.is.length || simulationFilter.is_not.length ? 1 : 0);
 
   const handleFilterApply = useCallback(
     (result) => {
       const lockedSim =
         isSelectable && personaCreateEditType ? personaCreateEditType : null;
+      const empty = () => ({ is: [], is_not: [] });
+      const lockedSimState = () =>
+        lockedSim ? { is: [lockedSim], is_not: [] } : empty();
       if (!result) {
-        setTypeFilter(null);
-        setSimulationFilter(lockedSim);
+        setTypeFilter(empty());
+        setSimulationFilter(lockedSimState());
         setPage(0);
         return;
       }
-      const pickFirst = (v) => (Array.isArray(v) ? v[0] : v) || null;
+      // Fresh inner arrays per field; shallow spread would alias them.
+      const next = { type: empty(), simulation_type: empty() };
       if (Array.isArray(result)) {
-        const flat = {};
         for (const t of result) {
-          const val = Array.isArray(t.value)
+          if (!next[t.field]) continue;
+          const vals = Array.isArray(t.value)
             ? t.value
             : t.value
               ? [t.value]
               : [];
-          if (val.length) flat[t.field] = val;
+          if (!vals.length) continue;
+          const bucket = t.operator === "is_not" ? "is_not" : "is";
+          next[t.field][bucket].push(...vals);
         }
-        setTypeFilter(pickFirst(flat.type));
-        setSimulationFilter(lockedSim ?? pickFirst(flat.simulation_type));
       } else {
-        setTypeFilter(pickFirst(result.type));
-        setSimulationFilter(lockedSim ?? pickFirst(result.simulation_type));
+        // Legacy object shape from FilterPanel — operator absent, assume `is`.
+        for (const field of Object.keys(next)) {
+          const v = result[field];
+          if (Array.isArray(v)) next[field].is = v.filter(Boolean);
+          else if (v) next[field].is = [v];
+        }
       }
+      for (const field of Object.keys(next)) {
+        next[field].is = Array.from(new Set(next[field].is));
+        next[field].is_not = Array.from(new Set(next[field].is_not));
+      }
+      setTypeFilter(next.type);
+      setSimulationFilter(lockedSim ? lockedSimState() : next.simulation_type);
       setPage(0);
     },
     [isSelectable, personaCreateEditType],
@@ -596,7 +645,11 @@ const PersonaListView = ({
         }}
       >
         {QUICK_FILTERS.map((f) => {
-          const isActive = typeFilter === f.value;
+          const isActive =
+            typeFilter.is_not.length === 0 &&
+            (f.value === null
+              ? typeFilter.is.length === 0
+              : typeFilter.is.length === 1 && typeFilter.is[0] === f.value);
           return (
             <Chip
               key={f.label}
@@ -606,7 +659,10 @@ const PersonaListView = ({
               variant={isActive ? "filled" : "outlined"}
               color={isActive ? "primary" : "default"}
               onClick={() => {
-                setTypeFilter(f.value);
+                setTypeFilter({
+                  is: f.value ? [f.value] : [],
+                  is_not: [],
+                });
                 setPage(0);
               }}
               sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
@@ -622,7 +678,12 @@ const PersonaListView = ({
           }}
         />
         {SIMULATION_FILTERS.map((f) => {
-          const isActive = simulationFilter === f.value;
+          const isActive =
+            simulationFilter.is_not.length === 0 &&
+            (f.value === null
+              ? simulationFilter.is.length === 0
+              : simulationFilter.is.length === 1 &&
+                simulationFilter.is[0] === f.value);
           return (
             <Chip
               key={f.label}
@@ -632,7 +693,10 @@ const PersonaListView = ({
               variant={isActive ? "filled" : "outlined"}
               color={isActive ? "primary" : "default"}
               onClick={() => {
-                setSimulationFilter(f.value);
+                setSimulationFilter({
+                  is: f.value ? [f.value] : [],
+                  is_not: [],
+                });
                 setPage(0);
               }}
               sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
@@ -662,9 +726,13 @@ const PersonaListView = ({
         getRowId={(row) => row.id}
         enableSelection
         emptyMessage={
-          typeFilter === "custom"
+          typeFilter.is_not.length === 0 &&
+          typeFilter.is.length === 1 &&
+          typeFilter.is[0] === "custom"
             ? "You haven't created any custom personas yet"
-            : typeFilter === "prebuilt"
+            : typeFilter.is_not.length === 0 &&
+                typeFilter.is.length === 1 &&
+                typeFilter.is[0] === "prebuilt"
               ? "No prebuilt personas found"
               : "No personas found"
         }
@@ -691,6 +759,7 @@ const PersonaListView = ({
         currentFilters={currentFilters}
         onApply={handleFilterApply}
         aiPlaceholder="e.g. 'show custom voice personas'"
+        emitRowsFormat
       />
 
       {/* Columns popover */}
