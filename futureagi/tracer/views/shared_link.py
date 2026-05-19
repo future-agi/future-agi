@@ -419,20 +419,38 @@ def resolve_shared_widget_data(request, token, widget_id):
     # workspace for older links created before workspace was recorded.
     workspace = link.workspace or widget.dashboard.workspace
 
-    try:
-        # execute_ch_query_config is request-independent (see its docstring),
-        # so it is safe to reuse here for the public share-token path.
-        return DashboardViewSet().execute_ch_query_config(query_config, workspace)
-    except Exception:
-        # This endpoint is public (AllowAny) — never echo the exception text,
-        # which can carry SQL, table names, or other internals. Log the
-        # detail server-side; return a generic message to the viewer.
-        logger.exception(
-            "Failed to execute shared widget query",
+    # This endpoint is public (AllowAny) — never let internal detail reach the
+    # viewer, whether it arrives as a raised exception OR as an error Response.
+    # execute_ch_query_config reports some failures (e.g. invalid project_ids)
+    # by *returning* a 4xx Response rather than raising, so the status of the
+    # returned Response must be inspected, not just the try/except.
+    def _generic_error(detail):
+        logger.error(
+            "Shared widget query failed",
             link_id=str(link.id),
             widget_id=str(widget_id),
+            detail=detail,
         )
         return Response(
             {"error": "Unable to load widget data"},
             status=status.HTTP_502_BAD_GATEWAY,
         )
+
+    try:
+        # execute_ch_query_config is request-independent (see its docstring),
+        # so it is safe to reuse here for the public share-token path.
+        result = DashboardViewSet().execute_ch_query_config(query_config, workspace)
+    except Exception as exc:
+        logger.exception(
+            "Shared widget query raised",
+            link_id=str(link.id),
+            widget_id=str(widget_id),
+        )
+        return _generic_error(str(exc))
+
+    status_code = getattr(result, "status_code", None)
+    if status_code is not None and status_code >= 400:
+        # An error Response slipped through without raising — sanitize it.
+        return _generic_error(getattr(result, "data", None))
+
+    return result

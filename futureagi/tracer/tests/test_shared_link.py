@@ -287,6 +287,37 @@ class TestSharedWidgetDataExecution:
         assert "secret" not in body
         assert "internal_table" not in body
 
+    def test_error_response_from_executor_does_not_leak(
+        self, api_client, public_link, widget,
+        _clickhouse_enabled, monkeypatch,
+    ):
+        """execute_ch_query_config reports some failures by *returning* a 4xx
+        Response (not raising) — e.g. invalid project_ids. That Response must
+        be sanitized to a generic 502, never passed through verbatim."""
+        from rest_framework import status as drf_status
+        from rest_framework.response import Response as DRFResponse
+
+        def returns_internal_error(self, query_config, ws):
+            return DRFResponse(
+                {"error": "Some project_ids are invalid or not in workspace xyz"},
+                status=drf_status.HTTP_400_BAD_REQUEST,
+            )
+
+        monkeypatch.setattr(
+            "tracer.views.dashboard.DashboardViewSet.execute_ch_query_config",
+            returns_internal_error,
+        )
+
+        resp = api_client.get(
+            WIDGET_DATA_URL.format(token=public_link.token, widget_id=widget.id)
+        )
+
+        # Sanitized: generic 502, internal message not echoed.
+        assert resp.status_code == 502
+        body = str(resp.data)
+        assert "project_ids" not in body
+        assert "workspace xyz" not in body
+
 
 class TestSharedWidgetDataHardening:
     """Regression guards for the security hardening on this endpoint."""
