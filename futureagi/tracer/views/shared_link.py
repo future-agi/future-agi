@@ -1,9 +1,15 @@
 import structlog
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import (
+    action,
+    api_view,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.models.user import User
@@ -20,6 +26,20 @@ from tracer.serializers.shared_link import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+class SharedWidgetDataThrottle(AnonRateThrottle):
+    """Rate limit for the public shared-widget-data endpoint.
+
+    The endpoint is unauthenticated (AllowAny) and triggers ClickHouse
+    queries, so without a limit a single leaked token is a DoS amplifier.
+    Keyed by client IP; `rate` is set explicitly so it needs no settings
+    entry. Generous enough for a human viewing a dashboard, low enough to
+    blunt scripted abuse.
+    """
+
+    scope = "shared_widget_data"
+    rate = "60/min"
 
 
 class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -191,8 +211,11 @@ def _check_link_access(link, request):
             status=status.HTTP_401_UNAUTHORIZED,
         )
 
-    has_access = link.access_list.filter(
-        email=request.user.email, deleted=False
+    # Match the ACL by email, but only for a non-empty email — otherwise a
+    # user with a blank email would match a blank-email ACL row.
+    user_email = (request.user.email or "").strip()
+    has_access = bool(user_email) and link.access_list.filter(
+        email=user_email, deleted=False
     ).exists()
     # Also allow the creator
     if not has_access and request.user != link.created_by:
@@ -331,6 +354,7 @@ def _resolve_resource(link):
 
 @api_view(["GET"])
 @permission_classes([AllowAny])
+@throttle_classes([SharedWidgetDataThrottle])
 def resolve_shared_widget_data(request, token, widget_id):
     """
     Execute one dashboard widget's query for a share token and return results.
@@ -399,13 +423,16 @@ def resolve_shared_widget_data(request, token, widget_id):
         # execute_ch_query_config is request-independent (see its docstring),
         # so it is safe to reuse here for the public share-token path.
         return DashboardViewSet().execute_ch_query_config(query_config, workspace)
-    except Exception as e:
+    except Exception:
+        # This endpoint is public (AllowAny) — never echo the exception text,
+        # which can carry SQL, table names, or other internals. Log the
+        # detail server-side; return a generic message to the viewer.
         logger.exception(
             "Failed to execute shared widget query",
             link_id=str(link.id),
             widget_id=str(widget_id),
         )
         return Response(
-            {"error": f"Query execution failed: {str(e)}"},
-            status=status.HTTP_400_BAD_REQUEST,
+            {"error": "Unable to load widget data"},
+            status=status.HTTP_502_BAD_GATEWAY,
         )

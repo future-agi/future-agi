@@ -7,10 +7,10 @@ acceptance criterion #6). These tests pin the authorization boundary:
 the token — and only the token — gates access, and a token never unlocks
 a widget outside the dashboard it shares.
 
-The actual ClickHouse query execution is exercised by the existing
-DashboardWidget endpoints; here `is_clickhouse_enabled` is patched off, so
-a `400 "ClickHouse is not enabled"` means "authorization passed, reached
-execution" — which is exactly what these tests assert.
+For the authorization tests, `is_clickhouse_enabled` is patched off, so a
+`400 "ClickHouse is not enabled"` means "authorization passed, reached
+execution". The execution-wiring tests instead mock `execute_ch_query_config`
+to pin argument passing and confirm failures never leak to the viewer.
 """
 
 import uuid
@@ -217,3 +217,127 @@ class TestSharedWidgetDataBoundary:
             WIDGET_DATA_URL.format(token=trace_link.token, widget_id=widget.id)
         )
         assert resp.status_code == 400
+
+
+class TestSharedWidgetDataExecution:
+    """Wiring between the endpoint and the query executor.
+
+    ClickHouse itself can't run in unit tests, so `execute_ch_query_config`
+    is mocked: these pin that the endpoint reaches it with the right
+    arguments and that a failure inside it never leaks to the public viewer.
+    """
+
+    @pytest.fixture
+    def _clickhouse_enabled(self, monkeypatch):
+        """Force `is_clickhouse_enabled` on so the endpoint reaches execution."""
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.client.is_clickhouse_enabled",
+            lambda: True,
+        )
+
+    def test_endpoint_executes_query_with_widget_config_and_workspace(
+        self, api_client, public_link, widget, workspace,
+        _clickhouse_enabled, monkeypatch,
+    ):
+        """The endpoint calls execute_ch_query_config with the widget's
+        query_config, scoped to the share link's workspace."""
+        from rest_framework.response import Response as DRFResponse
+
+        captured = {}
+
+        def fake_execute(self, query_config, ws):
+            captured["query_config"] = query_config
+            captured["workspace"] = ws
+            return DRFResponse({"result": {"metrics": []}})
+
+        monkeypatch.setattr(
+            "tracer.views.dashboard.DashboardViewSet.execute_ch_query_config",
+            fake_execute,
+        )
+
+        resp = api_client.get(
+            WIDGET_DATA_URL.format(token=public_link.token, widget_id=widget.id)
+        )
+
+        assert resp.status_code == 200
+        assert captured["query_config"] == widget.query_config
+        # Scoped to the link's workspace — not the (absent) viewer's.
+        assert captured["workspace"].id == workspace.id
+
+    def test_execution_failure_does_not_leak_exception_text(
+        self, api_client, public_link, widget,
+        _clickhouse_enabled, monkeypatch,
+    ):
+        """If query execution raises, the public viewer gets a generic 502 —
+        never the exception text (which can carry SQL or table names)."""
+        def boom(self, query_config, ws):
+            raise RuntimeError("SELECT secret FROM internal_table failed")
+
+        monkeypatch.setattr(
+            "tracer.views.dashboard.DashboardViewSet.execute_ch_query_config",
+            boom,
+        )
+
+        resp = api_client.get(
+            WIDGET_DATA_URL.format(token=public_link.token, widget_id=widget.id)
+        )
+
+        assert resp.status_code == 502
+        body = str(resp.data)
+        assert "secret" not in body
+        assert "internal_table" not in body
+
+
+class TestSharedWidgetDataHardening:
+    """Regression guards for the security hardening on this endpoint."""
+
+    def test_blank_email_user_does_not_match_blank_email_acl_entry(
+        self, auth_client, user, restricted_link, widget
+    ):
+        """A user with an empty email must not be let in by a blank-email
+        ACL row — the email match only counts for a non-empty email.
+
+        The requesting user must NOT be the link creator here, otherwise the
+        creator path would grant access and mask the email-match check.
+        """
+        from accounts.models.user import User
+
+        # restricted_link was created by `user`; reassign it to a different
+        # creator so only the ACL email match could grant access.
+        other_creator = User.objects.create_user(
+            email="other-creator@futureagi.com",
+            password="testpassword123",
+            name="Other Creator",
+            organization=user.organization,
+        )
+        restricted_link.created_by = other_creator
+        restricted_link.save(update_fields=["created_by"])
+
+        # A malformed ACL entry with a blank email.
+        SharedLinkAccess.objects.create(
+            shared_link=restricted_link,
+            email="",
+            granted_by=other_creator,
+        )
+        # The requesting user (auth_client's user) also has a blank email.
+        user.email = ""
+        user.save(update_fields=["email"])
+
+        resp = auth_client.get(
+            WIDGET_DATA_URL.format(
+                token=restricted_link.token, widget_id=widget.id
+            )
+        )
+        # Blank email must not match the blank-email ACL row → access denied.
+        assert resp.status_code == 403
+
+    def test_widget_data_endpoint_is_rate_limited(self):
+        """The public widget-data endpoint carries a throttle class — a
+        guard against silently dropping the DoS protection."""
+        from tracer.views.shared_link import (
+            SharedWidgetDataThrottle,
+            resolve_shared_widget_data,
+        )
+
+        throttles = getattr(resolve_shared_widget_data.cls, "throttle_classes", [])
+        assert SharedWidgetDataThrottle in throttles

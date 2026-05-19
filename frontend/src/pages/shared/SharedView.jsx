@@ -61,10 +61,30 @@ function SharedWidget({ token, widget }) {
         </Typography>
       )}
       <Box sx={{ flex: 1, minHeight: 160 }}>
-        <WidgetChart
-          widget={widget}
-          sharedData={{ result: data?.result ?? data, isLoading, isError }}
-        />
+        {isError ? (
+          <Box
+            sx={{
+              height: "100%",
+              minHeight: 160,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 0.5,
+              color: "text.disabled",
+            }}
+          >
+            <Iconify icon="mdi:chart-box-outline" width={28} />
+            <Typography sx={{ fontSize: 11 }}>
+              Widget data unavailable
+            </Typography>
+          </Box>
+        ) : (
+          <WidgetChart
+            widget={widget}
+            sharedData={{ result: data?.result ?? data, isLoading, isError }}
+          />
+        )}
       </Box>
     </Box>
   );
