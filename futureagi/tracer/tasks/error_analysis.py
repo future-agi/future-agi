@@ -87,7 +87,8 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         except ImportError:
             check_usage = None
 
-        usage_check = check_usage(
+        if check_usage is not None:
+            usage_check = check_usage(
             str(organization.id), APICallTypeChoices.TRACE_ERROR_ANALYSIS.value
         )
         if not usage_check.allowed:
@@ -97,7 +98,8 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             raise ValueError(usage_check.reason or "Usage limit exceeded")
 
         # Log and deduct cost for the analysis upfront.
-        api_call_log_row = log_and_deduct_cost_for_api_request(
+        if log_and_deduct_cost_for_api_request is not None:
+            api_call_log_row = log_and_deduct_cost_for_api_request(
             organization=organization,
             api_call_type=APICallTypeChoices.TRACE_ERROR_ANALYSIS.value,
             source="trace_error_analysis",
@@ -166,9 +168,14 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             actual_cost = getattr(agent, "cost", {}).get("total_cost", 0)
             if not actual_cost and hasattr(agent, "llm"):
                 actual_cost = getattr(agent.llm, "cost", {}).get("total_cost", 0)
-            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+            if BillingConfig is not None:
 
-            emit(
+                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+
+                emit(
                 UsageEvent(
                     org_id=str(organization.id),
                     event_type=BillingEventType.TRACE_ERROR_ANALYSIS,
@@ -192,7 +199,8 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         # If something went wrong, refund the cost.
         if api_call_log_row:
             logger.info(f"Refunding cost for failed trace analysis {trace_id}.")
-            refund_cost_for_api_call(api_call_log_row, config={"error": str(e)})
+            if refund_cost_for_api_call is not None:
+                refund_cost_for_api_call(api_call_log_row, config={"error": str(e)})
             api_call_log_row.status = APICallStatusChoices.ERROR.value
             api_call_log_row.save(update_fields=["status"])
 

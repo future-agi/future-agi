@@ -60,11 +60,13 @@ def _log_and_deduct_cost_for_external_eval(
     except ImportError:
         check_usage = None
 
-    usage_check = check_usage(str(config.organization.id), api_call_type)
+    if check_usage is not None:
+        usage_check = check_usage(str(config.organization.id), api_call_type)
     if not usage_check.allowed:
         raise ValueError(usage_check.reason or "Usage limit exceeded")
 
-    api_call_log_row = log_and_deduct_cost_for_api_request(
+    if log_and_deduct_cost_for_api_request is not None:
+        api_call_log_row = log_and_deduct_cost_for_api_request(
         organization=config.organization,
         api_call_type=api_call_type,
         source="tracer",
@@ -89,7 +91,10 @@ def _log_and_deduct_cost_for_external_eval(
         except ImportError:
             emit = None
 
-        emit(
+        if emit is not None and UsageEvent is not None:
+
+
+            emit(
             UsageEvent(
                 org_id=str(config.organization.id),
                 event_type=api_call_type,
