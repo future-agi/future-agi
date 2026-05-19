@@ -50,19 +50,15 @@
 ---
 
 <!--
-  [MARKETING] hero-demo.gif
-  What:    8–12 second product loop. Suggested flow:
-             1. Open a trace → expand a span
-             2. Click "Run Eval" → score appears
-             3. Navigate to Simulate → a voice agent conversation plays
-             4. Navigate to Gateway → cost + guardrail dashboard
-  Size:    1600 × 900, GIF ≤ 4 MB (use `gifski` to compress).
-  Fallback: hero-demo.png (first frame) for users who disable GIFs.
-  Why here: carries the "what is this?" answer in 3 seconds; biggest
-            single lift on time-on-page across flagship OSS READMEs.
+  [MARKETING] hero-demo (YouTube)
+  GitHub markdown does not render inline <iframe>/<video>, so we use a
+  clickable YouTube thumbnail that opens the video in a new tab.
+  Video: https://www.youtube.com/watch?v=Mdpn8ekFwQ0
 -->
 <div align="center">
-  <img alt="Future AGI — trace an agent, run evals, simulate, and guardrail in one platform" src="frontend/public/assets/readme/self-host.gif" width="720">
+  <a href="https://www.youtube.com/watch?v=Mdpn8ekFwQ0&t=1s">
+    <img alt="Future AGI — trace an agent, run evals, simulate, and guardrail in one platform (watch on YouTube)" src="https://img.youtube.com/vi/Mdpn8ekFwQ0/maxresdefault.jpg" width="720">
+  </a>
 </div>
 
 ---

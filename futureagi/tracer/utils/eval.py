@@ -1556,19 +1556,28 @@ def evaluate_observation_span_observe(
                 eval_task_id,
             )
 
-        # DISABLED 2026-04-30 — per-row enqueue caused Aurora CPU saturation
-        # under load (incident: cron-driven historical EvalTask × N×M fan-out
-        # → 60+ cluster_eval_results_task/sec → embedding service connection
-        # resets → workflow pile-up). Re-enable only after per-project debounce
-        # is implemented (Temporal workflow ID dedup or Redis lock).
-        #
-        # try:
-        #     from tracer.tasks.eval_clustering import cluster_eval_results_task
-        #
-        #     project_id = str(observation_span.project_id)
-        #     cluster_eval_results_task.delay(project_id)
-        # except Exception:
-        #     logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
+        # Re-enabled with per-project Temporal dedup. The original per-row
+        # enqueue caused embedding-service overload under backfill (N×M
+        # fan-out → many concurrent same-project clustering runs each
+        # re-embedding the whole unclustered backlog). A deterministic
+        # per-project workflow id + USE_EXISTING conflict policy collapses
+        # concurrent triggers for a project onto the single in-flight run;
+        # once it completes the next trigger starts a fresh run that
+        # re-sweeps whatever is still unclustered (cluster_eval_results is
+        # idempotent), so coalescing is safe and loses nothing.
+        try:
+            from temporalio.common import WorkflowIDConflictPolicy
+
+            from tracer.tasks.eval_clustering import cluster_eval_results_task
+
+            project_id = str(observation_span.project_id)
+            cluster_eval_results_task.apply_async(
+                args=(project_id,),
+                task_id=f"eval-cluster-{project_id}",
+                id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            )
+        except Exception:
+            logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
 
         return True
     except ValueError as e:

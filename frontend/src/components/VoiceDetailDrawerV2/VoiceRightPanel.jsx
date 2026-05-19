@@ -244,6 +244,7 @@ const VoiceRightPanel = ({
         score,
         score_label: scoreLabel,
         explanation: e?.reason || e?.explanation,
+        error: e?.error === true,
         // Error localization fields — pulled from whatever key the
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.

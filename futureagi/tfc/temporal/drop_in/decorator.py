@@ -140,6 +140,9 @@ def temporal_activity(
                     args=args or (),
                     kwargs=kwargs or {},
                     queue=target_queue,
+                    task_id=options.get("task_id"),
+                    id_conflict_policy=options.get("id_conflict_policy"),
+                    start_delay=options.get("start_delay"),
                 )
                 log.info(
                     "apply_async_completed",

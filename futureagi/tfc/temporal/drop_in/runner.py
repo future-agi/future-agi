@@ -28,6 +28,8 @@ def start_activity(
     kwargs: Optional[dict] = None,
     queue: str = "default",
     task_id: Optional[str] = None,
+    id_conflict_policy: Optional[Any] = None,
+    start_delay: Optional[Any] = None,
 ) -> str:
     """
     Start a Temporal activity (drop-in replacement for Celery's apply_async).
@@ -86,7 +88,13 @@ def start_activity(
                 future = executor.submit(
                     asyncio.run,
                     _start_activity_async(
-                        activity_name, args, kwargs, temporal_queue, task_id
+                        activity_name,
+                        args,
+                        kwargs,
+                        temporal_queue,
+                        task_id,
+                        id_conflict_policy,
+                        start_delay,
                     ),
                 )
                 result = future.result(timeout=30)  # 30 second timeout
@@ -101,7 +109,13 @@ def start_activity(
             # No running loop, create one - this is the normal case for sync Django views
             result = asyncio.run(
                 _start_activity_async(
-                    activity_name, args, kwargs, temporal_queue, task_id
+                    activity_name,
+                    args,
+                    kwargs,
+                    temporal_queue,
+                    task_id,
+                    id_conflict_policy,
+                    start_delay,
                 )
             )
             logger.info(
@@ -124,6 +138,8 @@ async def _start_activity_async(
     kwargs: dict,
     queue: str,
     task_id: str,
+    id_conflict_policy: Optional[Any] = None,
+    start_delay: Optional[Any] = None,
 ) -> str:
     """Async implementation of start_activity."""
     from temporalio.client import Client
@@ -178,6 +194,13 @@ async def _start_activity_async(
             queue=queue,
             activity_name=activity_name,
         )
+        # Only pass these when explicitly provided so every existing caller
+        # resolves to the exact same start_workflow call (zero blast radius).
+        _extra_start_kwargs: dict = {}
+        if id_conflict_policy is not None:
+            _extra_start_kwargs["id_conflict_policy"] = id_conflict_policy
+        if start_delay is not None:
+            _extra_start_kwargs["start_delay"] = start_delay
         handle = await client.start_workflow(
             TaskRunnerWorkflow.run,
             TaskRunnerInput(
@@ -192,6 +215,7 @@ async def _start_activity_async(
             execution_timeout=timedelta(hours=24),
             # Prevent single run from running forever - 13 hours max
             run_timeout=timedelta(hours=13),
+            **_extra_start_kwargs,
         )
 
         logger.info(

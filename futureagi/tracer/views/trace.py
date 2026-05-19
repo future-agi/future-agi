@@ -13,6 +13,7 @@ from django.contrib.postgres.aggregates import ArrayAgg
 from django.db import models
 from django.db.models import (
     Avg,
+    BooleanField,
     Case,
     CharField,
     Count,
@@ -1224,7 +1225,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
             metric_subquery = (
                 EvalLogger.objects.filter(
-                    trace_id=OuterRef("id"), custom_eval_config_id=config.id
+                    trace_id=OuterRef("id"),
+                    custom_eval_config_id=config.id,
+                    error=False,
                 )
                 .values("custom_eval_config_id")
                 .annotate(
@@ -1248,6 +1251,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 trace_id=OuterRef("id"),
                 custom_eval_config_id=config.id,
                 output_str_list__isnull=False,
+                error=False,
             ).values("output_str_list")[:1]
 
             base_query = base_query.annotate(
@@ -1327,7 +1331,27 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     f"metric_reason_{config.id}": Subquery(
                         metric_subquery.values("eval_explanation")
                     ),
-                    f"error_{config.id}": Subquery(metric_subquery.values("error")),
+                    f"error_{config.id}": Case(
+                        When(
+                            ~Exists(
+                                EvalLogger.objects.filter(
+                                    trace_id=OuterRef("id"),
+                                    custom_eval_config_id=config.id,
+                                    error=False,
+                                )
+                            )
+                            & Exists(
+                                EvalLogger.objects.filter(
+                                    trace_id=OuterRef("id"),
+                                    custom_eval_config_id=config.id,
+                                    error=True,
+                                )
+                            ),
+                            then=Value(True),
+                        ),
+                        default=Value(False),
+                        output_field=BooleanField(),
+                    ),
                 }
             )
         return eval_configs, base_query
@@ -5265,6 +5289,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         ) or {}
                         output_type = eval_template_config.get("output", "score")
                         metric_entry = {"name": metric_name, "output_type": output_type}
+                        # All eval rows errored — surface error to frontend
+                        if isinstance(scores, dict) and scores.get("error"):
+                            metric_entry["error"] = True
+                            metrics[config_id] = metric_entry
+                            continue
                         if isinstance(scores, dict):
                             if scores.get("per_choice"):
                                 metric_entry["output"] = [
