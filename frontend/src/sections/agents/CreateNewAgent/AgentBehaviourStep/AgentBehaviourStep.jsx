@@ -72,7 +72,7 @@ const AgentBehaviourStep = ({ control }) => {
               Knowledge Base
             </Typography>
             <Link
-              href="https://docs.futureagi.com/docs/knowledge-base/overview"
+              href="https://docs.futureagi.com/docs/knowledge-base"
               color="blue.500"
               target="_blank"
               rel="noopener noreferrer"

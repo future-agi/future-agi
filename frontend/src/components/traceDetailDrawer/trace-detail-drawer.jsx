@@ -494,7 +494,7 @@ const TraceDetailDrawerChild = ({
                       Span Kinds denote the possible types of spans you might
                       capture.{" "}
                       <Link
-                        href="https://docs.futureagi.com/docs/tracing/manual/instrument-with-traceai-helpers#fi-span-kinds"
+                        href="https://docs.futureagi.com/docs/observe/features/manual-tracing/instrument-with-traceai-helpers"
                         underline="always"
                         color="blue.500"
                         target="_blank"

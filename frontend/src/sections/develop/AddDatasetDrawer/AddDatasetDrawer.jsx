@@ -179,7 +179,7 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
                       Add dataset
                     </Typography>
                     <Link
-                      href="https://docs.futureagi.com/docs/dataset/overview"
+                      href="https://docs.futureagi.com/docs/dataset"
                       underline="always"
                       color="blue.500"
                       target="_blank"
