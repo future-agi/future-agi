@@ -79,6 +79,8 @@ class TestTokenObtainAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_nonexistent_email(self, api_client, db, clear_cache):
         """Login fails with nonexistent email."""
@@ -91,6 +93,8 @@ class TestTokenObtainAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_inactive_user(self, api_client, inactive_user, clear_cache):
         """Login fails for inactive user."""
@@ -103,6 +107,8 @@ class TestTokenObtainAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_ACCOUNT_DEACTIVATED"
 
     def test_login_email_case_insensitive(self, api_client, user, clear_cache):
         """Login works with email in different case."""
@@ -352,7 +358,7 @@ class TestLoginRateLimiting:
     """Tests for login rate limiting and account blocking."""
 
     def test_failed_login_tracks_attempts(self, api_client, user, clear_cache):
-        """Failed login attempts are tracked."""
+        """Failed login attempts are tracked and error_code is returned."""
         response = api_client.post(
             "/accounts/token/",
             {"email": user.email, "password": "wrongpassword"},
@@ -361,12 +367,13 @@ class TestLoginRateLimiting:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
         result = data.get("result", data)
-        # Should include remaining attempts info
+        # Should include remaining attempts info and structured error_code
         assert (
             "remainingAttempts" in result
             or "remaining_attempts" in result
             or "error" in result
         )
+        assert result.get("error_code") == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_remember_me(self, api_client, user, clear_cache):
         """Login with remember_me flag."""
