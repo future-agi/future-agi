@@ -1,5 +1,6 @@
 import { palette } from "src/theme/palette";
 import { MODEL_TYPES } from "../../develop-detail/RunPrompt/common";
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 
 const statusColor = {
   Passed: "success",
@@ -9,11 +10,16 @@ const statusColor = {
 };
 
 export const parseArrayString = (value) => {
-  try {
-    return JSON.parse(value.replace(/'/g, '"'));
-  } catch {
-    return [value];
+    const normalized = normalizeEvalCellValue(value);
+  if (Array.isArray(normalized)) return normalized;
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value.replace(/'/g, '"'));
+    } catch {
+      return [value];
+    }
   }
+  return [value];
 };
 
 export function interpolateColorforExperiment(
@@ -73,12 +79,32 @@ export const getChipLabel = (data) => {
     return cellValue;
   }
 
+  // LLM evals may pass {score, choice} (object or Python-repr string) — unwrap.
+  const normalized = normalizeEvalCellValue(cellValue);
+
   if (data?.dataType === "float") {
-    const num = parseFloat(cellValue);
-    return isNaN(num) ? "Error" : `${(num * 100).toFixed(0)}%`;
+    const rawScore =
+      normalized && typeof normalized === "object" && !Array.isArray(normalized)
+        ? typeof normalized.score === "number"
+          ? normalized.score
+          : NaN
+        : parseFloat(normalized);
+    return isNaN(rawScore) ? "Error" : `${(rawScore * 100).toFixed(0)}%`;
   }
 
-  return cellValue;
+  if (normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
+    // Backend uses plural "choices" for multi-choice, singular "choice" for single.
+    if (Array.isArray(normalized.choices)) return normalized.choices.join(", ");
+    if (Array.isArray(normalized.choice)) return normalized.choice.join(", ");
+    if (typeof normalized.choices === "string") return normalized.choices;
+    if (typeof normalized.choice === "string") return normalized.choice;
+    if (typeof normalized.score === "number") {
+      return `${(normalized.score * 100).toFixed(0)}%`;
+    }
+    return JSON.stringify(normalized);
+  }
+
+  return normalized;
 };
 
 export const getChipColor = (data) => {

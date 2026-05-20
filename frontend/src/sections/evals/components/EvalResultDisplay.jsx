@@ -12,13 +12,16 @@ import Editor from "@monaco-editor/react";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import CompositeResultView from "./CompositeResultView";
 import { canonicalEntries } from "src/utils/utils";
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 
 /**
  * Shared eval result display component.
  * Handles all output types: choices, scoring, pass/fail.
  * Includes Formatted / JSON toggle.
+ * Used in TestPlayground
  */
 const EvalResultDisplay = ({ result }) => {
+
   const [viewMode, setViewMode] = useState("formatted");
 
   // Support multiple shapes:
@@ -93,8 +96,29 @@ const EvalResultDisplay = ({ result }) => {
 
 const FormattedResult = ({ result }) => {
   // For code evals, result.output is missing — use result.score as the raw value
-  const raw = result.output != null ? result.output : result.score;
+  const rawInput = result.output != null ? result.output : result.score;
   const outputType = result.output_type;
+
+  const normalizedRaw = normalizeEvalCellValue(rawInput);
+
+  let raw = normalizedRaw;
+  if (
+    normalizedRaw &&
+    typeof normalizedRaw === "object" &&
+    !Array.isArray(normalizedRaw) &&
+    !normalizedRaw.label
+  ) {
+    if (normalizedRaw.choice != null || normalizedRaw.choices != null) {
+      const choiceVal = normalizedRaw.choices ?? normalizedRaw.choice;
+      raw = Array.isArray(choiceVal)
+        ? choiceVal.map(( c) => ({ label: c }))
+        : { label: choiceVal };
+    } else if (typeof normalizedRaw.score === "number") {
+      raw = normalizedRaw.score;
+    } else if (outputType === "choices" || outputType === "choice") {
+      raw = rawInput;
+    }
+  }
 
   // ── Choices: output is {label, score, category} or [{...}, ...] ──
   const isChoiceObj =
@@ -144,22 +168,19 @@ const FormattedResult = ({ result }) => {
                 typeof c.label === "string"
                   ? c.label.charAt(0).toUpperCase() + c.label.slice(1)
                   : String(c.label);
-              const useCategoryColor =
-                c.category === "pass" || c.category === "fail";
               return (
                 <Chip
                   key={i}
                   label={label}
                   size="small"
-                  variant={useCategoryColor ? "filled" : "outlined"}
-                  color={
-                    c.category === "pass"
-                      ? "success"
-                      : c.category === "fail"
-                        ? "error"
-                        : "primary"
-                  }
-                  sx={{ fontSize: "12px", height: 24, fontWeight: 600 }}
+                  variant="outlined"
+                  sx={{
+                    borderRadius: "4px",
+                    borderColor: "purple.500",
+                    color: "purple.500",
+                    fontWeight: 400,
+                    typography: "s3",
+                  }}
                 />
               );
             })}
@@ -207,7 +228,9 @@ const FormattedResult = ({ result }) => {
 
     // Scoring (numeric)
     const score = typeof raw === "number" ? raw : parseFloat(raw);
+
     if (!isNaN(score)) {
+
       return (
         <Box
           sx={{

@@ -1,10 +1,30 @@
 import { Chip, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
+const extractScore = (value) => {
+  const raw = value?.score;
+  const normalized = normalizeEvalCellValue(raw);
+  if (typeof normalized === "number") return normalized;
+  if (normalized && typeof normalized === "object" && typeof normalized.score === "number") {
+    return normalized.score;
+  }
+  return parseFloat(normalized);
+};
+
+const extractChoiceLabel = (value) => {
+  const normalized = normalizeEvalCellValue(value?.score);
+  if (normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
+    if (Array.isArray(normalized.choices)) return normalized.choices.join(", ");
+    if (Array.isArray(normalized.choice)) return normalized.choice.join(", ");
+    if (typeof normalized.choices === "string") return normalized.choices;
+    if (typeof normalized.choice === "string") return normalized.choice;
+  }
+  return null;
+};
 
 const getEvaluationMetricColor = (value) => {
-  const numericValue =
-    typeof value?.score === "number" ? value.score : parseFloat(value?.score);
+  const numericValue = extractScore(value);
   if (numericValue < 50) {
     return { backgroundColor: "red.o10", borderColor: "red.500" };
   }
@@ -36,9 +56,16 @@ export default function EvaluationsContent({ evaluationMetrics = {} }) {
         </Typography>
       ) : (
         Object.keys(evaluationMetrics).map((key, index) => {
-          const { backgroundColor, borderColor } = getEvaluationMetricColor(
-            evaluationMetrics[key],
-          );
+          const metric = evaluationMetrics[key];
+          const { backgroundColor, borderColor } =
+            getEvaluationMetricColor(metric);
+          const numericScore = extractScore(metric);
+          const choiceLabel = extractChoiceLabel(metric);
+          const scoreText = choiceLabel
+            ? choiceLabel
+            : isNaN(numericScore)
+              ? "—"
+              : `${numericScore}%`;
           return (
             <Chip
               key={index}
@@ -47,7 +74,7 @@ export default function EvaluationsContent({ evaluationMetrics = {} }) {
                   typography="s2"
                   sx={{ color: borderColor }}
                   fontWeight={"fontWeightMedium"}
-                >{`${evaluationMetrics[key].name}: ${evaluationMetrics[key].score}%`}</Typography>
+                >{`${metric.name}: ${scoreText}`}</Typography>
               }
               sx={{
                 backgroundColor: backgroundColor,

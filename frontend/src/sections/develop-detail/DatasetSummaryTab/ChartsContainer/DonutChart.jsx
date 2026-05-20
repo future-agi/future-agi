@@ -6,6 +6,7 @@ import { generateAllColors } from "src/sections/projects/ChartsView/common";
 import { palette } from "src/theme/palette";
 import CompareDatasetSummaryIcon from "../CompareDatasetSummaryIcon";
 import TotalRowCount from "./TotalRowCount";
+import { cleanChoiceLabel } from "src/sections/develop-detail/DataTab/common";
 
 const getDefaultOptions = (isDark) => ({
   chart: {
@@ -51,6 +52,7 @@ const DonutChart = ({
   type = "",
   height = 250,
 }) => {
+  console.log(data)
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const defaultOptions = useMemo(() => getDefaultOptions(isDark), [isDark]);
@@ -155,7 +157,7 @@ const DonutChart = ({
               fontWeight={"fontWeightMedium"}
               color="green.500"
             >
-              {headerValue.join(", ")}
+              {headerValue.map(cleanChoiceLabel).join(", ")}
               {/* {headerValue.map((item) => `${item} ${(headerData?.average[item])?.toFixed(0)}%`).join(", ")} */}
             </Typography>
             {visibleSeries?.length === 1 && (
@@ -170,7 +172,7 @@ const DonutChart = ({
         // @ts-ignore
         options={{
           ...defaultOptions,
-          labels: graphLabels,
+          labels: (graphLabels || []).map(cleanChoiceLabel),
           ...(plotOptions && { plotOptions }),
           ...options,
         }}

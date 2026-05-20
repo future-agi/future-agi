@@ -20,6 +20,7 @@ import CustomDevelopGroupCellHeader from "src/sections/common/DevelopCellRendere
 import FormattedValueReason from "./FormattedReason";
 import logger from "src/utils/logger";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 
 const EvaluateArrayCellRenderer = ({ value }) => {
   return (
@@ -57,9 +58,13 @@ const EvaluateArrayCellRenderer = ({ value }) => {
 };
 
 function convertStringToArray(cellValue) {
+  // LLM evals may pass Python-repr strings or {choice: [...]} objects — let the
+  // shared helper unwrap to an array when possible.
+  const normalized = normalizeEvalCellValue(cellValue);
+  if (Array.isArray(normalized)) return normalized;
+  if (typeof cellValue !== "string") return [];
   try {
-    const formattedString = cellValue.replace(/'/g, '"');
-    return JSON.parse(formattedString);
+    return JSON.parse(cellValue.replace(/'/g, '"'));
   } catch (error) {
     logger.error("Invalid string format for array:", error);
     return [];
@@ -74,11 +79,7 @@ const EvaluateCell = ({ value, dataType, cellData }) => {
   };
 
   if (cellData?.output_type == "choices" || dataType == "choices") {
-    return (
-      <EvaluateArrayCellRenderer
-        value={typeof value == "string" ? convertStringToArray(value) : value}
-      />
-    );
+    return <EvaluateArrayCellRenderer value={convertStringToArray(value)} />;
   }
 
   if (dataType === "boolean") {
@@ -102,8 +103,16 @@ const EvaluateCell = ({ value, dataType, cellData }) => {
     );
   }
   if (dataType === "float" || cellData?.output_type == "score") {
+    // Eval outputs may arrive as {score, choice} (object or Python-repr string).
+    const normalized = normalizeEvalCellValue(cellData?.cell_value);
+    const rawScore =
+      normalized && typeof normalized === "object" && !Array.isArray(normalized)
+        ? typeof normalized.score === "number"
+          ? normalized.score
+          : NaN
+        : parseFloat(normalized);
     const bgColor = cellData
-      ? interpolateColorBasedOnScore(parseFloat(cellData?.cell_value), 1)
+      ? interpolateColorBasedOnScore(isNaN(rawScore) ? 0 : rawScore, 1)
       : "";
     return (
       <Box
@@ -114,9 +123,7 @@ const EvaluateCell = ({ value, dataType, cellData }) => {
           height: "100%",
         }}
       >
-        {cellData?.cell_value?.toString() != "NaN"
-          ? `${getScorePercentage(parseFloat(cellData?.cell_value))}%`
-          : ""}
+        {!isNaN(rawScore) ? `${getScorePercentage(rawScore)}%` : ""}
       </Box>
     );
   }

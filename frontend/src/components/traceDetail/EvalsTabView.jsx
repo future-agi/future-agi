@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
-import { Box, Typography } from "@mui/material";
+import { Box, Chip, Typography } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
@@ -175,23 +175,41 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
           {evalName}
         </Typography>
 
-        {/* Score with colored bg */}
-        <Box sx={{ width: "15%" }}>
-          <Typography
-            sx={{
-              display: "inline-block",
-              fontSize: 11.5,
-              fontWeight: 600,
-              color: sc.text,
-              bgcolor: sc.bg,
-              px: 0.75,
-              py: 0.15,
-              borderRadius: "3px",
-              minWidth: 36,
-            }}
-          >
-            {scoreLabel}
-          </Typography>
+        {/* Score — choices render as violet chips, else a colored badge */}
+        <Box sx={{ width: "15%", display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+          {ev.score_items?.length ? (
+            ev.score_items.map((/** @type {any} */ item, /** @type {any} */ i) => (
+              <Chip
+                key={i}
+                label={item}
+                size="small"
+                variant="outlined"
+                sx={{
+                  borderRadius: "4px",
+                  borderColor: "purple.500",
+                  color: "purple.500",
+                  fontWeight: 400,
+                  typography: "s3",
+                }}
+              />
+            ))
+          ) : (
+            <Typography
+              sx={{
+                display: "inline-block",
+                fontSize: 11.5,
+                fontWeight: 600,
+                color: sc.text,
+                bgcolor: sc.bg,
+                px: 0.75,
+                py: 0.15,
+                borderRadius: "3px",
+                minWidth: 36,
+              }}
+            >
+              {scoreLabel}
+            </Typography>
+          )}
         </Box>
 
         {/* Span name — hidden for single-call views (voice drawer) */}
