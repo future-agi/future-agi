@@ -43,7 +43,13 @@ function TraceVoicePanel({ traceId, projectId }) {
   const data = { ...voiceCallData, project_id: projectId, module: "project" };
 
   return (
-    <Box sx={{ minHeight: 400, display: "flex", flexDirection: "column" }}>
+    <Box
+      sx={{
+        height: "clamp(420px, 70vh, 700px)",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
       <VoiceLeftPanel data={data} embedded />
     </Box>
   );

@@ -165,7 +165,10 @@ const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
                 </Box>
                 <ShowComponent condition={!!filteredTranscript?.length}>
                   <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
-                    <TranscriptView transcript={filteredTranscript} />
+                    <TranscriptView
+                      transcript={filteredTranscript}
+                      embedded={embedded}
+                    />
                   </Box>
                 </ShowComponent>
               </Stack>
