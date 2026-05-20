@@ -110,8 +110,8 @@ const OutputTypeConfig = ({
               sx={{ color: "text.disabled", flexShrink: 0 }}
             />
             <Typography variant="caption" color="text.secondary">
-              Output type is fixed for system-level evaluations and can&apos;t
-              be changed.
+              Output type is fixed for this evaluation and can&apos;t be
+              changed.
             </Typography>
           </Box>
         )}
