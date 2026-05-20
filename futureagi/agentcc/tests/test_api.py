@@ -401,6 +401,26 @@ class TestWebhookAPI:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"]["ingested"] == 0
 
+    def test_webhook_rejects_unknown_body_field(self, api_client):
+        response = api_client.post(
+            "/agentcc/webhook/logs/",
+            {"logs": [], "legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_shadow_webhook_rejects_unknown_body_field(self, api_client):
+        response = api_client.post(
+            "/agentcc/webhook/shadow-results/",
+            {"results": [], "legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
     def test_webhook_with_secret(self, api_client, gateway_id):
         with patch("agentcc.views.webhook.AGENTCC_WEBHOOK_SECRET", "my-secret"):
             # Without secret — should fail

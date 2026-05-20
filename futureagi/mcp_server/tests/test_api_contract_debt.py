@@ -104,3 +104,33 @@ def test_mcp_error_responses_have_contracts():
 
     for (method, path, status_code), definition_name in expected.items():
         assert _response_ref(_operation(path, method), status_code) == definition_name
+
+
+def test_mcp_oauth_token_validation_uses_oauth_error_shape(api_client):
+    response = api_client.post(
+        "/mcp/oauth/token/",
+        {
+            "grant_type": "authorization_code",
+            "client_id": "client",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "invalid_request"
+    assert "client_secret" in response.json()["error_description"]
+
+
+def test_mcp_oauth_token_invalid_grant_type_uses_protocol_error(api_client):
+    response = api_client.post(
+        "/mcp/oauth/token/",
+        {
+            "grant_type": "password",
+            "client_id": "client",
+            "client_secret": "secret",
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "unsupported_grant_type"

@@ -8349,8 +8349,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/agentcc/webhook/logs/": {
       "post": {
         "operationId": "agentcc_webhook_logs_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/WebhookLogsRequest"
         },
@@ -8371,8 +8371,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/agentcc/webhook/shadow-results/": {
       "post": {
         "operationId": "agentcc_webhook_shadow-results_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/ShadowResultsWebhookRequest"
         },
@@ -8998,7 +8998,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/falcon-ai/files/upload/": {
       "post": {
         "operationId": "falcon-ai_files_upload_create",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": null,
         "queryParameters": {},
@@ -9351,8 +9351,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/falcon-ai/messages/{message_id}/feedback/": {
       "post": {
         "operationId": "falcon-ai_messages_feedback_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/MessageFeedback"
         },
@@ -10241,8 +10241,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/mcp/oauth/token/": {
       "post": {
         "operationId": "mcp_oauth_token_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/MCPOAuthTokenRequest"
         },
@@ -72847,6 +72847,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "WebhookLogsRequest": {
       "type": "object",
       "properties": {
+        "gateway_id": {
+          "title": "Gateway id",
+          "type": "string"
+        },
         "logs": {
           "type": "array",
           "items": {

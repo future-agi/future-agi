@@ -27,32 +27,14 @@
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 416,
-    "direct_swagger_auto_schema_decorators": 340,
-    "doc_only_input_contract_decorators": 58,
+    "runtime_backed_validated_request_decorators": 420,
+    "direct_swagger_auto_schema_decorators": 335,
+    "doc_only_input_contract_decorators": 53,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [],
   "broad_request_contract_decorators": [],
   "app_wide_doc_only_input_contract_decorators": [
-    {
-      "path": "futureagi/agentcc/views/shadow_webhook.py",
-      "line": 34,
-      "class": "ShadowResultWebhookView",
-      "function": "post",
-      "serializers": [
-        "ShadowResultsWebhookRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/agentcc/views/webhook.py",
-      "line": 27,
-      "class": "GatewayWebhookView",
-      "function": "post",
-      "serializers": [
-        "WebhookLogsRequestSerializer"
-      ]
-    },
     {
       "path": "futureagi/ee/usage/views/admin_invoice.py",
       "line": 39,
@@ -456,33 +438,6 @@
       "function": "get",
       "serializers": [
         "WorkspaceUsageEvalQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/mcp_server/views/oauth.py",
-      "line": 200,
-      "class": "MCPOAuthTokenView",
-      "function": "post",
-      "serializers": [
-        "MCPOAuthTokenRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/ee/falcon_ai/views.py",
-      "line": 266,
-      "class": "MessageFeedbackView",
-      "function": "post",
-      "serializers": [
-        "MessageFeedbackSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/ee/falcon_ai/views.py",
-      "line": 328,
-      "class": "FileUploadView",
-      "function": "post",
-      "serializers": [
-        "no_body"
       ]
     },
     {

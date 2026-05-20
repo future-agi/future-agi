@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from tracer.serializers.filters import StrictInputSerializer
+
 
 class AgentccErrorResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
@@ -377,11 +379,12 @@ class ValidateCELResponseSerializer(serializers.Serializer):
     result = ValidateCELResultSerializer()
 
 
-class WebhookLogsRequestSerializer(serializers.Serializer):
+class WebhookLogsRequestSerializer(StrictInputSerializer):
+    gateway_id = serializers.CharField(required=False, allow_blank=True)
     logs = serializers.ListField(child=serializers.DictField(), required=False)
 
 
-class ShadowResultsWebhookRequestSerializer(serializers.Serializer):
+class ShadowResultsWebhookRequestSerializer(StrictInputSerializer):
     results = serializers.ListField(child=serializers.DictField(), required=False)
 
 

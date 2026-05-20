@@ -8905,6 +8905,7 @@ export const AgentccWebhookEventsRetryBody = zod.object({
 
 
 export const AgentccWebhookLogsCreateBody = zod.object({
+  "gateway_id": zod.string().optional(),
   "logs": zod.array(zod.record(zod.string(), zod.string())).optional()
 })
 

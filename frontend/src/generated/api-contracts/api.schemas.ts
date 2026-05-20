@@ -3304,6 +3304,7 @@ export interface AgentccWebhookEventApi {
 export type WebhookLogsRequestApiLogsItem = {[key: string]: string};
 
 export interface WebhookLogsRequestApi {
+  gateway_id?: string;
   logs?: WebhookLogsRequestApiLogsItem[];
 }
 

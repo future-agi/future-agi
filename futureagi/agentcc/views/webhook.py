@@ -2,7 +2,6 @@ import hmac
 import os
 
 import structlog
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
 
@@ -12,6 +11,7 @@ from agentcc.serializers.contracts import (
     WebhookLogsRequestSerializer,
 )
 from agentcc.services.log_ingestion import ingest_request_logs
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -24,12 +24,13 @@ class GatewayWebhookView(APIView):
     authentication_classes = []
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=WebhookLogsRequestSerializer,
+    @validated_request(
+        request_serializer=WebhookLogsRequestSerializer,
         responses={
             200: WebhookIngestResponseSerializer,
             400: AgentccErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
         expected_secret = AGENTCC_WEBHOOK_SECRET
@@ -39,7 +40,7 @@ class GatewayWebhookView(APIView):
         if not hmac.compare_digest(provided, expected_secret):
             return self._gm.bad_request("Invalid webhook secret")
 
-        logs = request.data.get("logs", [])
+        logs = request.validated_data.get("logs", [])
         if not logs:
             return self._gm.success_response({"ingested": 0})
 
