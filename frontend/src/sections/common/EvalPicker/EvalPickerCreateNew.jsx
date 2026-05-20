@@ -844,23 +844,27 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <Tabs
                   value={evalType}
                   onChange={(_, val) => setEvalType(val)}
+                  variant="standard"
                   TabIndicatorProps={{ style: { display: "none" } }}
                   sx={{
-                    minHeight: 28,
+                    width: "fit-content",
+                    minHeight: 32,
                     "& .MuiTab-root": {
+                      height: 28,
                       minHeight: 28,
+                      maxHeight: 28,
                       px: 1.5,
                       py: 0,
                       mr: "0px !important",
                       textTransform: "none",
                       fontSize: "13px",
+                      lineHeight: "28px",
                       borderRadius: "6px",
                     },
                     border: "1px solid",
                     borderColor: "divider",
                     p: "2px",
                     borderRadius: "8px",
-                    width: "fit-content",
                     bgcolor: (theme) =>
                       theme.palette.mode === "dark"
                         ? "rgba(255,255,255,0.04)"
