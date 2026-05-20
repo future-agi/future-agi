@@ -140,7 +140,7 @@ class EvalConfigUpdateRequestSerializer(StrictInputSerializer):
         return data
 
 
-class EvalSummaryFilterSerializer(serializers.Serializer):
+class EvalSummaryFilterSerializer(StrictInputSerializer):
     """Query parameter serializer for GET /simulate/run-tests/{run_test_id}/eval-summary/"""
 
     execution_id = serializers.UUIDField(
@@ -151,7 +151,7 @@ class EvalSummaryFilterSerializer(serializers.Serializer):
     )
 
 
-class EvalSummaryComparisonFilterSerializer(serializers.Serializer):
+class EvalSummaryComparisonFilterSerializer(StrictInputSerializer):
     """Query parameter serializer for GET /simulate/run-tests/{run_test_id}/eval-summary-comparison/"""
 
     execution_ids = serializers.CharField(
@@ -164,8 +164,10 @@ class EvalSummaryComparisonFilterSerializer(serializers.Serializer):
         """Parse JSON string and validate the resulting list is non-empty."""
         try:
             parsed = json.loads(value)
-        except (json.JSONDecodeError, TypeError):
-            raise serializers.ValidationError("execution_ids must be valid JSON")
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise serializers.ValidationError(
+                "execution_ids must be valid JSON"
+            ) from exc
         if not isinstance(parsed, list):
             raise serializers.ValidationError("execution_ids must be a JSON array")
         if not parsed:

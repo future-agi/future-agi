@@ -27,9 +27,9 @@
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 410,
-    "direct_swagger_auto_schema_decorators": 346,
-    "doc_only_input_contract_decorators": 64,
+    "runtime_backed_validated_request_decorators": 415,
+    "direct_swagger_auto_schema_decorators": 341,
+    "doc_only_input_contract_decorators": 59,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [],
@@ -465,51 +465,6 @@
       "function": "post",
       "serializers": [
         "MCPOAuthTokenRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/run_test.py",
-      "line": 3896,
-      "class": "RunTestComponentsUpdateView",
-      "function": "patch",
-      "serializers": [
-        "RunTestComponentsUpdateSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/run_test.py",
-      "line": 4289,
-      "class": "AddEvalConfigView",
-      "function": "post",
-      "serializers": [
-        "AddEvalConfigsRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/run_test.py",
-      "line": 4626,
-      "class": "UpdateEvalConfigView",
-      "function": "post",
-      "serializers": [
-        "EvalConfigUpdateRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/run_test.py",
-      "line": 5450,
-      "class": "RunTestEvalSummaryView",
-      "function": "get",
-      "serializers": [
-        "EvalSummaryFilterSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/run_test.py",
-      "line": 5501,
-      "class": "RunTestEvalSummaryComparisonView",
-      "function": "get",
-      "serializers": [
-        "EvalSummaryComparisonFilterSerializer"
       ]
     },
     {

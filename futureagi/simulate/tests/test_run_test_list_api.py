@@ -203,3 +203,50 @@ class TestRunTestRuntimeContracts:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_components_update_rejects_unknown_body_field(self, auth_client):
+        response = auth_client.patch(
+            f"/simulate/run-tests/{uuid4()}/components/",
+            {"legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_add_eval_configs_rejects_unknown_body_field(self, auth_client):
+        response = auth_client.post(
+            f"/simulate/run-tests/{uuid4()}/eval-configs/",
+            {"evaluations_config": [], "legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_update_eval_config_rejects_unknown_body_field(self, auth_client):
+        response = auth_client.post(
+            f"/simulate/run-tests/{uuid4()}/eval-configs/{uuid4()}/update/",
+            {"legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_eval_summary_rejects_unknown_query_param(self, auth_client):
+        response = auth_client.get(
+            f"/simulate/run-tests/{uuid4()}/eval-summary/?legacy=1"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy"] == ["Unknown field."]
+
+    def test_eval_summary_comparison_rejects_unknown_query_param(self, auth_client):
+        response = auth_client.get(
+            f"/simulate/run-tests/{uuid4()}/eval-summary-comparison/"
+            "?execution_ids=[]&legacy=1"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy"] == ["Unknown field."]

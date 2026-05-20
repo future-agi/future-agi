@@ -3893,14 +3893,15 @@ class RunTestComponentsUpdateView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=RunTestComponentsUpdateSerializer,
+    @validated_request(
+        request_serializer=RunTestComponentsUpdateSerializer,
         responses={
             200: RunTestResponseSerializer,
             400: RunTestErrorResponseSerializer,
             404: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def patch(self, request, run_test_id, *args, **kwargs):
         """Update components of a specific RunTest"""
@@ -3921,10 +3922,11 @@ class RunTestComponentsUpdateView(APIView):
                 # Track if agent version will be changed
                 agent_version_changed = False
                 new_agent_version = None
+                data = request.validated_data
 
                 # Update AgentDefinition if provided
-                if "agent_definition_id" in request.data:
-                    agent_definition_id = request.data["agent_definition_id"]
+                if "agent_definition_id" in data:
+                    agent_definition_id = data["agent_definition_id"]
                     try:
                         agent_definition = AgentDefinition.objects.get(
                             id=agent_definition_id,
@@ -3938,8 +3940,8 @@ class RunTestComponentsUpdateView(APIView):
                     except AgentDefinition.DoesNotExist:
                         return self.gm.not_found("Agent definition not found")
 
-                if "version" in request.data:
-                    version_id = request.data["version"]
+                if "version" in data:
+                    version_id = data["version"]
                     try:
                         version = AgentVersion.objects.get(
                             id=version_id, organization=user_organization, deleted=False
@@ -3951,8 +3953,8 @@ class RunTestComponentsUpdateView(APIView):
                         return self.gm.not_found("Agent version not found")
 
                 # Update SimulatorAgent if provided
-                if "simulator_agent_id" in request.data:
-                    simulator_agent_id = request.data["simulator_agent_id"]
+                if "simulator_agent_id" in data:
+                    simulator_agent_id = data["simulator_agent_id"]
                     try:
                         simulator_agent = SimulatorAgent.objects.get(
                             id=simulator_agent_id,
@@ -3964,8 +3966,8 @@ class RunTestComponentsUpdateView(APIView):
                         return self.gm.not_found("Simulator agent not found")
 
                 # Handle scenarios - replace with new list to maintain only specified scenarios as final state
-                if "scenarios" in request.data:
-                    scenario_ids = request.data["scenarios"]
+                if "scenarios" in data:
+                    scenario_ids = data["scenarios"]
 
                     # Validate scenarios data structure
                     if not isinstance(scenario_ids, list):
@@ -3991,10 +3993,8 @@ class RunTestComponentsUpdateView(APIView):
                     run_test.scenarios.set(scenarios_to_set)
 
                 # Update enable_tool_evaluation if provided
-                if "enable_tool_evaluation" in request.data:
-                    run_test.enable_tool_evaluation = request.data[
-                        "enable_tool_evaluation"
-                    ]
+                if "enable_tool_evaluation" in data:
+                    run_test.enable_tool_evaluation = data["enable_tool_evaluation"]
 
                 # Validate that if tool evaluation is enabled, agent has required api_key and assistant_id
                 if run_test.enable_tool_evaluation:
@@ -4286,11 +4286,11 @@ class AddEvalConfigView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         tags=["Run Tests - Eval Configs"],
         operation_summary="Add evaluation configurations",
         operation_description="Adds evaluation configurations to a test run. Returns 201 with the created configs.",
-        request_body=AddEvalConfigsRequestSerializer,
+        request_serializer=AddEvalConfigsRequestSerializer,
         responses={
             201: AddEvalConfigsResponseSerializer,
             400: EvalErrorResponseSerializer,
@@ -4298,6 +4298,7 @@ class AddEvalConfigView(APIView):
             404: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, run_test_id, *args, **kwargs):
         """
@@ -4317,11 +4318,7 @@ class AddEvalConfigView(APIView):
                 RunTest, id=run_test_id, organization=user_organization, deleted=False
             )
 
-            # Validate request data (Phase 0.3: moved from raw dict access)
-            req_serializer = AddEvalConfigsRequestSerializer(data=request.data)
-            if not req_serializer.is_valid():
-                return self.gm.bad_request(req_serializer.errors)
-            evaluations_config = req_serializer.validated_data["evaluations_config"]
+            evaluations_config = request.validated_data["evaluations_config"]
 
             # Get existing eval config names for this run test
             existing_eval_configs = SimulateEvalConfig.objects.filter(
@@ -4623,14 +4620,14 @@ class UpdateEvalConfigView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         tags=["Run Tests - Eval Configs"],
         operation_summary="Update evaluation configuration",
         operation_description=(
             "Updates an evaluation configuration and optionally triggers a rerun. "
             "When run=true, test_execution_id is required."
         ),
-        request_body=EvalConfigUpdateRequestSerializer,
+        request_serializer=EvalConfigUpdateRequestSerializer,
         responses={
             200: EvalConfigUpdateResponseSerializer,
             400: EvalErrorResponseSerializer,
@@ -4638,6 +4635,7 @@ class UpdateEvalConfigView(APIView):
             404: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, run_test_id, eval_config_id, *args, **kwargs):
         """
@@ -4652,11 +4650,7 @@ class UpdateEvalConfigView(APIView):
             if not user_organization:
                 return _gm.not_found("Organization not found for the user.")
 
-            # Validate request (Phase 0.2: cross-field run+test_execution_id check moved to serializer)
-            req_serializer = EvalConfigUpdateRequestSerializer(data=request.data)
-            if not req_serializer.is_valid():
-                return self._gm.bad_request(req_serializer.errors)
-            validated = req_serializer.validated_data
+            validated = request.validated_data
 
             # Get the run test and verify it belongs to the user's organization
             run_test = get_object_or_404(
@@ -5447,7 +5441,7 @@ class RunTestEvalSummaryView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         tags=["Run Tests - Eval Summary"],
         operation_summary="Get evaluation summary",
         operation_description="Returns evaluation summary statistics for a test run, optionally scoped to a single execution.",
@@ -5458,16 +5452,14 @@ class RunTestEvalSummaryView(APIView):
             404: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, run_test_id, *args, **kwargs):
         try:
             user_organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            filter_serializer = EvalSummaryFilterSerializer(data=request.query_params)
-            if not filter_serializer.is_valid():
-                return self._gm.bad_request(filter_serializer.errors)
-            execution_id = filter_serializer.validated_data.get("execution_id")
+            execution_id = request.validated_query_data.get("execution_id")
 
             run_test = RunTest.objects.get(
                 id=run_test_id, organization=user_organization
@@ -5498,7 +5490,7 @@ class RunTestEvalSummaryComparisonView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         tags=["Run Tests - Eval Summary"],
         operation_summary="Compare evaluation summaries",
         operation_description="Compares evaluation summary statistics across multiple test executions.",
@@ -5510,6 +5502,7 @@ class RunTestEvalSummaryComparisonView(APIView):
             404: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, run_test_id, *args, **kwargs):
         """
@@ -5520,11 +5513,7 @@ class RunTestEvalSummaryComparisonView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            # Phase 0.1: replaced raw json.loads with EvalSummaryComparisonFilterSerializer
-            filter_serializer = EvalSummaryComparisonFilterSerializer(data=request.GET)
-            if not filter_serializer.is_valid():
-                return self._gm.bad_request(filter_serializer.errors)
-            execution_ids = filter_serializer.validated_data["execution_ids"]
+            execution_ids = request.validated_query_data["execution_ids"]
 
             run_test = RunTest.objects.get(
                 id=run_test_id, organization=user_organization

@@ -28593,8 +28593,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/{run_test_id}/components/": {
       "patch": {
         "operationId": "simulate_run-tests_components_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/RunTestComponentsUpdate"
         },
@@ -28672,8 +28672,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/{run_test_id}/eval-configs/": {
       "post": {
         "operationId": "simulate_run-tests_eval-configs_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/AddEvalConfigsRequest"
         },
@@ -28749,8 +28749,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/{run_test_id}/eval-configs/{eval_config_id}/update/": {
       "post": {
         "operationId": "simulate_run-tests_eval-configs_update_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/EvalConfigUpdateRequest"
         },
@@ -28777,8 +28777,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/{run_test_id}/eval-summary-comparison/": {
       "get": {
         "operationId": "simulate_run-tests_eval-summary-comparison_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "execution_ids": {
@@ -28811,8 +28811,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/{run_test_id}/eval-summary/": {
       "get": {
         "operationId": "simulate_run-tests_eval-summary_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "execution_id": {
