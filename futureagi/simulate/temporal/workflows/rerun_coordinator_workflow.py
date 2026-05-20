@@ -89,9 +89,10 @@ class RerunCoordinatorWorkflow:
         self._completed_calls = 0
         self._failed_calls = 0
 
-        # Pending calls to launch as tuples of (call_id, eval_only)
-        # Each call carries its own eval_only flag
-        self._pending_calls: list[tuple[str, bool]] = []
+        # Pending calls as (call_id, eval_only, eval_config_ids) — each call
+        # carries its own flags so a single workflow can mix call+eval and
+        # eval-only children (merge strategy doesn't enforce a single mode).
+        self._pending_calls: list[tuple[str, bool, Optional[list[str]]]] = []
 
         # Track all call IDs (for cancellation)
         self._all_call_ids: list[str] = []
@@ -110,10 +111,9 @@ class RerunCoordinatorWorkflow:
         self._org_id = input.org_id
         self._workspace_id = input.workspace_id
 
-        # Convert call IDs to tuples with their eval_only flag
-        # (done for both initial and restored runs)
         self._pending_calls = [
-            (call_id, input.eval_only) for call_id in input.call_execution_ids
+            (call_id, input.eval_only, input.eval_config_ids)
+            for call_id in input.call_execution_ids
         ]
         # Restore full call ID list from continue-as-new, or initialize from input
         if input.all_call_ids:
@@ -279,10 +279,10 @@ class RerunCoordinatorWorkflow:
             workflow.logger.info("No new calls to merge - all already in queue")
             return
 
-        # Add new calls to pending list and tracking
-        # Store as tuples of (call_id, eval_only) for proper child workflow launch
         for call_id in new_calls:
-            self._pending_calls.append((call_id, signal.eval_only))
+            self._pending_calls.append(
+                (call_id, signal.eval_only, signal.eval_config_ids)
+            )
             self._all_call_ids.append(call_id)
 
         self._total_calls += len(new_calls)
@@ -326,13 +326,15 @@ class RerunCoordinatorWorkflow:
     # ========================================
 
     async def _launch_batch(
-        self, input: RerunCoordinatorInput, calls: list[tuple[str, bool]]
+        self,
+        input: RerunCoordinatorInput,
+        calls: list[tuple[str, bool, Optional[list[str]]]],
     ) -> None:
         """Launch a batch of CallExecutionWorkflow children for reruns.
 
         Args:
             input: Coordinator input with org_id, workspace_id, etc.
-            calls: List of (call_id, eval_only) tuples
+            calls: List of (call_id, eval_only, eval_config_ids) tuples
         """
         try:
             from ee.voice.temporal.workflows.call_execution_workflow import (
@@ -343,7 +345,7 @@ class RerunCoordinatorWorkflow:
                 "Voice call execution workflow is unavailable without Enterprise Edition."
             ) from exc
 
-        for call_id, eval_only in calls:
+        for call_id, eval_only, eval_config_ids in calls:
             # Unique workflow ID includes rerun_id to allow multiple reruns
             workflow_id = (
                 f"{RERUN_CALL_EXECUTION_WORKFLOW_ID_PREFIX}-{call_id}-{input.rerun_id}"
@@ -357,7 +359,8 @@ class RerunCoordinatorWorkflow:
                     workspace_id=input.workspace_id,
                     test_workflow_id=workflow.info().workflow_id,  # This coordinator!
                     test_execution_id=input.test_execution_id,
-                    eval_only=eval_only,  # Each call has its own eval_only flag
+                    eval_only=eval_only,
+                    eval_config_ids=eval_config_ids,
                 ),
                 id=workflow_id,
                 task_queue=QUEUE_L,
@@ -497,8 +500,9 @@ class RerunCoordinatorWorkflow:
     async def _checkpoint(self, input: RerunCoordinatorInput) -> RerunCoordinatorOutput:
         """Checkpoint state and continue-as-new.
 
-        Note: On continue-as-new, remaining calls use input.eval_only for their mode.
-        This is a simplification - in practice, most reruns won't hit the checkpoint threshold.
+        Note: remaining calls inherit input.eval_only / input.eval_config_ids;
+        per-call overrides from merge_calls signals are lost across continue-as-new.
+        Most reruns don't hit the checkpoint threshold in practice.
         """
         workflow.logger.info(
             f"Checkpointing rerun: events={self._event_count}, "
@@ -514,10 +518,8 @@ class RerunCoordinatorWorkflow:
             all_call_ids=self._all_call_ids.copy(),
         )
 
-        # Extract call_ids from pending tuples for continue-as-new
-        remaining_call_ids = [call_id for call_id, _ in self._pending_calls]
+        remaining_call_ids = [call_id for call_id, _, _ in self._pending_calls]
 
-        # Continue with preserved state
         workflow.continue_as_new(
             RerunCoordinatorInput(
                 test_execution_id=input.test_execution_id,
@@ -526,6 +528,7 @@ class RerunCoordinatorWorkflow:
                 workspace_id=input.workspace_id,
                 rerun_id=input.rerun_id,
                 eval_only=input.eval_only,
+                eval_config_ids=input.eval_config_ids,
                 state=state,
                 # Also pass all_call_ids at input level for initial restoration
                 all_call_ids=self._all_call_ids.copy(),

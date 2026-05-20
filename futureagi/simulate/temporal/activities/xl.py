@@ -462,28 +462,22 @@ def _build_simulation_context_map(call_execution, agent_version):
         "stereo_recording_url": _s(call_execution.stereo_recording_url),
     }
 
-    if agent_def:
-        ctx["agent_name"] = _s(agent_def.agent_name)
-        ctx["agent_type"] = _s(agent_def.agent_type)
-        ctx["agent_provider"] = _s(agent_def.provider)
-        ctx["agent_contact_number"] = _s(agent_def.contact_number)
-        ctx["agent_language"] = _s(agent_def.language)
-        ctx["agent_description"] = _s(getattr(agent_def, "description", ""))
-        ctx["agent_model"] = _s(getattr(agent_def, "model", ""))
+    # Snapshot first so evals see the config the call actually ran with;
+    # fall back to AgentDefinition only when the snapshot lacks the key
+    # (older agent_versions written before a field existed).
+    def _agent(snapshot_key, def_attr):
+        snap_value = config_snapshot.get(snapshot_key) if config_snapshot else None
+        if snap_value not in (None, ""):
+            return _s(snap_value)
+        return _s(getattr(agent_def, def_attr, "")) if agent_def else ""
 
-    # Snapshot fields override the live AgentDefinition when present, so
-    # evals see the exact prompt/model the call actually ran with instead
-    # of whatever the definition has drifted to since.
-    if config_snapshot:
-        snap_model = config_snapshot.get("model")
-        snap_desc = config_snapshot.get("description")
-        if snap_model:
-            ctx["agent_model"] = _s(snap_model)
-        if snap_desc:
-            ctx["agent_description"] = _s(snap_desc)
-
-    ctx.setdefault("agent_model", "")
-    ctx.setdefault("agent_description", "")
+    ctx["agent_name"] = _agent("agent_name", "agent_name")
+    ctx["agent_type"] = _agent("agent_type", "agent_type")
+    ctx["agent_provider"] = _agent("provider", "provider")
+    ctx["agent_contact_number"] = _agent("contact_number", "contact_number")
+    ctx["agent_language"] = _agent("language", "language")
+    ctx["agent_description"] = _agent("description", "description")
+    ctx["agent_model"] = _agent("model", "model")
 
     if simulator_agent:
         ctx["persona_name"] = _s(simulator_agent.name)

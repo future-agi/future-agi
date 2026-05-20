@@ -61,9 +61,7 @@ class RunNewEvalsOnSimulationTool(BaseTool):
         from simulate.models.run_test import RunTest
         from simulate.models.simulate_eval_config import SimulateEvalConfig
         from simulate.models.test_execution import TestExecution
-        from simulate.services.test_executor import (
-            run_new_evals_on_call_executions_task,
-        )
+        from simulate.temporal.client import rerun_call_executions
 
         logger = structlog.get_logger(__name__)
 
@@ -127,51 +125,13 @@ class RunNewEvalsOnSimulationTool(BaseTool):
                 error_code="NOT_FOUND",
             )
 
-        # Collect call execution IDs and update test execution status
-        call_execution_ids = []
-        test_execution_count = 0
-        test_executions_to_update = []
-
-        for test_execution in test_executions:
-            test_execution_count += 1
-            call_executions = CallExecution.objects.filter(
-                test_execution=test_execution
-            ).values_list("id", flat=True)
-            call_execution_ids.extend([str(ce_id) for ce_id in call_executions])
-
-            # Update status to EVALUATING
-            test_execution.status = TestExecution.ExecutionStatus.EVALUATING
-
-            # Update column_order with new eval configs
-            if not test_execution.execution_metadata:
-                test_execution.execution_metadata = {}
-
-            column_order = test_execution.execution_metadata.get("column_order", [])
-            existing_eval_ids = {
-                col.get("id") for col in column_order if col.get("type") == "evaluation"
-            }
-
-            for eval_config in eval_configs:
-                if str(eval_config.id) not in existing_eval_ids:
-                    column_order.append(
-                        {
-                            "column_name": eval_config.name,
-                            "id": str(eval_config.id),
-                            "eval_config": eval_config.eval_template.config,
-                            "visible": True,
-                            "type": "evaluation",
-                        }
-                    )
-
-            test_execution.execution_metadata["column_order"] = column_order
-            test_execution.picked_up_by_executor = False
-            test_executions_to_update.append(test_execution)
-
-        if test_executions_to_update:
-            TestExecution.objects.bulk_update(
-                test_executions_to_update,
-                ["status", "execution_metadata", "picked_up_by_executor"],
-            )
+        calls_by_test_execution: dict[str, list[str]] = {}
+        call_execution_ids: list[str] = []
+        for ce_id, te_id in CallExecution.objects.filter(
+            test_execution_id__in=test_executions.values_list("id", flat=True)
+        ).values_list("id", "test_execution_id"):
+            calls_by_test_execution.setdefault(str(te_id), []).append(str(ce_id))
+            call_execution_ids.append(str(ce_id))
 
         if not call_execution_ids:
             return ToolResult.error(
@@ -179,7 +139,10 @@ class RunNewEvalsOnSimulationTool(BaseTool):
                 error_code="NOT_FOUND",
             )
 
-        # Initialize eval_outputs for call executions
+        eval_config_ids_str = [str(ec_id) for ec_id in params.eval_config_ids]
+
+        # Seed eval_outputs placeholders before launching the workflows
+        # so the activity sees the pending rows on first read.
         call_executions_to_update = CallExecution.objects.filter(
             id__in=call_execution_ids
         )
@@ -202,15 +165,81 @@ class RunNewEvalsOnSimulationTool(BaseTool):
                 call_executions_list, ["call_metadata", "eval_outputs"]
             )
 
-        # Trigger the Celery task
-        eval_config_ids_str = [str(ec_id) for ec_id in params.eval_config_ids]
-        task = run_new_evals_on_call_executions_task.apply_async(
-            args=(call_execution_ids, eval_config_ids_str),
-        )
+        # One workflow per TestExecution: merge strategy is keyed on
+        # test_execution_id, so we can't bundle them into a single workflow.
+        workspace_id = run_test.workspace_id
+        workspace_id_str = str(workspace_id) if workspace_id else ""
+
+        test_execution_count = 0
+        launched_workflows: list[dict] = []
+        for test_execution in test_executions:
+            te_id = str(test_execution.id)
+            te_call_ids = calls_by_test_execution.get(te_id, [])
+            if not te_call_ids:
+                continue
+
+            if not test_execution.execution_metadata:
+                test_execution.execution_metadata = {}
+
+            column_order = test_execution.execution_metadata.get("column_order", [])
+            existing_eval_ids = {
+                col.get("id") for col in column_order
+                if col.get("type") == "evaluation"
+            }
+            for eval_config in eval_configs:
+                if str(eval_config.id) not in existing_eval_ids:
+                    column_order.append(
+                        {
+                            "column_name": eval_config.name,
+                            "id": str(eval_config.id),
+                            "eval_config": eval_config.eval_template.config,
+                            "visible": True,
+                            "type": "evaluation",
+                        }
+                    )
+            test_execution.execution_metadata["column_order"] = column_order
+
+            active_workflow_id = test_execution.execution_metadata.get(
+                "active_rerun_workflow_id"
+            )
+
+            rerun_result = rerun_call_executions(
+                test_execution_id=te_id,
+                call_execution_ids=te_call_ids,
+                org_id=str(context.organization.id),
+                workspace_id=workspace_id_str,
+                eval_only=True,
+                eval_config_ids=eval_config_ids_str,
+                active_workflow_id=active_workflow_id,
+            )
+
+            test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+            test_execution.picked_up_by_executor = True
+            if not rerun_result.get("merged"):
+                test_execution.execution_metadata[
+                    "active_rerun_workflow_id"
+                ] = rerun_result.get("workflow_id")
+            test_execution.save(
+                update_fields=[
+                    "status",
+                    "execution_metadata",
+                    "picked_up_by_executor",
+                ]
+            )
+
+            test_execution_count += 1
+            launched_workflows.append(
+                {
+                    "test_execution_id": te_id,
+                    "workflow_id": rerun_result.get("workflow_id"),
+                    "merged": rerun_result.get("merged", False),
+                    "call_count": len(te_call_ids),
+                }
+            )
 
         logger.info(
             "mcp_run_new_evals_triggered",
-            task_id=task.id,
+            launched_workflows=launched_workflows,
             call_executions=len(call_execution_ids),
             test_executions=test_execution_count,
             eval_configs=len(eval_config_ids),

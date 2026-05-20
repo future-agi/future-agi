@@ -35,6 +35,9 @@ class RerunCoordinatorInput:
     # If False, run full call + evaluation flow
     eval_only: bool = False
 
+    # None means run every eval config attached to the run_test.
+    eval_config_ids: Optional[list[str]] = None
+
     # State for continue-as-new (None for initial run)
     state: Optional["RerunCoordinatorState"] = None
 
@@ -118,6 +121,9 @@ class MergeCallsSignal:
 
     # Whether these calls are eval-only (must match workflow's eval_only mode)
     eval_only: bool = False
+
+    # None means run every eval config attached to the run_test.
+    eval_config_ids: Optional[list[str]] = None
 
 
 # =============================================================================

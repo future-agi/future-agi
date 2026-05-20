@@ -142,12 +142,7 @@ from simulate.serializers.test_execution import (
     TestExecutionSerializer,
 )
 
-# Import Temporal activities (using @temporal_activity drop-in decorator)
-from simulate.services.test_executor import (
-    TestExecutor,
-    _run_simulate_evaluations_task,
-    run_new_evals_on_call_executions_task,
-)
+from simulate.services.test_executor import TestExecutor
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
 from simulate.utils.agent_optimiser import (
     create_optimiser_run_for_test_execution,
@@ -169,7 +164,6 @@ from simulate.utils.sql_query import (
 )
 from simulate.utils.test_execution_utils import TestExecutionUtils
 from tfc.ee_gates import strip_turing_from_config_options
-from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -682,7 +676,6 @@ class RunTestExecutionView(APIView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
-        self.test_executor = TestExecutor()
 
     def post(self, request, run_test_id, *args, **kwargs):
         """Execute a test run"""
@@ -740,21 +733,11 @@ class RunTestExecutionView(APIView):
             if gate_response is not None:
                 return gate_response
 
-            # Check if Temporal test execution is enabled
-            if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):
-                result = self._execute_with_temporal(
-                    run_test=run_test,
-                    scenario_ids=final_scenario_ids,
-                    simulator_id=simulator_id,
-                )
-            else:
-                # Execute the test using the legacy test executor (Celery)
-                result = self.test_executor.execute_test(
-                    run_test_id=str(run_test.id),
-                    user_id=str(request.user.id),
-                    scenario_ids=final_scenario_ids,
-                    simulator_id=simulator_id,
-                )
+            result = self._execute_with_temporal(
+                run_test=run_test,
+                scenario_ids=final_scenario_ids,
+                simulator_id=simulator_id,
+            )
 
             if result["success"]:
                 return Response(
@@ -947,15 +930,7 @@ class TestExecutionCancelView(APIView):
             test_execution.status = TestExecution.ExecutionStatus.CANCELLING
             test_execution.save()
 
-            # Check if Temporal test execution is enabled
-            if getattr(app_settings, "TEMPORAL_TEST_EXECUTION_ENABLED", False):
-                result = self._cancel_with_temporal(test_execution)
-            else:
-                # Cancel using legacy test executor (Celery)
-                test_executor = TestExecutor()
-                result = test_executor.cancel_test(
-                    run_test_id=run_test_id, test_execution_id=test_execution_id
-                )
+            result = self._cancel_with_temporal(test_execution)
 
             if result["success"]:
                 response_data = {
@@ -4831,19 +4806,51 @@ class UpdateEvalConfigView(APIView):
                         f"{len(call_executions_list)} call executions with eval config {eval_config.id}"
                     )
 
-                # Update test execution status to EVALUATING
-                test_execution.status = TestExecution.ExecutionStatus.EVALUATING
-                test_execution.picked_up_by_executor = False
-                test_execution.save(update_fields=["status", "picked_up_by_executor"])
+                from simulate.temporal.client import rerun_call_executions
 
-                # Trigger the Celery task to run evaluations asynchronously
-                task = run_new_evals_on_call_executions_task.apply_async(
-                    args=(call_execution_ids, eval_config_ids_str),
+                # active_workflow_id lets a subsequent rerun for the same
+                # test execution merge into the in-flight workflow.
+                active_workflow_id = None
+                if test_execution.execution_metadata:
+                    active_workflow_id = test_execution.execution_metadata.get(
+                        "active_rerun_workflow_id"
+                    )
+
+                workspace_id = run_test.workspace_id
+                workspace_id_str = str(workspace_id) if workspace_id else ""
+
+                rerun_result = rerun_call_executions(
+                    test_execution_id=str(test_execution.id),
+                    call_execution_ids=call_execution_ids,
+                    org_id=str(user_organization.id),
+                    workspace_id=workspace_id_str,
+                    eval_only=True,
+                    eval_config_ids=eval_config_ids_str,
+                    active_workflow_id=active_workflow_id,
                 )
 
+                test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+                test_execution.picked_up_by_executor = True
+                if not test_execution.execution_metadata:
+                    test_execution.execution_metadata = {}
+                if not rerun_result.get("merged"):
+                    test_execution.execution_metadata[
+                        "active_rerun_workflow_id"
+                    ] = rerun_result.get("workflow_id")
+                test_execution.save(
+                    update_fields=[
+                        "status",
+                        "picked_up_by_executor",
+                        "execution_metadata",
+                    ]
+                )
+
+                merged_info = " (merged)" if rerun_result.get("merged") else ""
                 logger.info(
-                    f"Triggered rerun evaluations task {task.id} for {len(call_execution_ids)} call executions "
-                    f"in test execution {test_execution_id} with eval config {eval_config.id}"
+                    f"Launched RerunCoordinatorWorkflow (eval_only){merged_info} "
+                    f"{rerun_result.get('workflow_id')} for {len(call_execution_ids)} "
+                    f"call executions in test execution {test_execution_id} "
+                    f"with eval config {eval_config.id}"
                 )
 
                 return Response(
@@ -4854,7 +4861,7 @@ class UpdateEvalConfigView(APIView):
                             "run_test_id": str(run_test_id),
                             "test_execution_id": str(test_execution_id),
                             "call_execution_count": len(call_execution_ids),
-                            "note": f"{len(call_execution_ids)} parallel tasks will be spawned to process evaluations",
+                            "note": f"{len(call_execution_ids)} evaluations will run via Temporal workflow",
                         }
                     ).data,
                     status=status.HTTP_200_OK,
@@ -5939,58 +5946,6 @@ def _create_rerun_call_execution(call_execution):
     )
 
 
-def _rerun_call_executions(call_executions, rerun_type):
-    """
-    Process rerun for a list of call executions.
-    Returns (successful_reruns, failed_reruns, has_pending_calls, has_pending_evals)
-    """
-    successful_reruns = []
-    failed_reruns = []
-    has_pending_calls = False
-    has_pending_evals = False
-
-    for call_execution in call_executions:
-        try:
-            if rerun_type == "eval_only":
-                _save_eval_snapshot(call_execution)
-
-                call_execution.eval_outputs = {}
-                call_execution.call_metadata = call_execution.call_metadata or {}
-                call_execution.call_metadata["eval_started"] = False
-                call_execution.call_metadata["eval_completed"] = False
-                call_execution.save()
-
-                _run_simulate_evaluations_task.apply_async(
-                    args=(str(call_execution.id),)
-                )
-
-                has_pending_evals = True
-                logger.info(
-                    f"Rerunning evaluations for call execution {call_execution.id}"
-                )
-
-            else:  # call_and_eval
-                _clear_call_execution_data(call_execution)
-                _create_rerun_call_execution(call_execution)
-
-                has_pending_calls = True
-                logger.info(
-                    f"Rerunning call and evaluations for call execution {call_execution.id}"
-                )
-
-            successful_reruns.append(str(call_execution.id))
-
-        except Exception as e:
-            logger.error(
-                f"Error rerunning call execution {call_execution.id}: {str(e)}"
-            )
-            failed_reruns.append(
-                {"call_execution_id": str(call_execution.id), "error": str(e)}
-            )
-
-    return successful_reruns, failed_reruns, has_pending_calls, has_pending_evals
-
-
 class CallExecutionRerunView(APIView):
     """
     API View to handle bulk call execution rerun requests
@@ -6781,24 +6736,6 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     "One or more eval configs not found or do not belong to this run test."
                 )
 
-            # Collect all call execution IDs from the selected test executions
-            # Also update test execution status and column order.
-            #
-            # Memory-bounded rewrite: stream test executions with
-            # ``.iterator(chunk_size=100)`` so the queryset is not fully
-            # materialized, fetch call-execution ids in one bulk query
-            # (joined via ``test_execution_id__in``) instead of per-row,
-            # and flush ``bulk_update`` in batches of 100 so the buffer
-            # itself stays bounded for large runs.
-            BATCH_SIZE = 100
-            call_execution_ids = []
-            test_execution_count = 0
-            updated_test_executions = []
-            test_executions_to_update = []
-
-            # Precompute the eval-config columns once; they are identical
-            # for every test_execution so recomputing inside the loop is
-            # pure overhead.
             eval_column_entries = [
                 {
                     "column_name": eval_config.name,
@@ -6810,35 +6747,63 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 for eval_config in eval_configs
             ]
 
-            def _flush_bulk_update(buffer):
-                if buffer:
-                    TestExecution.objects.bulk_update(
-                        buffer,
-                        [
-                            "status",
-                            "execution_metadata",
-                            "picked_up_by_executor",
-                        ],
-                    )
-                    buffer.clear()
-
-            # Bulk-fetch all matching CallExecution ids in a single query
-            # (subquery against test_executions) rather than one query per
-            # test execution (N+1). Using ``.values_list("id")`` as a
-            # subquery keeps the id materialization server-side.
             ce_rows = CallExecution.objects.filter(
                 test_execution_id__in=test_executions.values_list("id", flat=True)
-            ).values_list("id", flat=True)
-            for ce_id in ce_rows.iterator(chunk_size=1000):
+            ).values_list("id", "test_execution_id")
+            calls_by_test_execution: dict[str, list[str]] = {}
+            call_execution_ids: list[str] = []
+            for ce_id, te_id in ce_rows.iterator(chunk_size=1000):
+                calls_by_test_execution.setdefault(str(te_id), []).append(str(ce_id))
                 call_execution_ids.append(str(ce_id))
 
-            for test_execution in test_executions.iterator(chunk_size=BATCH_SIZE):
-                test_execution_count += 1
+            if not call_execution_ids:
+                return self._gm.bad_request(
+                    "No call executions found in the selected test executions."
+                )
 
-                # Update test execution status to EVALUATING
-                test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+            eval_config_ids_str = [str(ec_id) for ec_id in eval_config_ids]
 
-                # Update column_order to include new eval configs
+            # Seed eval_outputs placeholders before launching the workflows
+            # so the activity sees the pending rows on first read.
+            call_executions_to_update = CallExecution.objects.filter(
+                id__in=call_execution_ids
+            )
+            call_executions_list = []
+            for call_execution in call_executions_to_update:
+                call_execution.call_metadata = call_execution.call_metadata or {}
+                call_execution.call_metadata["eval_started"] = True
+                call_execution.call_metadata["eval_completed"] = False
+
+                if not call_execution.eval_outputs:
+                    call_execution.eval_outputs = {}
+
+                for eval_config in eval_configs:
+                    call_execution.eval_outputs[str(eval_config.id)] = {
+                        "status": "pending"
+                    }
+
+                call_executions_list.append(call_execution)
+
+            if call_executions_list:
+                CallExecution.objects.bulk_update(
+                    call_executions_list, ["call_metadata", "eval_outputs"]
+                )
+
+            # One workflow per TestExecution: merge strategy is keyed on
+            # test_execution_id, so we can't bundle them into a single workflow.
+            from simulate.temporal.client import rerun_call_executions
+
+            workspace_id = run_test.workspace_id
+            workspace_id_str = str(workspace_id) if workspace_id else ""
+
+            test_execution_count = 0
+
+            for test_execution in test_executions.iterator(chunk_size=100):
+                te_id = str(test_execution.id)
+                te_call_ids = calls_by_test_execution.get(te_id, [])
+                if not te_call_ids:
+                    continue
+
                 if not test_execution.execution_metadata:
                     test_execution.execution_metadata = {}
 
@@ -6855,89 +6820,57 @@ class RunNewEvalsOnTestExecutionView(APIView):
                     ):
                         _col["column_name"] = _col.pop("columnName")
 
-                # Get existing eval config IDs in column order
-                existing_eval_ids = set()
-                for col in column_order:
-                    if col.get("type") == "evaluation":
-                        existing_eval_ids.add(col.get("id"))
-
-                # Add new eval configs to column order if they don't exist
+                existing_eval_ids = {
+                    col.get("id") for col in column_order
+                    if col.get("type") == "evaluation"
+                }
                 for entry in eval_column_entries:
                     if entry["id"] not in existing_eval_ids:
                         column_order.append(dict(entry))
-                        logger.info(
-                            f"Added eval config {entry['column_name']} to column order "
-                            f"for test execution {test_execution.id}"
-                        )
 
                 test_execution.execution_metadata["column_order"] = column_order
-                test_execution.picked_up_by_executor = False
-                test_executions_to_update.append(test_execution)
-                updated_test_executions.append(str(test_execution.id))
 
-                if len(test_executions_to_update) >= BATCH_SIZE:
-                    _flush_bulk_update(test_executions_to_update)
-
-            # Flush remainder
-            _flush_bulk_update(test_executions_to_update)
-
-            if not call_execution_ids:
-                return self._gm.bad_request(
-                    "No call executions found in the selected test executions."
+                active_workflow_id = test_execution.execution_metadata.get(
+                    "active_rerun_workflow_id"
                 )
 
-            # Convert eval_config_ids to strings
-            eval_config_ids_str = [str(ec_id) for ec_id in eval_config_ids]
-
-            # Bulk update eval_started flag and initialize eval_outputs for all call executions before triggering tasks
-            call_executions_to_update = CallExecution.objects.filter(
-                id__in=call_execution_ids
-            )
-            call_executions_list = []
-            for call_execution in call_executions_to_update:
-                # Provider-agnostic eval flags live in call_metadata
-                call_execution.call_metadata = call_execution.call_metadata or {}
-                call_execution.call_metadata["eval_started"] = True
-                call_execution.call_metadata["eval_completed"] = False
-
-                # Initialize eval_outputs for the new eval configs
-                if not call_execution.eval_outputs:
-                    call_execution.eval_outputs = {}
-
-                # Set placeholder values for each eval config that will be run
-                for eval_config in eval_configs:
-                    call_execution.eval_outputs[str(eval_config.id)] = {
-                        "status": "pending"
-                    }
-
-                call_executions_list.append(call_execution)
-
-            if call_executions_list:
-                CallExecution.objects.bulk_update(
-                    call_executions_list, ["call_metadata", "eval_outputs"]
-                )
-                logger.info(
-                    f"Bulk updated eval_started flag and initialized eval_outputs for "
-                    f"{len(call_executions_list)} call executions with {len(eval_configs)} eval configs"
+                rerun_result = rerun_call_executions(
+                    test_execution_id=te_id,
+                    call_execution_ids=te_call_ids,
+                    org_id=str(user_organization.id),
+                    workspace_id=workspace_id_str,
+                    eval_only=True,
+                    eval_config_ids=eval_config_ids_str,
+                    active_workflow_id=active_workflow_id,
                 )
 
-            # Trigger the Celery task to run evaluations asynchronously
-            task = run_new_evals_on_call_executions_task.apply_async(
-                args=(call_execution_ids, eval_config_ids_str),
-            )
-            task_id = task.id
+                test_execution.status = TestExecution.ExecutionStatus.EVALUATING
+                test_execution.picked_up_by_executor = True
+                if not rerun_result.get("merged"):
+                    test_execution.execution_metadata[
+                        "active_rerun_workflow_id"
+                    ] = rerun_result.get("workflow_id")
+
+                test_execution.save(
+                    update_fields=[
+                        "status",
+                        "execution_metadata",
+                        "picked_up_by_executor",
+                    ]
+                )
+
+                test_execution_count += 1
 
             logger.info(
-                f"Triggered new evaluations task {task_id} for {len(call_execution_ids)} call executions "
-                f"across {test_execution_count} test executions with {len(eval_config_ids)} eval configs. "
-                f"Updated {len(updated_test_executions)} test executions to EVALUATING status. "
-                f"Individual tasks will be spawned for parallel processing."
+                f"Launched {test_execution_count} RerunCoordinatorWorkflow(s) "
+                f"(eval_only) for {len(call_execution_ids)} call executions "
+                f"with {len(eval_config_ids)} eval configs"
             )
 
             return Response(
                 RunNewEvalsResponseSerializer(
                     {
-                        "message": "New evaluations dispatched successfully. Individual tasks will run in parallel.",
+                        "message": "New evaluations dispatched successfully. Evaluations will run via Temporal workflows.",
                         "run_test_id": str(run_test_id),
                         "call_execution_count": len(call_execution_ids),
                     }

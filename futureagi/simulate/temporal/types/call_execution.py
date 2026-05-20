@@ -42,6 +42,9 @@ class CallExecutionInput:
     # Used for eval-only reruns where the call data already exists
     eval_only: bool = False
 
+    # None means run every eval config attached to the run_test.
+    eval_config_ids: Optional[list[str]] = None
+
 
 @dataclass
 class CallInfo:

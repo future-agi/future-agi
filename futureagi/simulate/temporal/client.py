@@ -251,6 +251,7 @@ def rerun_call_executions(
     org_id: str,
     workspace_id: str,
     eval_only: bool = False,
+    eval_config_ids: Optional[list[str]] = None,
     active_workflow_id: Optional[str] = None,
 ) -> dict:
     """
@@ -270,6 +271,9 @@ def rerun_call_executions(
         org_id: Organization ID
         workspace_id: Workspace ID
         eval_only: If True, only rerun evaluations (no call execution)
+        eval_config_ids: Optional subset of SimulateEvalConfig IDs to run
+            in eval-only mode. None means run every eval config attached to
+            the run_test. Only meaningful when eval_only=True.
         active_workflow_id: Optional workflow ID of active rerun to merge into
 
     Returns:
@@ -282,6 +286,7 @@ def rerun_call_executions(
         org_id=org_id,
         workspace_id=workspace_id,
         eval_only=eval_only,
+        eval_config_ids=eval_config_ids,
         active_workflow_id=active_workflow_id,
     )
 
@@ -292,6 +297,7 @@ async def _rerun_call_executions_async(
     org_id: str,
     workspace_id: str,
     eval_only: bool = False,
+    eval_config_ids: Optional[list[str]] = None,
     active_workflow_id: Optional[str] = None,
 ) -> dict:
     """
@@ -346,6 +352,7 @@ async def _rerun_call_executions_async(
                     MergeCallsSignal(
                         call_execution_ids=call_execution_ids,
                         eval_only=eval_only,
+                        eval_config_ids=eval_config_ids,
                     ),
                 )
 
@@ -413,6 +420,7 @@ async def _rerun_call_executions_async(
             workspace_id=workspace_id,
             rerun_id=rerun_id,
             eval_only=eval_only,
+            eval_config_ids=eval_config_ids,
         ),
         id=workflow_id,
         task_queue=QUEUE_L,
