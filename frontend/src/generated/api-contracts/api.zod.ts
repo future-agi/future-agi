@@ -30883,7 +30883,8 @@ export const SimulateRunTestsCreateCreateBody = zod.object({
   "eval_group": zod.string().uuid().optional().describe('Eval group that created this evaluation config.')
 })).default(simulateRunTestsCreateCreateBodyEvaluationsConfigDefault).describe('Evaluation configurations to create'),
   "enable_tool_evaluation": zod.boolean().default(simulateRunTestsCreateCreateBodyEnableToolEvaluationDefault).describe('Enable automatic tool evaluation for this test run'),
-  "replay_session_id": zod.string().uuid().optional().describe('Optional replay session ID to mark as completed after run test creation')
+  "replay_session_id": zod.string().uuid().optional().describe('Optional replay session ID to mark as completed after run test creation'),
+  "agent_version": zod.string().uuid().optional().describe('Optional agent version to bind to this test run')
 })
 
 

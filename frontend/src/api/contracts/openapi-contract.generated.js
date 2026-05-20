@@ -28311,8 +28311,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/": {
       "get": {
         "operationId": "simulate_run-tests_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "search": {
@@ -28398,8 +28398,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/create/": {
       "post": {
         "operationId": "simulate_run-tests_create_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/CreateRunTest"
         },
@@ -28470,8 +28470,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "simulate_run-tests_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/UpdateRunTest"
         },
@@ -28842,8 +28842,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/run-tests/{run_test_id}/execute/": {
       "post": {
         "operationId": "simulate_run-tests_execute_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/ExecuteRunTest"
         },
@@ -49626,6 +49626,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "replay_session_id": {
           "title": "Replay session id",
           "description": "Optional replay session ID to mark as completed after run test creation",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "agent_version": {
+          "title": "Agent version",
+          "description": "Optional agent version to bind to this test run",
           "type": "string",
           "format": "uuid",
           "x-nullable": true

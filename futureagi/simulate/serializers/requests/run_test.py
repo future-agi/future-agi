@@ -67,6 +67,11 @@ class CreateRunTestSerializer(StrictInputSerializer):
         allow_null=True,
         help_text="Optional replay session ID to mark as completed after run test creation",
     )
+    agent_version = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Optional agent version to bind to this test run",
+    )
 
     def validate_agent_definition_id(self, value):
         """Validate that the agent definition exists"""

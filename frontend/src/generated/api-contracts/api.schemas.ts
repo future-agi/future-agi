@@ -16044,6 +16044,8 @@ export interface CreateRunTestApi {
   enable_tool_evaluation?: boolean;
   /** Optional replay session ID to mark as completed after run test creation */
   replay_session_id?: string;
+  /** Optional agent version to bind to this test run */
+  agent_version?: string;
 }
 
 export interface RunTestNameResultApi {

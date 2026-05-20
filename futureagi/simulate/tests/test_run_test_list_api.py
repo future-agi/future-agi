@@ -7,6 +7,7 @@ from rest_framework import status
 
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import AgentDefinition, RunTest, Scenarios
+from simulate.models.agent_version import AgentVersion
 
 
 @pytest.fixture
@@ -97,3 +98,78 @@ class TestRunTestListPromptVersionRegression:
         )
         scenario = run_test["scenarios_detail"][0]
         assert scenario["prompt_version_detail"]["template_version"] == "v10"
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestRunTestRuntimeContracts:
+    def test_list_rejects_unknown_query_param(self, auth_client):
+        response = auth_client.get("/simulate/run-tests/?page=1&legacyPageSize=25")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacyPageSize"] == ["Unknown field."]
+
+    def test_create_accepts_declared_agent_version_field(
+        self, auth_client, agent_definition, scenario_with_prompt_version
+    ):
+        agent_version = agent_definition.create_version(
+            description="Runtime contract version",
+            commit_message="Test version",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+
+        response = auth_client.post(
+            "/simulate/run-tests/create/",
+            {
+                "name": "Runtime Contract Run",
+                "agent_definition_id": str(agent_definition.id),
+                "agent_version": str(agent_version.id),
+                "scenario_ids": [str(scenario_with_prompt_version.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.content
+        run_test = RunTest.objects.get(id=response.json()["id"])
+        assert run_test.agent_version_id == agent_version.id
+
+    def test_create_rejects_unknown_body_field(
+        self, auth_client, agent_definition, scenario_with_prompt_version
+    ):
+        response = auth_client.post(
+            "/simulate/run-tests/create/",
+            {
+                "name": "Unknown Field Run",
+                "agent_definition_id": str(agent_definition.id),
+                "scenario_ids": [str(scenario_with_prompt_version.id)],
+                "legacy_extra": True,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_update_rejects_unknown_body_field(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        response = auth_client.patch(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/",
+            {"name": "Updated", "legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_execute_rejects_unknown_body_field(
+        self, auth_client, run_test_with_v10_scenario
+    ):
+        response = auth_client.post(
+            f"/simulate/run-tests/{run_test_with_v10_scenario.id}/execute/",
+            {"legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]

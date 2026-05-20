@@ -245,12 +245,13 @@ class RunTestListView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=RunTestFilterSerializer,
         responses={
             200: RunTestResponseSerializer(many=True),
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, *args, **kwargs):
         """
@@ -273,17 +274,10 @@ class RunTestListView(APIView):
             if not user_organization:
                 return self.gm.not_found("Organization not found for the user.")
 
-            # Validate and parse query parameters
-            filter_serializer = RunTestFilterSerializer(data=request.query_params)
-            if not filter_serializer.is_valid():
-                return self.gm.bad_request(filter_serializer.errors)
-            search_query = filter_serializer.validated_data.get("search", "").strip()
-            simulation_type = filter_serializer.validated_data.get(
-                "simulation_type", ""
-            ).strip()
-            prompt_template_id = filter_serializer.validated_data.get(
-                "prompt_template_id"
-            )
+            query_data = request.validated_query_data
+            search_query = query_data.get("search", "").strip()
+            simulation_type = query_data.get("simulation_type", "").strip()
+            prompt_template_id = query_data.get("prompt_template_id")
 
             # Filter run tests by organization (only non-deleted)
             # Prefetch simulate_eval_configs to avoid N+1 in serializer's to_representation
@@ -361,26 +355,21 @@ class CreateRunTestView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=CreateRunTestSerializer,
+    @validated_request(
+        request_serializer=CreateRunTestSerializer,
         responses={
             201: RunTestResponseSerializer,
             400: RunTestErrorResponseSerializer,
             404: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
+        serializer_context=lambda request: {"request": request},
     )
     def post(self, request, *args, **kwargs):
         """Create a new RunTest"""
         try:
-            # Validate request data
-            serializer = CreateRunTestSerializer(
-                data=request.data, context={"request": request}
-            )
-            if not serializer.is_valid():
-                return self.gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
 
             # Get the organization of the logged-in user
             user_organization = (
@@ -405,7 +394,7 @@ class CreateRunTestView(APIView):
 
             # Create the RunTest
             with transaction.atomic():
-                agent_version = request.data.get("agent_version")
+                agent_version = validated_data.get("agent_version")
                 if agent_version:
                     agent_version = AgentVersion.objects.get(
                         id=agent_version, deleted=False, organization=user_organization
@@ -550,14 +539,16 @@ class RunTestDetailView(APIView):
                 f"Failed to retrieve run test: {str(e)}"
             )
 
-    @swagger_auto_schema(
-        request_body=UpdateRunTestSerializer,
+    @validated_request(
+        request_serializer=UpdateRunTestSerializer,
         responses={
             200: RunTestResponseSerializer,
             400: RunTestErrorResponseSerializer,
             404: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
+        partial_request_validation=True,
     )
     def patch(self, request, run_test_id, *args, **kwargs):
         """Update a specific RunTest"""
@@ -570,15 +561,7 @@ class RunTestDetailView(APIView):
                 RunTest, id=run_test_id, organization=user_organization, deleted=False
             )
 
-            # Validate request data
-            serializer = UpdateRunTestSerializer(
-                data=request.data, context={"request": request}
-            )
-
-            if not serializer.is_valid():
-                return self.gm.bad_request(serializer.errors)
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
 
             # Update fields if provided
             with transaction.atomic():
@@ -687,14 +670,15 @@ class RunTestExecutionView(APIView):
             self._test_executor = TestExecutor()
         return self._test_executor
 
-    @swagger_auto_schema(
-        request_body=ExecuteRunTestSerializer,
+    @validated_request(
+        request_serializer=ExecuteRunTestSerializer,
         responses={
             200: RunTestExecutionResponseSerializer,
             400: RunTestErrorResponseSerializer,
             404: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, run_test_id, *args, **kwargs):
         """Execute a test run"""
@@ -721,9 +705,9 @@ class RunTestExecutionView(APIView):
                 if forbidden is not None:
                     return forbidden
 
-            # Get parameters from request
-            scenario_ids = request.data.get("scenario_ids", [])
-            simulator_id = request.data.get("simulator_id", None)
+            # Get parameters from the runtime-validated request contract.
+            scenario_ids = request.validated_data.get("scenario_ids", [])
+            simulator_id = request.validated_data.get("simulator_id", None)
             # select_all = request.data.get("select_all", False)
 
             # Get all available scenario IDs for this run test
