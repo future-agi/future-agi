@@ -5,10 +5,14 @@
 <div id="custom-admin-links" style="margin-bottom: 20px;">
   <div class="module" style="margin-bottom: 0;">
     <table>
-      <caption><a href="{% url 'admin:custom-pricing' %}" class="section" title="Custom Pricing Manager">Custom Tools</a></caption>
+      <caption><a href="{% url 'admin:custom-pricing' %}" class="section" title="Custom Tools">Custom Tools</a></caption>
       <tr>
         <th scope="row"><a href="{% url 'admin:custom-pricing' %}">Custom Pricing Manager</a></th>
         <td><a href="{% url 'admin:custom-pricing' %}">Open</a></td>
+      </tr>
+      <tr>
+        <th scope="row"><a href="{% url 'admin:generate-invoice' %}">Generate Invoice</a></th>
+        <td><a href="{% url 'admin:generate-invoice' %}">Open</a></td>
       </tr>
     </table>
   </div>

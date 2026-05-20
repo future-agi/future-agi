@@ -64,7 +64,7 @@ def apply_created_at_filters(qs, filters):
     """
     applied = set()
     for i, f in enumerate(filters):
-        cfg = f.get("filter_config") or f.get("filterConfig") or {}
+        _, cfg = FilterEngine._normalize_filter_params(f)
         if cfg.get("filter_type") != "datetime":
             continue
         op = normalize_filter_op(cfg.get("filter_op"))
@@ -229,10 +229,21 @@ class FilterEngine:
         except (ValueError, TypeError, IndexError):
             return False, None
 
+    _INNER_KEY_MAP = {
+        "filterOp": "filter_op",
+        "filterType": "filter_type",
+        "filterValue": "filter_value",
+        "colType": "col_type",
+    }
+
     @staticmethod
     def _normalize_filter_params(filter_item):
         """
         Normalize filter parameters to handle both camelCase and snake_case.
+
+        Normalizes both outer keys (columnId/column_id, filterConfig/filter_config)
+        and inner keys within filter_config (filterOp→filter_op, filterType→filter_type,
+        filterValue→filter_value, colType→col_type).
 
         Args:
             filter_item: Dictionary containing filter parameters
@@ -241,17 +252,26 @@ class FilterEngine:
             tuple: (column_id, filter_config) with normalized parameter names
         """
         column_id = filter_item.get("columnId") or filter_item.get("column_id")
-        filter_config = filter_item.get("filterConfig") or filter_item.get(
-            "filter_config", {}
+        filter_config = (
+            filter_item.get("filterConfig") or filter_item.get("filter_config") or {}
         )
+
+        if filter_config:
+            normalized = {}
+            for key, value in filter_config.items():
+                canonical = FilterEngine._INNER_KEY_MAP.get(key, key)
+                normalized[canonical] = value
+            filter_config = normalized
+
         return column_id, filter_config
 
     def apply_filters(self, filters):
         filtered_objects = self.objects
 
         for filter_item in filters:
-            column_id = filter_item.get("column_id")
-            filter_config = filter_item.get("filter_config", {})
+            column_id, filter_config = FilterEngine._normalize_filter_params(
+                filter_item
+            )
             col_type = filter_config.get("col_type", ColType.NORMAL)
 
             if isinstance(col_type, str):
@@ -290,12 +310,17 @@ class FilterEngine:
 
     def _filter_number(self, objects, column_id, filter_op, filter_value, col_type):
         if filter_op in ("is_null", "is_not_null"):
+
             def _missing(obj):
                 if col_type == ColType.EVAL_METRIC:
-                    return obj.get("evals_metrics", {}).get(column_id, {}).get("score") is None
+                    return (
+                        obj.get("evals_metrics", {}).get(column_id, {}).get("score")
+                        is None
+                    )
                 if col_type == ColType.SYSTEM_METRIC:
                     return obj.get("system_metrics", {}).get(column_id) is None
                 return obj.get(column_id) is None
+
             return [obj for obj in objects if _missing(obj) == (filter_op == "is_null")]
 
         operator_map = {
@@ -342,14 +367,20 @@ class FilterEngine:
 
     def _filter_text(self, objects, column_id, filter_op, filter_value, col_type):
         if filter_op in ("is_null", "is_not_null"):
+
             def _missing(obj):
                 if col_type == ColType.EVAL_METRIC:
-                    v = obj.get("evals_metrics", {}).get(str(column_id), {}).get("score")
+                    v = (
+                        obj.get("evals_metrics", {})
+                        .get(str(column_id), {})
+                        .get("score")
+                    )
                 elif col_type == ColType.SYSTEM_METRIC:
                     v = obj.get("system_metrics", {}).get(column_id)
                 else:
                     v = obj.get(column_id)
                 return v is None or v == ""
+
             return [obj for obj in objects if _missing(obj) == (filter_op == "is_null")]
 
         # Set-membership ops (in/not_in): filter_value is a list of values.
@@ -358,20 +389,24 @@ class FilterEngine:
             if isinstance(filter_value, list):
                 values = [str(v).lower() for v in filter_value]
             else:
-                values = [v.strip().lower() for v in str(filter_value).split(",") if v.strip()]
+                values = [
+                    v.strip().lower() for v in str(filter_value).split(",") if v.strip()
+                ]
             text_ops = {
-                "in":     lambda x: x in values,
+                "in": lambda x: x in values,
                 "not_in": lambda x: x not in values,
             }
         else:
-            fv = (filter_value if isinstance(filter_value, str) else str(filter_value)).lower()
+            fv = (
+                filter_value if isinstance(filter_value, str) else str(filter_value)
+            ).lower()
             text_ops = {
-                "contains":     lambda x: fv in x,
+                "contains": lambda x: fv in x,
                 "not_contains": lambda x: fv not in x,
-                "equals":       lambda x: x == fv,
-                "not_equals":   lambda x: x != fv,
-                "starts_with":  lambda x: x.startswith(fv),
-                "ends_with":    lambda x: x.endswith(fv),
+                "equals": lambda x: x == fv,
+                "not_equals": lambda x: x != fv,
+                "starts_with": lambda x: x.startswith(fv),
+                "ends_with": lambda x: x.endswith(fv),
             }
 
         if filter_op not in text_ops:
@@ -395,12 +430,15 @@ class FilterEngine:
                     result.append(obj)
         return result
 
-    def _filter_boolean(self, objects, column_id, filter_value, col_type, filter_op=None):
+    def _filter_boolean(
+        self, objects, column_id, filter_value, col_type, filter_op=None
+    ):
         filter_op = filter_op or "equals"
 
         if filter_op in ("is_null", "is_not_null"):
             return [
-                obj for obj in objects
+                obj
+                for obj in objects
                 if (obj.get(column_id) is None) == (filter_op == "is_null")
             ]
 
@@ -774,9 +812,7 @@ class FilterEngine:
             column_id, filter_config = FilterEngine._normalize_filter_params(
                 filter_item
             )
-            col_type = (
-                filter_config.get("col_type") or filter_config.get("colType") or ""
-            )
+            col_type = filter_config.get("col_type", "")
 
             if column_id not in FilterEngine.VOICE_SYSTEM_METRIC_IDS:
                 continue
@@ -787,15 +823,9 @@ class FilterEngine:
             if not defn:
                 continue
 
-            filter_op = normalize_filter_op(
-                filter_config.get("filter_op") or filter_config.get("filterOp")
-            )
-            filter_value = filter_config.get(
-                "filter_value", filter_config.get("filterValue")
-            )
-            filter_type = filter_config.get("filter_type") or filter_config.get(
-                "filterType"
-            )
+            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_value = filter_config.get("filter_value")
+            filter_type = filter_config.get("filter_type")
 
             if not filter_op or filter_value is None or not filter_type:
                 continue
@@ -895,15 +925,16 @@ class FilterEngine:
 
         conditions = []
         for filter_item in filters:
-            column_id = filter_item.get("columnId")
-            filter_config = filter_item.get("filterConfig", {})
+            column_id, filter_config = FilterEngine._normalize_filter_params(
+                filter_item
+            )
 
             if not column_id or not filter_config:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filterOp"))
-            filter_value = filter_config.get("filterValue")
-            filter_type = filter_config.get("filterType")
+            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_value = filter_config.get("filter_value")
+            filter_type = filter_config.get("filter_type")
 
             if not all([filter_op, filter_value is not None, filter_type]):
                 continue
@@ -1218,8 +1249,9 @@ class FilterEngine:
         having = None
 
         for filter_item in filters:
-            column_id = filter_item.get("columnId")
-            filter_config = filter_item.get("filterConfig", {})
+            column_id, filter_config = FilterEngine._normalize_filter_params(
+                filter_item
+            )
 
             if (
                 not column_id
@@ -1240,9 +1272,9 @@ class FilterEngine:
             ):
                 continue
 
-            filter_type = filter_config.get("filterType")
-            filter_op = normalize_filter_op(filter_config.get("filterOp"))
-            filter_value = filter_config.get("filterValue")
+            filter_type = filter_config.get("filter_type")
+            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_value = filter_config.get("filter_value")
 
             if filter_type == "number":
                 metric_val = None
@@ -1334,8 +1366,9 @@ class FilterEngine:
     def get_filter_conditions_for_non_system_metrics(filters):
         eval_filter_conditions = Q()
         for filter_item in filters:
-            column_id = filter_item.get("column_id")
-            filter_config = filter_item.get("filter_config", {})
+            column_id, filter_config = FilterEngine._normalize_filter_params(
+                filter_item
+            )
             col_type = (
                 filter_config.get("col_type", ColType.EVAL_METRIC.value)
                 if "col_type" in filter_config
@@ -1423,9 +1456,7 @@ class FilterEngine:
                         positive |= Q(**{f"{metric_column_id}__score__gt": 0})
                     elif normalized in ("failed", "fail", "false", "0"):
                         positive |= Q(**{f"{metric_column_id}__score": 0})
-                    positive |= Q(
-                        **{f"{metric_column_id}__{text_value}__score__gt": 0}
-                    )
+                    positive |= Q(**{f"{metric_column_id}__{text_value}__score__gt": 0})
 
                 if filter_op in ("not_equals", "not_in", "not_contains"):
                     return Q(**{f"{metric_column_id}__isnull": False}) & ~positive
@@ -1846,7 +1877,9 @@ class FilterEngine:
                 # Thumbs Up/Down annotations use keys "thumbs_up"/"thumbs_down"
                 # but the frontend sends display labels "Thumbs Up"/"Thumbs Down".
                 _THUMBS_MAP = {"Thumbs Up": "thumbs_up", "Thumbs Down": "thumbs_down"}
-                raw_values = filter_value if isinstance(filter_value, list) else [filter_value]
+                raw_values = (
+                    filter_value if isinstance(filter_value, list) else [filter_value]
+                )
                 values = [_THUMBS_MAP.get(v, v) for v in raw_values]
                 has_annotation = Q(**{f"{annotation_field}__isnull": False})
 
@@ -2167,12 +2200,10 @@ class FilterEngine:
         # Use span_attributes (canonical) for all filters - eval_attributes is deprecated.
         # Vocabulary mirrors `SPAN_ATTR_ALLOWED_OPS` in `tracer.utils.constants`.
         _null_q = lambda col: (
-            ~Q(span_attributes__has_key=col)
-            | Q(span_attributes__contains={col: None})
+            ~Q(span_attributes__has_key=col) | Q(span_attributes__contains={col: None})
         )
         _not_null_q = lambda col: (
-            Q(span_attributes__has_key=col)
-            & ~Q(span_attributes__contains={col: None})
+            Q(span_attributes__has_key=col) & ~Q(span_attributes__contains={col: None})
         )
 
         text_operator_map = {
@@ -2180,14 +2211,16 @@ class FilterEngine:
             "not_equals": lambda col, val: ~Q(span_attributes__contains={col: val}),
             "in": lambda col, val: Q(
                 **{
-                    f"span_attributes__{col}__in":
+                    f"span_attributes__{col}__in": (
                         val if isinstance(val, list) else [val]
+                    )
                 }
             ),
             "not_in": lambda col, val: ~Q(
                 **{
-                    f"span_attributes__{col}__in":
+                    f"span_attributes__{col}__in": (
                         val if isinstance(val, list) else [val]
+                    )
                 }
             ),
             "contains": lambda col, val: Q(

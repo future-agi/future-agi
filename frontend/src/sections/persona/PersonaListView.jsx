@@ -9,7 +9,7 @@ import {
 } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import PropTypes from "prop-types";
-import { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import { enqueueSnackbar } from "src/components/snackbar";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
@@ -613,32 +613,39 @@ const PersonaListView = ({
             />
           );
         })}
-        <Box
-          sx={{
-            width: "1px",
-            height: 18,
-            bgcolor: "divider",
-            mx: 0.5,
-          }}
-        />
-        {SIMULATION_FILTERS.map((f) => {
-          const isActive = simulationFilter === f.value;
-          return (
-            <Chip
-              key={f.label}
-              icon={f.icon ? <Iconify icon={f.icon} width={14} /> : undefined}
-              label={f.label}
-              size="small"
-              variant={isActive ? "filled" : "outlined"}
-              color={isActive ? "primary" : "default"}
-              onClick={() => {
-                setSimulationFilter(f.value);
-                setPage(0);
+
+        {!(isSelectable && personaCreateEditType) && (
+          <>
+            <Box
+              sx={{
+                width: "1px",
+                height: 18,
+                bgcolor: "divider",
+                mx: 0.5,
               }}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
             />
-          );
-        })}
+            {SIMULATION_FILTERS.map((f) => {
+              const isActive = simulationFilter === f.value;
+              return (
+                <Chip
+                  key={f.label}
+                  icon={
+                    f.icon ? <Iconify icon={f.icon} width={14} /> : undefined
+                  }
+                  label={f.label}
+                  size="small"
+                  variant={isActive ? "filled" : "outlined"}
+                  color={isActive ? "primary" : "default"}
+                  onClick={() => {
+                    setSimulationFilter(f.value);
+                    setPage(0);
+                  }}
+                  sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+                />
+              );
+            })}
+          </>
+        )}
       </Box>
 
       {/* Table */}

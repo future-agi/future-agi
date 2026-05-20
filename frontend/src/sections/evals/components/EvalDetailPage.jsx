@@ -220,6 +220,23 @@ const EvalDetailPage = () => {
 
   // Version viewing state
   const [viewingVersion, setViewingVersion] = useState(null);
+
+  useEffect(() => {
+    if (!viewingVersion || !versionsData?.versions) return;
+    const fresh = versionsData.versions.find((v) => v.id === viewingVersion.id);
+    if (!fresh) return;
+    const freshFlag = fresh.is_default ?? fresh.isDefault ?? false;
+    const localFlag =
+      viewingVersion.is_default ?? viewingVersion.isDefault ?? false;
+    if (freshFlag !== localFlag) {
+      setViewingVersion((prev) =>
+        prev
+          ? { ...prev, is_default: freshFlag, isDefault: freshFlag }
+          : prev,
+      );
+    }
+  }, [versionsData, viewingVersion]);
+
   const defaultVersion = useMemo(() => {
     const list = versionsData?.versions || [];
     if (!list.length) return null;
@@ -1873,7 +1890,7 @@ const EvalDetailPage = () => {
                       variant="contained"
                       size="small"
                       onClick={handleSaveVersion}
-                      disabled={isSaving}
+                      disabled={isSaving || !isDirty}
                       startIcon={
                         isSaving ? (
                           <CircularProgress size={14} />

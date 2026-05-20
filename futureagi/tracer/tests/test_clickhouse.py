@@ -103,7 +103,9 @@ class TestClickHouseSchema:
         assert "allow_nullable_key = 1" in CDC_EVAL_LOGGER
 
         # New TRACE_SESSION_DICT exists and points at the trace_session table
-        assert "CREATE DICTIONARY IF NOT EXISTS trace_session_dict" in TRACE_SESSION_DICT
+        assert (
+            "CREATE DICTIONARY IF NOT EXISTS trace_session_dict" in TRACE_SESSION_DICT
+        )
         assert "trace_session" in TRACE_SESSION_DICT
         assert "project_id UUID" in TRACE_SESSION_DICT
 
@@ -996,9 +998,7 @@ class TestClickHouseFilterBuilder:
         assert "output_float IS NOT NULL" in where
 
     @pytest.mark.django_db
-    def test_translate_pass_fail_eval_filter_uses_output_bool(
-        self, custom_eval_config
-    ):
+    def test_translate_pass_fail_eval_filter_uses_output_bool(self, custom_eval_config):
         """Pass/fail evals must use output_bool, not stale mixed fields."""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
@@ -5227,7 +5227,7 @@ class TestVoiceCallListQueryBuilder:
         )
         query, params = builder.build_eval_query(["trace-1", "trace-2"])
         assert "tracer_eval_logger" in query
-        assert "avg(output_float)" in query
+        assert "avgIf" in query
         assert params["trace_ids"] == ("trace-1", "trace-2")
         assert params["eval_config_ids"] == ("eval-1", "eval-2")
 
@@ -5244,6 +5244,118 @@ class TestVoiceCallListQueryBuilder:
         query, params = builder.build_eval_query([])
         assert query == ""
         assert params == {}
+
+    def test_eval_query_filters_errored_rows(self):
+        """Eval query should exclude errored rows from score aggregation."""
+        from tracer.services.clickhouse.query_builders.voice_call_list import (
+            VoiceCallListQueryBuilder,
+        )
+
+        builder = VoiceCallListQueryBuilder(
+            project_id="proj-1",
+            eval_config_ids=["eval-1"],
+        )
+        query, _ = builder.build_eval_query(["trace-1"])
+        assert "error = 0" in query
+        assert "success_count" in query
+        assert "error_count" in query
+
+    def test_eval_query_returns_8_columns(self):
+        """Eval query should return all 8 columns expected by pivot_eval_results."""
+        from tracer.services.clickhouse.query_builders.voice_call_list import (
+            VoiceCallListQueryBuilder,
+        )
+
+        builder = VoiceCallListQueryBuilder(
+            project_id="proj-1",
+            eval_config_ids=["eval-1"],
+        )
+        query, _ = builder.build_eval_query(["trace-1"])
+        for col_name in [
+            "avg_score",
+            "pass_rate",
+            "success_count",
+            "error_count",
+            "eval_count",
+            "str_lists",
+        ]:
+            assert col_name in query, f"Missing column: {col_name}"
+
+    def test_pivot_eval_results_all_errored(self):
+        """When all evals errored, pivot should return error marker."""
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TraceListQueryBuilder,
+        )
+
+        rows = [
+            ("t1", "cfg-1", None, None, 0, 3, 3, []),
+        ]
+        columns = [
+            "trace_id",
+            "eval_config_id",
+            "avg_score",
+            "pass_rate",
+            "success_count",
+            "error_count",
+            "eval_count",
+            "str_lists",
+        ]
+        result = TraceListQueryBuilder.pivot_eval_results(rows, columns)
+        assert result["t1"]["cfg-1"] == {"error": True}
+
+    def test_pivot_eval_results_partial_errors(self):
+        """When some evals succeed and some error, should return scores not error."""
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TraceListQueryBuilder,
+        )
+
+        rows = [
+            ("t1", "cfg-1", 0.75, None, 2, 1, 3, []),
+        ]
+        columns = [
+            "trace_id",
+            "eval_config_id",
+            "avg_score",
+            "pass_rate",
+            "success_count",
+            "error_count",
+            "eval_count",
+            "str_lists",
+        ]
+        result = TraceListQueryBuilder.pivot_eval_results(rows, columns)
+        assert result["t1"]["cfg-1"]["avg_score"] == 75.0
+        assert "error" not in result["t1"]["cfg-1"]
+
+    def test_pivot_eval_results_error_with_dict_rows(self):
+        """Error detection should work with dict-style rows from CH client."""
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TraceListQueryBuilder,
+        )
+
+        rows = [
+            {
+                "trace_id": "t1",
+                "eval_config_id": "cfg-1",
+                "avg_score": None,
+                "pass_rate": None,
+                "success_count": 0,
+                "error_count": 5,
+                "eval_count": 5,
+                "str_lists": [],
+            }
+        ]
+        columns = [
+            "trace_id",
+            "eval_config_id",
+            "avg_score",
+            "pass_rate",
+            "success_count",
+            "error_count",
+            "eval_count",
+            "str_lists",
+        ]
+        result = TraceListQueryBuilder.pivot_eval_results(rows, columns)
+        assert result["t1"]["cfg-1"] == {"error": True}
 
     def test_annotation_query(self):
         """Phase 3 annotation query should filter by trace_ids and label_ids."""

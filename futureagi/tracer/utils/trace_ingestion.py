@@ -26,6 +26,7 @@ from tracer.utils.otel import bulk_convert_otel_spans_to_observation_spans
 from tracer.utils.parsers import deserialize_trace_payload
 from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
 from tracer.utils.pii_settings import get_pii_settings_for_projects
+from tracer.utils.usage_emit import emit_span_ingestion_usage
 
 OTLP_STATUS_MAP = {
     "STATUS_CODE_UNSET": "UNSET",
@@ -773,51 +774,16 @@ def bulk_create_observation_span_task(
             # 5. Trigger scanner for completed traces (root span with end_time)
             _trigger_trace_scanner(observation_spans_to_create)
 
-        # 6. Usage metering (after commit, outside transaction)
-        try:
-            try:
-                from ee.usage.deployment import DeploymentMode
-            except ImportError:
-                DeploymentMode = None
-
-            if not DeploymentMode.is_oss():
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
-                num_traces = len(
-                    set(p.get("trace") for p in parsed_data_list if p.get("trace"))
-                )
-                num_spans = len(observation_spans_to_create)
-                if num_traces:
-                    emit(
-                        UsageEvent(
-                            org_id=str(organization_id),
-                            event_type=BillingEventType.TRACING_EVENT,
-                            amount=num_traces,
-                            properties={"traces": num_traces},
-                        )
-                    )
-                if num_spans:
-                    emit(
-                        UsageEvent(
-                            org_id=str(organization_id),
-                            event_type=BillingEventType.OBSERVE_ADD,
-                            amount=len(payload_bytes) if payload_bytes else 0,
-                            properties={"source": "trace_span", "spans": num_spans},
-                        )
-                    )
-        except Exception:
-            logger.debug("usage_metering_skipped", exc_info=True)
+        num_traces = len(
+            set(p.get("trace") for p in parsed_data_list if p.get("trace"))
+        )
+        emit_span_ingestion_usage(
+            organization_id=organization_id,
+            num_traces=num_traces,
+            num_spans=len(observation_spans_to_create),
+            payload_bytes=len(payload_bytes) if payload_bytes else 0,
+            source="trace_span",
+        )
 
     except Exception as exc:
         logger.exception(

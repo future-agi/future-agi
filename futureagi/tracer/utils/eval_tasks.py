@@ -277,7 +277,11 @@ def process_eval_task(eval_task_id: str):
             )
             entity_qs = TraceSession.objects.filter(id__in=matching_session_ids)
             dispatch = evaluate_trace_session_observe
-        elif eval_task.row_type == RowType.SPANS:
+        elif eval_task.row_type in (RowType.SPANS, RowType.VOICE_CALLS):
+            # Voice calls share the spans dispatch — the picker layer
+            # already aliases voiceCalls→spans (observation_span.py:2890),
+            # and any conversation-type narrowing the user wants comes
+            # through ``filters`` like every other span query.
             entity_qs = ObservationSpan.objects.filter(filters)
             dispatch = evaluate_observation_span_observe
         else:

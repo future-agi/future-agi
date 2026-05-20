@@ -192,22 +192,14 @@ class TestEvalLoggerConflationOnRootSpan:
 class TestEvalLoggerReaderAudit:
     """Pin the reader-audit fixes that keep session rows off span/trace surfaces."""
 
-    def test_get_evaluation_details_clickhouse_filters_target_type_span(
+    def test_get_evaluation_details_clickhouse_filters_target_type_span_and_trace(
         self, observation_span, custom_eval_config
     ):
-        """``_get_evaluation_details_clickhouse`` adds ``target_type='span'`` to its WHERE.
-
-        We don't need a real ClickHouse here — just assert the helper builds
-        a query string with the new filter. Pre-PR3 the WHERE clause was
-        keyed only on observation_span_id + custom_eval_config_id.
-        """
+        """CH query allows span+trace targets and excludes session rows."""
         from tracer.views.observation_span import ObservationSpanView
 
         view = ObservationSpanView()
         analytics = MagicMock()
-        # Make the executed query observable; return an empty .data so the
-        # helper short-circuits to a 'no row' response (we only care about the
-        # SQL it built, not the result handling).
         analytics.execute_ch_query.return_value.data = []
 
         view._get_evaluation_details_clickhouse(
@@ -216,11 +208,101 @@ class TestEvalLoggerReaderAudit:
             analytics=analytics,
         )
 
-        # The query string is the first positional arg.
         sent_query = analytics.execute_ch_query.call_args.args[0]
-        assert "target_type = 'span'" in sent_query, (
-            f"expected target_type='span' filter in CH query, got:\n{sent_query}"
+        assert "target_type IN ('span', 'trace')" in sent_query, (
+            f"expected target_type IN ('span', 'trace') filter in CH query, got:\n{sent_query}"
         )
+        assert "'session'" not in sent_query, (
+            "session-target rows must not be reachable via this endpoint; "
+            f"got:\n{sent_query}"
+        )
+
+    def test_get_evaluation_details_pg_excludes_session_rows(
+        self,
+        auth_client,
+        observe_project,
+        trace_session,
+        custom_eval_config,
+    ):
+        """Endpoint must never surface session-target rows (HTTP-level pin)."""
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        observe_config = CustomEvalConfig.objects.create(
+            name="Observe Eval Session-Excluded",
+            project=observe_project,
+            eval_template=custom_eval_config.eval_template,
+            config={"output": "Pass/Fail"},
+            mapping={"input": "input"},
+        )
+        EvalLogger.objects.create(
+            target_type=EvalTargetType.SESSION,
+            observation_span=None,
+            trace=None,
+            trace_session=trace_session,
+            custom_eval_config=observe_config,
+            output_bool=True,
+            eval_explanation="session-only row",
+        )
+
+        response = auth_client.get(
+            "/tracer/observation-span/get_evaluation_details/",
+            {
+                "observation_span_id": "0000000000000000",
+                "custom_eval_config_id": str(observe_config.id),
+            },
+        )
+        assert response.status_code == 400
+        body = response.json()
+        assert body.get("status") is False
+        assert "No eval logger found" in str(body.get("result", ""))
+
+    def test_get_evaluation_details_pg_excludes_session_rows_when_span_row_absent(
+        self,
+        observe_project,
+        observation_span,
+        trace_session,
+        custom_eval_config,
+    ):
+        """Query-level pin: target_type__in filter is what excludes session rows."""
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        observe_config = CustomEvalConfig.objects.create(
+            name="Observe Eval Query-Level",
+            project=observe_project,
+            eval_template=custom_eval_config.eval_template,
+            config={"output": "Pass/Fail"},
+            mapping={"input": "input"},
+        )
+        span_row = EvalLogger.objects.create(
+            target_type=EvalTargetType.SPAN,
+            observation_span=observation_span,
+            trace=observation_span.trace,
+            custom_eval_config=observe_config,
+            output_bool=True,
+        )
+        EvalLogger.objects.create(
+            target_type=EvalTargetType.SESSION,
+            observation_span=None,
+            trace=None,
+            trace_session=trace_session,
+            custom_eval_config=observe_config,
+            output_bool=False,
+        )
+
+        endpoint_filter = EvalLogger.objects.filter(
+            observation_span_id=observation_span.id,
+            custom_eval_config_id=observe_config.id,
+            target_type__in=["span", "trace"],
+        )
+        assert endpoint_filter.count() == 1
+        assert endpoint_filter.first().id == span_row.id
+
+        session_row = EvalLogger.objects.filter(
+            custom_eval_config_id=observe_config.id,
+            target_type=EvalTargetType.SESSION,
+        ).first()
+        assert session_row is not None
+        assert session_row.observation_span_id is None
 
 
 @pytest.mark.integration

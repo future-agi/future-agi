@@ -13,6 +13,7 @@ from django.contrib.postgres.aggregates import ArrayAgg
 from django.db import models
 from django.db.models import (
     Avg,
+    BooleanField,
     Case,
     CharField,
     Count,
@@ -1224,7 +1225,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
             metric_subquery = (
                 EvalLogger.objects.filter(
-                    trace_id=OuterRef("id"), custom_eval_config_id=config.id
+                    trace_id=OuterRef("id"),
+                    custom_eval_config_id=config.id,
+                    error=False,
                 )
                 .values("custom_eval_config_id")
                 .annotate(
@@ -1248,6 +1251,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 trace_id=OuterRef("id"),
                 custom_eval_config_id=config.id,
                 output_str_list__isnull=False,
+                error=False,
             ).values("output_str_list")[:1]
 
             base_query = base_query.annotate(
@@ -1327,7 +1331,27 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     f"metric_reason_{config.id}": Subquery(
                         metric_subquery.values("eval_explanation")
                     ),
-                    f"error_{config.id}": Subquery(metric_subquery.values("error")),
+                    f"error_{config.id}": Case(
+                        When(
+                            ~Exists(
+                                EvalLogger.objects.filter(
+                                    trace_id=OuterRef("id"),
+                                    custom_eval_config_id=config.id,
+                                    error=False,
+                                )
+                            )
+                            & Exists(
+                                EvalLogger.objects.filter(
+                                    trace_id=OuterRef("id"),
+                                    custom_eval_config_id=config.id,
+                                    error=True,
+                                )
+                            ),
+                            then=Value(True),
+                        ),
+                        default=Value(False),
+                        output_field=BooleanField(),
+                    ),
                 }
             )
         return eval_configs, base_query
@@ -3242,11 +3266,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     data = getattr(trace, f"metric_{config.id}")
                     if data and "score" in data:
                         score = data["score"]
-                        result[str(config.id)] = round(score, 2) if score is not None else None
+                        result[str(config.id)] = (
+                            round(score, 2) if score is not None else None
+                        )
                     elif data:
                         for key, value in data.items():
-                            score = value["score"] if isinstance(value, dict) and "score" in value else None
-                            result[str(config.id) + "**" + key] = round(score, 2) if score is not None else None
+                            score = (
+                                value["score"]
+                                if isinstance(value, dict) and "score" in value
+                                else None
+                            )
+                            result[str(config.id) + "**" + key] = (
+                                round(score, 2) if score is not None else None
+                            )
 
                 # Add Root Span Annotations
                 for label in annotation_labels:
@@ -4745,11 +4777,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             org = getattr(request, "organization", None) or request.user.organization
         _resolved: List[Dict] = []
         for _f in filters:
-            _col = _f.get("column_id") or _f.get("columnId")
-            _cfg = _f.get("filter_config") or _f.get("filterConfig") or {}
-            _col_type = _cfg.get("col_type") or _cfg.get("colType") or "NORMAL"
+            _col, _cfg = FilterEngine._normalize_filter_params(_f)
+            _col_type = _cfg.get("col_type", "NORMAL")
             if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value", _cfg.get("filterValue"))
+                _val = _cfg.get("filter_value")
                 _vals = _val if isinstance(_val, list) else [_val]
                 _vals = [v for v in _vals if v]
                 if not _vals:
@@ -4786,9 +4817,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_config_ids = []
         if org_scope:
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
-                    trace__project_id__in=org_project_ids
-                )
+                id__in=EvalLogger.objects.filter(trace__project_id__in=org_project_ids)
                 .values("custom_eval_config_id")
                 .distinct(),
                 deleted=False,
@@ -5260,12 +5289,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         ) or {}
                         output_type = eval_template_config.get("output", "score")
                         metric_entry = {"name": metric_name, "output_type": output_type}
+                        # All eval rows errored — surface error to frontend
+                        if isinstance(scores, dict) and scores.get("error"):
+                            metric_entry["error"] = True
+                            metrics[config_id] = metric_entry
+                            continue
                         if isinstance(scores, dict):
                             if scores.get("per_choice"):
                                 metric_entry["output"] = [
-                                    k
-                                    for k, v in scores["per_choice"].items()
-                                    if v > 0
+                                    k for k, v in scores["per_choice"].items() if v > 0
                                 ]
                                 metric_entry["output_type"] = "str_list"
                             elif "str_list" in scores and scores["str_list"]:

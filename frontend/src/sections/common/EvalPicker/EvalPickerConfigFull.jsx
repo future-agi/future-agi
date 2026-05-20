@@ -387,8 +387,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         evalData?.config?.run_config ||
         evalData?.config?.runConfig ||
         {};
-        
-     const normalizedRunConfig = {
+
+      const normalizedRunConfig = {
         ...rawRunConfig,
         agent_mode:
           rawRunConfig.agent_mode ??
@@ -529,13 +529,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           setContextOptions(["variables_only"]);
         }
       } else if (source === "task") {
-      const seeded = contextOptionsForRowType(sourceRowType);
+        const seeded = contextOptionsForRowType(sourceRowType);
         if (seeded) setContextOptions(seeded);
       }
       setErrorLocalizerEnabled(
         config.error_localizer_enabled ??
-          fullEval.error_localizer_enabled ??
-          false,
+        fullEval.error_localizer_enabled ??
+        false,
       );
 
       // Edit mode: keep the saved name. Create mode: generate a unique name
@@ -555,8 +555,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           .replace(/[^a-z0-9_-]/g, "");
         const sourceSlug = SOURCE_NAME_SLUGS[source] || "";
         const stamp = format(new Date(), "dd_MMM_yyyy_HH_mm").toLowerCase();
+        const suffix = [sourceSlug, stamp].filter(Boolean).join("_");
+        const maxBaseLen = Math.max(0, 50 - suffix.length - (suffix ? 1 : 0));
+        const truncatedBase = sanitized.slice(0, maxBaseLen).replace(/_+$/, "");
         setEvalName(
-          [sanitized, sourceSlug, stamp].filter(Boolean).join("_"),
+          [truncatedBase, sourceSlug, stamp].filter(Boolean).join("_"),
         );
       }
 
@@ -627,8 +630,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         setUseInternet(fullEval.config?.check_internet ?? false);
         setErrorLocalizerEnabled(
           fullEval.error_localizer_enabled ??
-            fullEval.config?.error_localizer_enabled ??
-            false,
+          fullEval.config?.error_localizer_enabled ??
+          false,
         );
         setIsDirty(false);
         return;
@@ -834,13 +837,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         );
         return;
       }
-    if (evalType === "llm" && !hasValidPromptMessages) {
-      const errorMessage = "Prompt message is required";
-      setPromptMessageError(errorMessage);
-      enqueueSnackbar(errorMessage, { variant: "error" });
-      return;
+      if (evalType === "llm" && !hasValidPromptMessages) {
+        const errorMessage = "Prompt message is required";
+        setPromptMessageError(errorMessage);
+        enqueueSnackbar(errorMessage, { variant: "error" });
+        return;
+      }
     }
-  }
 
     if (source === "task" && onFiltersChange) {
       onFiltersChange(localFilterForm.getValues("filters") || []);
@@ -1151,7 +1154,16 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             setEvalName(raw);
             setIsDirty(true);
           }}
-          inputProps={{ maxLength: 60 }}
+          inputProps={{ maxLength: 50 }}
+          error={!isEditMode && evalName.length >= 50}
+          helperText={
+            isEditMode
+              ? undefined
+              : evalName.length >= 50
+                ? "Name can't be longer than 50 characters"
+                : `Use lowercase letters, numbers, hyphens (-) and underscores (_) only. ${evalName.length}/50`
+          }
+          FormHelperTextProps={{ sx: { fontSize: "11px", mt: 0.25, mx: 0 } }}
           sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 34 } }}
         />
       </Box>
@@ -1624,27 +1636,27 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   source === "workbench" ||
                   source === "run-experiment" ||
                   source === "run-optimization") && (
-                  <DatasetTestMode
-                    ref={sourceRef}
-                    templateId={templateId}
-                    variables={variables}
-                    model={model}
-                    codeParams={codeParams}
-                    onTestResult={handleTestResult}
-                    onClearResult={handleClearTestResult}
-                    onColumnsLoaded={handleColumnsLoaded}
-                    initialDatasetId={sourceId}
-                    onReadyChange={handleSourceReadyChange}
-                    contextOptions={contextOptions}
-                    errorLocalizerEnabled={errorLocalizerEnabled}
-                    initialMapping={evalData?.mapping}
-                    {...compositeSourceModeProps}
-                    sourceColumns={
-                      source === "workbench" ? sourceColumns : null
-                    }
-                    extraColumns={extraColumns}
-                  />
-                )}
+                    <DatasetTestMode
+                      ref={sourceRef}
+                      templateId={templateId}
+                      variables={variables}
+                      model={model}
+                      codeParams={codeParams}
+                      onTestResult={handleTestResult}
+                      onClearResult={handleClearTestResult}
+                      onColumnsLoaded={handleColumnsLoaded}
+                      initialDatasetId={sourceId}
+                      onReadyChange={handleSourceReadyChange}
+                      contextOptions={contextOptions}
+                      errorLocalizerEnabled={errorLocalizerEnabled}
+                      initialMapping={evalData?.mapping}
+                      {...compositeSourceModeProps}
+                      sourceColumns={
+                        source === "workbench" ? sourceColumns : null
+                      }
+                      extraColumns={extraColumns}
+                    />
+                  )}
                 {source === "tracing" && (
                   <TracingTestMode
                     ref={sourceRef}
@@ -1924,7 +1936,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
           return (
             <ShowComponent
-              condition={!hasDataInjection }
+              condition={!hasDataInjection}
             >
               <CustomTooltip
                 show={testDisabled && !!testDisabledReason}
