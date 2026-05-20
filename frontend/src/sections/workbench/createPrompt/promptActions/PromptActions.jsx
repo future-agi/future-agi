@@ -570,7 +570,7 @@ const PromptActions = () => {
                     }
                     onClick={() => {
                       setSaveCommitOpen(true);
-                      trackEvent(Events.promptVersionHistoryClicked, {
+                      trackEvent(Events.promptCommitClicked, {
                         [PropertyName.promptId]: id,
                       });
                     }}
