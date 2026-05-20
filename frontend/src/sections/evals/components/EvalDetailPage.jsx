@@ -1563,7 +1563,7 @@ const EvalDetailPage = () => {
                   ))}
 
                 {/* Error Localization */}
-                {!isComposite && (
+                {!isComposite && evalType !== "code"  && (
                   <Box>
                     <FormControlLabel
                       control={
