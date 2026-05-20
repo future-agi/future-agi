@@ -1,4 +1,5 @@
 module.exports = {
+  "**/*": "node scripts/check-staged-safety.mjs",
   "futureagi/**/*.py": "scripts/lint-staged-python.sh",
   "frontend/**/*.{js,jsx,ts,tsx,mjs,mts,json,yaml,yml,css,scss,md,mdx}":
     "node scripts/lint-staged-frontend.mjs",
