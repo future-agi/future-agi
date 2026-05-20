@@ -27102,8 +27102,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/api/call-executions/": {
       "get": {
         "operationId": "simulate_api_call-executions_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "search": {
@@ -27764,8 +27764,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/api/run-tests/": {
       "get": {
         "operationId": "simulate_api_run-tests_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "search": {
@@ -27878,8 +27878,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "simulate_call-executions_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/CallExecutionStatusUpdate"
         },
@@ -29440,8 +29440,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/simulate/test-executions/{test_execution_id}/": {
       "get": {
         "operationId": "simulate_test-executions_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "search": {

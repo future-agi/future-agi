@@ -2,6 +2,8 @@
 API tests for GET /simulate/run-tests/ (RunTestListView).
 """
 
+from uuid import uuid4
+
 import pytest
 from rest_framework import status
 
@@ -109,6 +111,12 @@ class TestRunTestRuntimeContracts:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.json()["details"]["legacyPageSize"] == ["Unknown field."]
 
+    def test_legacy_run_test_list_rejects_unknown_query_param(self, auth_client):
+        response = auth_client.get("/simulate/api/run-tests/?page=1&legacyPageSize=25")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacyPageSize"] == ["Unknown field."]
+
     def test_create_accepts_declared_agent_version_field(
         self, auth_client, agent_definition, scenario_with_prompt_version
     ):
@@ -168,6 +176,28 @@ class TestRunTestRuntimeContracts:
         response = auth_client.post(
             f"/simulate/run-tests/{run_test_with_v10_scenario.id}/execute/",
             {"legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_call_execution_list_rejects_unknown_query_param(self, auth_client):
+        response = auth_client.get("/simulate/api/call-executions/?legacyPageSize=25")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacyPageSize"] == ["Unknown field."]
+
+    def test_test_execution_detail_rejects_unknown_query_param(self, auth_client):
+        response = auth_client.get(f"/simulate/test-executions/{uuid4()}/?legacy=1")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy"] == ["Unknown field."]
+
+    def test_call_execution_status_update_rejects_unknown_body_field(self, auth_client):
+        response = auth_client.patch(
+            f"/simulate/call-executions/{uuid4()}/",
+            {"status": "failed", "legacy_extra": True},
             format="json",
         )
 

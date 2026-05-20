@@ -1086,13 +1086,14 @@ class RunTestAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=RunTestFilterSerializer,
         responses={
             200: RunTestResponseSerializer(many=True),
             404: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, *args, **kwargs):
         """
@@ -1111,11 +1112,7 @@ class RunTestAPIView(APIView):
             if not user_organization:
                 return _gm.not_found("Organization not found for the user.")
 
-            # Validate and parse query parameters
-            filter_serializer = RunTestFilterSerializer(data=request.query_params)
-            if not filter_serializer.is_valid():
-                return _gm.bad_request(filter_serializer.errors)
-            search_query = filter_serializer.validated_data.get("search", "").strip()
+            search_query = request.validated_query_data.get("search", "").strip()
 
             # Filter run tests by organization (only non-deleted)
             run_tests = (
@@ -1239,13 +1236,14 @@ class CallExecutionAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=CallExecutionFilterSerializer,
         responses={
             200: CallExecutionSerializer(many=True),
             404: CallExecutionErrorResponseSerializer,
             500: CallExecutionErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, *args, **kwargs):
         """
@@ -1266,15 +1264,12 @@ class CallExecutionAPIView(APIView):
             if not user_organization:
                 return _gm.not_found("Organization not found for the user.")
 
-            # Validate and parse query parameters
-            filter_serializer = CallExecutionFilterSerializer(data=request.query_params)
-            if not filter_serializer.is_valid():
-                return _gm.bad_request(filter_serializer.errors)
-            search_query = filter_serializer.validated_data.get("search", "").strip()
-            status_filter = filter_serializer.validated_data.get("status", "").strip()
+            query_data = request.validated_query_data
+            search_query = query_data.get("search", "").strip()
+            status_filter = query_data.get("status", "").strip()
             test_execution_id = (
-                str(filter_serializer.validated_data["test_execution_id"])
-                if filter_serializer.validated_data.get("test_execution_id")
+                str(query_data["test_execution_id"])
+                if query_data.get("test_execution_id")
                 else ""
             )
 
@@ -1904,13 +1899,14 @@ class TestExecutionDetailView(APIView):
     permission_classes = [IsAuthenticated]
     utils = TestExecutionUtils()
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=ExecutionDetailQuerySerializer,
         responses={
             200: TestExecutionDetailResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, test_execution_id, *args, **kwargs):
         """
@@ -1931,10 +1927,7 @@ class TestExecutionDetailView(APIView):
             if not user_organization:
                 return _gm.not_found("Organization not found for the user.")
 
-            query_serializer = ExecutionDetailQuerySerializer(data=request.query_params)
-            if not query_serializer.is_valid():
-                return _gm.bad_request(query_serializer.errors)
-            query_data = query_serializer.validated_data
+            query_data = request.validated_query_data
             search_query = query_data.get("search", "").strip()
             filters = query_data.get("filters", [])
             row_groups = query_data.get("row_groups", [])
@@ -3234,14 +3227,15 @@ class CallExecutionDetailView(APIView):
             )
 
     # used only for marking call failed.
-    @swagger_auto_schema(
-        request_body=CallExecutionStatusUpdateSerializer,
+    @validated_request(
+        request_serializer=CallExecutionStatusUpdateSerializer,
         responses={
             200: CallExecutionSerializer,
             400: CallExecutionErrorResponseSerializer,
             404: CallExecutionErrorResponseSerializer,
             500: CallExecutionErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def patch(self, request, call_execution_id, *args, **kwargs):
         """Update the status of a specific call execution"""
@@ -3262,15 +3256,11 @@ class CallExecutionDetailView(APIView):
                 test_execution__run_test__deleted=False,
             )
 
-            # Validate request data
-            request_serializer = CallExecutionStatusUpdateSerializer(data=request.data)
-            if not request_serializer.is_valid():
-                return self.gm.bad_request(request_serializer.errors)
-            new_status = request_serializer.validated_data["status"]
+            new_status = request.validated_data["status"]
             # Do NOT persist raw error details from the client into DB.
             # Use a safe generic reason instead (prevents leaking internal errors/stacktraces).
             generic_failure_reason = "Error processing simulation"
-            ended_reason = request_serializer.validated_data.get("ended_reason")
+            ended_reason = request.validated_data.get("ended_reason")
 
             # Update status atomically
             with transaction.atomic():

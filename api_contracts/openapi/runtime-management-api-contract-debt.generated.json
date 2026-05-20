@@ -27,9 +27,9 @@
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 406,
-    "direct_swagger_auto_schema_decorators": 350,
-    "doc_only_input_contract_decorators": 68,
+    "runtime_backed_validated_request_decorators": 410,
+    "direct_swagger_auto_schema_decorators": 346,
+    "doc_only_input_contract_decorators": 64,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [],
@@ -469,43 +469,7 @@
     },
     {
       "path": "futureagi/simulate/views/run_test.py",
-      "line": 1089,
-      "class": "RunTestAPIView",
-      "function": "get",
-      "serializers": [
-        "RunTestFilterSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/run_test.py",
-      "line": 1242,
-      "class": "CallExecutionAPIView",
-      "function": "get",
-      "serializers": [
-        "CallExecutionFilterSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/run_test.py",
-      "line": 1907,
-      "class": "TestExecutionDetailView",
-      "function": "get",
-      "serializers": [
-        "ExecutionDetailQuerySerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/run_test.py",
-      "line": 3237,
-      "class": "CallExecutionDetailView",
-      "function": "patch",
-      "serializers": [
-        "CallExecutionStatusUpdateSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/run_test.py",
-      "line": 3906,
+      "line": 3896,
       "class": "RunTestComponentsUpdateView",
       "function": "patch",
       "serializers": [
@@ -514,7 +478,7 @@
     },
     {
       "path": "futureagi/simulate/views/run_test.py",
-      "line": 4299,
+      "line": 4289,
       "class": "AddEvalConfigView",
       "function": "post",
       "serializers": [
@@ -523,7 +487,7 @@
     },
     {
       "path": "futureagi/simulate/views/run_test.py",
-      "line": 4636,
+      "line": 4626,
       "class": "UpdateEvalConfigView",
       "function": "post",
       "serializers": [
@@ -532,7 +496,7 @@
     },
     {
       "path": "futureagi/simulate/views/run_test.py",
-      "line": 5460,
+      "line": 5450,
       "class": "RunTestEvalSummaryView",
       "function": "get",
       "serializers": [
@@ -541,7 +505,7 @@
     },
     {
       "path": "futureagi/simulate/views/run_test.py",
-      "line": 5511,
+      "line": 5501,
       "class": "RunTestEvalSummaryComparisonView",
       "function": "get",
       "serializers": [
