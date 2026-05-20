@@ -29,6 +29,7 @@ from mcp_server.serializers.contracts import (
     MCPOAuthTokenRequestSerializer,
     MCPOAuthTokenResponseSerializer,
 )
+from tfc.utils.api_contracts import validated_request
 
 logger = structlog.get_logger(__name__)
 
@@ -109,13 +110,14 @@ class MCPOAuthAuthorizeView(APIView):
 class MCPOAuthConsentView(APIView):
     """POST /mcp/oauth/consent/ — Process user consent decision."""
 
-    @swagger_auto_schema(
-        request_body=MCPOAuthConsentRequestSerializer,
+    @validated_request(
+        request_serializer=MCPOAuthConsentRequestSerializer,
         responses={
             200: MCPOAuthRedirectResponseSerializer,
             400: MCPErrorResponseSerializer,
             403: MCPErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
         user = request.user
@@ -124,17 +126,11 @@ class MCPOAuthConsentView(APIView):
         )
         workspace = getattr(request, "workspace", None)
 
-        client_id = request.data.get("client_id")
-        redirect_uri = request.data.get("redirect_uri")
-        state = request.data.get("state", "")
-        approved = request.data.get("approved", False)
-        selected_groups = request.data.get("selected_groups", [])
-
-        if not client_id or not redirect_uri:
-            return Response(
-                {"status": False, "error": "Missing client_id or redirect_uri"},
-                status=400,
-            )
+        client_id = request.validated_data["client_id"]
+        redirect_uri = request.validated_data["redirect_uri"]
+        state = request.validated_data.get("state", "")
+        approved = request.validated_data.get("approved", False)
+        selected_groups = request.validated_data.get("selected_groups", [])
 
         if not organization:
             return Response(

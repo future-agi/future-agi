@@ -25,6 +25,7 @@ from mcp_server.usage_helpers import (
     record_usage,
     update_session_counters,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 
 logger = structlog.get_logger(__name__)
@@ -33,8 +34,8 @@ logger = structlog.get_logger(__name__)
 class MCPToolCallView(APIView):
     """Execute a tool call via internal API (used by stdio proxy)."""
 
-    @swagger_auto_schema(
-        request_body=MCPToolCallRequestSerializer,
+    @validated_request(
+        request_serializer=MCPToolCallRequestSerializer,
         responses={
             200: MCPToolCallResponseSerializer,
             400: MCPErrorResponseSerializer,
@@ -43,17 +44,12 @@ class MCPToolCallView(APIView):
             429: MCPErrorResponseSerializer,
             500: MCPErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
-        tool_name = request.data.get("tool_name")
-        params = request.data.get("params", {})
-        session_id = request.data.get("session_id")
-
-        if not tool_name:
-            return Response(
-                build_error_envelope("tool_name is required", status_code=400),
-                status=400,
-            )
+        tool_name = request.validated_data["tool_name"]
+        params = request.validated_data.get("params", {})
+        session_id = request.validated_data.get("session_id")
 
         user = request.user
         organization = getattr(request, "organization", None) or getattr(
