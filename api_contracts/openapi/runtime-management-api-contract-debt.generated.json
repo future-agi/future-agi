@@ -27,9 +27,9 @@
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 365,
-    "direct_swagger_auto_schema_decorators": 392,
-    "doc_only_input_contract_decorators": 110,
+    "runtime_backed_validated_request_decorators": 370,
+    "direct_swagger_auto_schema_decorators": 387,
+    "doc_only_input_contract_decorators": 105,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [],
@@ -514,7 +514,7 @@
     },
     {
       "path": "futureagi/simulate/views/agent_version.py",
-      "line": 107,
+      "line": 108,
       "class": "CreateAgentVersionView",
       "function": "post",
       "serializers": [
@@ -522,53 +522,8 @@
       ]
     },
     {
-      "path": "futureagi/simulate/views/agent_version.py",
-      "line": 319,
-      "class": "ActivateAgentVersionView",
-      "function": "post",
-      "serializers": [
-        "EmptyRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/agent_version.py",
-      "line": 429,
-      "class": "RestoreAgentVersionView",
-      "function": "post",
-      "serializers": [
-        "EmptyRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/call_transcript.py",
-      "line": 259,
-      "class": "CallBranchAnalysisView",
-      "function": "post",
-      "serializers": [
-        "EmptyRequestSerializer"
-      ]
-    },
-    {
       "path": "futureagi/simulate/views/chat_simulation.py",
-      "line": 104,
-      "class": "RunTestChatExecutionView",
-      "function": "post",
-      "serializers": [
-        "EmptyRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/chat_simulation.py",
-      "line": 187,
-      "class": "TestExecutionChatBatchView",
-      "function": "post",
-      "serializers": [
-        "EmptyRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/simulate/views/chat_simulation.py",
-      "line": 472,
+      "line": 475,
       "class": "ChatSendMessageView",
       "function": "post",
       "serializers": [

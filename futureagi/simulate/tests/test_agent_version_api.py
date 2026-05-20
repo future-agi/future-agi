@@ -227,9 +227,9 @@ class TestGetAgentVersion:
         snapshot = data["configuration_snapshot"]
         for key, value in snapshot.items():
             if value is not None:
-                assert isinstance(
-                    value, (str, int, float, bool, list, dict)
-                ), f"Snapshot key '{key}' has type {type(value)}"
+                assert isinstance(value, (str, int, float, bool, list, dict)), (
+                    f"Snapshot key '{key}' has type {type(value)}"
+                )
 
     def test_unauthenticated(self, api_client, agent_definition, agent_version):
         response = api_client.get(_version_url(agent_definition.id, agent_version.id))
@@ -405,7 +405,7 @@ class TestAgentVersionEvalSummary:
         )
         assert response.status_code == status.HTTP_200_OK
         # Empty array when no eval configs exist
-        assert response.json() == []
+        assert response.json() == {"status": True, "result": []}
 
     def test_unauthenticated(self, api_client, agent_definition, agent_version):
         response = api_client.get(

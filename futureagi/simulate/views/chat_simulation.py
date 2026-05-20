@@ -28,6 +28,7 @@ from simulate.services.chat_sim import initiate_chat, send_message_to_chat
 from simulate.services.test_executor import TestExecutor
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,
     EmptyRequestSerializer,
@@ -101,14 +102,15 @@ class RunTestChatExecutionView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=EmptyRequestSerializer,
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             200: RunTestChatExecutionResponseSerializer,
             400: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
             500: ApiTextErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, run_test_id, *args, **kwargs):
         """Execute a test run"""
@@ -184,13 +186,14 @@ class TestExecutionChatBatchView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=EmptyRequestSerializer,
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             200: TestExecutionChatBatchResponseSerializer,
             400: ApiTextErrorResponseSerializer,
             500: ApiTextErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, test_execution_id, *args, **kwargs):
         """
@@ -497,7 +500,6 @@ class ChatSendMessageView(APIView):
                 or (isinstance(request_data, dict) and not request_data)
                 or len(request_data) == 0
             ):
-
                 return self.gm.bad_request(
                     "Request data is required and must be of type SendChatRequest"
                 )
@@ -519,7 +521,6 @@ class ChatSendMessageView(APIView):
                 )
 
             if chat_request.initiate_chat:
-
                 if call_execution.test_execution.status not in [
                     TestExecution.ExecutionStatus.RUNNING,
                     TestExecution.ExecutionStatus.EVALUATING,

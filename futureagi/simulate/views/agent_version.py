@@ -32,6 +32,7 @@ from simulate.utils.eval_summary import (
     _get_completed_call_executions_for_agent_version,
     _get_eval_config_for_agent_version,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import (
     ApiErrorWithDetailsResponseSerializer,
@@ -316,13 +317,14 @@ class ActivateAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EmptyRequestSerializer,
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             200: AgentVersionActivateResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, agent_id, version_id, *args, **kwargs):
         """
@@ -426,14 +428,15 @@ class RestoreAgentVersionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=EmptyRequestSerializer,
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             200: AgentVersionRestoreResponseSerializer,
             400: ApiErrorWithDetailsResponseSerializer,
             404: ApiErrorWithDetailsResponseSerializer,
             500: ApiErrorWithDetailsResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, agent_id, version_id, *args, **kwargs):
         """

@@ -21,6 +21,7 @@ from simulate.serializers.test_execution import (
 )
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.general_methods import GeneralMethods
 
@@ -213,7 +214,6 @@ class CallBranchAnalysisView(APIView):
             ):
                 analysis_data = call_execution.analysis_data.get("branch_analysis", {})
             else:
-
                 # Perform branch analysis
                 analyzer = BranchDeviationAnalyzer()
                 analysis = analyzer.analyze_call_execution_branch(call_execution)
@@ -256,13 +256,14 @@ class CallBranchAnalysisView(APIView):
                 f"Failed to analyze call execution: {str(e)}"
             )
 
-    @swagger_auto_schema(
-        request_body=EmptyRequestSerializer,
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             200: CallBranchDeviationCreateResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, call_execution_id, *args, **kwargs):
         """Create deviation nodes and edges for a call execution"""
