@@ -158,7 +158,14 @@ def resolve_persona_for_call(call_execution):
     2. First Persona referenced by scenario.metadata.persona_ids
        (ordered by created_at — stable across runs).
     3. None — `persona.*` keys resolve to "".
+
+    Invalid UUIDs in either source resolve to None instead of raising;
+    callers (eval resolver, serializer) treat that as "no persona bound".
     """
+    import uuid as _uuid
+
+    from django.core.exceptions import ValidationError
+
     from simulate.models import Persona
 
     metadata = call_execution.call_metadata or {}
@@ -169,7 +176,7 @@ def resolve_persona_for_call(call_execution):
             return Persona.no_workspace_objects.get(
                 id=row_persona_id, deleted=False
             )
-        except (Persona.DoesNotExist, ValueError):
+        except (Persona.DoesNotExist, ValueError, ValidationError):
             pass
 
     scenario = getattr(call_execution, "scenario", None)
@@ -179,13 +186,19 @@ def resolve_persona_for_call(call_execution):
     persona_ids = scenario_meta.get("persona_ids") or []
     if not persona_ids:
         return None
-    try:
-        return (
-            Persona.no_workspace_objects.filter(
-                id__in=persona_ids, deleted=False
-            )
-            .order_by("created_at")
-            .first()
-        )
-    except ValueError:
+
+    valid_ids = []
+    for pid in persona_ids:
+        try:
+            _uuid.UUID(str(pid))
+            valid_ids.append(pid)
+        except (ValueError, TypeError):
+            continue
+    if not valid_ids:
         return None
+
+    return (
+        Persona.no_workspace_objects.filter(id__in=valid_ids, deleted=False)
+        .order_by("created_at")
+        .first()
+    )

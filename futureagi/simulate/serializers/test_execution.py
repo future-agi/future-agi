@@ -173,6 +173,14 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
     # Dynamic scenario columns - these will be populated based on scenarios
     scenario_columns = serializers.SerializerMethodField()
 
+    # Persona profile attributes (gender, age_group, etc.) + free-form
+    # persona.metadata sub-keys. Frontend flattener emits flat.persona.<X>
+    # / flat.persona.metadata.<X> from these.
+    persona_profile = serializers.SerializerMethodField()
+
+    # Free-form Scenarios.metadata sub-keys (with internal references denylisted).
+    scenario_metadata = serializers.SerializerMethodField()
+
     # Graph-related field
     scenario_id = serializers.SerializerMethodField()
 
@@ -229,6 +237,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "eval_outputs",
             "eval_metrics",
             "scenario_columns",
+            "persona_profile",
+            "scenario_metadata",
             "ended_reason",
             "simulator_agent_name",
             "simulator_agent_id",
@@ -681,6 +691,54 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             scenario_data = {}
 
         return scenario_data
+
+    def get_persona_profile(self, obj):
+        """Persona attributes + Persona.metadata for the user-facing eval
+        mapping dropdown. Persona model fields only — SimulatorAgent fields
+        are deliberately excluded (legacy `persona.<sim_field>` mappings
+        still resolve at runtime via the eval-context resolver, but the
+        dropdown source must never list them).
+        """
+        if isinstance(obj, dict):
+            return {}
+        from simulate.utils.eval_context import (
+            flatten_persona,
+            resolve_persona_for_call,
+        )
+
+        persona = resolve_persona_for_call(obj)
+        if persona is None:
+            return {}
+
+        flat = flatten_persona(persona)
+        out = {}
+        for key, value in flat.items():
+            if not key.startswith("persona."):
+                continue
+            suffix = key[len("persona.") :]
+            if suffix.startswith("metadata."):
+                out.setdefault("metadata", {})[suffix[len("metadata.") :]] = value
+            else:
+                out[suffix] = value
+        return out
+
+    def get_scenario_metadata(self, obj):
+        """Free-form Scenarios.metadata sub-keys, with internal reference keys
+        denylisted (matches the eval context map's _SCENARIO_METADATA_DENYLIST).
+        """
+        if isinstance(obj, dict):
+            return {}
+        scenario = getattr(obj, "scenario", None)
+        if not scenario or not scenario.metadata:
+            return {}
+        from simulate.utils.eval_context import flatten_jsonfield_value
+
+        denylist = {"persona_ids", "agent_definition_version_id"}
+        return {
+            key: flatten_jsonfield_value(value)
+            for key, value in scenario.metadata.items()
+            if key not in denylist
+        }
 
     def get_scenario_id(self, obj):
         """Get scenario ID"""
