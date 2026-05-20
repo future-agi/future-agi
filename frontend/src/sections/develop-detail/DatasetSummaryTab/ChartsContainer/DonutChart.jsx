@@ -52,7 +52,6 @@ const DonutChart = ({
   type = "",
   height = 250,
 }) => {
-  console.log(data)
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const defaultOptions = useMemo(() => getDefaultOptions(isDark), [isDark]);
