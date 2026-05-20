@@ -9,127 +9,21 @@ Covers:
 
 import pytest
 
-from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
-from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from simulate.models import AgentDefinition, Persona, Scenarios
-from simulate.models.run_test import RunTest
-from simulate.models.simulator_agent import SimulatorAgent
-from simulate.models.test_execution import CallExecution, TestExecution
+from model_hub.models.choices import SourceChoices
+from model_hub.models.develop_dataset import Column
+from simulate.models import Scenarios
+from simulate.tests.factories import (
+    make_agent_definition,
+    make_call_execution,
+    make_dataset_with_columns,
+    make_persona,
+    make_run_test,
+    make_scenario,
+    make_simulator_agent,
+    make_test_execution,
+)
 
 pytestmark = pytest.mark.integration
-
-
-# ---------------------------------------------------------------------------
-# Test helpers — module-scope factories. Kept in this file (not conftest) so
-# the persona/simulator coverage doesn't bleed into unrelated suites.
-# ---------------------------------------------------------------------------
-
-
-def _make_persona(organization, workspace, **overrides):
-    """Create a Persona row with sane defaults; overrides win."""
-    defaults = dict(
-        name="Test Persona",
-        organization=organization,
-        workspace=workspace,
-        persona_type=Persona.PersonaType.WORKSPACE,
-    )
-    defaults.update(overrides)
-    return Persona.objects.create(**defaults)
-
-
-def _make_agent_definition(organization, workspace):
-    return AgentDefinition.objects.create(
-        agent_name="Test Agent",
-        agent_type=AgentDefinition.AgentTypeChoices.VOICE,
-        inbound=True,
-        description="Test agent",
-        organization=organization,
-        workspace=workspace,
-        languages=["en"],
-    )
-
-
-def _make_dataset_with_columns(organization, workspace, user, column_specs):
-    """Create a Dataset with the named columns and a single Row.
-
-    `column_specs` is a list of (column_name, cell_value) tuples. Returns
-    (dataset, row, columns_by_name).
-    """
-    dataset = Dataset.no_workspace_objects.create(
-        name="Test Dataset",
-        organization=organization,
-        workspace=workspace,
-        user=user,
-        source=DatasetSourceChoices.SCENARIO.value,
-    )
-    columns_by_name = {}
-    column_order = []
-    for col_name, _ in column_specs:
-        col = Column.objects.create(
-            dataset=dataset,
-            name=col_name,
-            data_type="text",
-            source=SourceChoices.OTHERS.value,
-        )
-        columns_by_name[col_name] = col
-        column_order.append(str(col.id))
-    dataset.column_order = column_order
-    dataset.save()
-
-    row = Row.objects.create(dataset=dataset, order=0)
-    for col_name, cell_value in column_specs:
-        Cell.objects.create(
-            dataset=dataset,
-            column=columns_by_name[col_name],
-            row=row,
-            value=cell_value,
-        )
-    return dataset, row, columns_by_name
-
-
-def _make_scenario(
-    organization, workspace, agent_definition, dataset=None, metadata=None
-):
-    return Scenarios.objects.create(
-        name="Test Scenario",
-        description="Test scenario description",
-        source="Test source",
-        scenario_type=Scenarios.ScenarioTypes.DATASET,
-        organization=organization,
-        workspace=workspace,
-        dataset=dataset,
-        agent_definition=agent_definition,
-        status=StatusType.COMPLETED.value,
-        metadata=metadata or {},
-    )
-
-
-def _make_run_test(organization, workspace, agent_definition, simulator_agent, scenario):
-    rt = RunTest.objects.create(
-        name="Test Run",
-        description="Test run description",
-        agent_definition=agent_definition,
-        simulator_agent=simulator_agent,
-        organization=organization,
-        workspace=workspace,
-    )
-    rt.scenarios.add(scenario)
-    return rt
-
-
-def _make_call_execution(test_execution, scenario, row_id=None, row_data=None):
-    call_metadata = {}
-    if row_id is not None:
-        call_metadata["row_id"] = str(row_id)
-    if row_data is not None:
-        call_metadata["row_data"] = row_data
-    return CallExecution.objects.create(
-        test_execution=test_execution,
-        scenario=scenario,
-        phone_number="+1234567890",
-        status=CallExecution.CallStatus.COMPLETED,
-        call_metadata=call_metadata,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -143,32 +37,27 @@ def persona_setup(db, organization, workspace, user):
     → TestExecution. Returns a closure that builds a CallExecution with
     arbitrary scenario_metadata / row_data.
     """
-    agent_def = _make_agent_definition(organization, workspace)
-    simulator = SimulatorAgent.objects.create(
-        name="Sim",
-        prompt="You are a simulator",
-        voice_provider="elevenlabs",
-        voice_name="marissa",
-        model="gpt-4",
-        organization=organization,
-        workspace=workspace,
-    )
+    agent_def = make_agent_definition(organization, workspace)
+    simulator = make_simulator_agent(organization, workspace)
 
     def _build(scenario_metadata=None, row_data=None):
-        scenario = _make_scenario(
+        scenario = make_scenario(
             organization,
             workspace,
             agent_def,
             metadata=scenario_metadata or {},
         )
-        rt = _make_run_test(organization, workspace, agent_def, simulator, scenario)
-        te = TestExecution.objects.create(
-            run_test=rt,
-            status=TestExecution.ExecutionStatus.COMPLETED,
+        rt = make_run_test(
+            organization,
+            workspace,
+            agent_def,
             simulator_agent=simulator,
-            agent_definition=agent_def,
+            scenarios=[scenario],
         )
-        return _make_call_execution(te, scenario, row_data=row_data)
+        te = make_test_execution(
+            rt, agent_definition=agent_def, simulator_agent=simulator
+        )
+        return make_call_execution(te, scenario, row_data=row_data)
 
     return _build
 
@@ -179,8 +68,8 @@ def test_resolve_persona_prefers_row_data_persona_id(
 ):
     from simulate.utils.eval_context import resolve_persona_for_call
 
-    persona_a = _make_persona(organization, workspace, name="A")
-    persona_b = _make_persona(organization, workspace, name="B")
+    persona_a = make_persona(organization, workspace, name="A")
+    persona_b = make_persona(organization, workspace, name="B")
 
     call = persona_setup(
         scenario_metadata={"persona_ids": [str(persona_a.id), str(persona_b.id)]},
@@ -199,8 +88,8 @@ def test_resolve_persona_falls_back_to_first_in_metadata(
 ):
     from simulate.utils.eval_context import resolve_persona_for_call
 
-    persona_a = _make_persona(organization, workspace, name="A")
-    persona_b = _make_persona(organization, workspace, name="B")
+    persona_a = make_persona(organization, workspace, name="A")
+    persona_b = make_persona(organization, workspace, name="B")
 
     call = persona_setup(
         scenario_metadata={"persona_ids": [str(persona_a.id), str(persona_b.id)]},
@@ -236,7 +125,7 @@ def test_user_facing_flatten_persona_excludes_simulator_fields(
     """
     from simulate.utils.eval_context import flatten_persona
 
-    persona = _make_persona(
+    persona = make_persona(
         organization,
         workspace,
         name="Alice",
@@ -261,7 +150,7 @@ def test_user_facing_flatten_persona_excludes_simulator_fields(
 def test_flatten_persona_multi_value_list_joins_with_comma(organization, workspace):
     from simulate.utils.eval_context import flatten_persona
 
-    persona = _make_persona(
+    persona = make_persona(
         organization,
         workspace,
         languages=["English", "Hindi", "Marathi"],
@@ -279,7 +168,7 @@ def test_flatten_persona_metadata_surfaces_dynamically(organization, workspace):
     """
     from simulate.utils.eval_context import flatten_persona
 
-    persona = _make_persona(
+    persona = make_persona(
         organization,
         workspace,
         metadata={"region": "EMEA", "vip_tier": "gold", "tags": ["A", "B"]},
@@ -316,16 +205,14 @@ def test_resolver_flatten_persona_falls_back_to_simulator(
     """
     from simulate.utils.eval_context import flatten_persona_for_resolver
 
-    persona = _make_persona(organization, workspace, name="Alice")
-    simulator = SimulatorAgent.objects.create(
+    persona = make_persona(organization, workspace, name="Alice")
+    simulator = make_simulator_agent(
+        organization,
+        workspace,
         name="SimulatorBot",  # Persona.name should still win.
         prompt="You are helpful",
-        voice_provider="elevenlabs",
         voice_name="alloy",
-        model="gpt-4",
         initial_message="Hello",
-        organization=organization,
-        workspace=workspace,
     )
 
     flat = flatten_persona_for_resolver(persona, simulator)
@@ -347,15 +234,13 @@ def test_resolver_flatten_persona_no_persona_uses_simulator(
     """
     from simulate.utils.eval_context import flatten_persona_for_resolver
 
-    simulator = SimulatorAgent.objects.create(
+    simulator = make_simulator_agent(
+        organization,
+        workspace,
         name="Bot",
         prompt="You are helpful",
-        voice_provider="elevenlabs",
         voice_name="alloy",
-        model="gpt-4",
         initial_message="Hi",
-        organization=organization,
-        workspace=workspace,
     )
 
     flat = flatten_persona_for_resolver(None, simulator)
@@ -380,7 +265,7 @@ def test_context_map_surfaces_persona_and_legacy_simulator_fields(
     """
     from simulate.temporal.activities.xl import _build_simulation_context_map
 
-    persona = _make_persona(
+    persona = make_persona(
         organization,
         workspace,
         name="Alice",
@@ -509,33 +394,28 @@ def call_with_dataset_columns(db, organization, workspace, user):
     Returns a closure that takes a {column_name: cell_value} dict and yields
     (call_execution, columns_by_name).
     """
-    agent_def = _make_agent_definition(organization, workspace)
-    simulator = SimulatorAgent.objects.create(
-        name="Sim",
-        prompt="You are a simulator",
-        voice_provider="elevenlabs",
-        voice_name="marissa",
-        model="gpt-4",
-        organization=organization,
-        workspace=workspace,
-    )
+    agent_def = make_agent_definition(organization, workspace)
+    simulator = make_simulator_agent(organization, workspace)
 
     def _build(columns):
         column_specs = list(columns.items())
-        dataset, row, columns_by_name = _make_dataset_with_columns(
+        dataset, row, columns_by_name = make_dataset_with_columns(
             organization, workspace, user, column_specs
         )
-        scenario = _make_scenario(
+        scenario = make_scenario(
             organization, workspace, agent_def, dataset=dataset
         )
-        rt = _make_run_test(organization, workspace, agent_def, simulator, scenario)
-        te = TestExecution.objects.create(
-            run_test=rt,
-            status=TestExecution.ExecutionStatus.COMPLETED,
+        rt = make_run_test(
+            organization,
+            workspace,
+            agent_def,
             simulator_agent=simulator,
-            agent_definition=agent_def,
+            scenarios=[scenario],
         )
-        call = _make_call_execution(te, scenario, row_id=row.id)
+        te = make_test_execution(
+            rt, agent_definition=agent_def, simulator_agent=simulator
+        )
+        call = make_call_execution(te, scenario, row_id=row.id)
         return call, columns_by_name
 
     return _build
