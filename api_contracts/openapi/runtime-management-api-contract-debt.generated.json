@@ -27,9 +27,9 @@
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
-    "runtime_backed_validated_request_decorators": 337,
-    "direct_swagger_auto_schema_decorators": 420,
-    "doc_only_input_contract_decorators": 138,
+    "runtime_backed_validated_request_decorators": 338,
+    "direct_swagger_auto_schema_decorators": 419,
+    "doc_only_input_contract_decorators": 137,
     "broad_request_contract_decorators": 0
   },
   "doc_only_input_contract_decorators": [],
@@ -618,15 +618,6 @@
       "function": "post",
       "serializers": [
         "MCPOAuthTokenRequestSerializer"
-      ]
-    },
-    {
-      "path": "futureagi/mcp_server/views/oauth_approve.py",
-      "line": 108,
-      "class": "MCPOAuthApproveView",
-      "function": "post",
-      "serializers": [
-        "MCPOAuthApproveRequestSerializer"
       ]
     },
     {

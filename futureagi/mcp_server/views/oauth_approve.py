@@ -28,6 +28,7 @@ from mcp_server.serializers.contracts import (
     MCPOAuthApproveRequestSerializer,
     MCPOAuthRedirectResponseSerializer,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_errors import build_error_envelope
 
 logger = structlog.get_logger(__name__)
@@ -105,14 +106,15 @@ class MCPOAuthApproveView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
-        request_body=MCPOAuthApproveRequestSerializer,
+    @validated_request(
+        request_serializer=MCPOAuthApproveRequestSerializer,
         responses={
             200: MCPOAuthRedirectResponseSerializer,
             400: MCPErrorResponseSerializer,
             403: MCPErrorResponseSerializer,
             404: MCPErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request):
         user = request.user
@@ -123,15 +125,9 @@ class MCPOAuthApproveView(APIView):
             settings, "CURRENT_WORKSPACE", None
         )
 
-        request_id = request.data.get("request_id")
-        approved = request.data.get("approved", False)
-        selected_groups = request.data.get("selected_groups", [])
-
-        if not request_id:
-            return Response(
-                build_error_envelope("Missing request_id", status_code=400),
-                status=400,
-            )
+        request_id = request.validated_data["request_id"]
+        approved = request.validated_data.get("approved", False)
+        selected_groups = request.validated_data.get("selected_groups", [])
 
         if not organization:
             return Response(
