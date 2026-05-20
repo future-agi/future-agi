@@ -496,6 +496,24 @@ class GetAPICallLogView(APIView):
             if "required_keys" in values:
                 required_keys = values.get("required_keys", [])
 
+            # Composite eval results carry per-child structured data under
+            # ``config.children`` (see model_hub/utils/composite_execution.py).
+            # Attach it onto ``output.composite`` so the FE's LogDrawerRight
+            # can render per-child cards instead of markdown-parsing the
+            # flattened ``[child_name] (score:..., weight:...)`` summary
+            # string (which collides with markdown link syntax).
+            output_payload = config.get("output", {}) or {}
+            if config.get("composite") and config.get("children"):
+                if not isinstance(output_payload, dict):
+                    output_payload = {"output": output_payload}
+                output_payload["composite"] = {
+                    "composite_id": config.get("reference_id"),
+                    "aggregation_function": config.get("aggregation_function"),
+                    "aggregation_enabled": config.get("aggregation_enabled"),
+                    "aggregate_pass": (output_payload or {}).get("aggregate_pass"),
+                    "children": config.get("children"),
+                }
+
             row_data.update(
                 {
                     "log_id": log_row.log_id,
@@ -504,7 +522,7 @@ class GetAPICallLogView(APIView):
                     "source": log_source,
                     "required_keys": required_keys,
                     "values": config.get("mappings", {}),
-                    "output": config.get("output", {}),
+                    "output": output_payload,
                     "input_data_types": config.get("input_data_types", {}),
                 }
             )

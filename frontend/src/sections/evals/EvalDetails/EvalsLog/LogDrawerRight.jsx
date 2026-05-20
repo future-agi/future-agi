@@ -16,6 +16,7 @@ import {
 import { ShowComponent } from "src/components/show";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import CompositeResultView from "src/sections/evals/components/CompositeResultView";
 import JsonCodeView from "src/components/code/json-code-view";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useAuthContext } from "src/auth/hooks";
@@ -133,19 +134,34 @@ const LogDrawerRight = ({
               borderRadius: "4px",
             }}
           >
-            <Typography fontWeight={400} fontSize={14} color="text.primary">
-              {typeof output.reason === "string" ? (
-                output?.reason?.trim() ? (
-                  <CellMarkdown spacing={0} text={output?.reason} />
+            {/*
+              Composite eval results carry a structured ``composite.children``
+              payload (BE: tracer/views/observation_span.py::get_evaluation_details).
+              When present we render per-child cards instead of markdown-parsing
+              the flattened ``output.reason`` string — the flattened form uses
+              [child_name] (score:..., weight:...) which collides with markdown
+              link syntax and renders as broken ``[]()`` artifacts.
+            */}
+            {output?.composite?.children?.length ? (
+              // Reuse the shared CompositeResultView (same component the
+              // dataset experiment surface uses) so per-child eval cards
+              // look identical across every consumer.
+              <CompositeResultView compositeResult={output.composite} />
+            ) : (
+              <Typography fontWeight={400} fontSize={14} color="text.primary">
+                {typeof output.reason === "string" ? (
+                  output?.reason?.trim() ? (
+                    <CellMarkdown spacing={0} text={output?.reason} />
+                  ) : (
+                    "Unable to fetch Explanation"
+                  )
                 ) : (
-                  "Unable to fetch Explanation"
-                )
-              ) : (
-                output?.reason?.map((item, index) => (
-                  <CellMarkdown key={index} spacing={0} text={item} />
-                ))
-              )}
-            </Typography>
+                  output?.reason?.map((item, index) => (
+                    <CellMarkdown key={index} spacing={0} text={item} />
+                  ))
+                )}
+              </Typography>
+            )}
           </Box>
         </Box>
 

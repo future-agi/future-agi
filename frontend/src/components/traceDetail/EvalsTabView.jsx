@@ -6,6 +6,7 @@ import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
+import CompositeResultView from "src/sections/evals/components/CompositeResultView";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
 // see the informational toast — preserves pre-integration behavior.
@@ -270,26 +271,35 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
             gap: 1,
           }}
         >
-          {explanation && (
-            <Box
-              sx={{
-                fontSize: 11,
-                color: "text.secondary",
-                lineHeight: 1.6,
-                "& p": { m: 0, mb: 0.5 },
-                "& ul, & ol": { m: 0, pl: 2 },
-                "& li": { mb: 0.25 },
-                "& strong": { fontWeight: 600, color: "text.primary" },
-                "& code": {
-                  bgcolor: (theme) => alpha(theme.palette.text.disabled, 0.15),
-                  px: 0.5,
-                  borderRadius: "2px",
-                  fontSize: 10,
-                },
-              }}
-            >
-              <Markdown>{explanation}</Markdown>
-            </Box>
+          {/* Composite eval result — render the shared per-child card view
+              the dataset experiment surface uses. The flattened ``explanation``
+              string for composite results has the form
+              ``[child_name] (score:..., weight:...)`` which collides with
+              markdown link syntax and renders as broken ``[]()`` artifacts. */}
+          {ev?.composite?.children?.length ? (
+            <CompositeResultView compositeResult={ev.composite} />
+          ) : (
+            explanation && (
+              <Box
+                sx={{
+                  fontSize: 11,
+                  color: "text.secondary",
+                  lineHeight: 1.6,
+                  "& p": { m: 0, mb: 0.5 },
+                  "& ul, & ol": { m: 0, pl: 2 },
+                  "& li": { mb: 0.25 },
+                  "& strong": { fontWeight: 600, color: "text.primary" },
+                  "& code": {
+                    bgcolor: (theme) => alpha(theme.palette.text.disabled, 0.15),
+                    px: 0.5,
+                    borderRadius: "2px",
+                    fontSize: 10,
+                  },
+                }}
+              >
+                <Markdown>{explanation}</Markdown>
+              </Box>
+            )
           )}
 
           {/* Error localization section — shows run-on-demand button when

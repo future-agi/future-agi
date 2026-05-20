@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import CompositeResultView from "src/sections/evals/components/CompositeResultView";
 import PropTypes from "prop-types";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { alpha } from "@mui/material/styles";
@@ -786,6 +787,23 @@ const DetailPanelContent = ({ row, isDark }) => {
                   `reason` is set on both. */}
               {row.status === "error" ? (
                 <ErrorDetails rawError={detail.error_message || row.reason} />
+              ) : row?.composite?.children?.length ? (
+                // Composite eval result — render the shared per-child card
+                // view (same component the dataset experiment surface uses).
+                // The flattened ``row.reason`` for composite evals has the
+                // form ``[child_name] (score:..., weight:...)`` which collides
+                // with markdown link syntax and renders as broken ``[]()``
+                // artifacts when piped through CellMarkdown.
+                <>
+                  <Typography
+                    variant="caption"
+                    fontWeight={600}
+                    sx={{ mt: 1.5, mb: 0.5 }}
+                  >
+                    Per-child Results
+                  </Typography>
+                  <CompositeResultView compositeResult={row.composite} />
+                </>
               ) : (
                 row.reason && (
                   <>

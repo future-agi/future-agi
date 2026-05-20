@@ -642,6 +642,39 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
                 reason = log.eval_explanation or log.error_message or ""
 
+                # Composite eval result — pull the per-child structured
+                # payload from output_metadata so the FE can render the
+                # shared CompositeResultView component instead of markdown-
+                # parsing the flattened summary string. The flattened
+                # ``[child] (score:..., weight:...)`` form collides with
+                # markdown link syntax and renders as broken ``[]()``
+                # artifacts in the task usage drawer.
+                composite_payload = None
+                meta = log.output_metadata if isinstance(log.output_metadata, dict) else None
+                if meta and meta.get("composite_id"):
+                    children_list = meta.get("children") or []
+                    completed_children = sum(
+                        1 for c in children_list if (c or {}).get("status") == "completed"
+                    )
+                    failed_children = sum(
+                        1 for c in children_list if (c or {}).get("status") == "failed"
+                    )
+                    composite_payload = {
+                        "composite_id": meta.get("composite_id"),
+                        "aggregation_function": meta.get("aggregation_function"),
+                        "aggregation_enabled": meta.get("aggregation_enabled"),
+                        "aggregate_pass": meta.get("aggregate_pass"),
+                        "aggregate_score": (
+                            float(log.output_float)
+                            if log.output_float is not None
+                            else None
+                        ),
+                        "children": children_list,
+                        "total_children": len(children_list),
+                        "completed_children": completed_children,
+                        "failed_children": failed_children,
+                    }
+
                 log_items.append(
                     {
                         "id": str(log.id),
@@ -649,6 +682,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         "result": result_label,
                         "score": score,
                         "reason": reason,
+                        "composite": composite_payload,
                         "status": status,
                         "source": "eval_task",
                         "created_at": (

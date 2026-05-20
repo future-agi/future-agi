@@ -818,7 +818,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 output_float,
                 output_bool,
                 output_str,
-                eval_explanation
+                eval_explanation,
+                output_metadata
             FROM tracer_eval_logger FINAL
             WHERE trace_id = %(trace_id)s
               AND _peerdb_is_deleted = 0
@@ -877,6 +878,50 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
                 explanation = row.get("eval_explanation", "")
 
+                # Composite eval payload. ``output_metadata`` is stored as
+                # a String in CH (jsonb on PG), so parse it before reading
+                # ``children``. Shape matches what the FE's
+                # ``CompositeResultView`` component expects so the trace
+                # drawer's Evals tab renders per-child cards instead of
+                # markdown-parsing the flattened
+                # ``[child] (score:..., weight:...)`` summary string.
+                composite_payload = None
+                meta_raw = row.get("output_metadata")
+                meta = None
+                if meta_raw:
+                    if isinstance(meta_raw, dict):
+                        meta = meta_raw
+                    elif isinstance(meta_raw, str):
+                        try:
+                            meta = json.loads(meta_raw)
+                        except (ValueError, TypeError):
+                            meta = None
+                if meta and meta.get("composite_id"):
+                    children_list = meta.get("children") or []
+                    completed_children = sum(
+                        1
+                        for c in children_list
+                        if (c or {}).get("status") == "completed"
+                    )
+                    failed_children = sum(
+                        1
+                        for c in children_list
+                        if (c or {}).get("status") == "failed"
+                    )
+                    composite_payload = {
+                        "composite_id": meta.get("composite_id"),
+                        "aggregation_function": meta.get("aggregation_function"),
+                        "aggregation_enabled": meta.get("aggregation_enabled"),
+                        "aggregate_pass": meta.get("aggregate_pass"),
+                        "aggregate_score": (
+                            float(output_float) if output_float is not None else None
+                        ),
+                        "children": children_list,
+                        "total_children": len(children_list),
+                        "completed_children": completed_children,
+                        "failed_children": failed_children,
+                    }
+
                 eval_map[sid].append(
                     {
                         "eval_config_id": cid,
@@ -886,6 +931,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         "result": output_str
                         or (output_bool if output_bool is not None else None),
                         "explanation": explanation if explanation else None,
+                        "composite": composite_payload,
                     }
                 )
         except Exception as e:
