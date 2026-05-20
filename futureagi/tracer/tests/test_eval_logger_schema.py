@@ -509,3 +509,43 @@ class TestGetUsageAggregationBlocks:
         for meta in body["evals"]:
             for k in ("runs_period", "success_count", "error_count", "pass_rate"):
                 assert k in meta, f"evals[] entry missing {k}: {meta}"
+
+    def test_span_attributes_filter_malformed_json_returns_400(
+        self, auth_client, project, eval_template
+    ):
+        """``?span_attributes_filters=`` rejects non-JSON input with a clean 400.
+
+        Pins the contract that malformed filter input fails loudly with an
+        informative error rather than silently no-op'ing (which would let a
+        broken caller think they were filtering when they were not).
+        """
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        cc = CustomEvalConfig.objects.create(
+            name="cfg", project=project, eval_template=eval_template,
+            config={}, mapping={}, filters={},
+        )
+        task = EvalTask.objects.create(
+            project=project, name="malformed-filter test",
+            status=EvalTaskStatus.COMPLETED, run_type=RunType.HISTORICAL,
+            row_type="spans", sampling_rate=100.0,
+        )
+        task.evals.add(cc)
+
+        resp = auth_client.get(
+            "/tracer/eval-task/get_usage/",
+            {
+                "eval_task_id": str(task.id),
+                "page": 1, "page_size": 5, "period": "30d",
+                "span_attributes_filters": "not-valid-json",
+            },
+        )
+        assert resp.status_code == 400, (
+            f"expected 400 for malformed span_attributes_filters, got {resp.status_code}"
+        )
+        body = resp.json()
+        assert body.get("status") is False
+        assert "span_attributes_filters" in str(body.get("result", "")), (
+            f"error message should name the bad field, got {body!r}"
+        )
