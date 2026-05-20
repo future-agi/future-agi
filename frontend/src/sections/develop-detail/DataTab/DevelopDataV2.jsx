@@ -519,7 +519,7 @@ const getAverageColumnConfig = (columns, tableRows) => {
     },
   ];
 };
-const DATASET_ROWS_LIMIT = 30;
+const DATASET_ROWS_LIMIT = 50;
 const BATCH_SIZE = 3;
 
 const DevelopDataV2 = ({ datasetId, viewOptions }) => {
@@ -1284,7 +1284,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                     gridApiRef,
                     updateProcessingSyntheticData,
                   }}
-                  blockLoadDebounceMillis={300}
+                  blockLoadDebounceMillis={100}
                 />
               </>
             ) : (
