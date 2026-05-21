@@ -14,6 +14,14 @@ vi.mock("src/components/traceDetail/AddTagsPopover", () => ({
     ) : null,
 }));
 
+vi.mock("src/components/traceDetail/TagChip", () => ({
+  default: ({ name, readOnly }) => (
+    <span data-read-only={String(readOnly)} data-testid={`tag-chip-${name}`}>
+      {name}
+    </span>
+  ),
+}));
+
 describe("TagsCell", () => {
   it("renders tag chips for an array of strings", () => {
     render(<TagsCell value={["production", "v2"]} />);
@@ -48,6 +56,15 @@ describe("TagsCell", () => {
     render(<TagsCell value={["solo"]} />);
     expect(screen.getByText("solo")).toBeInTheDocument();
     expect(screen.queryByText(/\+/)).not.toBeInTheDocument();
+  });
+
+  it("keeps grid chips read-only while the cell handles editing", () => {
+    render(<TagsCell traceId="trace-1" value={["production"]} />);
+
+    expect(screen.getByTestId("tag-chip-production")).toHaveAttribute(
+      "data-read-only",
+      "true",
+    );
   });
 
   it("opens the tag editor for a trace row when a visible tag is clicked", () => {

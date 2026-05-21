@@ -99,6 +99,7 @@ const TagsCell = ({ value, traceId, spanId }) => {
               name={tag.name}
               color={tag.color}
               size="small"
+              readOnly
             />
           );
         })}
