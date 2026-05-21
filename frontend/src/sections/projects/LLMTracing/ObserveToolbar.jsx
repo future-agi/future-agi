@@ -17,6 +17,7 @@ import {
   startOfYesterday,
   sub,
 } from "date-fns";
+import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
 import Iconify from "src/components/iconify";
 import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
@@ -453,7 +454,9 @@ const ObserveToolbar = ({
               const apiFilters = newFilters.map((f) => {
                 const filterOp = LEGACY_OP_ALIAS[f.operator] || f.operator;
                 const apiColType = f.apiColType || colTypeMap[f.fieldCategory];
-                let filterValue = f.value;
+                let filterValue = NULL_OPERATORS.includes(filterOp)
+                  ? ""
+                  : f.value;
                 if (Array.isArray(filterValue)) {
                   if (RANGE_OPS.has(filterOp)) {
                     // Coerce numeric range bounds.

@@ -39,6 +39,7 @@ import {
   isAudioUrlString,
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
+import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
 
 // ───────────────────────────────────────────────────────────────
 // Helpers (ported from TracingTestMode)
@@ -56,6 +57,7 @@ const ID_COLUMNS = new Set(["trace_id", "span_id"]);
 
 const RANGE_OPS = new Set(["between", "not_between"]);
 const LIST_OPS = new Set(["in", "not_in"]);
+const NO_VALUE_OPS = new Set(NULL_OPERATORS);
 
 // Form rows from `TaskFilterBar.convertNewToOld` carry scalar `filterValue`
 // for single-value ops and arrays for `in`/`not_in`/`between`/`not_between`.
@@ -106,7 +108,9 @@ export function buildApiFilterArray(oldFormatFilters, startDate, endDate) {
         COL_TYPE_MAP[entry.fieldCategory] ||
         (entry.isAttribute ? "SPAN_ATTRIBUTE" : "SYSTEM_METRIC");
       let filterValue;
-      if (RANGE_OPS.has(entry.op)) {
+      if (NO_VALUE_OPS.has(entry.op)) {
+        filterValue = "";
+      } else if (RANGE_OPS.has(entry.op)) {
         filterValue = entry.value;
       } else if (LIST_OPS.has(entry.op)) {
         filterValue = entry.values;

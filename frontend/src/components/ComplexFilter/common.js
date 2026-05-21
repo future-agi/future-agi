@@ -143,13 +143,15 @@ export const getComplexFilterValidation = (
         ),
     })
     .transform((val) => {
-      // For null operators, set filterValue to empty string even if it exists in old data
-      const isNullOperator =
-        val.filterConfig.filterOp === "is_null" ||
-        val.filterConfig.filterOp === "is_not_null";
+      const isNullOperator = NULL_OPERATORS.includes(val.filterConfig.filterOp);
 
       let finalFilters = {};
-      if (val.filterConfig.filterType === "number") {
+      if (isNullOperator) {
+        finalFilters = {
+          columnId: val.columnId,
+          filterConfig: { ...val.filterConfig, filterValue: "" },
+        };
+      } else if (val.filterConfig.filterType === "number") {
         let newFilterValues;
         if (["between", "not_in_between"].includes(val.filterConfig.filterOp)) {
           newFilterValues = val.filterConfig.filterValue.map((item) =>
@@ -183,10 +185,7 @@ export const getComplexFilterValidation = (
       } else {
         finalFilters = {
           columnId: val.columnId,
-          filterConfig: {
-            ...val.filterConfig,
-            ...(isNullOperator && { filterValue: "" }),
-          },
+          filterConfig: { ...val.filterConfig },
         };
       }
 
