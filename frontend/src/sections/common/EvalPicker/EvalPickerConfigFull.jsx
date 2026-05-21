@@ -72,6 +72,7 @@ import { format } from "date-fns";
 import {
   buildEvalTemplateConfig,
   buildCompositeSourceModeProps,
+  buildDataInjection,
   contextOptionsForRowType,
   extractCodeEvaluateParams,
   getSourceModeVariables,
@@ -849,23 +850,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       onFiltersChange(localFilterForm.getValues("filters") || []);
     }
 
-    // Build a data_injection config from context options.
-    const dataInjection = (() => {
-      if (
-        contextOptions.length === 0 ||
-        (contextOptions.length === 1 && contextOptions[0] === "variables_only")
-      ) {
-        return { variables_only: true };
-      }
-      const flags = {};
-      if (contextOptions.includes("dataset_row")) flags.full_row = true;
-      if (contextOptions.includes("span_context")) flags.span_context = true;
-      if (contextOptions.includes("trace_context")) flags.trace_context = true;
-      if (contextOptions.includes("session_context")) flags.session_context = true;
-      if (contextOptions.includes("call_context")) flags.call_context = true;
-      if (contextOptions.includes("full_row")) flags.full_row = true;
-      return Object.keys(flags).length > 0 ? flags : { full_row: true };
-    })();
+    const dataInjection = buildDataInjection(contextOptions);
     const tools = build_tools_payload(connectorIds);
 
     const templateType =
@@ -1491,7 +1476,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   >
                     <Typography variant="caption">0</Typography>
                     <Slider
-                      value={passThreshold * 100}
+                      value={Math.round(passThreshold * 100)}
                       onChange={(_, val) => {
                         setPassThreshold(val / 100);
                         setIsDirty(true);
@@ -1758,6 +1743,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     model={model}
                     functionParamsSchema={functionParamsSchema}
                     configParamsDesc={configParamsDesc}
+                    codeParams={codeParams}
+                    onCodeParamsChange={setCodeParams}
                   />
                 )}
 

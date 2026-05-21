@@ -284,7 +284,7 @@ def _get_cell_value_with_json_path(cell, json_path):
 
     # Try to parse the cell value as JSON and extract the path
     parsed_json, is_valid = parse_json_safely(cell.value)
-    if is_valid and parsed_json:
+    if is_valid:
         return resolve_json_path(parsed_json, json_path)
 
     # If not valid JSON, return the original value
@@ -1026,9 +1026,12 @@ class EvaluationRunner:
                 mapping_error,
                 config_error,
                 eval_instance,
+                partial_input_warning,
             ) = self._run_evaluation(row, mappings, config)
             # Format response first so we can access the formatted data
-            response = self._format_response(eval_result)
+            response = self._format_response(
+                eval_result, partial_input_warning=partial_input_warning
+            )
             # Reason column is always-on for experiments (matches dataset
             # behavior in develop_dataset.py:7102-7128). For datasets we
             # still respect the legacy config.reason_column flag.
@@ -1053,16 +1056,18 @@ class EvaluationRunner:
             value = self.format_output(response, row)
 
             config_dict = json.loads(api_call_log_row.config)
-            config_dict.update(
-                {
-                    "output": {
-                        "output": value,
-                        "reason": (
-                            response["reason"] if "reason" in response.keys() else None
-                        ),
-                    }
-                }
-            )
+            output_payload = {
+                "output": value,
+                "reason": (
+                    response["reason"] if "reason" in response.keys() else None
+                ),
+            }
+            # Propagate partial-input warnings into the API call log so the
+            # eval tasks log and eval usage views (which read APICallLog)
+            # can surface the warning alongside the eval's output.
+            if response.get("warnings"):
+                output_payload["warnings"] = response["warnings"]
+            config_dict.update({"output": output_payload})
             input_types = {}
             for key, mapping_value in mappings.items():
                 # Extract base column ID to look up data type
@@ -1885,16 +1890,6 @@ class EvaluationRunner:
         required_field_error = required_field
         mapping_error = mapping
 
-        def _is_empty_value(value):
-            """Return True when value is effectively empty."""
-            if value is None:
-                return True
-            if isinstance(value, str) and not value.strip():
-                return True
-            if isinstance(value, list) and all(not item for item in value):
-                return True
-            return False
-
         def _is_mapped(mapping_config):
             """Return True when a key is mapped to any column."""
             if isinstance(mapping_config, list):
@@ -1916,25 +1911,34 @@ class EvaluationRunner:
                     return True
             return False
 
-        # Use eval template config with row mappings.
+        # Mapping-validity check: a configured-but-unresolvable mapping is
+        # a real config error regardless of eval type. Surface it before
+        # the emptiness check so the user gets the specific error message.
         required_keys = []
         optional_keys = []
+        is_user_custom_eval = False
         if getattr(self.eval_template, "config", None):
             required_keys = self.eval_template.config.get("required_keys", [])
             optional_keys = self.eval_template.config.get("optional_keys", [])
+            is_user_custom_eval = self.eval_template.config.get(
+                "custom_eval", False
+            )
 
-        # Validate mapped required/optional keys only.
+        # Validate mapped required/optional keys only. Skip for user-built
+        # custom evals so empty cells flow through to the eval (the template
+        # can define explicit handling, e.g. a "No Input" choice). This keeps
+        # the dataset path consistent with the eval playground, which never
+        # applied this row-level guard. For custom evals the shared
+        # validator below still enforces the all-empty safety net.
         keys_to_check = list(set(required_keys) | set(optional_keys))
-        if keys_to_check:
+        if keys_to_check and not is_user_custom_eval:
             for key in keys_to_check:
-                # Mapping config indicates whether the user mapped this key.
                 mapping_config = (
                     mappings.get(key) if isinstance(mappings, dict) else None
                 )
                 # Skip unmapped keys.
                 if not _is_mapped(mapping_config):
                     continue
-
                 # Raise if mapped key has no row value.
                 if key not in required_field:
                     if not _has_valid_mapping(mapping_config, row.dataset_id):
@@ -1944,13 +1948,49 @@ class EvaluationRunner:
                     raise ValueError(
                         f"No input received for '{key}'. Please check your input."
                     )
-
                 # Map back from key to row value via the ordered lists.
                 value = mapping[required_field.index(key)]
                 if _is_empty_value(value):
                     raise ValueError(
                         f"No input received for '{key}'. Please check your input."
                     )
+
+        # Emptiness rules live in the shared validator so dataset,
+        # playground, tracing, and SDK paths apply the same logic.
+        from model_hub.utils.eval_input_validation import validate_eval_inputs
+
+        values_for_validation = {
+            key: mapping[required_field.index(key)]
+            for key in required_field
+            if key in keys_to_check
+        }
+        mapped_keys_for_validation = set()
+        # Mapped-but-unresolved keys count as empty so the all-empty
+        # safety net can still fire for custom evals.
+        for key in keys_to_check:
+            mapping_config = (
+                mappings.get(key) if isinstance(mappings, dict) else None
+            )
+            if _is_mapped(mapping_config):
+                mapped_keys_for_validation.add(key)
+                if key not in values_for_validation:
+                    values_for_validation[key] = None
+
+        partial_input_warning, _normalized_values = validate_eval_inputs(
+            self.eval_template,
+            values_for_validation,
+            mapped_keys=mapped_keys_for_validation,
+        )
+        # The dataset path runs rows in parallel via ThreadPoolExecutor,
+        # so we cannot stash this on self — sibling threads would race and
+        # lose each other's warnings. Threaded through the return tuple
+        # and into _format_response per-row instead.
+        #
+        # Note: the dataset path builds kwargs separately via map_fields
+        # below, so normalized_values from the validator isn't fed into
+        # eval_instance.run here. The map_fields path already handles
+        # missing/empty cells; this validator's role on the dataset
+        # path is the all-empty guard + warning attach.
 
         # Validate param modalities for function evals (deterministic evals
         # validate inside their own _validate_param_modalities).
@@ -2104,6 +2144,7 @@ class EvaluationRunner:
             mapping_error,
             config_error,
             eval_instance,
+            partial_input_warning,
         )
 
     def _prepare_mapping_data(self, row, mappings):
@@ -2574,13 +2615,21 @@ class EvaluationRunner:
 
         return config
 
-    def _format_response(self, eval_result):
+    def _format_response(self, eval_result, partial_input_warning=None):
         """Format evaluation result response"""
         from evaluations.engine.formatting import extract_raw_result
 
         response = extract_raw_result(eval_result, self.eval_template)
         response["name"] = self.user_eval_metric.name
         response["model"] = ""  # Dataset path doesn't track model used
+
+        # Attach the per-row partial-input warning so the cell payload
+        # and the EvalLogger projection (output_metadata.warnings) both
+        # carry it. Threaded in as an argument because rows run in
+        # parallel — see _process_eval_result.
+        if partial_input_warning:
+            response.setdefault("warnings", []).append(partial_input_warning)
+
         return response
 
     def _handle_error(self, error):

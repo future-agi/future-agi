@@ -7795,7 +7795,10 @@ class AddUserEvalView(CreateAPIView):
                     getattr(template, "error_localizer_enabled", False)
                 )
 
-            # Validate required mapping keys
+            # Validate required mapping keys. System evals stay strict —
+            # every required key must be mapped. Custom evals allow
+            # partial mappings; the shared validator at run time decides
+            # whether to fail (all empty) or run with a warning.
             from model_hub.utils.eval_validators import validate_required_key_mapping
 
             mapping = validated_data.get("config", {}).get("mapping", {})
@@ -7804,11 +7807,17 @@ class AddUserEvalView(CreateAPIView):
                 if template.config and isinstance(template.config, dict)
                 else []
             )
-            missing_keys = validate_required_key_mapping(mapping, required_keys)
-            if missing_keys:
-                return self._gm.bad_request(
-                    f"Missing required mapping keys: {', '.join(missing_keys)}"
+            is_user_custom_eval = bool(
+                template.config and template.config.get("custom_eval", False)
+            )
+            if not is_user_custom_eval:
+                missing_keys = validate_required_key_mapping(
+                    mapping, required_keys
                 )
+                if missing_keys:
+                    return self._gm.bad_request(
+                        f"Missing required mapping keys: {', '.join(missing_keys)}"
+                    )
 
             try:
                 validated_data["config"] = normalize_eval_runtime_config(

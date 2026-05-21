@@ -11,7 +11,7 @@ from cryptography.fernet import Fernet
 from django.conf import settings
 from django.core.cache import cache
 from django.db import IntegrityError
-from django.http import HttpResponseForbidden
+from django.http import HttpResponseForbidden, JsonResponse
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.authentication import BaseAuthentication
@@ -579,14 +579,28 @@ class AuthMonitoringMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
 
+    @staticmethod
+    def _json_forbidden(error_code, error_message, **extra):
+        """Return a JSON 403 response with a structured error_code."""
+        body = {
+            "status": False,
+            "result": {
+                "error": error_message,
+                "error_code": error_code,
+                **extra,
+            },
+        }
+        return JsonResponse(body, status=403)
+
     def __call__(self, request):
         client_ip, _ = get_client_ip(request)
 
         if request.path.endswith("password-reset-initiate/"):
             # Check if IP is blocked
             if cache.get(f"rate_limit_{client_ip}"):
-                return HttpResponseForbidden(
-                    "Rate limit exceeded. Too many password reset requests."
+                return self._json_forbidden(
+                    "LOGIN_PASSWORD_RESET_RATE_LIMITED",
+                    "Rate limit exceeded. Too many password reset requests.",
                 )
 
             # Check rate limiting
@@ -598,8 +612,9 @@ class AuthMonitoringMiddleware:
 
             if len(requests) >= MAX_LOGIN_ATTEMPTS_PER_HOUR:
                 cache.set(f"rate_limit_{client_ip}", True, IP_BLOCK_DURATION)
-                return HttpResponseForbidden(
-                    "Rate limit exceeded. Too many password reset requests."
+                return self._json_forbidden(
+                    "LOGIN_PASSWORD_RESET_RATE_LIMITED",
+                    "Rate limit exceeded. Too many password reset requests.",
                 )
 
             requests.append(now)
@@ -612,8 +627,10 @@ class AuthMonitoringMiddleware:
         ):
             # Check if IP is blocked
             if cache.get(f"blocked_ip_{client_ip}"):
-                return HttpResponseForbidden(
-                    "IP address temporarily blocked due to multiple failed attempts"
+                return self._json_forbidden(
+                    "LOGIN_IP_BLOCKED",
+                    "IP address temporarily blocked due to multiple failed attempts",
+                    blocked=True,
                 )
 
             # Check rate limiting
@@ -625,7 +642,11 @@ class AuthMonitoringMiddleware:
 
             if len(requests) >= MAX_LOGIN_ATTEMPTS_PER_HOUR:
                 cache.set(f"blocked_ip_{client_ip}", True, IP_BLOCK_DURATION)
-                return HttpResponseForbidden("Too many login attempts")
+                return self._json_forbidden(
+                    "LOGIN_IP_RATE_LIMITED",
+                    "Too many login attempts",
+                    blocked=True,
+                )
 
             requests.append(now)
             cache.set(f"ip_requests_{client_ip}", requests, 1200)

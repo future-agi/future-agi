@@ -2580,12 +2580,23 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
-            # Run evaluation
-            eval_result = eval_instance.run(
-                **evaluation_runner.map_fields(
-                    list(run_params.keys()), list(run_params.values())
-                )
+            # Apply the shared empty-input rules so prompt-template evals
+            # behave the same as dataset/playground/tracing/SDK paths.
+            from model_hub.utils.eval_input_validation import (
+                validate_eval_inputs,
             )
+
+            _mapped_kwargs = evaluation_runner.map_fields(
+                list(run_params.keys()), list(run_params.values())
+            )
+            partial_input_warning, _mapped_kwargs = validate_eval_inputs(
+                eval_template,
+                _mapped_kwargs,
+                mapped_keys=_mapped_kwargs.keys(),
+            )
+
+            # Run evaluation
+            eval_result = eval_instance.run(**_mapped_kwargs)
 
             # Format response
             response = {
@@ -2599,6 +2610,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 "metadata": eval_result.eval_results[0].get("metadata", {}),
                 "output": eval_template.config.get("output"),
             }
+            if partial_input_warning:
+                response["warnings"] = [partial_input_warning]
             metadata = response.get("metadata") or {}
             if isinstance(metadata, str):
                 try:

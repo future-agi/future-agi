@@ -74,6 +74,28 @@ def _walk_dotted_path(root, path):
 _MISSING = object()
 
 
+def _build_apicall_output(result, partial_input_warning):
+    """Build the ``APICallLog.config.output`` payload for an eval success.
+
+    Bundles ``partial_input_warning`` into the same payload so the single
+    save below carries both the result and the warning — avoids the
+    earlier double-save (which silently dropped the warning if the
+    second save raised).
+    """
+    payload = {"output": result.value, "reason": result.reason}
+    if partial_input_warning:
+        payload["warnings"] = [partial_input_warning]
+    return payload
+
+
+def _attach_warning_to_metadata(response, output_metadata, partial_input_warning):
+    """Mirror a partial-input warning onto the response and EvalLogger metadata."""
+    if not partial_input_warning:
+        return
+    response["warnings"] = [partial_input_warning]
+    output_metadata["warnings"] = [partial_input_warning]
+
+
 def _resolve_attr(span_attrs: dict, candidate: str):
     """Literal lookup → dotted walk → JSON-parsed parent walk on miss.
 
@@ -390,10 +412,19 @@ def _process_mapping(
     # Use accessor for backward compatibility (span_attributes || eval_attributes)
     span_attrs = get_span_attributes(span)
 
-    # Handle optional keys from eval template
+    # Handle optional keys from eval template + record whether this is a
+    # user-built custom eval. For custom evals, a missing span attribute
+    # is treated as an empty value (not a hard error) — the shared
+    # validator later decides whether to fail (all empty) or warn
+    # (partial). This is what makes the tracer path consistent with
+    # dataset / playground / simulation.
+    is_user_custom_eval = False
     try:
         given_eval_template = EvalTemplate.no_workspace_objects.get(id=eval_template_id)
         optional_keys = given_eval_template.config.get("optional_keys", [])
+        is_user_custom_eval = bool(
+            given_eval_template.config.get("custom_eval", False)
+        )
         if len(optional_keys) > 0:
             for key in optional_keys:
                 if key in mapping and (mapping[key] is None or mapping[key] == ""):
@@ -431,6 +462,12 @@ def _process_mapping(
                 parsed_mapping[key] = resolved_value
             else:
                 parsed_mapping[key] = json.dumps(resolved_value)
+        elif is_user_custom_eval:
+            # Custom eval: missing span attribute is treated as empty so
+            # the shared validator can decide whether to fail (all empty)
+            # or run with a partial_input warning. Span path mirrors
+            # what dataset/playground do when a column cell is empty.
+            parsed_mapping[key] = ""
         else:
             logger.error(
                 f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"
@@ -508,6 +545,17 @@ def _run_evaluation(
         if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             raise ValueError("API call not allowed : ", api_call_log_row.status)
 
+        # Apply the same empty-input rules the dataset and playground
+        # paths use, so eval tasks behave consistently with everywhere
+        # else evals can run. The validator also normalizes kwargs to
+        # fill any missing required_keys with "" so the underlying eval
+        # engine doesn't raise "Missing required key" for unmapped vars.
+        from model_hub.utils.eval_input_validation import validate_eval_inputs
+
+        partial_input_warning, run_params = validate_eval_inputs(
+            eval_model, run_params, mapped_keys=(run_params or {}).keys()
+        )
+
         start_time = time.time()
         result = eval_instance.run(**run_params)
         end_time = time.time()
@@ -525,13 +573,18 @@ def _run_evaluation(
             "end_time": end_time,
             "duration": end_time - start_time,
         }
+        if partial_input_warning:
+            response["warnings"] = [partial_input_warning]
         value = runner.format_output(result_data=response, eval_template=eval_model)
 
         config_dict = json.loads(api_call_log_row.config)
+        output_payload = {"output": value, "reason": response["reason"]}
+        if response.get("warnings"):
+            output_payload["warnings"] = response["warnings"]
         config_dict.update(
             {
                 "input": response["data"],
-                "output": {"output": value, "reason": response["reason"]},
+                "output": output_payload,
             }
         )
         api_call_log_row.config = json.dumps(config_dict)
@@ -584,11 +637,17 @@ def _run_evaluation(
         if not isinstance(metadata, dict):
             metadata = {}
 
-        # Create kwargs dict for EvalLogger based on value type
+        # Create kwargs dict for EvalLogger based on value type.
+        # Persist partial-input warnings into output_metadata.warnings so
+        # the eval task logs view (which reads EvalLogger) can render
+        # them alongside the eval result.
+        _output_metadata = {**metadata}
+        if response.get("warnings"):
+            _output_metadata["warnings"] = response["warnings"]
         logger_kwargs = {
             "trace": observation_span.trace,
             "observation_span": observation_span,
-            "output_metadata": {**metadata},
+            "output_metadata": _output_metadata,
             "eval_explanation": result.eval_results[0].get("reason"),
             "results_explanation": response,
             "eval_task_id": eval_task_id,
@@ -1067,6 +1126,8 @@ def _execute_evaluation(
     # Composite evals: fan out across children via the shared helper and
     # return a synthesised result that matches the shape downstream
     # logging expects. Single-template execution skips this branch.
+    # Validator runs per-child inside the recursive call, not at the
+    # parent — composite parents don't have their own required_keys.
     if eval_model.template_type == "composite":
         return _execute_composite_on_span(
             observation_span_id=observation_span_id,
@@ -1075,6 +1136,16 @@ def _execute_evaluation(
             run_params=run_params,
             feedback_id=feedback_id,
         )
+
+    # Apply the shared empty-input rules so eval tasks behave the same as
+    # the dataset / playground / SDK paths. The validator raises when all
+    # mapped inputs are empty (for custom evals) and otherwise returns a
+    # partial_input warning we attach to the EvalLogger output_metadata.
+    from model_hub.utils.eval_input_validation import validate_eval_inputs
+
+    partial_input_warning, run_params = validate_eval_inputs(
+        eval_model, run_params, mapped_keys=(run_params or {}).keys()
+    )
 
     org_id = str(observation_span.project.organization.id)
     ws_id = (
@@ -1161,12 +1232,14 @@ def _execute_evaluation(
             )
         )
 
-        # Update cost log
+        # Build the output payload up front so the partial-input warning
+        # rides on the single save below — avoids losing the warning if a
+        # follow-up save were to fail (see _build_apicall_output).
         config_dict = json.loads(api_call_log_row.config)
         config_dict.update(
             {
                 "input": result.data,
-                "output": {"output": result.value, "reason": result.reason},
+                "output": _build_apicall_output(result, partial_input_warning),
             }
         )
         api_call_log_row.config = json.dumps(config_dict)
@@ -1198,10 +1271,13 @@ def _execute_evaluation(
             "duration": result.duration,
         }
 
+        _output_metadata = {**metadata}
+        _attach_warning_to_metadata(response, _output_metadata, partial_input_warning)
+
         logger_kwargs = {
             "trace": observation_span.trace,
             "observation_span": observation_span,
-            "output_metadata": {**metadata},
+            "output_metadata": _output_metadata,
             "eval_explanation": result.reason,
             "results_explanation": response,
             "eval_task_id": eval_task_id,
@@ -1556,19 +1632,28 @@ def evaluate_observation_span_observe(
                 eval_task_id,
             )
 
-        # DISABLED 2026-04-30 — per-row enqueue caused Aurora CPU saturation
-        # under load (incident: cron-driven historical EvalTask × N×M fan-out
-        # → 60+ cluster_eval_results_task/sec → embedding service connection
-        # resets → workflow pile-up). Re-enable only after per-project debounce
-        # is implemented (Temporal workflow ID dedup or Redis lock).
-        #
-        # try:
-        #     from tracer.tasks.eval_clustering import cluster_eval_results_task
-        #
-        #     project_id = str(observation_span.project_id)
-        #     cluster_eval_results_task.delay(project_id)
-        # except Exception:
-        #     logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
+        # Re-enabled with per-project Temporal dedup. The original per-row
+        # enqueue caused embedding-service overload under backfill (N×M
+        # fan-out → many concurrent same-project clustering runs each
+        # re-embedding the whole unclustered backlog). A deterministic
+        # per-project workflow id + USE_EXISTING conflict policy collapses
+        # concurrent triggers for a project onto the single in-flight run;
+        # once it completes the next trigger starts a fresh run that
+        # re-sweeps whatever is still unclustered (cluster_eval_results is
+        # idempotent), so coalescing is safe and loses nothing.
+        try:
+            from temporalio.common import WorkflowIDConflictPolicy
+
+            from tracer.tasks.eval_clustering import cluster_eval_results_task
+
+            project_id = str(observation_span.project_id)
+            cluster_eval_results_task.apply_async(
+                args=(project_id,),
+                task_id=f"eval-cluster-{project_id}",
+                id_conflict_policy=WorkflowIDConflictPolicy.USE_EXISTING,
+            )
+        except Exception:
+            logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
 
         return True
     except ValueError as e:
@@ -2160,12 +2245,16 @@ def _process_trace_mapping(
         return {}
 
     parsed: dict = {}
+    is_user_custom_eval = False
 
     try:
         given_eval_template = EvalTemplate.no_workspace_objects.get(
             id=eval_template_id
         )
         optional_keys = given_eval_template.config.get("optional_keys", []) or []
+        is_user_custom_eval = bool(
+            given_eval_template.config.get("custom_eval", False)
+        )
         for key in optional_keys:
             if key in mapping and (mapping[key] is None or mapping[key] == ""):
                 mapping.pop(key)
@@ -2187,6 +2276,12 @@ def _process_trace_mapping(
     for key, attribute in mapping.items():
         value = _resolve_trace_path(trace, attribute) if attribute else _MISSING
         if value is _MISSING:
+            if is_user_custom_eval:
+                # Custom eval: treat missing trace attribute as empty so
+                # the shared validator can fail (all empty) or warn
+                # (partial). Mirrors the span / dataset behaviour.
+                parsed[key] = ""
+                continue
             logger.error(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on trace {trace.id}"
@@ -2208,12 +2303,16 @@ def _process_session_mapping(
         return {}
 
     parsed: dict = {}
+    is_user_custom_eval = False
 
     try:
         given_eval_template = EvalTemplate.no_workspace_objects.get(
             id=eval_template_id
         )
         optional_keys = given_eval_template.config.get("optional_keys", []) or []
+        is_user_custom_eval = bool(
+            given_eval_template.config.get("custom_eval", False)
+        )
         for key in optional_keys:
             if key in mapping and (mapping[key] is None or mapping[key] == ""):
                 mapping.pop(key)
@@ -2236,6 +2335,12 @@ def _process_session_mapping(
             else _MISSING
         )
         if value is _MISSING:
+            if is_user_custom_eval:
+                # Custom eval: treat missing session attribute as empty
+                # so the shared validator can fail (all empty) or warn
+                # (partial), matching dataset/span behaviour.
+                parsed[key] = ""
+                continue
             logger.error(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on session {trace_session.id}"
@@ -2286,6 +2391,15 @@ def _execute_evaluation_for_trace(
         return
     eval_type_id = eval_template.config.get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
+
+    # Apply the shared empty-input rules — see _execute_evaluation for
+    # the rationale. Same partial_input warning gets attached to the
+    # EvalLogger output_metadata so the trace-target row gets the badge.
+    from model_hub.utils.eval_input_validation import validate_eval_inputs
+
+    partial_input_warning, run_params = validate_eval_inputs(
+        eval_template, run_params, mapped_keys=(run_params or {}).keys()
+    )
 
     org_id = str(trace.project.organization.id)
     workspace = trace.project.workspace
@@ -2383,7 +2497,7 @@ def _execute_evaluation_for_trace(
         config_dict.update(
             {
                 "input": result.data,
-                "output": {"output": result.value, "reason": result.reason},
+                "output": _build_apicall_output(result, partial_input_warning),
             }
         )
         api_call_log_row.config = json.dumps(config_dict)
@@ -2413,12 +2527,14 @@ def _execute_evaluation_for_trace(
             "end_time": result.end_time,
             "duration": result.duration,
         }
+        _output_metadata = {**metadata}
+        _attach_warning_to_metadata(response, _output_metadata, partial_input_warning)
         logger_kwargs = {
             "target_type": EvalTargetType.TRACE.value,
             "trace": trace,
             "observation_span": anchor_span,
             "trace_session": None,
-            "output_metadata": {**metadata},
+            "output_metadata": _output_metadata,
             "eval_explanation": result.reason,
             "results_explanation": response,
             "eval_task_id": eval_task_id,
@@ -2503,6 +2619,13 @@ def _execute_evaluation_for_session(
         return
     eval_type_id = eval_template.config.get("eval_type_id")
     futureagi_eval = eval_type_id in FUTUREAGI_EVAL_TYPES
+
+    # Shared empty-input rules — see _execute_evaluation for rationale.
+    from model_hub.utils.eval_input_validation import validate_eval_inputs
+
+    partial_input_warning, run_params = validate_eval_inputs(
+        eval_template, run_params, mapped_keys=(run_params or {}).keys()
+    )
 
     org_id = str(trace_session.project.organization.id)
     workspace = trace_session.project.workspace
@@ -2599,7 +2722,7 @@ def _execute_evaluation_for_session(
         config_dict.update(
             {
                 "input": result.data,
-                "output": {"output": result.value, "reason": result.reason},
+                "output": _build_apicall_output(result, partial_input_warning),
             }
         )
         api_call_log_row.config = json.dumps(config_dict)
@@ -2629,12 +2752,14 @@ def _execute_evaluation_for_session(
             "end_time": result.end_time,
             "duration": result.duration,
         }
+        _output_metadata = {**metadata}
+        _attach_warning_to_metadata(response, _output_metadata, partial_input_warning)
         logger_kwargs = {
             "target_type": EvalTargetType.SESSION.value,
             "trace": None,
             "observation_span": None,
             "trace_session": trace_session,
-            "output_metadata": {**metadata},
+            "output_metadata": _output_metadata,
             "eval_explanation": result.reason,
             "results_explanation": response,
             "eval_task_id": eval_task_id,

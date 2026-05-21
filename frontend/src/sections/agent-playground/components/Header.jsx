@@ -134,7 +134,7 @@ export default function Header() {
           }}
           startIcon={<SvgColor src="/assets/icons/ic_docs_single.svg" />}
           component="a"
-          href="https://docs.futureagi.com/docs/prompt/overview"
+          href="https://docs.futureagi.com/docs/prompt"
           target="_blank"
         >
           Docs

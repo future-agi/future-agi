@@ -60,6 +60,10 @@ export function collectAllEvalsFromEntry(entry) {
         spanId: s.id || spanId,
         spanName: s.name || "unnamed",
         spanType: s.observation_type || "unknown",
+        // Trace API writes "ERROR" into `result` instead of a dedicated error
+        // field (voice API uses `error: true`). Unify both into `error` so the
+        // shared EvalTableRow renderer only checks one signal.
+        error: ev?.error === true || ev?.result === "ERROR",
       });
     }
     if (e?.children?.length) {
@@ -96,11 +100,18 @@ export function scoreColor(score) {
 /** Single eval row with collapsible explanation + optional "View span" */
 const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => {
   const [expanded, setExpanded] = useState(false);
-  const sc = scoreColor(ev.score);
+  const hasError = ev?.error === true;
+  const sc = hasError
+    ? {
+        bg: (theme) => alpha(theme.palette.error.main, 0.08),
+        text: "error.main",
+      }
+    : scoreColor(ev.score);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";
   const explanation = ev.explanation || ev.eval_explanation;
-  const scoreLabel =
-    ev.score_label != null
+  const scoreLabel = hasError
+    ? "Error"
+    : ev.score_label != null
       ? ev.score_label
       : ev.score != null
         ? `${ev.score}%`

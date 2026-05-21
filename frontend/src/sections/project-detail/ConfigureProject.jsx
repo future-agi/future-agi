@@ -236,7 +236,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                         compass
                       </Typography>
                       <a
-                        href="https://docs.futureagi.com/docs/error-feed/features/using-error-feed/#sampling-rate"
+                        href="https://docs.futureagi.com/docs/error-feed/features/sampling"
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{ textDecoration: "none" }}

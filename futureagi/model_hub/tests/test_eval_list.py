@@ -12,6 +12,7 @@ from django.utils import timezone
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.eval_list import (
+    build_eval_list_queryset,
     derive_eval_type,
     derive_output_type,
     get_created_by_name,
@@ -504,3 +505,142 @@ class TestEvalTemplateBulkDeleteAPI:
 
         user_eval_template.refresh_from_db()
         assert user_eval_template.deleted is True
+
+
+# =============================================================================
+# TH-5355: output_type filter regression — the UI→DB reverse map must
+# expand each many-to-one entry (e.g. "percentage" → score/numeric/reason/"")
+# instead of collapsing duplicates and losing all but the last DB value.
+# =============================================================================
+
+
+@pytest.mark.django_db
+class TestEvalListOutputTypeFilter:
+    """Pins ``build_eval_list_queryset``'s ``output_type`` filter against
+    the bug fixed in PR #562 — the previous reverse-map comprehension
+    only retained the last DB value for each UI value, so filtering by
+    "percentage" matched only ``config.output == ""`` and returned an
+    empty list for real-world evals (score / numeric / reason)."""
+
+    def _make_eval(self, organization, workspace, name: str, db_output: str):
+        return EvalTemplate.no_workspace_objects.create(
+            name=name,
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": db_output},
+            eval_tags=["llm"],
+            visible_ui=True,
+        )
+
+    @pytest.fixture
+    def evals_one_per_db_output(self, organization, workspace):
+        """One eval per known DB output value, so filter assertions can
+        check the exact set returned.
+
+        ``EvalTemplate.name`` is validated as a slug (lowercase + ``-_``),
+        so the keys are mapped to slug-safe names rather than echoed
+        verbatim (e.g. ``Pass/Fail`` → ``eval_pass_fail``)."""
+        name_for_output = {
+            "Pass/Fail": "eval_pass_fail",
+            "score": "eval_score",
+            "numeric": "eval_numeric",
+            "reason": "eval_reason",
+            "": "eval_empty_output",
+            "choices": "eval_choices",
+        }
+        return {
+            db_out: self._make_eval(organization, workspace, slug, db_out)
+            for db_out, slug in name_for_output.items()
+        }
+
+    def test_percentage_expands_to_all_four_db_values(
+        self, organization, workspace, evals_one_per_db_output
+    ):
+        """The headline TH-5355 case: ``percentage`` must match score,
+        numeric, reason, AND the empty-string output — not just one."""
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"output_type": ["percentage"]},
+        )
+        actual_outputs = {t.config.get("output", "") for t in qs}
+        assert actual_outputs == {"score", "numeric", "reason", ""}
+
+    def test_pass_fail_matches_single_db_value(
+        self, organization, workspace, evals_one_per_db_output
+    ):
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"output_type": ["pass_fail"]},
+        )
+        actual_outputs = {t.config.get("output", "") for t in qs}
+        assert actual_outputs == {"Pass/Fail"}
+
+    def test_deterministic_matches_choices(
+        self, organization, workspace, evals_one_per_db_output
+    ):
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"output_type": ["deterministic"]},
+        )
+        actual_outputs = {t.config.get("output", "") for t in qs}
+        assert actual_outputs == {"choices"}
+
+    def test_multiple_ui_values_union(
+        self, organization, workspace, evals_one_per_db_output
+    ):
+        """Selecting more than one chip in the FE filter must union
+        the matching DB-value sets, not intersect them."""
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"output_type": ["percentage", "pass_fail"]},
+        )
+        actual_outputs = {t.config.get("output", "") for t in qs}
+        assert actual_outputs == {"score", "numeric", "reason", "", "Pass/Fail"}
+
+    def test_unknown_ui_value_is_silently_ignored(
+        self, organization, workspace, evals_one_per_db_output
+    ):
+        """Pins the known quirk that an unknown UI value (typo / FE bug)
+        results in ``output_values == []``, which the ``if output_values:``
+        guard treats as "no filter" — so the filter is silently skipped
+        and every visible eval comes back.
+
+        Same behavior as before PR #562 (old code's
+        ``if ot in reverse_map`` guard had the same effect). Whether the
+        endpoint should instead return an empty list or raise a 400 is a
+        separate UX call — pin current behavior here so a future change
+        is explicit."""
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"output_type": ["bogus_value"]},
+        )
+        # All six visible evals from the fixture are returned, exactly
+        # as if no output_type filter had been supplied.
+        actual_outputs = {t.config.get("output", "") for t in qs}
+        assert actual_outputs == {
+            "Pass/Fail",
+            "score",
+            "numeric",
+            "reason",
+            "",
+            "choices",
+        }
+
+    def test_no_output_type_filter_returns_everything_visible(
+        self, organization, workspace, evals_one_per_db_output
+    ):
+        """Without the filter all six evals are visible — sanity check
+        that the test fixture isn't accidentally hidden by some other
+        gate (visible_ui / deleted / owner_filter)."""
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={},
+        )
+        assert qs.count() >= 6

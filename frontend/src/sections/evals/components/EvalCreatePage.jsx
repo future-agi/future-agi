@@ -31,6 +31,7 @@ import LLMPromptEditor from "./LLMPromptEditor";
 import OutputTypeConfig from "./OutputTypeConfig";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
+import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys";
 import CodeEditor from "./CodeEditor";
 import CodeEvalEditor, {
@@ -40,6 +41,7 @@ import CodeEvalEditor, {
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import { extractVariables } from "src/utils/utils";
+import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
@@ -313,23 +315,7 @@ const EvalCreatePage = () => {
   const autoSaveTimer = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
   const buildUpdatePayload = useCallback(() => {
-    const dataInjection = (() => {
-      if (
-        contextOptions.length === 0 ||
-        (contextOptions.length === 1 && contextOptions[0] === "variables_only")
-      ) {
-        return { variables_only: true };
-      }
-      // Send individual flags so the backend can enable the right tools
-      const flags = {};
-      if (contextOptions.includes("dataset_row")) flags.full_row = true;
-      if (contextOptions.includes("span_context")) flags.span_context = true;
-      if (contextOptions.includes("trace_context")) flags.trace_context = true;
-      if (contextOptions.includes("session_context")) flags.session_context = true;
-      if (contextOptions.includes("call_context")) flags.call_context = true;
-      // If nothing specific matched, default to full_row for backward compat
-      return Object.keys(flags).length > 0 ? flags : { full_row: true };
-    })();
+    const dataInjection = buildDataInjection(contextOptions);
 
     const summary =
       summaryType === "custom"
@@ -364,8 +350,9 @@ const EvalCreatePage = () => {
       summary: evalType === "agent" ? summary : undefined,
       error_localizer_enabled: errorLocalizerEnabled,
       messages: evalType === "llm" ? messages : undefined,
+      // Send [] for LLM evals so the BE can persist a user-cleared list.
       few_shot_examples:
-        evalType === "llm" && fewShotExamples.length > 0
+        evalType === "llm"
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
@@ -485,6 +472,7 @@ const EvalCreatePage = () => {
         name: compositeName.trim(),
         description: compositeDescription || null,
         child_template_ids: childIds,
+        child_configs: buildCompositeChildConfigs(selectedChildren),
         aggregation_enabled: aggregationEnabled,
         aggregation_function: aggregationFunction,
         composite_child_axis: compositeChildAxis,
@@ -788,7 +776,7 @@ const EvalCreatePage = () => {
                       fontWeight={600}
                       sx={{ mb: 0.5 }}
                     >
-                      Eval Name<span style={{ color: "red" }}>*</span>
+                      Eval Name<Box component="span" sx={{ color: "error.main", ml: 0.25 }}>*</Box>
                     </Typography>
                     <TextField
                       fullWidth
@@ -979,7 +967,7 @@ const EvalCreatePage = () => {
                       >
                         <Typography variant="caption">0</Typography>
                         <Slider
-                          value={passThreshold * 100}
+                          value={Math.round(passThreshold * 100)}
                           onChange={(_, val) => setPassThreshold(val / 100)}
                           min={0}
                           max={100}
@@ -1217,6 +1205,8 @@ const EvalCreatePage = () => {
                           child_template_ids: selectedChildren.map(
                             (c) => c.child_id,
                           ),
+                          child_configs:
+                            buildCompositeChildConfigs(selectedChildren),
                           aggregation_enabled: aggregationEnabled,
                           aggregation_function: aggregationFunction,
                           composite_child_axis: compositeChildAxis || "",

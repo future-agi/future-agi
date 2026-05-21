@@ -323,6 +323,177 @@ ErrorGroupCard.propTypes = {
   defaultExpanded: PropTypes.bool,
 };
 
+const WarningGroupCard = ({ group, defaultExpanded = false }) => {
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const emptyKeys = group.empty_keys || [];
+  const filledKeys = group.filled_keys || [];
+  const message =
+    group.message ||
+    "Eval ran with some inputs empty. Result may be less reliable. Ignore if this is intentional.";
+
+  return (
+    <Box
+      sx={(t) => ({
+        border: "1px solid",
+        borderColor: alpha(t.palette.warning.main, 0.35),
+        bgcolor: alpha(
+          t.palette.warning.main,
+          t.palette.mode === "dark" ? 0.1 : 0.05,
+        ),
+        borderRadius: 1,
+        overflow: "hidden",
+      })}
+    >
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 1.25,
+          p: 1.5,
+          cursor: "pointer",
+        }}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <Box
+          sx={(t) => ({
+            width: 32,
+            height: 32,
+            borderRadius: "8px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            bgcolor: alpha(t.palette.warning.main, 0.16),
+            flexShrink: 0,
+          })}
+        >
+          <Iconify
+            icon="solar:danger-triangle-linear"
+            width={18}
+            sx={{ color: "warning.main" }}
+          />
+        </Box>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.75,
+              flexWrap: "wrap",
+              mb: 0.25,
+            }}
+          >
+            <Typography
+              variant="subtitle2"
+              fontWeight={600}
+              sx={{ fontSize: "13px" }}
+            >
+              Partial inputs
+            </Typography>
+            <Chip
+              label={`${group.count} ${
+                group.count === 1 ? "occurrence" : "occurrences"
+              }`}
+              size="small"
+              color="warning"
+              variant="outlined"
+              sx={{ fontSize: "10px", height: 18 }}
+            />
+          </Box>
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ fontSize: "12px", lineHeight: 1.5 }}
+          >
+            {message}
+          </Typography>
+        </Box>
+        <IconButton size="small" sx={{ p: 0.25, mt: 0.25, flexShrink: 0 }}>
+          <Iconify
+            icon={
+              expanded
+                ? "solar:alt-arrow-up-linear"
+                : "solar:alt-arrow-down-linear"
+            }
+            width={14}
+            sx={{ color: "text.disabled" }}
+          />
+        </IconButton>
+      </Box>
+      <Collapse in={expanded} unmountOnExit>
+        <Divider sx={{ borderColor: alpha("#000", 0) }} />
+        <Box sx={{ px: 1.5, pb: 1.5, pt: 0.5 }}>
+          <Typography
+            variant="overline"
+            sx={{
+              display: "block",
+              mb: 0.5,
+              fontSize: "10px",
+              color: "text.disabled",
+            }}
+          >
+            Missing variables
+          </Typography>
+          <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap", mb: 1 }}>
+            {emptyKeys.length > 0 ? (
+              emptyKeys.map((key) => (
+                <Chip
+                  key={key}
+                  label={key}
+                  size="small"
+                  color="warning"
+                  variant="outlined"
+                  sx={{ fontSize: "10px", height: 18 }}
+                />
+              ))
+            ) : (
+              <Typography variant="caption" color="text.disabled">
+                Unknown
+              </Typography>
+            )}
+          </Box>
+          {filledKeys.length > 0 && (
+            <>
+              <Typography
+                variant="overline"
+                sx={{
+                  display: "block",
+                  mb: 0.5,
+                  fontSize: "10px",
+                  color: "text.disabled",
+                }}
+              >
+                Present variables
+              </Typography>
+              <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
+                {filledKeys.map((key) => (
+                  <Chip
+                    key={key}
+                    label={key}
+                    size="small"
+                    variant="outlined"
+                    sx={{ fontSize: "10px", height: 18 }}
+                  />
+                ))}
+              </Box>
+            </>
+          )}
+        </Box>
+      </Collapse>
+    </Box>
+  );
+};
+
+WarningGroupCard.propTypes = {
+  group: PropTypes.shape({
+    type: PropTypes.string,
+    empty_keys: PropTypes.arrayOf(PropTypes.string),
+    filled_keys: PropTypes.arrayOf(PropTypes.string),
+    message: PropTypes.string,
+    count: PropTypes.number.isRequired,
+  }).isRequired,
+  defaultExpanded: PropTypes.bool,
+};
+
 // ── Main Component ──
 
 const TaskLogsView = ({ evalTaskId, taskStatus }) => {
@@ -353,7 +524,16 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
     () => enrichErrorGroups(data?.error_groups || []),
     [data?.error_groups],
   );
-  const errorGroupsTruncated = data?.error_groups_truncated ?? false;
+  // Some response paths (older DRF camelCase middleware) emit camelCase;
+  // current path is snake_case — accept either so the panel doesn't
+  // silently render empty if a stale renderer hits a new backend (or
+  // vice versa).
+  const warningGroups =
+    data?.warning_groups || data?.warningGroups || [];
+  const errorGroupsTruncated =
+    data?.error_groups_truncated ?? data?.errorGroupsTruncated ?? false;
+  const warningGroupsTruncated =
+    data?.warning_groups_truncated ?? data?.warningGroupsTruncated ?? false;
 
   if (isLoading) {
     return (
@@ -393,6 +573,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   const {
     success_count: successCount = 0,
     errors_count: errorsCount = 0,
+    warnings_count: warningsCount = data?.warningsCount ?? 0,
     total_count: totalCount = 0,
     start_time: startTime,
     end_time: endTime,
@@ -410,6 +591,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   const errorRate =
     totalCount > 0 ? Math.round((errorsCount / totalCount) * 100) : 0;
   const hasErrors = errorGroups.length > 0;
+  const hasWarnings = warningGroups.length > 0;
   const isHighErrorRate = errorRate > 50;
 
   return (
@@ -481,6 +663,15 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           color="error.main"
           bgColor={alpha(theme.palette.error.main, 0.1)}
         />
+        {warningsCount > 0 && (
+          <StatCard
+            icon="solar:danger-triangle-linear"
+            label="Partial Inputs"
+            value={warningsCount}
+            color="warning.main"
+            bgColor={alpha(theme.palette.warning.main, 0.1)}
+          />
+        )}
         <StatCard
           icon="solar:layers-linear"
           label={totalLabel}
@@ -551,6 +742,81 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
               </Box>
             </Box>
           )}
+        </Box>
+      )}
+
+      {hasWarnings && (
+        <Box>
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              mb: 1.5,
+              flexWrap: "wrap",
+              gap: 1,
+            }}
+          >
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography variant="subtitle2" sx={{ fontSize: "13px" }}>
+                Partial Input Warnings
+              </Typography>
+              <Chip
+                label={`${warningGroups.length} ${
+                  warningGroups.length === 1 ? "type" : "types"
+                }`}
+                size="small"
+                color="warning"
+                variant="outlined"
+                sx={{ fontSize: "11px", height: 20 }}
+              />
+            </Box>
+            <Typography
+              variant="caption"
+              color="text.disabled"
+              sx={{ fontSize: "11px" }}
+            >
+              {warningsCount} total warning
+              {warningsCount !== 1 ? "s" : ""} — grouped by missing variables
+            </Typography>
+          </Box>
+          {warningGroupsTruncated && (
+            <Box
+              sx={(t) => ({
+                display: "flex",
+                alignItems: "center",
+                gap: 0.75,
+                p: 1,
+                mb: 1,
+                borderRadius: "6px",
+                bgcolor: alpha(t.palette.info.main, 0.08),
+                border: "1px solid",
+                borderColor: alpha(t.palette.info.main, 0.25),
+              })}
+            >
+              <Iconify
+                icon="solar:info-circle-linear"
+                width={14}
+                sx={{ color: "info.main", flexShrink: 0 }}
+              />
+              <Typography
+                variant="caption"
+                sx={{ fontSize: "11px", color: "text.secondary" }}
+              >
+                Showing the most common warning types. Rarer warning groups are
+                hidden.
+              </Typography>
+            </Box>
+          )}
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+            {warningGroups.map((group, index) => (
+              <WarningGroupCard
+                key={`${group.type}-${(group.empty_keys || []).join(",")}`}
+                group={group}
+                defaultExpanded={index === 0}
+              />
+            ))}
+          </Box>
         </Box>
       )}
 
@@ -639,7 +905,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
       )}
 
       {/* Empty state for no errors */}
-      {!hasErrors && totalCount > 0 && (
+      {!hasErrors && !hasWarnings && totalCount > 0 && (
         <Box
           sx={{
             p: 3,

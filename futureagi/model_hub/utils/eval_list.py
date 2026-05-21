@@ -378,9 +378,16 @@ def build_eval_list_queryset(
 
         # Output type filter
         if _f("output_type"):
-            reverse_map = {v: k for k, v in _OUTPUT_TYPE_MAP.items()}
+            # _OUTPUT_TYPE_MAP is many-to-one (e.g. score/numeric/reason/""
+            # all map to "percentage"), so expand each UI value back to every
+            # DB value that maps to it.
+            reverse_map: dict[str, list[str]] = {}
+            for db_value, ui_value in _OUTPUT_TYPE_MAP.items():
+                reverse_map.setdefault(ui_value, []).append(db_value)
             output_values = [
-                reverse_map.get(ot) for ot in _f("output_type") if ot in reverse_map
+                db_value
+                for ot in _f("output_type")
+                for db_value in reverse_map.get(ot, [])
             ]
             if output_values:
                 qs = qs.filter(config__output__in=output_values)

@@ -336,6 +336,18 @@ def run_eval_func(
 
             _run_kwargs = preprocess_inputs(template.name, _run_kwargs)
 
+        # Apply the shared empty-input rules so the playground (and
+        # every other caller of run_eval_func — composite children,
+        # protect, simulation) behaves the same way as the dataset path.
+        # The validator also normalizes kwargs for custom evals so the
+        # underlying engine doesn't raise "Missing required key" when
+        # the caller omits unmapped variables.
+        from model_hub.utils.eval_input_validation import validate_eval_inputs
+
+        partial_input_warning, _run_kwargs = validate_eval_inputs(
+            template, _run_kwargs
+        )
+
         eval_result = eval_instance.run(**_run_kwargs)
         end_time = time.time()
 
@@ -356,6 +368,8 @@ def run_eval_func(
                 else config.get("output", "choices")
             ),
         }
+        if partial_input_warning:
+            response["warnings"] = [partial_input_warning]
         # logger.info(f"response*******: {response}")
 
         metadata = response.get("metadata")
@@ -372,9 +386,15 @@ def run_eval_func(
         if api_call_log_row is None:
             return response
         config_dict = json.loads(api_call_log_row.config)
+        output_payload = {"output": value, "reason": response["reason"]}
+        # Mirror the dataset path: propagate partial-input warnings into
+        # the API call log so the eval usage view (which reads APICallLog)
+        # can surface them alongside the eval's output.
+        if response.get("warnings"):
+            output_payload["warnings"] = response["warnings"]
         config_dict.update(
             {
-                "output": {"output": value, "reason": response["reason"]},
+                "output": output_payload,
                 "input": response["data"],
             }
         )
@@ -456,6 +476,10 @@ def run_eval_func(
         output["metadata"] = response.get("metadata")
         output["output_type"] = template.config.get("output")
         output["log_id"] = str(api_call_log_row.log_id)
+        # Pass partial-input warning through to the playground UI so the
+        # yellow ⚠ badge can render alongside the result.
+        if response.get("warnings"):
+            output["warnings"] = response["warnings"]
 
         if error_localizer:
             from model_hub.tasks.user_evaluation import (

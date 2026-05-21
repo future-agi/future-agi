@@ -25,7 +25,7 @@ from django.utils import timezone
 logger = structlog.get_logger(__name__)
 
 # Bump this when system evals change. Seeder skips if DB is already at this version.
-SYSTEM_EVALS_VERSION = 7
+SYSTEM_EVALS_VERSION = 8
 
 SYSTEM_EVALS_DIR = Path(__file__).resolve().parent.parent.parent / "system_evals"
 CATALOG_YAML = (
@@ -210,8 +210,15 @@ def _yaml_to_template_fields(eval_def):
     """Convert a YAML eval definition dict into EvalTemplate field values."""
     from model_hub.models.choices import OwnerChoices
 
+    from tfc.ee_gating import is_oss
+
     track = eval_def.get("_track", "agent")
-    eval_type_map = {"function": "code", "agent": "agent", "specialty": "agent"}
+    # In OSS, agent evals run as LLM-as-a-Judge (CustomPromptEvaluator)
+    # since AgentEvaluator requires the ee module.
+    if is_oss():
+        eval_type_map = {"function": "code", "agent": "llm", "specialty": "llm"}
+    else:
+        eval_type_map = {"function": "code", "agent": "agent", "specialty": "agent"}
 
     # Build config dict
     config = eval_def.get("config", {})
@@ -225,7 +232,10 @@ def _yaml_to_template_fields(eval_def):
     if track in ("agent", "specialty"):
         if "rule_prompt" not in config and eval_def.get("criteria"):
             config["rule_prompt"] = eval_def["criteria"]
-        config.setdefault("eval_type_id", "AgentEvaluator")
+        if is_oss():
+            config.setdefault("eval_type_id", "CustomPromptEvaluator")
+        else:
+            config.setdefault("eval_type_id", "AgentEvaluator")
 
     # Permissions
     permissions = eval_def.get("permissions", {})

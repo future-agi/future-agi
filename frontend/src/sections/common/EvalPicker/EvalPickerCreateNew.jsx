@@ -48,6 +48,7 @@ import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import { buildCompositeChildConfigs } from "src/sections/evals/Helpers/compositeRuntimeConfig";
 import {
   contextOptionsForRowType,
   extractCodeEvaluateParams,
@@ -180,6 +181,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         ? null
         : {
             child_template_ids: selectedChildren.map((c) => c.child_id),
+            child_configs: buildCompositeChildConfigs(selectedChildren),
             aggregation_enabled: aggregationEnabled,
             aggregation_function: aggregationFunction,
             composite_child_axis: compositeChildAxis || "",
@@ -569,6 +571,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         name: name.trim(),
         description: description || null,
         child_template_ids: childIds,
+        child_configs: buildCompositeChildConfigs(selectedChildren),
         aggregation_enabled: aggregationEnabled,
         aggregation_function: aggregationFunction,
         composite_child_axis: compositeChildAxis,
@@ -844,23 +847,27 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <Tabs
                   value={evalType}
                   onChange={(_, val) => setEvalType(val)}
+                  variant="standard"
                   TabIndicatorProps={{ style: { display: "none" } }}
                   sx={{
-                    minHeight: 28,
+                    width: "fit-content",
+                    minHeight: 32,
                     "& .MuiTab-root": {
+                      height: 28,
                       minHeight: 28,
+                      maxHeight: 28,
                       px: 1.5,
                       py: 0,
                       mr: "0px !important",
                       textTransform: "none",
                       fontSize: "13px",
+                      lineHeight: "28px",
                       borderRadius: "6px",
                     },
                     border: "1px solid",
                     borderColor: "divider",
                     p: "2px",
                     borderRadius: "8px",
-                    width: "fit-content",
                     bgcolor: (theme) =>
                       theme.palette.mode === "dark"
                         ? "rgba(255,255,255,0.04)"
@@ -991,7 +998,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     >
                       <Typography variant="caption">0</Typography>
                       <Slider
-                        value={passThreshold * 100}
+                        value={Math.round(passThreshold * 100)}
                         onChange={(_, val) =>
                           handlePassThresholdChange(val / 100)
                         }
