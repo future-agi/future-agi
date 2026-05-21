@@ -1,30 +1,14 @@
 import { Chip, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
-import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
-const extractScore = (value) => {
-  const raw = value?.score;
-  const normalized = normalizeEvalCellValue(raw);
-  if (typeof normalized === "number") return normalized;
-  if (normalized && typeof normalized === "object" && typeof normalized.score === "number") {
-    return normalized.score;
-  }
-  return parseFloat(normalized);
-};
+import {
+  normalizeEvalCellValue,
+  extractScore,
+  extractChoiceLabel,
+} from "src/sections/develop-detail/DataTab/common";
 
-const extractChoiceLabel = (value) => {
-  const normalized = normalizeEvalCellValue(value?.score);
-  if (normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
-    if (Array.isArray(normalized.choices)) return normalized.choices.join(", ");
-    if (Array.isArray(normalized.choice)) return normalized.choice.join(", ");
-    if (typeof normalized.choices === "string") return normalized.choices;
-    if (typeof normalized.choice === "string") return normalized.choice;
-  }
-  return null;
-};
-
-const getEvaluationMetricColor = (value) => {
-  const numericValue = extractScore(value);
+const getEvaluationMetricColor = ( normalized) => {
+  const numericValue = extractScore(normalized);
   if (numericValue < 50) {
     return { backgroundColor: "red.o10", borderColor: "red.500" };
   }
@@ -57,10 +41,11 @@ export default function EvaluationsContent({ evaluationMetrics = {} }) {
       ) : (
         Object.keys(evaluationMetrics).map((key, index) => {
           const metric = evaluationMetrics[key];
+          const normalized = normalizeEvalCellValue(metric?.score);
           const { backgroundColor, borderColor } =
-            getEvaluationMetricColor(metric);
-          const numericScore = extractScore(metric);
-          const choiceLabel = extractChoiceLabel(metric);
+            getEvaluationMetricColor(normalized);
+          const numericScore = extractScore(normalized);
+          const choiceLabel = extractChoiceLabel(normalized);
           const scoreText = choiceLabel
             ? choiceLabel
             : isNaN(numericScore)

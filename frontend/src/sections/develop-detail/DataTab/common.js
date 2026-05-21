@@ -787,11 +787,28 @@ const extractChoiceArray = (obj) => {
   return null;
 };
 
-const extractChoiceLabel = (obj) => {
+// Display label for a choice-shaped value ({ choice } / { choices });
+// joins arrays, returns null when the value isn't choice-shaped.
+export const extractChoiceLabel = (/** @type {any} */ obj) => {
   if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
-  if (typeof obj.choice === "string") return obj.choice;
+  if (Array.isArray(obj.choices)) return obj.choices.join(", ");
+  if (Array.isArray(obj.choice)) return obj.choice.join(", ");
   if (typeof obj.choices === "string") return obj.choices;
+  if (typeof obj.choice === "string") return obj.choice;
   return null;
+};
+
+// Numeric score from an already-normalized eval value.
+export const extractScore = (/** @type {any} */ normalized) => {
+  if (typeof normalized === "number") return normalized;
+  if (
+    normalized &&
+    typeof normalized === "object" &&
+    typeof normalized.score === "number"
+  ) {
+    return normalized.score;
+  }
+  return parseFloat(normalized);
 };
 
 export const normalizeEvalCellValue = (value) => {

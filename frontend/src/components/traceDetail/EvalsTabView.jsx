@@ -178,7 +178,7 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
         {/* Score — choices render as violet chips, else a colored badge */}
         <Box sx={{ width: "15%", display: "flex", flexWrap: "wrap", gap: 0.5 }}>
           {ev.score_items?.length ? (
-            ev.score_items.map((/** @type {any} */ item, /** @type {any} */ i) => (
+            ev.score_items.map((item, i) => (
               <Chip
                 key={i}
                 label={item}
@@ -188,7 +188,6 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
                   borderRadius: "4px",
                   borderColor: "purple.500",
                   color: "purple.500",
-                  fontWeight: 400,
                   typography: "s3",
                 }}
               />
@@ -198,7 +197,7 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
               sx={{
                 display: "inline-block",
                 fontSize: 11.5,
-                fontWeight: 600,
+                fontWeight: "fontWeightSemiBold",
                 color: sc.text,
                 bgcolor: sc.bg,
                 px: 0.75,

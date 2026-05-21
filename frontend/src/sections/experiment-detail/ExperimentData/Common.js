@@ -1,6 +1,9 @@
 import { palette } from "src/theme/palette";
 import { MODEL_TYPES } from "../../develop-detail/RunPrompt/common";
-import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
+import {
+  normalizeEvalCellValue,
+  extractChoiceLabel,
+} from "src/sections/develop-detail/DataTab/common";
 
 const statusColor = {
   Passed: "success",
@@ -93,11 +96,8 @@ export const getChipLabel = (data) => {
   }
 
   if (normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
-    // Backend uses plural "choices" for multi-choice, singular "choice" for single.
-    if (Array.isArray(normalized.choices)) return normalized.choices.join(", ");
-    if (Array.isArray(normalized.choice)) return normalized.choice.join(", ");
-    if (typeof normalized.choices === "string") return normalized.choices;
-    if (typeof normalized.choice === "string") return normalized.choice;
+    const choiceLabel = extractChoiceLabel(normalized);
+    if (choiceLabel != null) return choiceLabel;
     if (typeof normalized.score === "number") {
       return `${(normalized.score * 100).toFixed(0)}%`;
     }

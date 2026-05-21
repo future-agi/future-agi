@@ -143,12 +143,18 @@ const useColumns = () =>
         header: "Score",
         size: 80,
         cell: ({ getValue, row }) => {
-          const parsed = parsePythonReprIfNeeded(row.original.result);
-          const resultScore =
-            parsed && typeof parsed === "object" && !Array.isArray(parsed)
-              ? parsed.score
-              : null;
-          return <ScoreCell value={getValue() ?? resultScore ?? null} />;
+          const score = getValue();
+          const rawResult = row.original?.result;
+          let resultScore = null;
+          // Only parse the result when there's no direct score to fall back on.
+          if (score == null && rawResult != null) {
+            const parsed = parsePythonReprIfNeeded(rawResult);
+            resultScore =
+              parsed && typeof parsed === "object" && !Array.isArray(parsed)
+                ? parsed.score
+                : null;
+          }
+          return <ScoreCell value={score ?? resultScore ?? null} />;
         },
       },
       {

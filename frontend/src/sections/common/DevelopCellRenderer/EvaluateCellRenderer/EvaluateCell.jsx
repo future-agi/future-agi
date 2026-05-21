@@ -218,7 +218,7 @@ const EvaluateCell = ({
             alignContent: "flex-start",
           }}
         >
-          {normalized.items.map((item) => (
+          {normalized?.items?.map((item) => (
             <Chip
               key={item}
               label={item}
