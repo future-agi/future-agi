@@ -90,7 +90,17 @@ export default function JwtRegisterView() {
     locallyExtractUtmParams();
   }, [locallyExtractUtmParams]);
 
+  // Persist returnTo on an auth action so it survives flows that drop the
+  // URL param (OAuth / SSO round-trip, register → setup-org).
+  const persistReturnTo = () => {
+    const returnTo = new URLSearchParams(search).get("returnTo");
+    if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+      localStorage.setItem("redirectUrl", returnTo);
+    }
+  };
+
   const handleSsoLogin = () => {
+    persistReturnTo();
     // Navigate to SSO login page
     navigate(paths.auth.jwt.sso);
   };
@@ -110,6 +120,7 @@ export default function JwtRegisterView() {
   const email = watch("email");
 
   const handleSignup = async (data) => {
+    persistReturnTo();
     const token = GOOGLE_SITE_KEY ? await executeRecaptcha("signup") : "";
     setErrorMsg("");
     try {
@@ -181,6 +192,7 @@ export default function JwtRegisterView() {
   };
 
   const handleLogin = async (data) => {
+    persistReturnTo();
     const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
 
     trackEvent(Events.loginClicked, {
@@ -237,6 +249,7 @@ export default function JwtRegisterView() {
   });
 
   const handleServiceProvider = async (provider) => {
+    persistReturnTo();
     try {
       const response = await axios.get(endpoints.auth.service(provider));
       logger.debug("Service provider response:", {

@@ -55,6 +55,13 @@ export default function JwtLoginView() {
   const [errorMsg, setErrorMsg] = useState("");
   const [searchParams] = useSearchParams();
   const returnTo = searchParams.get("returnTo");
+  // Persist returnTo on a login action so it survives flows that drop the
+  // URL param (OAuth round-trip, login → setup-org).
+  const persistReturnTo = () => {
+    if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+      localStorage.setItem("redirectUrl", returnTo);
+    }
+  };
   const password = useBoolean();
   const navigate = useNavigate();
   const { search } = useLocation();
@@ -186,6 +193,7 @@ export default function JwtLoginView() {
   } = methods;
 
   const onSubmit = handleSubmit(async (data) => {
+    persistReturnTo();
     if (GOOGLE_SITE_KEY && !executeRecaptcha) {
       enqueueSnackbar({
         message: "reCAPTCHA not ready. Please try again",
@@ -233,7 +241,9 @@ export default function JwtLoginView() {
           localStorage.setItem("signupProvider", "email");
           navigate(paths.auth.jwt.setup_org);
         } else {
+          if (returnTo) localStorage.setItem("initial-render", "done");
           router.push(returnTo || postLoginPath);
+          localStorage.removeItem("redirectUrl");
         }
       }
     } catch (error) {
@@ -330,6 +340,7 @@ export default function JwtLoginView() {
 
   const handlePasskeyLogin = async () => {
     try {
+      persistReturnTo();
       setPasskeyLoading(true);
       // Get authentication options from server
       const optionsRes = await axiosInstance.post(
@@ -353,7 +364,9 @@ export default function JwtLoginView() {
 
       if (verifyRes.status === 200) {
         await login(verifyRes);
+        if (returnTo) localStorage.setItem("initial-render", "done");
         router.push(returnTo || postLoginPath);
+        localStorage.removeItem("redirectUrl");
       }
     } catch (error) {
       if (error?.name === "NotAllowedError") {
@@ -373,11 +386,13 @@ export default function JwtLoginView() {
   };
 
   const handleSsoLogin = () => {
+    persistReturnTo();  
     // Navigate to SSO login page
     navigate(paths.auth.jwt.sso);
   };
 
   const handleServiceProvider = async (provider) => {
+    persistReturnTo();
     trackEvent(Events.ssoLoginClicked, {
       [PropertyName.mode]: provider,
     });

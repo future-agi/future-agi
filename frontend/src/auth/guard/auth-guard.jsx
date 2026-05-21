@@ -56,6 +56,7 @@ function Container({ children }) {
     const refreshToken = queryParams.get("refresh_token");
     const isNewOAuthUser = queryParams.get("is_new_user") === "true";
     const returnTo = localStorage.getItem("redirectUrl");
+    
 
     if (!authenticated) {
       if (sso_token) {
@@ -191,6 +192,7 @@ function Container({ children }) {
         router.replace("/dashboard/get-started");
       }
       localStorage.setItem("initial-render", "done");
+      localStorage.removeItem("redirectUrl");
     }
   }, [postLoginPath, user, router]);
 
