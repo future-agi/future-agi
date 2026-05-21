@@ -158,6 +158,18 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
         return queryset
 
+    def perform_destroy(self, instance):
+        # Cascade soft-delete to the task's loggers and eval results so they
+        # don't outlive the deleted task (mirrors mark_eval_tasks_deleted).
+        now = timezone.now()
+        EvalTaskLogger.objects.filter(eval_task_id=instance.id).update(
+            deleted=True, deleted_at=now
+        )
+        EvalLogger.objects.filter(eval_task_id=instance.id).update(
+            deleted=True, deleted_at=now
+        )
+        instance.delete()
+
     def create(self, request, *args, **kwargs):
         try:
             data = request.data
