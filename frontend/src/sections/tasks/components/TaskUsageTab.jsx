@@ -165,7 +165,7 @@ const useColumns = () =>
         accessorKey: "result",
         header: "Result",
         size: 100,
-        cell: ({ getValue }) => {
+        cell: ({ getValue, row }) => {
           const raw = getValue();
           if (!raw) return null;
           const parsed = parsePythonReprIfNeeded(raw);
