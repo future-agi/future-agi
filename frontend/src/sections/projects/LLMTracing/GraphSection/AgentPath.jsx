@@ -405,6 +405,9 @@ const AgentPath = ({ data, isLoading, onNodeClick }) => {
   const theme = useTheme();
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(900);
+  const [zoom, setZoom] = useState(1);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const layout = useMemo(() => computeSankeyLayout(data), [data]);
 
   useEffect(() => {
@@ -417,6 +420,19 @@ const AgentPath = ({ data, isLoading, onNodeClick }) => {
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
+
+  useEffect(() => {
+    if (!isFullscreen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setIsFullscreen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen]);
 
   if (isLoading) {
     return (
@@ -450,8 +466,25 @@ const AgentPath = ({ data, isLoading, onNodeClick }) => {
     );
   }
 
+  const viewportHeight = typeof window === "undefined" ? 0 : window.innerHeight;
+  const chartHeight = isFullscreen ? Math.max(viewportHeight - 48, 240) : 200;
+  const chartWidth = Math.max(Math.round(containerWidth * zoom), 320);
+  const scaledChartHeight = Math.max(Math.round(chartHeight * zoom), 120);
+
   return (
-    <Box ref={containerRef} sx={{ position: "relative", mx: 2, my: 1 }}>
+    <Box
+      ref={containerRef}
+      sx={{
+        position: isFullscreen ? "fixed" : "relative",
+        inset: isFullscreen ? 0 : "auto",
+        zIndex: isFullscreen ? (t) => t.zIndex.modal : "auto",
+        mx: isFullscreen ? 0 : 2,
+        my: isFullscreen ? 0 : 1,
+        p: isFullscreen ? 2 : 0,
+        bgcolor: "background.paper",
+        overflow: "auto",
+      }}
+    >
       {/* Zoom controls, top right (matches AgentGraph) */}
       <Box
         sx={{
@@ -469,16 +502,39 @@ const AgentPath = ({ data, isLoading, onNodeClick }) => {
         }}
       >
         {[
-          { icon: "mdi:plus", label: "Zoom in" },
-          { icon: "mdi:minus", label: "Zoom out" },
-          { icon: "mdi:crosshairs-gps", label: "Fit" },
-          { icon: "mdi:fullscreen", label: "Fullscreen" },
-          { icon: "mdi:chevron-down", label: "Collapse" },
+          {
+            icon: "mdi:plus",
+            label: "Zoom in",
+            onClick: () =>
+              setZoom((currentZoom) => Math.min(2, currentZoom + 0.2)),
+          },
+          {
+            icon: "mdi:minus",
+            label: "Zoom out",
+            onClick: () =>
+              setZoom((currentZoom) => Math.max(0.6, currentZoom - 0.2)),
+          },
+          {
+            icon: "mdi:crosshairs-gps",
+            label: "Fit",
+            onClick: () => setZoom(1),
+          },
+          {
+            icon: isFullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen",
+            label: isFullscreen ? "Exit fullscreen" : "Fullscreen",
+            onClick: () => setIsFullscreen((fullscreen) => !fullscreen),
+          },
+          {
+            icon: isCollapsed ? "mdi:chevron-up" : "mdi:chevron-down",
+            label: isCollapsed ? "Expand" : "Collapse",
+            onClick: () => setIsCollapsed((collapsed) => !collapsed),
+          },
         ].map((btn) => (
           <IconButton
             key={btn.icon}
             size="small"
             title={btn.label}
+            onClick={btn.onClick}
             sx={{
               p: 0.5,
               borderRadius: 0,
@@ -493,13 +549,15 @@ const AgentPath = ({ data, isLoading, onNodeClick }) => {
         ))}
       </Box>
 
-      <SankeyChart
-        layout={layout}
-        width={containerWidth}
-        height={200}
-        onNodeClick={onNodeClick}
-        theme={theme}
-      />
+      {!isCollapsed && (
+        <SankeyChart
+          layout={layout}
+          width={chartWidth}
+          height={scaledChartHeight}
+          onNodeClick={onNodeClick}
+          theme={theme}
+        />
+      )}
     </Box>
   );
 };

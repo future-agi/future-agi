@@ -529,7 +529,7 @@ const buildFlowData = (graphData, direction = "LR", theme = null) => {
 // ---------------------------------------------------------------------------
 // Zoom controls — top-right, appear on hover
 // ---------------------------------------------------------------------------
-const ZoomControls = () => {
+const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const btnSx = {
     p: 0.5,
@@ -558,6 +558,7 @@ const ZoomControls = () => {
     >
       <IconButton
         size="small"
+        title="Zoom in"
         onClick={() => zoomIn({ duration: 200 })}
         sx={btnSx}
       >
@@ -565,6 +566,7 @@ const ZoomControls = () => {
       </IconButton>
       <IconButton
         size="small"
+        title="Zoom out"
         onClick={() => zoomOut({ duration: 200 })}
         sx={btnSx}
       >
@@ -572,6 +574,7 @@ const ZoomControls = () => {
       </IconButton>
       <IconButton
         size="small"
+        title="Fit"
         onClick={() => fitView({ duration: 300, padding: 0.3 })}
         sx={btnSx}
       >
@@ -579,13 +582,22 @@ const ZoomControls = () => {
       </IconButton>
       <IconButton
         size="small"
-        onClick={() => fitView({ duration: 300, padding: 0.2 })}
+        title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        onClick={onToggleFullscreen}
         sx={btnSx}
       >
-        <Iconify icon="mdi:fullscreen" width={14} />
+        <Iconify
+          icon={isFullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}
+          width={14}
+        />
       </IconButton>
     </Box>
   );
+};
+
+ZoomControls.propTypes = {
+  isFullscreen: PropTypes.bool.isRequired,
+  onToggleFullscreen: PropTypes.func.isRequired,
 };
 
 // ---------------------------------------------------------------------------
@@ -600,6 +612,7 @@ const AgentGraphInner = ({
 }) => {
   const theme = useTheme();
   const [isHovering, setIsHovering] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const { nodes: layoutNodes, edges: layoutEdges } = useMemo(
     () => buildFlowData(data, direction, theme),
     [data, direction, theme],
@@ -612,6 +625,19 @@ const AgentGraphInner = ({
     setNodes(layoutNodes);
     setEdges(layoutEdges);
   }, [layoutNodes, layoutEdges, setNodes, setEdges]);
+
+  useEffect(() => {
+    if (!isFullscreen) return undefined;
+
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        setIsFullscreen(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isFullscreen]);
 
   if (isLoading) {
     return (
@@ -667,10 +693,13 @@ const AgentGraphInner = ({
   return (
     <Box
       sx={{
-        height: "100%",
+        height: isFullscreen ? "100vh" : "100%",
         minHeight: 120,
         width: "100%",
-        position: "relative",
+        position: isFullscreen ? "fixed" : "relative",
+        inset: isFullscreen ? 0 : "auto",
+        zIndex: isFullscreen ? (t) => t.zIndex.modal : "auto",
+        bgcolor: "background.paper",
       }}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
@@ -699,7 +728,14 @@ const AgentGraphInner = ({
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
-        {isHovering && <ZoomControls />}
+        {(isHovering || isFullscreen) && (
+          <ZoomControls
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={() =>
+              setIsFullscreen((fullscreen) => !fullscreen)
+            }
+          />
+        )}
       </ReactFlow>
     </Box>
   );
