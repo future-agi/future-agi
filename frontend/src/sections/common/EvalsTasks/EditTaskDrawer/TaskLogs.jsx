@@ -88,6 +88,8 @@ const TaskLogs = ({ evalTaskId }) => {
     }
     return log;
   };
+  const warningGroups = data?.warning_groups || data?.warningGroups || [];
+  const warningsCount = data?.warnings_count ?? data?.warningsCount ?? 0;
 
   return (
     <Box
@@ -152,6 +154,52 @@ const TaskLogs = ({ evalTaskId }) => {
             Errors: {data?.errors_count ?? data?.errorsCount}
           </Typography>
         </Box>
+        {warningsCount > 0 && (
+          <Box
+            sx={(theme) => ({
+              p: 1.5,
+              mb: 2,
+              borderRadius: 1,
+              display: "flex",
+              flexDirection: "column",
+              gap: 1,
+              bgcolor: alpha(theme.palette.warning.main, 0.08),
+              border: "1px solid",
+              borderColor: alpha(theme.palette.warning.main, 0.18),
+            })}
+          >
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Iconify
+                icon="solar:danger-triangle-linear"
+                width={18}
+                color="warning.main"
+              />
+              <Typography fontSize="14px" fontWeight={600}>
+                Partial Inputs: {warningsCount}
+              </Typography>
+            </Box>
+            {warningGroups.map((group) => (
+              <Box
+                key={`${group.type}-${(group.empty_keys || []).join(",")}`}
+                sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}
+              >
+                {(group.empty_keys || []).map((key) => (
+                  <Chip
+                    key={key}
+                    label={`Missing: ${key}`}
+                    color="warning"
+                    variant="outlined"
+                    size="small"
+                    sx={{ fontSize: "10px", height: 18 }}
+                  />
+                ))}
+                <Typography variant="caption" color="text.secondary">
+                  {group.count} occurrence{group.count === 1 ? "" : "s"}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+        )}
         {/* Error Log Box */}
         <ShowComponent
           condition={

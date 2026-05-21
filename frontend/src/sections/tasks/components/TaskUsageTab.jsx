@@ -25,6 +25,9 @@ import { useTaskUsageChart, useTaskUsageLogs } from "../hooks/useTaskUsage";
 import UsageChart from "src/sections/evals/components/UsageChart";
 import { JsonValueTree } from "src/sections/evals/components/DatasetTestMode";
 import { classifyTaskError } from "src/sections/common/EvalsTasks/classifyTaskError";
+import PartialInputWarningDetails, {
+  PARTIAL_INPUT_WARNING_TYPE,
+} from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 import { isEditableElement } from "src/utils/keyboardUtils";
 
 // ── Inline stat ──
@@ -148,22 +151,47 @@ const useColumns = () =>
         accessorKey: "result",
         header: "Result",
         size: 100,
-        cell: ({ getValue }) => {
+        cell: ({ getValue, row }) => {
           const v = getValue();
           if (!v) return null;
           const isPassed = v === "Passed" || v === "Pass";
           const isFailed = v === "Failed" || v === "Fail";
           const isError = v === "Error";
+          const warnings = row.original.warnings || [];
+          const partialWarning = warnings.find(
+            (w) => w?.type === PARTIAL_INPUT_WARNING_TYPE,
+          );
           return (
-            <Chip
-              label={v}
-              size="small"
-              color={
-                isPassed ? "success" : isFailed || isError ? "error" : "default"
-              }
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 20 }}
-            />
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Chip
+                label={v}
+                size="small"
+                color={
+                  isPassed
+                    ? "success"
+                    : isFailed || isError
+                      ? "error"
+                      : "default"
+                }
+                variant="outlined"
+                sx={{ fontSize: "11px", height: 20 }}
+              />
+              {partialWarning && (
+                <Tooltip
+                  title={
+                    partialWarning.message ||
+                    "Eval ran with some inputs empty. Result may be less reliable. Ignore if this is intentional."
+                  }
+                  arrow
+                >
+                  <Iconify
+                    icon="solar:danger-triangle-bold"
+                    width={14}
+                    sx={{ color: "warning.main", cursor: "help" }}
+                  />
+                </Tooltip>
+              )}
+            </Box>
           );
         },
       },
@@ -562,10 +590,16 @@ ErrorDetails.propTypes = {
   rawError: PropTypes.string,
 };
 
+
+PartialInputWarningDetails.propTypes = {
+  warnings: PropTypes.arrayOf(PropTypes.object),
+};
+
 // ── Detail panel content (Formatted / JSON toggle) ──
 const DetailPanelContent = ({ row, isDark }) => {
   const [viewMode, setViewMode] = useState("formatted");
   const detail = row.detail || {};
+  const warnings = row.warnings || detail.warnings || [];
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
   return (
     <Box
@@ -688,6 +722,7 @@ const DetailPanelContent = ({ row, isDark }) => {
                       : "default"
                 }
               />
+              <PartialInputWarningDetails warnings={warnings} />
               {detail.eval_name && (
                 <DetailRow label="Eval" value={detail.eval_name} />
               )}

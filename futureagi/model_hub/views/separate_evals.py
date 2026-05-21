@@ -4672,6 +4672,15 @@ class EvalUsageStatsView(APIView):
                     elif agg_pass is False:
                         result_label = "Failed"
 
+                # Surface partial-input warnings stored on output_data.
+                # Set by every eval execution path (dataset/playground/
+                # tracing) when a custom eval ran with some inputs empty.
+                warnings = (
+                    output_data.get("warnings")
+                    if isinstance(output_data, dict)
+                    else None
+                )
+
                 log_item = {
                     "id": str(log.log_id),
                     "input": input_str[:200],
@@ -4683,9 +4692,11 @@ class EvalUsageStatsView(APIView):
                     "created_at": (
                         log.created_at.isoformat() if log.created_at else ""
                     ),
+                    "warnings": warnings or [],
                     "detail": {
                         "input_variables": input_vars or config.get("input", {}),
                         "output": output_data,
+                        "warnings": warnings or [],
                         "mappings": mappings,
                         "model": (
                             config.get("model") if isinstance(config, dict) else None

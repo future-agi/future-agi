@@ -331,6 +331,7 @@ const CustomCellRender = (props) => {
         originType={originType}
         isFutureAgiEval={isFutureAgiEval}
         outputType={output}
+        warnings={cellData?.value_infos?.warnings}
       />
     );
   }
