@@ -624,12 +624,15 @@ export const getTraceListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
+      const column = params?.colDef?.col;
+      const colId = column?.id;
+      if (
+        isCellValueEmpty(value) &&
+        !RENDERER_CONFIG.tagColumns?.includes(colId)
+      ) {
         // No renderer for empty values
         return null;
       }
-      const column = params?.colDef?.col;
-      const colId = column?.id;
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
         return {

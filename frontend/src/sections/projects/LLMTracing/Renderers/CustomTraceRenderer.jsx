@@ -16,6 +16,7 @@ import {
   TagsCell,
   ObservationLevelsCell,
 } from "./index";
+import { getTagCellTargetIds } from "./tagTargetIds";
 import { useNavigationHandlers } from "./useNavigationHandlers";
 
 const CustomTraceRenderer = (params) => {
@@ -74,7 +75,8 @@ const CustomTraceRenderer = (params) => {
   }
 
   if (RENDERER_CONFIG.tagColumns?.includes(colId)) {
-    return <TagsCell value={value} />;
+    const { traceId, spanId } = getTagCellTargetIds(data);
+    return <TagsCell value={value} traceId={traceId} spanId={spanId} />;
   }
 
   if (isEval && column?.outputType === "Pass/Fail") {
