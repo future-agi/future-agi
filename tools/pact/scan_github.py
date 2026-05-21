@@ -250,6 +250,8 @@ def scan_repo(
 
             for call in calls:
                 for mode in DEFAULT_MODES:
+                    if mode.check is None:
+                        continue
                     for ev in mode.check(call, model_index, func_index):
                         rec = _add_ev(ev)
                         if rec:
