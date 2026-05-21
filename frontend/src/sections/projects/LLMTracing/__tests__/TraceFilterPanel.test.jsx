@@ -1,5 +1,8 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  default as TraceFilterPanel,
   buildTraceFilterProperties,
   getTraceFilterFields,
   normalizeFilterRowOperator,
@@ -8,6 +11,89 @@ import {
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
 } from "../filterValuePickerUtils";
+
+const parseQueryMock = vi.fn();
+
+vi.mock("src/hooks/use-ai-filter", () => ({
+  useAIFilter: () => ({
+    parseQuery: parseQueryMock,
+    loading: false,
+    error: null,
+  }),
+}));
+
+vi.mock("src/hooks/useDashboards", () => ({
+  useDashboardFilterValues: () => ({
+    data: [],
+    isLoading: false,
+  }),
+}));
+
+describe("TraceFilterPanel AI actions", () => {
+  beforeEach(() => {
+    parseQueryMock.mockReset();
+  });
+
+  it("runs the AI filter when Apply is clicked with an AI query", async () => {
+    parseQueryMock.mockResolvedValue([
+      { field: "status", operator: "equals", value: "ERROR" },
+    ]);
+    const onApply = vi.fn();
+    const onClose = vi.fn();
+    const anchorEl = document.createElement("button");
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    document.body.appendChild(anchorEl);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TraceFilterPanel
+          anchorEl={anchorEl}
+          open
+          onClose={onClose}
+          onApply={onApply}
+          currentFilters={[]}
+          properties={[
+            {
+              id: "status",
+              name: "Status",
+              category: "system",
+              type: "string",
+            },
+          ]}
+          showQueryTab={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask AI/i), {
+      target: { value: "show errors" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(parseQueryMock).toHaveBeenCalledWith("show errors", {
+        smart: true,
+        projectId: undefined,
+        source: "traces",
+      });
+    });
+    expect(onApply).toHaveBeenCalledWith([
+      {
+        field: "status",
+        fieldCategory: "system",
+        fieldType: "string",
+        apiColType: undefined,
+        operator: "equals",
+        value: ["ERROR"],
+      },
+    ]);
+    expect(onClose).toHaveBeenCalled();
+
+    document.body.removeChild(anchorEl);
+  });
+});
 
 describe("getTraceFilterFields (TH-4571)", () => {
   it("prepends Trace ID when tab is 'trace'", () => {
