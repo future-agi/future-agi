@@ -216,9 +216,18 @@ const getDataSource = (
           validFilters,
           sort,
           search,
-          { enabled: true, staleTime: 0, pageSize: DATASET_ROWS_LIMIT },
+          { enabled: true, staleTime: 5 * 1000, pageSize: DATASET_ROWS_LIMIT },
         );
-        const data = await queryClient.fetchQuery({ ...queryOptions });
+      
+        // If this page is already in the cache and has not been marked
+        // changed, reuse it instantly; otherwise fetch it from the server.
+        const cachedState = queryClient.getQueryState(queryOptions.queryKey);
+        const servedFromCache =
+          cachedState?.data !== undefined && !cachedState.isInvalidated;
+        const data = servedFromCache
+          ? cachedState.data
+          : await queryClient.fetchQuery({ ...queryOptions });
+      
         const processingData = data?.data?.result?.isProcessingData;
 
         useProcessingStore.getState().setIsProcessingData(processingData);
@@ -280,17 +289,37 @@ const getDataSource = (
             rowCount: lastRow,
           });
 
-          // Prefetch next page so scroll feels instant
+          // Prefetch the next two pages so scrolling stays ahead of the
+          // network and never shows the 2-3s block loader. Pages past the
+          // end of the dataset are skipped — e.g. on the second-to-last
+          // page only the last page is prefetched, not a non-existent one.
+          // A prefetched page is reused only while it is still fresh when
+          // getRows consumes it — that is why this and the fetchQuery
+          // above use staleTime 5s; with staleTime 0 the page is stale on
+          // arrival and getRows fetches it again, wasting the prefetch.
           if (!isLastPage) {
-            const nextPageOptions = getDatasetQueryOptions(
-              datasetId,
-              pageNumber + 1,
-              validFilters,
-              sort,
-              search,
-              { enabled: true, staleTime: 0, pageSize: DATASET_ROWS_LIMIT },
-            );
-            queryClient.prefetchQuery({ ...nextPageOptions });
+            const totalPages = totalRows
+              ? Math.ceil(totalRows / DATASET_ROWS_LIMIT)
+              : Infinity;
+              
+            [pageNumber + 1, pageNumber + 2]
+              .filter((page) => page < totalPages)
+              .forEach((page) => {
+                queryClient.prefetchQuery(
+                  getDatasetQueryOptions(
+                    datasetId,
+                    page,
+                    validFilters,
+                    sort,
+                    search,
+                    {
+                      enabled: true,
+                      staleTime: 5 * 1000,
+                      pageSize: DATASET_ROWS_LIMIT,
+                    },
+                  ),
+                );
+              });
           }
         }
       } catch (e) {
@@ -519,7 +548,7 @@ const getAverageColumnConfig = (columns, tableRows) => {
     },
   ];
 };
-const DATASET_ROWS_LIMIT = 50;
+const DATASET_ROWS_LIMIT = 30;
 const BATCH_SIZE = 3;
 
 const DevelopDataV2 = ({ datasetId, viewOptions }) => {
@@ -1188,7 +1217,6 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                   pagination={false}
                   cacheBlockSize={DATASET_ROWS_LIMIT}
                   rowBuffer={10}
-                  maxBlocksInCache={5}
                   suppressServerSideFullWidthLoadingRow={true}
                   serverSideInitialRowCount={DATASET_ROWS_LIMIT}
                   statusBar={statusBar}
