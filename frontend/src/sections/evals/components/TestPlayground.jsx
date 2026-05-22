@@ -1633,7 +1633,7 @@ const TestPlayground = React.forwardRef(
                                 fontWeight: 600,
                                 fontFamily: "'IBM Plex Sans', sans-serif",
                                 color: isSelected
-                                  ? "common.white"
+                                  ? "primary.contrastText"
                                   : isDefault
                                     ? "info.main"
                                     : "text.primary",
