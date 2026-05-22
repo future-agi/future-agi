@@ -188,6 +188,108 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             normalized.append(metric_copy)
         return normalized
 
+    def execute_ch_query_config(self, query_config, workspace):
+        """Execute a query_config against ClickHouse and return formatted results.
+
+        Routes each metric to the appropriate builder based on source.
+
+        Request-independent: given (query_config, workspace) it reads no
+        auth/request state, so it is safe to call from other views — e.g.
+        DashboardWidgetViewSet's query endpoints and the public
+        shared-dashboard widget endpoint. Lives on DashboardViewSet because
+        its helpers (_normalize_metric_sources, _get_trace_query_timeout_ms,
+        _run_simulation_clickhouse_queries) do.
+        """
+        # Infer source from workflow for backward compat
+        workflow = query_config.get("workflow", "")
+        for m in query_config.get("metrics", []):
+            if "source" not in m:
+                m["source"] = "datasets" if workflow == "dataset" else "traces"
+
+        query_config["metrics"] = self._normalize_metric_sources(query_config["metrics"])
+
+        trace_metrics = [
+            m for m in query_config["metrics"] if m.get("source") == "traces"
+        ]
+        dataset_metrics = [
+            m for m in query_config["metrics"] if m.get("source") == "datasets"
+        ]
+        simulation_metrics = [
+            m for m in query_config["metrics"] if m.get("source") == "simulation"
+        ]
+
+        ch_client = get_clickhouse_client()
+        metric_results = []
+
+        if trace_metrics:
+            trace_config = {**query_config, "metrics": trace_metrics}
+            project_ids = trace_config.get("project_ids", [])
+            if not project_ids:
+                project_ids = list(
+                    Project.objects.filter(
+                        workspace=workspace,
+                    ).values_list("id", flat=True)
+                )
+                trace_config["project_ids"] = [str(pid) for pid in project_ids]
+                query_config["project_ids"] = trace_config["project_ids"]
+            else:
+                valid_count = Project.objects.filter(
+                    id__in=project_ids,
+                    workspace=workspace,
+                ).count()
+                if valid_count != len(project_ids):
+                    return self._gm.bad_request(
+                        "Some project_ids are invalid or not in this workspace"
+                    )
+            builder = DashboardQueryBuilder(trace_config)
+            query_timeout = self._get_trace_query_timeout_ms(trace_config)
+            for sql, params, metric_info in builder.build_all_queries():
+                metric_info["source"] = "traces"
+                rows, column_types, _ = ch_client.execute_read(
+                    sql, params, timeout_ms=query_timeout
+                )
+                col_names = [ct[0] for ct in column_types]
+                row_dicts = [dict(zip(col_names, row)) for row in rows]
+                metric_results.append((metric_info, row_dicts))
+
+        if dataset_metrics:
+            ds_config = {**query_config, "metrics": dataset_metrics}
+            ds_config["workspace_id"] = str(workspace.id)
+            builder = DatasetQueryBuilder(ds_config)
+            for sql, params, metric_info in builder.build_all_queries():
+                metric_info["source"] = "datasets"
+                rows, column_types, _ = ch_client.execute_read(sql, params)
+                col_names = [ct[0] for ct in column_types]
+                row_dicts = [dict(zip(col_names, row)) for row in rows]
+                metric_results.append((metric_info, row_dicts))
+
+        if simulation_metrics:
+            sim_config = {**query_config, "metrics": simulation_metrics}
+            sim_config["workspace_id"] = str(workspace.id)
+            metric_results.extend(
+                self._run_simulation_clickhouse_queries(ch_client, sim_config)
+            )
+
+        # Format using DatasetQueryBuilder (compatible format_results)
+        formatter_config = {**query_config, "workspace_id": str(workspace.id)}
+        formatter = DatasetQueryBuilder(formatter_config)
+
+        if trace_metrics and not dataset_metrics and not simulation_metrics:
+            project_ids = query_config.get("project_ids", [])
+            project_name_map = dict(
+                Project.objects.filter(
+                    id__in=project_ids if project_ids else [],
+                ).values_list("id", "name")
+            )
+            project_name_map = {str(k): v for k, v in project_name_map.items()}
+            formatted = DashboardQueryBuilder(query_config).format_results(
+                metric_results, project_name_map=project_name_map
+            )
+        else:
+            formatted = formatter.format_results(metric_results)
+
+        return self._gm.success_response(formatted)
+
     def list(self, request, *args, **kwargs):
         try:
             queryset = self.get_queryset()
@@ -2539,101 +2641,6 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.error(f"Failed to duplicate widget: {e}", exc_info=True)
             return self._gm.bad_request("Failed to duplicate widget.")
 
-    def _execute_ch_query_config(self, query_config, workspace):
-        """Execute a query_config against ClickHouse and return formatted results.
-
-        Routes each metric to the appropriate builder based on source.
-        """
-        # Infer source from workflow for backward compat
-        workflow = query_config.get("workflow", "")
-        for m in query_config.get("metrics", []):
-            if "source" not in m:
-                m["source"] = "datasets" if workflow == "dataset" else "traces"
-
-        query_config["metrics"] = self._normalize_metric_sources(query_config["metrics"])
-
-        trace_metrics = [
-            m for m in query_config["metrics"] if m.get("source") == "traces"
-        ]
-        dataset_metrics = [
-            m for m in query_config["metrics"] if m.get("source") == "datasets"
-        ]
-        simulation_metrics = [
-            m for m in query_config["metrics"] if m.get("source") == "simulation"
-        ]
-
-        ch_client = get_clickhouse_client()
-        metric_results = []
-
-        if trace_metrics:
-            trace_config = {**query_config, "metrics": trace_metrics}
-            project_ids = trace_config.get("project_ids", [])
-            if not project_ids:
-                project_ids = list(
-                    Project.objects.filter(
-                        workspace=workspace,
-                    ).values_list("id", flat=True)
-                )
-                trace_config["project_ids"] = [str(pid) for pid in project_ids]
-                query_config["project_ids"] = trace_config["project_ids"]
-            else:
-                valid_count = Project.objects.filter(
-                    id__in=project_ids,
-                    workspace=workspace,
-                ).count()
-                if valid_count != len(project_ids):
-                    return self._gm.bad_request(
-                        "Some project_ids are invalid or not in this workspace"
-                    )
-            builder = DashboardQueryBuilder(trace_config)
-            query_timeout = self._get_trace_query_timeout_ms(trace_config)
-            for sql, params, metric_info in builder.build_all_queries():
-                metric_info["source"] = "traces"
-                rows, column_types, _ = ch_client.execute_read(
-                    sql, params, timeout_ms=query_timeout
-                )
-                col_names = [ct[0] for ct in column_types]
-                row_dicts = [dict(zip(col_names, row)) for row in rows]
-                metric_results.append((metric_info, row_dicts))
-
-        if dataset_metrics:
-            ds_config = {**query_config, "metrics": dataset_metrics}
-            ds_config["workspace_id"] = str(workspace.id)
-            builder = DatasetQueryBuilder(ds_config)
-            for sql, params, metric_info in builder.build_all_queries():
-                metric_info["source"] = "datasets"
-                rows, column_types, _ = ch_client.execute_read(sql, params)
-                col_names = [ct[0] for ct in column_types]
-                row_dicts = [dict(zip(col_names, row)) for row in rows]
-                metric_results.append((metric_info, row_dicts))
-
-        if simulation_metrics:
-            sim_config = {**query_config, "metrics": simulation_metrics}
-            sim_config["workspace_id"] = str(workspace.id)
-            metric_results.extend(
-                self._run_simulation_clickhouse_queries(ch_client, sim_config)
-            )
-
-        # Format using DatasetQueryBuilder (compatible format_results)
-        formatter_config = {**query_config, "workspace_id": str(workspace.id)}
-        formatter = DatasetQueryBuilder(formatter_config)
-
-        if trace_metrics and not dataset_metrics and not simulation_metrics:
-            project_ids = query_config.get("project_ids", [])
-            project_name_map = dict(
-                Project.objects.filter(
-                    id__in=project_ids if project_ids else [],
-                ).values_list("id", "name")
-            )
-            project_name_map = {str(k): v for k, v in project_name_map.items()}
-            formatted = DashboardQueryBuilder(query_config).format_results(
-                metric_results, project_name_map=project_name_map
-            )
-        else:
-            formatted = formatter.format_results(metric_results)
-
-        return self._gm.success_response(formatted)
-
     @action(detail=True, methods=["post"], url_path="query")
     def execute_query(self, request, *args, **kwargs):
         """Execute the widget's query_config against ClickHouse and return results."""
@@ -2648,7 +2655,11 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "Widget has no query configuration or metrics defined."
                 )
 
-            return self._execute_ch_query_config(query_config, request.workspace)
+            # execute_ch_query_config lives on DashboardViewSet alongside the
+            # query helpers it depends on; it is request-independent.
+            return DashboardViewSet().execute_ch_query_config(
+                query_config, request.workspace
+            )
         except Exception as e:
             logger.error("widget_query_execution_failed", error=str(e), exc_info=True)
             return self._gm.bad_request(f"Query execution failed: {str(e)}")
@@ -2664,7 +2675,11 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             if not query_config or not query_config.get("metrics"):
                 return self._gm.bad_request("query_config with metrics is required.")
 
-            return self._execute_ch_query_config(query_config, request.workspace)
+            # execute_ch_query_config lives on DashboardViewSet alongside the
+            # query helpers it depends on; it is request-independent.
+            return DashboardViewSet().execute_ch_query_config(
+                query_config, request.workspace
+            )
         except Exception as e:
             logger.error("query_preview_failed", error=str(e), exc_info=True)
             return self._gm.bad_request(f"Query preview failed: {str(e)}")

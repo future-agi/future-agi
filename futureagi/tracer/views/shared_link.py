@@ -1,9 +1,15 @@
 import structlog
 from django.utils import timezone
 from rest_framework import status
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import (
+    action,
+    api_view,
+    permission_classes,
+    throttle_classes,
+)
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import AnonRateThrottle
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.models.user import User
@@ -20,6 +26,20 @@ from tracer.serializers.shared_link import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+class SharedWidgetDataThrottle(AnonRateThrottle):
+    """Rate limit for the public shared-widget-data endpoint.
+
+    The endpoint is unauthenticated (AllowAny) and triggers ClickHouse
+    queries, so without a limit a single leaked token is a DoS amplifier.
+    Keyed by client IP; `rate` is set explicitly so it needs no settings
+    entry. Generous enough for a human viewing a dashboard, low enough to
+    blunt scripted abuse.
+    """
+
+    scope = "shared_widget_data"
+    rate = "60/min"
 
 
 class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -149,6 +169,64 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
 # --------------------------------------------------------------------------
 
 
+def _get_accessible_link(token):
+    """
+    Look up a SharedLink by token and verify it is still usable.
+
+    Returns (link, error_response). Exactly one is non-None: on success
+    `link` is set, otherwise `error_response` carries the DRF Response.
+    """
+    try:
+        link = SharedLink.objects.get(token=token, deleted=False)
+    except SharedLink.DoesNotExist:
+        return None, Response(
+            {"error": "Shared link not found"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    if not link.is_accessible:
+        reason = "expired" if link.is_expired else "revoked"
+        return None, Response(
+            {"error": f"This shared link has been {reason}"},
+            status=status.HTTP_410_GONE,
+        )
+
+    return link, None
+
+
+def _check_link_access(link, request):
+    """
+    Enforce the ACL for restricted links.
+
+    Public links are always accessible. Restricted links require an
+    authenticated user whose email is in the ACL (or who created the link).
+    Returns a DRF Response to short-circuit with, or None if access is granted.
+    """
+    if link.access_type != AccessType.RESTRICTED:
+        return None
+
+    if not request.user or not request.user.is_authenticated:
+        return Response(
+            {"error": "Authentication required to access this link"},
+            status=status.HTTP_401_UNAUTHORIZED,
+        )
+
+    # Match the ACL by email, but only for a non-empty email — otherwise a
+    # user with a blank email would match a blank-email ACL row.
+    user_email = (request.user.email or "").strip()
+    has_access = bool(user_email) and link.access_list.filter(
+        email=user_email, deleted=False
+    ).exists()
+    # Also allow the creator
+    if not has_access and request.user != link.created_by:
+        return Response(
+            {"error": "You don't have access to this shared resource"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    return None
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def resolve_shared_link(request, token):
@@ -157,37 +235,14 @@ def resolve_shared_link(request, token):
     - Public links: no auth needed
     - Restricted links: user must be authenticated + email in ACL
     """
-    try:
-        link = SharedLink.objects.get(token=token, deleted=False)
-    except SharedLink.DoesNotExist:
-        return Response(
-            {"error": "Shared link not found"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
-
-    if not link.is_accessible:
-        reason = "expired" if link.is_expired else "revoked"
-        return Response(
-            {"error": f"This shared link has been {reason}"},
-            status=status.HTTP_410_GONE,
-        )
+    link, error = _get_accessible_link(token)
+    if error is not None:
+        return error
 
     # Check access for restricted links
-    if link.access_type == AccessType.RESTRICTED:
-        if not request.user or not request.user.is_authenticated:
-            return Response(
-                {"error": "Authentication required to access this link"},
-                status=status.HTTP_401_UNAUTHORIZED,
-            )
-        has_access = link.access_list.filter(
-            email=request.user.email, deleted=False
-        ).exists()
-        # Also allow the creator
-        if not has_access and request.user != link.created_by:
-            return Response(
-                {"error": "You don't have access to this shared resource"},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+    access_error = _check_link_access(link, request)
+    if access_error is not None:
+        return access_error
 
     # Resolve the resource
     resource_data = _resolve_resource(link)
@@ -270,6 +325,7 @@ def _resolve_resource(link):
 
         elif link.resource_type == "dashboard":
             from tracer.models.dashboard import Dashboard
+            from tracer.serializers.dashboard import DashboardWidgetSerializer
 
             dashboard = Dashboard.objects.filter(
                 id=link.resource_id,
@@ -277,10 +333,15 @@ def _resolve_resource(link):
             ).first()
             if not dashboard:
                 return None
+
+            widgets_qs = dashboard.widgets.filter(deleted=False).order_by(
+                "position", "created_at"
+            )
             return {
                 "id": str(dashboard.id),
                 "name": dashboard.name,
-                "config": dashboard.config,
+                "description": dashboard.description,
+                "widgets": DashboardWidgetSerializer(widgets_qs, many=True).data,
             }
 
         # Extend for other resource types as needed
@@ -289,3 +350,106 @@ def _resolve_resource(link):
     except Exception:
         logger.exception("Failed to resolve shared resource", link_id=str(link.id))
         return None
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+@throttle_classes([SharedWidgetDataThrottle])
+def resolve_shared_widget_data(request, token, widget_id):
+    """
+    Execute one dashboard widget's query for a share token and return results.
+
+    Lets a public viewer of a shared dashboard load live widget data without
+    an auth wall: the share token authorizes the read, and the query runs
+    scoped to the link's workspace (the viewer has no workspace of their own).
+
+    - Public links: no auth needed
+    - Restricted links: same ACL as resolve_shared_link
+    """
+    link, error = _get_accessible_link(token)
+    if error is not None:
+        return error
+
+    access_error = _check_link_access(link, request)
+    if access_error is not None:
+        return access_error
+
+    # Widget data only makes sense for shared dashboards.
+    if link.resource_type != "dashboard":
+        return Response(
+            {"error": "This shared link is not a dashboard"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from tracer.models.dashboard import DashboardWidget
+    from tracer.services.clickhouse.client import is_clickhouse_enabled
+    from tracer.views.dashboard import DashboardViewSet
+
+    if not is_clickhouse_enabled():
+        return Response(
+            {"error": "ClickHouse is not enabled"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # The widget must belong to the dashboard this link shares — never trust
+    # the widget_id alone, or any token would unlock any widget.
+    widget = (
+        DashboardWidget.objects.filter(
+            id=widget_id,
+            dashboard_id=link.resource_id,
+            deleted=False,
+        )
+        .select_related("dashboard")
+        .first()
+    )
+    if not widget:
+        return Response(
+            {"error": "Widget not found in this shared dashboard"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    query_config = widget.query_config
+    if not query_config or not query_config.get("metrics"):
+        return Response(
+            {"error": "Widget has no query configuration"},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # The link's workspace owns the data; fall back to the dashboard's own
+    # workspace for older links created before workspace was recorded.
+    workspace = link.workspace or widget.dashboard.workspace
+
+    # This endpoint is public (AllowAny) — never let internal detail reach the
+    # viewer, whether it arrives as a raised exception OR as an error Response.
+    # execute_ch_query_config reports some failures (e.g. invalid project_ids)
+    # by *returning* a 4xx Response rather than raising, so the status of the
+    # returned Response must be inspected, not just the try/except.
+    def _generic_error(detail, *, exc_info=False):
+        # exc_info=True only when called from inside an except block, so the
+        # traceback is captured; the returned-error-Response path has no
+        # active exception and uses a plain error log.
+        log = logger.exception if exc_info else logger.error
+        log(
+            "Shared widget query failed",
+            link_id=str(link.id),
+            widget_id=str(widget_id),
+            detail=detail,
+        )
+        return Response(
+            {"error": "Unable to load widget data"},
+            status=status.HTTP_502_BAD_GATEWAY,
+        )
+
+    try:
+        # execute_ch_query_config is request-independent (see its docstring),
+        # so it is safe to reuse here for the public share-token path.
+        result = DashboardViewSet().execute_ch_query_config(query_config, workspace)
+    except Exception as exc:
+        return _generic_error(str(exc), exc_info=True)
+
+    status_code = getattr(result, "status_code", None)
+    if status_code is not None and status_code >= 400:
+        # An error Response slipped through without raising — sanitize it.
+        return _generic_error(getattr(result, "data", None))
+
+    return result

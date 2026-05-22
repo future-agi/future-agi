@@ -1,8 +1,13 @@
+/* eslint-disable react/prop-types */
 import React, { useState, useCallback, useMemo } from "react";
 import { useParams } from "react-router";
 import { Alert, Box, CircularProgress, Typography } from "@mui/material";
 import { Helmet } from "react-helmet-async";
-import { useResolveSharedLink } from "src/api/shared-links";
+import {
+  useResolveSharedLink,
+  useResolveSharedWidgetData,
+} from "src/api/shared-links";
+import WidgetChart from "src/sections/dashboards/WidgetChart";
 import DrawerToolbar from "src/components/traceDetail/DrawerToolbar";
 import TraceTreeV2 from "src/components/traceDetail/TraceTreeV2";
 import SpanDetailPane from "src/components/traceDetail/SpanDetailPane";
@@ -18,6 +23,140 @@ import { isVoiceCall } from "./sharedViewHelpers";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
+}
+
+/**
+ * A single widget inside a shared dashboard. Fetches its data through the
+ * public, share-token-authorized endpoint (no workspace auth) and renders it
+ * with the same WidgetChart component the authenticated dashboard uses.
+ */
+function SharedWidget({ token, widget }) {
+  const { data, isLoading, isError } = useResolveSharedWidgetData(
+    token,
+    widget.id,
+  );
+
+  return (
+    <Box
+      sx={{
+        gridColumn: `span ${Math.min(12, Math.max(1, widget.width || 12))}`,
+        minHeight: 220,
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px",
+        bgcolor: "background.paper",
+        p: 2,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <Typography
+        sx={{ fontSize: 13, fontWeight: 600, color: "text.primary", mb: 0.5 }}
+      >
+        {widget.name || "Untitled widget"}
+      </Typography>
+      {widget.description && (
+        <Typography sx={{ fontSize: 11, color: "text.disabled", mb: 1 }}>
+          {widget.description}
+        </Typography>
+      )}
+      <Box sx={{ flex: 1, minHeight: 160 }}>
+        {isError ? (
+          <Box
+            sx={{
+              height: "100%",
+              minHeight: 160,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 0.5,
+              color: "text.disabled",
+            }}
+          >
+            <Iconify icon="mdi:chart-box-outline" width={28} />
+            <Typography sx={{ fontSize: 11 }}>
+              Widget data unavailable
+            </Typography>
+          </Box>
+        ) : (
+          <WidgetChart
+            widget={widget}
+            sharedData={{ result: data?.result ?? data, isLoading, isError }}
+          />
+        )}
+      </Box>
+    </Box>
+  );
+}
+
+/**
+ * Read-only dashboard view for shared links. Renders the dashboard's widgets
+ * with live data — each widget loads through the share-token-authorized
+ * endpoint, so public recipients see real charts without an auth wall.
+ */
+function SharedDashboardView({ token, dashboard }) {
+  const sortedWidgets = useMemo(() => {
+    const widgets = dashboard?.widgets || [];
+    return [...widgets].sort((a, b) => (a.position || 0) - (b.position || 0));
+  }, [dashboard?.widgets]);
+  const signInHref = `/auth/jwt/login?returnTo=${encodeURIComponent(
+    window.location.pathname,
+  )}`;
+
+  return (
+    <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
+      <Box sx={{ mb: 3 }}>
+        <Typography
+          sx={{ fontSize: 20, fontWeight: 600, color: "text.primary", mb: 0.5 }}
+        >
+          {dashboard?.name || "Untitled dashboard"}
+        </Typography>
+        {dashboard?.description && (
+          <Typography sx={{ fontSize: 13, color: "text.secondary" }}>
+            {dashboard.description}
+          </Typography>
+        )}
+      </Box>
+
+      <Alert severity="info" sx={{ mb: 3 }}>
+        Read-only view —{" "}
+        <Box
+          component="a"
+          href={signInHref}
+          sx={{
+            color: "inherit",
+            fontWeight: 600,
+            textDecoration: "underline",
+          }}
+        >
+          sign in
+        </Box>{" "}
+        to open this dashboard in your workspace.
+      </Alert>
+
+      {sortedWidgets.length === 0 ? (
+        <Box sx={{ textAlign: "center", py: 6, color: "text.disabled" }}>
+          <Iconify icon="mdi:view-dashboard-outline" width={48} sx={{ mb: 1 }} />
+          <Typography sx={{ fontSize: 13 }}>
+            No widgets in this dashboard.
+          </Typography>
+        </Box>
+      ) : (
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(12, 1fr)",
+            gap: 2,
+          }}
+        >
+          {sortedWidgets.map((w) => (
+            <SharedWidget key={w.id} token={token} widget={w} />
+          ))}
+        </Box>
+      )}
+    </Box>
+  );
 }
 
 export default function SharedView() {
@@ -368,8 +507,11 @@ export default function SharedView() {
               )}
             </Box>
           </Box>
+        ) : resourceType === "dashboard" ? (
+          /* Dashboard view — read-only, widgets load live via share token */
+          <SharedDashboardView token={token} dashboard={resourceData} />
         ) : (
-          /* Non-trace resource — just show the raw data */
+          /* Other resource types — fall back to raw data dump */
           <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
             <Alert severity="info" sx={{ mb: 2 }}>
               Viewing shared {resourceType}

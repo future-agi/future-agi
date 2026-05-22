@@ -57,6 +57,22 @@ export const useResolveSharedLink = (token) => {
   });
 };
 
+/**
+ * Resolve live data for one widget of a shared dashboard (public endpoint).
+ * The share token authorizes the read — no workspace auth required.
+ */
+export const useResolveSharedWidgetData = (token, widgetId, enabled = true) => {
+  return useQuery({
+    queryKey: [SHARED_LINKS_KEY, "widget-data", token, widgetId],
+    queryFn: () =>
+      axios.get(endpoints.sharedLinks.widgetData(token, widgetId)),
+    select: (d) => d.data?.result ?? d.data,
+    enabled: !!token && !!widgetId && enabled,
+    retry: false,
+    staleTime: 60_000,
+  });
+};
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------

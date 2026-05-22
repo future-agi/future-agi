@@ -42,8 +42,19 @@ function getApexType(chartType) {
   return map[chartType] || "line";
 }
 
-export default function WidgetChart({ widget, globalDateRange }) {
+/**
+ * Renders a dashboard widget chart.
+ *
+ * By default it fetches its own data via the authenticated dashboard-query
+ * endpoint. Pass `sharedData` to run it in controlled mode instead — the
+ * caller supplies `{ result, isLoading, isError }`, used by the shared-link
+ * view, which fetches widget data through a public, share-token-authorized
+ * endpoint.
+ */
+export default function WidgetChart({ widget, globalDateRange, sharedData }) {
   const theme = useTheme();
+  // Controlled mode: caller supplies the data, skip the auth-bound fetch.
+  const controlled = sharedData !== undefined;
   const queryMutation = useDashboardQuery();
   const rawQueryConfig = widget.query_config;
   // If globalDateRange is provided, override the widget's time range
@@ -99,12 +110,15 @@ export default function WidgetChart({ widget, globalDateRange }) {
     [queryConfig],
   );
   useEffect(() => {
+    if (controlled) return;
     if (queryConfig?.metrics?.length > 0) {
       queryMutation.mutate(queryConfig);
     }
-  }, [querySignature, queryConfig]);
+  }, [querySignature, queryConfig, controlled]);
 
-  const result = queryMutation.data?.data?.result;
+  const result = controlled
+    ? sharedData?.result
+    : queryMutation.data?.data?.result;
   const series = useMemo(() => {
     const s = [];
     if (result?.metrics) {
@@ -245,7 +259,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
       formatValueWithConfig(val, cfg, { fallbackDecimals, includeUnit });
   const formatVal = makeFormatter(leftAxisFormatConfig);
 
-  if (queryMutation.isPending) {
+  const showLoading = controlled
+    ? sharedData?.isLoading
+    : queryMutation.isPending;
+  const showError = controlled ? sharedData?.isError : queryMutation.isError;
+
+  if (showLoading) {
     return (
       <Box
         ref={containerRef}
@@ -263,7 +282,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
     );
   }
 
-  if (queryMutation.isError) {
+  if (showError) {
     return (
       <Box
         ref={containerRef}
