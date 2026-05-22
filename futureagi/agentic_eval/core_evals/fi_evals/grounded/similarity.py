@@ -116,6 +116,8 @@ class JaccardSimilarity(Comparator):
     def _jaccard_similarity(self, str1, str2):
         str1_tokens = set(str1.lower().split())
         str2_tokens = set(str2.lower().split())
+        if not str1_tokens and not str2_tokens:
+            return 1.0
         return len(str1_tokens.intersection(str2_tokens)) / len(
             str1_tokens.union(str2_tokens)
         )
@@ -128,6 +130,8 @@ class SorensenDiceSimilarity(Comparator):
     def _sorensen_dice_similarity(self, str1, str2):
         str1_tokens = set(str1.lower().split())
         str2_tokens = set(str2.lower().split())
+        if not str1_tokens and not str2_tokens:
+            return 1.0
         return (
             2
             * len(str1_tokens.intersection(str2_tokens))
@@ -192,14 +196,13 @@ class PhoneticSimilarity(Comparator):
         return [self._get_soundex_code(token) for token in self._tokenize(string)]
 
     def compare(self, string1: str, string2: str) -> float:
-        tokens1 = self._to_soundex_tokens(string1)
-        tokens2 = self._to_soundex_tokens(string2)
+        tokens1 = set(self._to_soundex_tokens(string1))
+        tokens2 = set(self._to_soundex_tokens(string2))
 
         if not tokens1 and not tokens2:
             return 1.0
         if not tokens1 or not tokens2:
             return 0.0
 
-        # Token-level comparison: match each token in tokens1 to best in tokens2
-        matches = sum(1 for t in tokens1 if t in set(tokens2))
-        return matches / max(len(tokens1), len(tokens2))
+        matches = len(tokens1.intersection(tokens2))
+        return matches / len(tokens1.union(tokens2))
