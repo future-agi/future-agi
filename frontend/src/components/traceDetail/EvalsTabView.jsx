@@ -584,34 +584,46 @@ const EvalsTabView = ({
           />
         </Box>
         <Box
-          onClick={() =>
-            enqueueSnackbar("Add Evals — coming soon", { variant: "info" })
-          }
           sx={{
             display: "inline-flex",
             alignItems: "center",
             gap: 0.5,
             px: 1,
             py: 0.35,
-            border: "1px solid",
+            border: "1px dashed",
             borderColor: "divider",
             borderRadius: "4px",
-            cursor: "pointer",
             bgcolor: "background.paper",
             flexShrink: 0,
-            "&:hover": { bgcolor: "action.hover" },
+            opacity: 0.7,
           }}
         >
           <Iconify
             icon="mdi:plus-circle-outline"
             width={13}
-            color="text.secondary"
+            color="text.disabled"
           />
           <Typography
-            sx={{ fontSize: 11, fontWeight: 500, color: "text.secondary" }}
+            sx={{ fontSize: 11, fontWeight: 500, color: "text.disabled" }}
           >
             Add Evals
           </Typography>
+          <Box
+            sx={{
+              px: 0.6,
+              py: 0.1,
+              borderRadius: "3px",
+              bgcolor: (theme) => alpha(theme.palette.success.main, 0.16),
+              color: "success.dark",
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: 0.2,
+              lineHeight: 1.5,
+              whiteSpace: "nowrap",
+            }}
+          >
+            Coming soon
+          </Box>
         </Box>
       </Box>
 
