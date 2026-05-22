@@ -91,7 +91,7 @@ runs:
         set -e
 
         echo "result_json=$RESULT" >> "$GITHUB_OUTPUT"
-        echo "pass_rate=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("pass_rate",""))')" >> "$GITHUB_OUTPUT"
+        echo "pass_rate=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); v=d.get("pass_rate"); print("" if v is None else v)')" >> "$GITHUB_OUTPUT"
         echo "execution_id=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("execution_id",""))')" >> "$GITHUB_OUTPUT"
         echo "status=$(echo "$RESULT" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("status",""))')" >> "$GITHUB_OUTPUT"
 

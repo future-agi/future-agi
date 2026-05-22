@@ -96,9 +96,20 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _headless_output(state: PollState) -> None:
     """Write a single JSON object to stdout and flush."""
+    # Map terminal phases to canonical status values the action.yml expects.
+    # state.run_status carries the HTTP API value ("running", "completed" …)
+    # which never becomes "timed_out" or "failed" for client-side failures.
+    if state.phase == Phase.TIMED_OUT:
+        canonical_status = "timed_out"
+    elif state.phase == Phase.FAILED and state.run_status not in {
+        "completed", "failed", "cancelled"
+    }:
+        canonical_status = "failed"
+    else:
+        canonical_status = state.run_status
     payload = {
         "execution_id": state.execution_id,
-        "status": state.run_status,
+        "status": canonical_status,
         "phase": state.phase.value,
         "pass_rate": state.pass_rate,
         "polls_done": state.polls_done,
