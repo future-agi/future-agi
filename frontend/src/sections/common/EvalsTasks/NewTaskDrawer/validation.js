@@ -11,69 +11,35 @@ const TASK_FILTER_PROPERTY_TO_API = {
 export const getTaskFilterApiKey = (property) =>
   TASK_FILTER_PROPERTY_TO_API[property] || property;
 
-// Group multiple form rows for the same (column_id, op) into a single wire
-// entry. Scalar rows for list ops collapse to array `filter_value`; multiple
-// scalar rows for a single-value op (legacy multi-value `equals` from saved
-// tasks) are promoted to `in` so the BE filter validator accepts them.
+// One form row → one wire entry. Cross-row composition is the BE's
+// responsibility; merging here would collapse "not_contains A AND
+// not_contains B" into "in [A, B]" and invert the user's intent.
 export const extractAttributeFilters = (filters) => {
-  const merged = new Map();
-  (filters || [])
-    .filter((f) => f?.property === "attributes")
-    .forEach((f) => {
-      const columnId = f.propertyId;
-      if (!columnId) return;
-      const op = f?.filterConfig?.filterOp || "equals";
-      const filterType = f?.filterConfig?.filterType || "text";
-      const key = `${columnId}|${op}|${filterType}`;
-      if (!merged.has(key)) {
-        merged.set(key, {
-          columnId,
-          op,
-          filterType,
-          rangeValue: undefined,
-          values: [],
-        });
-      }
-      const entry = merged.get(key);
-      const v = f?.filterConfig?.filterValue;
-      if (RANGE_OPS.has(op)) {
-        entry.rangeValue = Array.isArray(v) ? v : entry.rangeValue;
-      } else if (LIST_OPS.has(op)) {
-        const arr = Array.isArray(v)
-          ? v
-          : v !== undefined && v !== null && v !== ""
-            ? [v]
-            : [];
-        entry.values.push(...arr);
-      } else if (v !== undefined && v !== null && v !== "") {
-        entry.values.push(v);
-      }
-    });
+  return (filters || []).reduce((acc, f) => {
+    if (f?.property !== "attributes") return acc;
+    const columnId = f.propertyId;
+    if (!columnId) return acc;
+    const op = f?.filterConfig?.filterOp || "equals";
+    const filterType = f?.filterConfig?.filterType || "text";
+    const v = f?.filterConfig?.filterValue;
 
-  return Array.from(merged.values()).map((entry) => {
     let filterValue;
-    let filterOp = entry.op;
-    if (RANGE_OPS.has(filterOp)) {
-      filterValue = entry.rangeValue;
-    } else if (LIST_OPS.has(filterOp)) {
-      filterValue = entry.values;
-    } else if (entry.values.length > 1) {
-      // Multiple scalar rows under a single-value op → promote to `in`.
-      filterOp = "in";
-      filterValue = entry.values;
-    } else if (entry.values.length === 1) {
-      filterValue = entry.values[0];
+    if (RANGE_OPS.has(op) || LIST_OPS.has(op)) {
+      if (Array.isArray(v) && v.length > 0) filterValue = v;
+    } else if (v !== undefined && v !== null && v !== "") {
+      filterValue = v;
     }
-    return {
-      column_id: entry.columnId,
+    acc.push({
+      column_id: columnId,
       filter_config: {
-        filter_type: entry.filterType,
-        filter_op: filterOp,
+        filter_type: filterType,
+        filter_op: op,
         col_type: "SPAN_ATTRIBUTE",
         ...(filterValue !== undefined && { filter_value: filterValue }),
       },
-    };
-  });
+    });
+    return acc;
+  }, []);
 };
 
 export const getNewTaskFilters = (data, projectId, ignoreDate = false) => {

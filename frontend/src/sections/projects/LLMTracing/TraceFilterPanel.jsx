@@ -188,7 +188,6 @@ const ANNOTATOR_OPS = [
 
 // Direct UUID identifiers support exact multi-select through the canonical
 // list operators. Avoid substring/null operators for these fields.
-const ID_ONLY_FIELDS = new Set(["trace_id", "span_id", "session"]);
 const ID_ONLY_OPS = [
   { value: "in", label: "equals" },
   { value: "not_in", label: "not equals" },
@@ -1004,9 +1003,6 @@ function ValuePicker({
           })()
         ) : (
           selectedValues.slice(0, 3).map((v) => {
-            // Resolve the display label from static choices or rendered
-            // options. Falls back to the raw value (e.g. plain strings
-            // without a label).
             const match = options.find((o) => {
               const ov = typeof o === "string" ? o : o.value;
               return ov === v;

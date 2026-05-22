@@ -14,6 +14,7 @@ const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
 // `equals`/`not_equals`. Rewrite to `in`/`not_in` on read so the new
 // panel renders the row under the multi-value picker.
 const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
+const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
 
 const isStringLike = (fieldType) =>
   fieldType === "text" || fieldType === "string";
@@ -151,9 +152,15 @@ function convertNewToOld(newFilters) {
   return out;
 }
 
-// ── form filter → new panel format (one row per property+op group) ──
+// ── form filter → new panel format ──
+// One form row → one panel row. Only ops with a natural multi-value shape
+// (range, list, or string equals/not_equals just rewritten to in/not_in via
+// HYDRATE_STRING_OP) collapse same-(field, op) rows into one multi-value
+// panel row — grouping any other op (e.g. not_contains) would let the chip
+// + panel UI fold "exclude A AND exclude B" into a single "[A, B]" row.
 function convertOldToNew(oldFilters) {
   const groups = new Map();
+  const result = [];
   (oldFilters || []).forEach((f) => {
     if (!f) return;
     const isAttribute = f.property === "attributes";
@@ -166,39 +173,58 @@ function convertOldToNew(oldFilters) {
     const fieldType =
       ft === "number" ? "number" : ft === "boolean" ? "boolean" : "string";
 
-    let op = rawOp;
-    if (isStringLike(fieldType) && HYDRATE_STRING_OP[op]) {
+    let op = LEGACY_OP_ALIAS[rawOp] || rawOp;
+    const hydrated = isStringLike(fieldType) && HYDRATE_STRING_OP[op];
+    if (hydrated) {
       op = HYDRATE_STRING_OP[op];
     }
 
-    const key = `${field}|${op}|${category}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
+    const isMultiValueOp =
+      RANGE_OPS.has(op) || LIST_OPS.has(op) || Boolean(hydrated);
+
+    let entry;
+    if (isMultiValueOp) {
+      const key = `${field}|${op}|${category}`;
+      entry = groups.get(key);
+      if (!entry) {
+        entry = {
+          field,
+          fieldLabel: f.fieldLabel || field,
+          fieldType,
+          fieldCategory: category,
+          operator: op,
+          value: [],
+        };
+        groups.set(key, entry);
+        result.push(entry);
+      }
+    } else {
+      entry = {
         field,
         fieldLabel: f.fieldLabel || field,
         fieldType,
         fieldCategory: category,
         operator: op,
         value: [],
-      });
+      };
+      result.push(entry);
     }
 
     if (NO_VALUE_OPS.has(op)) return;
 
     const val = f?.filterConfig?.filterValue;
     if (RANGE_OPS.has(op)) {
-      // Range: the form row carries the [low, high] array directly.
-      groups.get(key).value = Array.isArray(val) ? val : [];
+      entry.value = Array.isArray(val) ? val : [];
       return;
     }
     if (val === undefined || val === null || val === "") return;
     if (Array.isArray(val)) {
-      groups.get(key).value.push(...val);
+      entry.value.push(...val);
     } else {
-      groups.get(key).value.push(val);
+      entry.value.push(val);
     }
   });
-  return Array.from(groups.values());
+  return result;
 }
 
 // ── Chip display for an active filter ──
