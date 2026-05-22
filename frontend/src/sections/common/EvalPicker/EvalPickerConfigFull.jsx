@@ -1140,13 +1140,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             setIsDirty(true);
           }}
           inputProps={{ maxLength: 50 }}
-          error={!isEditMode && evalName.length >= 50}
+          error={!isEditMode && evalName.length > 50}
           helperText={
             isEditMode
               ? undefined
               : evalName.length >= 50
                 ? "Name can't be longer than 50 characters"
-                : `Use lowercase letters, numbers, hyphens (-) and underscores (_) only. ${evalName.length}/50`
+                : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
           FormHelperTextProps={{ sx: { fontSize: "11px", mt: 0.25, mx: 0 } }}
           sx={{ "& .MuiInputBase-root": { fontSize: "13px", height: 34 } }}
@@ -1468,11 +1468,30 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
                     Scoring
                   </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ mb: 1.5, display: "block" }}
+                  >
+                    Code evaluator returns a score between 0 and 1. Set a pass
+                    threshold below.
+                  </Typography>
+                  <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+                    Pass Threshold
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ mb: 1, display: "block" }}
+                  >
+                    Scores at or above this threshold are considered a pass.
+                  </Typography>
                   <Box
                     sx={{
                       display: "flex",
                       alignItems: "center",
                       gap: 2,
+                      px: 1,
                     }}
                   >
                     <Typography variant="caption">0</Typography>
