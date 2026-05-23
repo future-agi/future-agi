@@ -13,6 +13,7 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { useGetNodeExecutionDetail } from "src/api/agent-playground/agent-playground";
 import CustomJsonViewer from "src/components/custom-json-viewer/CustomJsonViewer";
+import { over } from "lodash";
 
 const tryParseJson = (str) => {
   if (typeof str !== "string") return null;
@@ -30,6 +31,8 @@ const tryParseJson = (str) => {
   }
   return null;
 };
+
+const IMAGE_URL_RE = /^https?:\/\/.+\.(png|jpe?g|webp|gif)(\?.*)?$/i;
 
 const PayloadContent = ({ value }) => {
   if (!value) {
@@ -65,6 +68,37 @@ const PayloadContent = ({ value }) => {
           object={value}
           defaultInspectDepth={2}
           collapseStringsAfterLength={false}
+        />
+      </Box>
+    );
+  }
+
+  // Render image URLs inline with click-to-expand
+  if (typeof value === "string" && IMAGE_URL_RE.test(value.trim())) {
+    return (
+      <Box
+        sx={{
+          height: "100%",
+          padding: "4px 8px",
+          display: "flex",
+          alignItems: "flex-start",
+          overflowY: "auto",
+        }}
+      >
+        <Box
+          component="img"
+          src={value.trim()}
+          alt="node output"
+          sx={{
+            maxWidth: "100%",
+            maxHeight: 480,
+            objectFit: "contain",
+            borderRadius: 1,
+            cursor: "pointer",
+          }}
+          onClick={() =>
+            window.open(value.trim(), "_blank", "noopener,noreferrer")
+          }
         />
       </Box>
     );

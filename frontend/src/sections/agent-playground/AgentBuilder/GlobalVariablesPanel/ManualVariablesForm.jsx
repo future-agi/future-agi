@@ -18,8 +18,13 @@ import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
 import { useUpdateDatasetCell } from "../../../../api/agent-playground/agent-playground";
 import useWorkflowExecution from "../../hooks/useWorkflowExecution";
+import PlaygroundInput from "src/components/PlaygroundInput/PlaygroundInput";
+
+const IMAGE_URL_RE = /^https?:\/\/.+\.(png|jpe?g|webp|gif)(\?.*)?$/i;
 
 function FormField({ label, value, onChange }) {
+  const isImageUrl = IMAGE_URL_RE.test(value ?? "");
+
   return (
     <Stack
       direction={"column"}
@@ -47,17 +52,29 @@ function FormField({ label, value, onChange }) {
           fontWeight={"fontWeightMedium"}
         >{`{{${label}}}`}</Typography>
       </Box>
-      <TextField
-        size="small"
-        variant="outlined"
-        sx={{
-          "& .MuiOutlinedInput-notchedOutline": {
-            border: "none",
-          },
-        }}
-        value={value}
-        onChange={onChange}
-      />
+      {isImageUrl ? (
+        <Box sx={{ p: 1 }}>
+          <PlaygroundInput
+            fieldTitle=""
+            value={{ type: "image", value: "", url: value }}
+            onChange={(e) => onChange({ target: { value: e.url ?? "" } })}
+            inputType="image"
+            showTabs={false}
+          />
+        </Box>
+      ) : (
+        <TextField
+          size="small"
+          variant="outlined"
+          sx={{
+            "& .MuiOutlinedInput-notchedOutline": {
+              border: "none",
+            },
+          }}
+          value={value}
+          onChange={onChange}
+        />
+      )}
     </Stack>
   );
 }
