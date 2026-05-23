@@ -102,7 +102,7 @@ def _headless_output(state: PollState) -> None:
     if state.phase == Phase.TIMED_OUT:
         canonical_status = "timed_out"
     elif state.phase == Phase.FAILED and state.run_status not in {
-        "completed", "failed", "cancelled"
+        "failed", "cancelled"
     }:
         canonical_status = "failed"
     else:
