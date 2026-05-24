@@ -720,14 +720,14 @@ const DevelopData = React.forwardRef(
 
         // Use unique row ID instead of rowIndex
         prev.forEach((row) => {
-          const id = row.data?.rowId;
+          const id = row.data?.row_id ?? row.data?.rowId;
           if (id !== undefined) {
             mergedMap.set(id, row);
           }
         });
 
         newRows.forEach((row) => {
-          const id = row.data?.rowId;
+          const id = row.data?.row_id ?? row.data?.rowId;
           if (id !== undefined) {
             mergedMap.set(id, row);
           }
@@ -840,7 +840,7 @@ const DevelopData = React.forwardRef(
         return;
       }
       const columnId = params?.column?.colId;
-      const rowId = params?.data?.rowId;
+      const rowId = params?.data?.row_id ?? params?.data?.rowId;
       const newValue = params?.newValue;
       const dataType = params?.column?.colDef?.dataType;
 
@@ -1219,7 +1219,7 @@ const DevelopData = React.forwardRef(
                   suppressRowTransform={true}
                   suppressAnimationFrame={true}
                   getRowId={({ data }) => {
-                    return data.rowId;
+                    return data.row_id ?? data.rowId;
                   }}
                   onCellClicked={(params) => {
                     setActiveRow(null);

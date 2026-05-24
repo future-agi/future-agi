@@ -47,8 +47,10 @@ function StatusBar({ statusBreakdown, total }) {
   if (!total) return null;
   const segments = [
     { key: "completed", color: "success.main", label: "Completed" },
-    { key: "in_progress", color: "warning.main", label: "In Progress" },
-    { key: "pending", color: "info.main", label: "Pending" },
+    { key: "in_review", color: "warning.main", label: "In Review" },
+    { key: "needs_changes", color: "error.main", label: "Needs Changes" },
+    { key: "resubmitted", color: "secondary.main", label: "Resubmitted" },
+    { key: "pending", color: "info.main", label: "Pending Annotation" },
     { key: "skipped", color: "text.disabled", label: "Skipped" },
   ];
 
@@ -92,7 +94,13 @@ function StatusBar({ statusBreakdown, total }) {
           );
         })}
       </Box>
-      <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+      <Stack
+        direction="row"
+        spacing={2}
+        useFlexGap
+        flexWrap="wrap"
+        sx={{ mt: 1 }}
+      >
         {segments.map((seg) => (
           <Stack
             key={seg.key}

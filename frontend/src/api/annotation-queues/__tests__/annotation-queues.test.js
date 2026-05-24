@@ -15,7 +15,10 @@ import {
   useCreateAutomationRule,
   useCreateAnnotationQueue,
   useEvaluateRule,
+  useBulkReviewItems,
   useCreateDiscussionComment,
+  useDeleteDiscussionComment,
+  useGetOrCreateDefaultQueue,
   useAnnotateDetail,
   useAssignQueueItems,
   useCompleteItem,
@@ -30,6 +33,7 @@ import {
   useResolveDiscussionThread,
   useSubmitAnnotations,
   useToggleDiscussionReaction,
+  useUpdateDiscussionComment,
 } from "../annotation-queues";
 
 vi.mock("src/utils/axios", () => ({
@@ -100,6 +104,21 @@ describe("Annotation Queues API", () => {
         "/model-hub/annotation-queues/q-123/update-status/",
       );
     });
+
+    it("generates correct bulk-review and discussion-comment endpoints", () => {
+      expect(annotationQueueEndpoints.bulkReviewItems("q-123")).toBe(
+        "/model-hub/annotation-queues/q-123/items/bulk-review/",
+      );
+      expect(
+        annotationQueueEndpoints.discussionComment(
+          "q-123",
+          "item-1",
+          "comment-1",
+        ),
+      ).toBe(
+        "/model-hub/annotation-queues/q-123/items/item-1/discussion/comments/comment-1/",
+      );
+    });
   });
 
   describe("queue query keys", () => {
@@ -168,6 +187,42 @@ describe("Annotation Queues API", () => {
           { variant: "error" },
         );
       });
+    });
+  });
+
+  describe("useGetOrCreateDefaultQueue", () => {
+    it("surfaces the backend org-wide queue limit message in the snackbar", async () => {
+      const backendMessage =
+        "You've reached the 3 annotation queues limit across this organization (5 existing queues; 2 in the current workspace and 3 in other workspaces). Archive unused queues in another workspace or upgrade your plan.";
+
+      axios.post.mockRejectedValueOnce({
+        error: {
+          code: "ENTITLEMENT_LIMIT",
+          message: backendMessage,
+          detail: {
+            current_usage: 5,
+            limit: 3,
+            workspace_usage: 2,
+            other_workspace_usage: 3,
+          },
+        },
+      });
+
+      const { result } = renderHook(() => useGetOrCreateDefaultQueue(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({ projectId: "project-1" });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(backendMessage, {
+          variant: "error",
+        });
+      });
+      expect(axios.post).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/get-or-create-default/",
+        { project_id: "project-1" },
+      );
     });
   });
 
@@ -346,6 +401,34 @@ describe("Annotation Queues API", () => {
       );
     });
 
+    it("does not add completed navigation params unless the UI explicitly opts in", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: {
+          result: {
+            item: { id: "item-1", status: "completed" },
+            next_item_id: "item-2",
+          },
+        },
+      });
+
+      const { result } = renderHook(
+        () => useAnnotateDetail("queue-1", "item-1"),
+        {
+          wrapper: createQueryWrapper(),
+        },
+      );
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/item-1/annotate-detail/",
+        undefined,
+      );
+      expect(result.current.data.next_item_id).toBe("item-2");
+    });
+
     it("passes review view mode without requiring a pending-review filter", async () => {
       axios.get.mockResolvedValueOnce({
         data: { result: { annotations: [] } },
@@ -496,6 +579,29 @@ describe("Annotation Queues API", () => {
         "/model-hub/annotation-queues/queue-1/items/next-item/",
         { params: { include_completed: true } },
       );
+    });
+
+    it("leaves completed queue default navigation to the backend", async () => {
+      axios.get.mockResolvedValueOnce({
+        data: { result: { item: { id: "item-1", status: "completed" } } },
+      });
+
+      const { result } = renderHook(() => useNextItem("queue-1"), {
+        wrapper: createQueryWrapper(),
+      });
+
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+
+      expect(axios.get).toHaveBeenCalledWith(
+        "/model-hub/annotation-queues/queue-1/items/next-item/",
+        undefined,
+      );
+      expect(result.current.data).toEqual({
+        id: "item-1",
+        status: "completed",
+      });
     });
 
     it("passes review view mode for manager submission browsing", async () => {
@@ -961,6 +1067,79 @@ describe("Annotation Queues API", () => {
     });
   });
 
+  describe("useBulkReviewItems", () => {
+    it("posts selected item ids and invalidates review-related queries", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { result: { reviewed: 2, errors: [] } },
+      });
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      const { result } = renderHook(() => useBulkReviewItems(), {
+        wrapper: createQueryWrapper(queryClient),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemIds: ["item-1", "item-2"],
+        action: "approve",
+        notes: "Looks good.",
+      });
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/bulk-review/",
+          {
+            item_ids: ["item-1", "item-2"],
+            action: "approve",
+            notes: "Looks good.",
+          },
+        );
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith("2 items reviewed", {
+          variant: "success",
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: queueItemKeys.all("queue-1"),
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.nextItem("queue-1"),
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotationQueueKeys.progress("queue-1"),
+        });
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotationQueueKeys.analytics("queue-1"),
+        });
+      });
+    });
+
+    it("warns when the backend skips some selected items", async () => {
+      axios.post.mockResolvedValueOnce({
+        data: { result: { reviewed: 1, errors: [{ item_id: "item-2" }] } },
+      });
+
+      const { result } = renderHook(() => useBulkReviewItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemIds: ["item-1", "item-2"],
+        action: "approve",
+      });
+
+      await waitFor(() => {
+        expect(enqueueSnackbar).toHaveBeenCalledWith(
+          "1 items reviewed, 1 skipped",
+          { variant: "warning" },
+        );
+      });
+    });
+  });
+
   describe("useOrgMembersInfinite", () => {
     it("refetches on mount so newly added members are available in queue settings", async () => {
       const queryClient = createTestQueryClient();
@@ -1090,14 +1269,23 @@ describe("Annotation Queues API", () => {
           queryKey: annotateKeys.discussion("queue-1", "item-1"),
         });
       });
+      expect(invalidateSpy).toHaveBeenCalledTimes(1);
+      expect(invalidateSpy).not.toHaveBeenCalledWith({
+        queryKey: annotateKeys.detail("queue-1", "item-1"),
+      });
+      expect(invalidateSpy).not.toHaveBeenCalledWith({
+        queryKey: annotateKeys.annotations("queue-1", "item-1"),
+      });
     });
 
     it("posts resolve, reopen, and reaction actions", async () => {
       axios.post.mockResolvedValue({ data: { result: {} } });
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
 
       const { result: resolveResult } = renderHook(
         () => useResolveDiscussionThread(),
-        { wrapper: createQueryWrapper() },
+        { wrapper: createQueryWrapper(queryClient) },
       );
       resolveResult.current.mutate({
         queueId: "queue-1",
@@ -1107,7 +1295,7 @@ describe("Annotation Queues API", () => {
 
       const { result: reopenResult } = renderHook(
         () => useReopenDiscussionThread(),
-        { wrapper: createQueryWrapper() },
+        { wrapper: createQueryWrapper(queryClient) },
       );
       reopenResult.current.mutate({
         queueId: "queue-1",
@@ -1117,7 +1305,7 @@ describe("Annotation Queues API", () => {
 
       const { result: reactionResult } = renderHook(
         () => useToggleDiscussionReaction(),
-        { wrapper: createQueryWrapper() },
+        { wrapper: createQueryWrapper(queryClient) },
       );
       reactionResult.current.mutate({
         queueId: "queue-1",
@@ -1139,6 +1327,66 @@ describe("Annotation Queues API", () => {
           "/model-hub/annotation-queues/queue-1/items/item-1/discussion/comments/comment-1/reaction/",
           { emoji: "👍" },
         );
+      });
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledTimes(3);
+      });
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: annotateKeys.discussion("queue-1", "item-1"),
+      });
+      expect(invalidateSpy).not.toHaveBeenCalledWith({
+        queryKey: annotateKeys.detail("queue-1", "item-1"),
+      });
+      expect(invalidateSpy).not.toHaveBeenCalledWith({
+        queryKey: annotateKeys.annotations("queue-1", "item-1"),
+      });
+    });
+
+    it("patches and deletes author comments through the discussion comment endpoint", async () => {
+      axios.patch.mockResolvedValueOnce({ data: { result: {} } });
+      axios.delete.mockResolvedValueOnce({ data: { result: {} } });
+      const queryClient = createTestQueryClient();
+      const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
+
+      const { result: updateResult } = renderHook(
+        () => useUpdateDiscussionComment(),
+        { wrapper: createQueryWrapper(queryClient) },
+      );
+      updateResult.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        commentId: "comment-1",
+        comment: "Updated",
+        mentionedUserIds: ["user-2"],
+      });
+
+      const { result: deleteResult } = renderHook(
+        () => useDeleteDiscussionComment(),
+        { wrapper: createQueryWrapper(queryClient) },
+      );
+      deleteResult.current.mutate({
+        queueId: "queue-1",
+        itemId: "item-1",
+        commentId: "comment-1",
+      });
+
+      await waitFor(() => {
+        expect(axios.patch).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/discussion/comments/comment-1/",
+          {
+            comment: "Updated",
+            mentioned_user_ids: ["user-2"],
+          },
+        );
+        expect(axios.delete).toHaveBeenCalledWith(
+          "/model-hub/annotation-queues/queue-1/items/item-1/discussion/comments/comment-1/",
+        );
+      });
+
+      await waitFor(() => {
+        expect(invalidateSpy).toHaveBeenCalledWith({
+          queryKey: annotateKeys.discussion("queue-1", "item-1"),
+        });
       });
     });
   });

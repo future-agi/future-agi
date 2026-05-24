@@ -31,14 +31,21 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if obj.metric:
-                try:
-                    eval_config = CustomEvalConfig.objects.get(id=obj.metric)
+                eval_config = (
+                    CustomEvalConfig.objects.filter(
+                        id=obj.metric,
+                        project=obj.project,
+                        deleted=False,
+                    )
+                    .select_related("eval_template")
+                    .first()
+                )
+                if eval_config:
                     metric_name = eval_config.name
                     if obj.threshold_metric_value:
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
-                except CustomEvalConfig.DoesNotExist:
-                    return "Invalid Eval"
+                return "Invalid Eval"
         return obj.get_metric_type_display()
 
     def validate_notification_emails(self, value):
@@ -262,14 +269,21 @@ class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if obj.metric:
-                try:
-                    eval_config = CustomEvalConfig.objects.get(id=obj.metric)
+                eval_config = (
+                    CustomEvalConfig.objects.filter(
+                        id=obj.metric,
+                        project=obj.project,
+                        deleted=False,
+                    )
+                    .select_related("eval_template")
+                    .first()
+                )
+                if eval_config:
                     metric_name = eval_config.name
                     if obj.threshold_metric_value:
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
-                except CustomEvalConfig.DoesNotExist:
-                    return "Invalid Eval"
+                return "Invalid Eval"
         return obj.get_metric_type_display()
 
 

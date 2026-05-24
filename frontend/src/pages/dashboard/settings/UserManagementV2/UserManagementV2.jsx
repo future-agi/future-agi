@@ -48,10 +48,7 @@ const UserManagementV2 = ({ workspaceScope = false }) => {
   const [selectedStatus, setSelectedStatus] = useState("");
   const [selectedRole, setSelectedRole] = useState("");
   const { setUsersList } = useUserManagementStore();
-  workspaceId =
-    workspaceId ??
-    currentWorkspaceId ??
-    user?.default_workspace_id;
+  workspaceId = workspaceId ?? currentWorkspaceId ?? user?.default_workspace_id;
 
   // Use integer levels when available, fall back to string role check
   const canManageUsers =

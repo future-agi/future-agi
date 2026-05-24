@@ -865,6 +865,18 @@ class TestManageTeamViewGet:
         """Can search team members."""
         response = auth_client.get("/accounts/team/users/", {"search_query": user.name})
         assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert any(row["id"] == str(user.id) for row in result["results"])
+
+    def test_list_team_with_email_search(self, auth_client, user):
+        """Can search team members by email as shown in settings tables."""
+        response = auth_client.get(
+            "/accounts/team/users/", {"search_query": user.email}
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["total"] >= 1
+        assert any(row["id"] == str(user.id) for row in result["results"])
 
     def test_list_team_with_is_active_filter(self, auth_client):
         """Can filter by is_active."""

@@ -1,3 +1,4 @@
+from django.db.models import Q
 from rest_framework import serializers
 
 from tracer.models.project import Project
@@ -16,10 +17,16 @@ class TraceSerializer(serializers.ModelSerializer):
         queryset=Project.objects.all(), many=False
     )
     project_version = serializers.PrimaryKeyRelatedField(
-        queryset=ProjectVersion.objects.all(), many=False, required=False
+        queryset=ProjectVersion.objects.all(),
+        many=False,
+        required=False,
+        allow_null=True,
     )
     session = serializers.PrimaryKeyRelatedField(
-        queryset=TraceSession.objects.all(), many=False, required=False
+        queryset=TraceSession.objects.all(),
+        many=False,
+        required=False,
+        allow_null=True,
     )
 
     class Meta:
@@ -37,6 +44,86 @@ class TraceSerializer(serializers.ModelSerializer):
             "external_id",
             "tags",
         ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        if not request:
+            return
+
+        organization = getattr(request, "organization", None) or getattr(
+            request.user, "organization", None
+        )
+        if not organization:
+            return
+
+        project_scope = Q(organization=organization)
+        related_project_scope = Q(project__organization=organization)
+        workspace = getattr(request, "workspace", None)
+        if workspace:
+            if getattr(workspace, "is_default", False):
+                project_scope &= (
+                    Q(workspace=workspace)
+                    | Q(workspace__is_default=True, workspace__organization=organization)
+                    | Q(workspace__isnull=True)
+                )
+                related_project_scope &= (
+                    Q(project__workspace=workspace)
+                    | Q(
+                        project__workspace__is_default=True,
+                        project__workspace__organization=organization,
+                    )
+                    | Q(project__workspace__isnull=True)
+                )
+            else:
+                project_scope &= Q(workspace=workspace)
+                related_project_scope &= Q(project__workspace=workspace)
+
+        project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+        self.fields["project"].queryset = project_manager.filter(
+            project_scope, deleted=False
+        )
+
+        project_version_manager = getattr(
+            ProjectVersion, "no_workspace_objects", ProjectVersion.objects
+        )
+        self.fields["project_version"].queryset = project_version_manager.filter(
+            related_project_scope,
+            project__deleted=False,
+            deleted=False,
+        )
+
+        trace_session_manager = getattr(
+            TraceSession, "no_workspace_objects", TraceSession.objects
+        )
+        self.fields["session"].queryset = trace_session_manager.filter(
+            related_project_scope,
+            project__deleted=False,
+            deleted=False,
+        )
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        instance = getattr(self, "instance", None)
+        project = attrs.get("project") or getattr(instance, "project", None)
+        project_version = attrs.get("project_version")
+        if "project_version" not in attrs and instance is not None:
+            project_version = instance.project_version
+        session = attrs.get("session")
+        if "session" not in attrs and instance is not None:
+            session = instance.session
+
+        if project_version and project and project_version.project_id != project.id:
+            raise serializers.ValidationError(
+                {"project_version": "Project version must belong to the selected project."}
+            )
+
+        if session and project and session.project_id != project.id:
+            raise serializers.ValidationError(
+                {"session": "Session must belong to the selected project."}
+            )
+
+        return attrs
 
 
 class CommaSeparatedStringListField(serializers.Field):

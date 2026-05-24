@@ -52,7 +52,9 @@ export const serializeSavedViewConfig = (config = {}) => {
     (key) => !SAVED_VIEW_CONFIG_KEYS.has(key),
   );
   if (unknownKeys.length) {
-    throw new Error(`Unknown saved view config keys: ${unknownKeys.join(", ")}`);
+    throw new Error(
+      `Unknown saved view config keys: ${unknownKeys.join(", ")}`,
+    );
   }
 
   return Object.fromEntries(
@@ -220,13 +222,15 @@ export const useCreateSavedView = (projectId) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data) =>
-      axios.post(endpoints.savedViews.create, buildCreateSavedViewPayload(data)),
+      axios.post(
+        endpoints.savedViews.create,
+        buildCreateSavedViewPayload(data),
+      ),
     onSuccess: (response) => {
       const newView = response?.data?.result;
       if (newView) {
-        queryClient.setQueryData(
-          [SAVED_VIEWS_KEY, projectId],
-          (old) => appendCustomViewToCache(old, newView),
+        queryClient.setQueryData([SAVED_VIEWS_KEY, projectId], (old) =>
+          appendCustomViewToCache(old, newView),
         );
       }
       queryClient.invalidateQueries({

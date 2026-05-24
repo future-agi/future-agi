@@ -2,6 +2,7 @@ import json
 
 from rest_framework import serializers
 
+from model_hub.constants import MAX_EMPTY_DATASET_ROWS
 from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
@@ -1542,7 +1543,7 @@ class EvalApiLogTableQuerySerializer(StrictInputSerializer):
         required=False,
         default="logs",
     )
-    search = serializers.CharField(required=False, allow_blank=True, default="")
+    search = json_object_query_param_field(required=False, default=dict)
     filters = filter_list_query_param_field(required=False, default=list)
     sort = DatasetSortListQueryParamField(required=False, default=list)
 
@@ -1932,7 +1933,7 @@ class EvalExecutionResponseResultSerializer(serializers.Serializer):
     result = serializers.JSONField(required=False)
     reason = serializers.CharField(required=False, allow_blank=True)
     score = serializers.JSONField(required=False, allow_null=True)
-    metadata = serializers.JSONField(required=False)
+    metadata = serializers.JSONField(required=False, allow_null=True)
     log_id = serializers.UUIDField(required=False)
     error_localizer = serializers.JSONField(required=False)
     error_details = serializers.JSONField(required=False)
@@ -2198,6 +2199,7 @@ class CompositeEvalCreateRequestSerializer(serializers.Serializer):
         default="weighted_avg",
     )
     child_weights = serializers.JSONField(required=False, allow_null=True)
+    child_pinned_versions = serializers.JSONField(required=False, allow_null=True)
     composite_child_axis = serializers.ChoiceField(
         choices=["", "pass_fail", "percentage", "choices", "code"],
         required=False,
@@ -2231,6 +2233,7 @@ class CompositeEvalUpdateRequestSerializer(serializers.Serializer):
         allow_null=True,
     )
     child_weights = serializers.JSONField(required=False, allow_null=True)
+    child_pinned_versions = serializers.JSONField(required=False, allow_null=True)
     composite_child_axis = serializers.ChoiceField(
         choices=["", "pass_fail", "percentage", "choices", "code"],
         required=False,
@@ -2741,7 +2744,9 @@ class CreateEmptyDatasetRequestSerializer(serializers.Serializer):
     new_dataset_name = serializers.CharField()
     model_type = serializers.CharField(required=False, allow_blank=True)
     is_sdk = serializers.BooleanField(required=False, default=False)
-    row = serializers.IntegerField(required=False, min_value=0)
+    row = serializers.IntegerField(
+        required=False, min_value=0, max_value=MAX_EMPTY_DATASET_ROWS
+    )
 
 
 class ManualDatasetCreateRequestSerializer(serializers.Serializer):

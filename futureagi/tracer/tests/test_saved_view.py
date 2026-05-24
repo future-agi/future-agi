@@ -2,11 +2,9 @@
 Tests for SavedView (Tab System & Saved Views) — Phase 1A.
 """
 
-import importlib
 import uuid
 
 import pytest
-from django.apps import apps
 
 from tracer.models.saved_view import SavedView
 
@@ -27,18 +25,6 @@ def _filter(column_id="status", filter_type="text", filter_op="equals", value="E
 
 def _view_url(view, action=""):
     return f"{BASE_URL}/{view.id}/{action}?project_id={view.project_id}"
-
-
-def _legacy_filter():
-    return {
-        "columnId": "status",
-        "filterConfig": {
-            "colType": "SYSTEM_METRIC",
-            "filterType": "text",
-            "filterOp": "equals",
-            "filterValue": "ERROR",
-        },
-    }
 
 
 @pytest.fixture
@@ -410,32 +396,6 @@ class TestSavedViewCreate:
         config = response.json()["result"]["config"]
         assert config["extra_filters"][0]["column_id"] == "status"
         assert config["display"]["dateFilter"]["dateOption"] == "Last 7 days"
-
-    @pytest.mark.django_db
-    def test_saved_view_config_key_migration_canonicalizes_existing_views(
-        self, saved_view
-    ):
-        migration = importlib.import_module(
-            "tracer.migrations.0079_rename_saved_view_config_keys"
-        )
-        saved_view.config = {
-            "subTab": "sessions",
-            "filters": {
-                "extraFilters": [_legacy_filter()],
-                "dateFilter": {"dateOption": "Last 7 days"},
-            },
-        }
-        saved_view.save(update_fields=["config"])
-
-        migration.rename_saved_view_config_keys(apps, None)
-
-        saved_view.refresh_from_db()
-        config = saved_view.config
-        assert config["sub_tab"] == "sessions"
-        assert "filters" not in config
-        assert config["display"]["dateFilter"]["dateOption"] == "Last 7 days"
-        assert config["extra_filters"][0]["column_id"] == "status"
-        assert config["extra_filters"][0]["filter_config"]["filter_op"] == "equals"
 
 
 class TestSavedViewRetrieve:

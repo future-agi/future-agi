@@ -121,7 +121,7 @@ class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
             # The model name will be used directly by the optimizer
             try:
                 optimizer_model = AIModel.objects.filter(
-                    model_name__iexact=optimizer_model_name
+                    user_model_id__iexact=optimizer_model_name
                 ).first()
                 if optimizer_model:
                     validated_data["optimizer_model"] = optimizer_model
@@ -221,7 +221,7 @@ class DatasetOptimizationListSerializer(serializers.ModelSerializer):
     def get_optimizer_model_id(self, obj):
         # Return the model name which is what the frontend expects
         if obj.optimizer_model:
-            return obj.optimizer_model.model_name
+            return obj.optimizer_model.user_model_id
         return None
 
 

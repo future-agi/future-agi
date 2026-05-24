@@ -71,6 +71,21 @@ const CustomColLoadingSkeleton = () => (
   />
 );
 
+const TERMINAL_CALL_STATUSES = new Set([
+  "completed",
+  "dropped",
+  "ended",
+  "error",
+  "failed",
+  "not-connected",
+  "ok",
+]);
+
+const isSelectableForAnnotation = (row) => {
+  const status = String(row?.status || "").toLowerCase();
+  return TERMINAL_CALL_STATUSES.has(status);
+};
+
 const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   {
     id,
@@ -304,7 +319,9 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         flex: 0,
         minWidth: 120,
         hide: c.isVisible === false,
-        cellRenderer: isLoading ? CustomColLoadingSkeleton : CustomColCellRenderer,
+        cellRenderer: isLoading
+          ? CustomColLoadingSkeleton
+          : CustomColCellRenderer,
         valueGetter: (params) => {
           if (!params.data) return null;
           let value = params.data[c.id];
@@ -433,8 +450,14 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
                       // the banner by up to `pageLimit - 1` rows.
                       const totalMatching =
                         typeof data?.count === "number" ? data.count : null;
+                      const unavailableSelectedCount = selectedRows.filter(
+                        (row) =>
+                          row?.trace_id && !isSelectableForAnnotation(row),
+                      ).length;
                       onSelectionMeta({
                         traceIds,
+                        selectedCount: traceIds.length,
+                        unavailableSelectedCount,
                         isAllOnPageSelected:
                           currentPageSize > 0 &&
                           selectedRows.length === currentPageSize,

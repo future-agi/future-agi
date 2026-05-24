@@ -34,9 +34,12 @@ export const getComplexFilterValidation = (
         .transform((val) => {
           return val;
         }),
-      _meta: z.object({
-        parentProperty: z.string(),
-      }),
+      _meta: z
+        .object({
+          parentProperty: z.string().optional(),
+        })
+        .optional()
+        .default({ parentProperty: "" }),
       filter_config: z
         .object({
           filter_op: z.enum(
@@ -50,6 +53,7 @@ export const getComplexFilterValidation = (
           filter_value: z
             .union([
               z.string(),
+              z.number(),
               z.array(z.string()),
               z.array(z.any()),
               z.boolean(),
@@ -70,63 +74,50 @@ export const getComplexFilterValidation = (
             }
 
             switch (val.filter_type) {
-              case "number":
-                if (!val.filter_value || !Array.isArray(val.filter_value))
-                  return false;
+              case "number": {
+                const values = Array.isArray(val.filter_value)
+                  ? val.filter_value
+                  : [val.filter_value];
+                const hasValue = (item) =>
+                  item !== "" && item !== null && item !== undefined;
 
                 if (RangeOperators.has(val.filter_op)) {
-                  if (val.filter_value.length !== 2) return false;
-                  if (
-                    val.filter_value[0].length === 0 ||
-                    val.filter_value[1].length === 0
-                  )
+                  if (values.length !== 2 || !values.every(hasValue))
+                    return false;
+                  return values.every(
+                    (item) => !Number.isNaN(parseFloat(item)),
+                  );
+                }
+
+                if (values.length === 0 || !hasValue(values[0])) return false;
+                return !Number.isNaN(parseFloat(values[0]));
+              }
+              case "datetime": {
+                const values = Array.isArray(val.filter_value)
+                  ? val.filter_value
+                  : [val.filter_value];
+                const hasValue = (item) =>
+                  item !== "" && item !== null && item !== undefined;
+
+                if (RangeOperators.has(val.filter_op)) {
+                  if (values.length !== 2 || !values.every(hasValue))
                     return false;
                   try {
-                    parseFloat(val.filter_value[0]);
-                    parseFloat(val.filter_value[1]);
+                    format(new Date(values[0]), "yyyy-MM-dd HH:mm:ss");
+                    format(new Date(values[1]), "yyyy-MM-dd HH:mm:ss");
                   } catch (error) {
                     return false;
                   }
                 } else {
-                  if (val.filter_value.length == 0) return false;
-                  if (val.filter_value[0].length === 0) return false;
+                  if (values.length === 0 || !hasValue(values[0])) return false;
                   try {
-                    parseFloat(val.filter_value[0]);
+                    format(new Date(values[0]), "yyyy-MM-dd HH:mm:ss");
                   } catch (error) {
                     return false;
                   }
                 }
                 return true;
-              case "datetime":
-                if (!val.filter_value || !Array.isArray(val.filter_value))
-                  return false;
-
-                if (RangeOperators.has(val.filter_op)) {
-                  if (val.filter_value.length !== 2) return false;
-                  try {
-                    format(
-                      new Date(val.filter_value[0]),
-                      "yyyy-MM-dd HH:mm:ss",
-                    );
-                    format(
-                      new Date(val.filter_value[1]),
-                      "yyyy-MM-dd HH:mm:ss",
-                    );
-                  } catch (error) {
-                    return false;
-                  }
-                } else {
-                  if (val.filter_value.length == 0) return false;
-                  try {
-                    format(
-                      new Date(val.filter_value[0]),
-                      "yyyy-MM-dd HH:mm:ss",
-                    );
-                  } catch (error) {
-                    return false;
-                  }
-                }
-                return true;
+              }
               case "text":
               case "categorical":
               case "thumbs":
@@ -187,13 +178,14 @@ export const getComplexFilterValidation = (
           },
         };
       } else if (val.filter_config.filter_type === "number") {
+        const values = Array.isArray(val.filter_config.filter_value)
+          ? val.filter_config.filter_value
+          : [val.filter_config.filter_value];
         let newFilterValues;
         if (RangeOperators.has(val.filter_config.filter_op)) {
-          newFilterValues = val.filter_config.filter_value.map((item) =>
-            parseFloat(item),
-          );
+          newFilterValues = values.map((item) => parseFloat(item));
         } else {
-          newFilterValues = parseFloat(val.filter_config.filter_value[0]);
+          newFilterValues = parseFloat(values[0]);
         }
         finalFilters = {
           column_id: val.column_id,
@@ -203,15 +195,16 @@ export const getComplexFilterValidation = (
           },
         };
       } else if (val.filter_config.filter_type === "datetime") {
+        const values = Array.isArray(val.filter_config.filter_value)
+          ? val.filter_config.filter_value
+          : [val.filter_config.filter_value];
         let newFilterValues;
         if (RangeOperators.has(val.filter_config.filter_op)) {
-          newFilterValues = val.filter_config.filter_value.map((item) =>
+          newFilterValues = values.map((item) =>
             formatISOCustom(new Date(item)),
           );
         } else {
-          newFilterValues = formatISOCustom(
-            new Date(val.filter_config.filter_value[0]),
-          );
+          newFilterValues = formatISOCustom(new Date(values[0]));
         }
         finalFilters = {
           column_id: val.column_id,

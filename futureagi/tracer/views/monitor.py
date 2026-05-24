@@ -46,13 +46,41 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = UserAlertMonitorSerializer
 
-    def get_queryset(self):
-        user_alert_id = self.kwargs.get("pk")
+    def _current_organization(self):
+        return (
+            getattr(self.request, "organization", None) or self.request.user.organization
+        )
+
+    def _workspace_scope_q(self, field_name="workspace"):
+        workspace = getattr(self.request, "workspace", None)
+        if not workspace:
+            return Q()
+        if getattr(workspace, "is_default", False):
+            return (
+                Q(**{field_name: workspace})
+                | Q(
+                    **{
+                        f"{field_name}__is_default": True,
+                        f"{field_name}__organization": workspace.organization,
+                    }
+                )
+                | Q(**{f"{field_name}__isnull": True})
+            )
+        return Q(**{field_name: workspace})
+
+    def _visible_observe_projects(self):
+        return Project.no_workspace_objects.filter(
+            self._workspace_scope_q("workspace"),
+            organization=self._current_organization(),
+            trace_type="observe",
+            deleted=False,
+        )
+
+    def _base_monitor_queryset(self):
         unresolved_logs = UserAlertMonitorLog.objects.filter(
             alert=OuterRef("pk"), resolved=False
         )
-        # Get base queryset with automatic filtering from mixin
-        query_Set = (
+        return (
             super()
             .get_queryset()
             .select_related("organization", "created_by", "project")
@@ -62,6 +90,18 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 has_unresolved_logs=Exists(unresolved_logs),
             )
         )
+
+    def get_serializer(self, *args, **kwargs):
+        serializer = super().get_serializer(*args, **kwargs)
+        serializer_obj = getattr(serializer, "child", serializer)
+        fields = getattr(serializer_obj, "fields", None)
+        if fields and "project" in fields:
+            fields["project"].queryset = self._visible_observe_projects()
+        return serializer
+
+    def get_queryset(self):
+        user_alert_id = self.kwargs.get("pk")
+        query_Set = self._base_monitor_queryset()
 
         if user_alert_id:
             return query_Set.filter(id=user_alert_id)
@@ -99,17 +139,45 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
         return query_Set.order_by(sort_query)[start:end], total_count
 
+    def list(self, request, *args, **kwargs):
+        """Return the paginated root monitor list.
+
+        ``get_queryset`` returns ``(page_queryset, total_count)`` for list
+        requests because ``list_monitors`` also needs the total count. DRF's
+        default ``list`` expects only a queryset, so keep the root endpoint
+        explicit instead of letting DRF serialize the tuple incorrectly.
+        """
+        try:
+            page_number = int(request.query_params.get("page_number", 0))
+            page_size = int(request.query_params.get("page_size", 30))
+            queryset, total_records = self.get_queryset()
+            serializer = self.get_serializer(queryset, many=True)
+
+            return self._gm.success_response(
+                {
+                    "results": serializer.data,
+                    "metadata": {
+                        "total_rows": total_records,
+                        "page_number": page_number,
+                        "page_size": page_size,
+                        "total_pages": (
+                            math.ceil(total_records / page_size)
+                            if page_size > 0
+                            else 0
+                        ),
+                    },
+                }
+            )
+        except ValueError:
+            return self._gm.bad_request(
+                {"pagination": "page_number and page_size must be integers."}
+            )
+
     @action(detail=True, methods=["get"], url_path="details")
     def monitor_details(self, request, *args, **kwargs):
         try:
             user_alert_id = kwargs.get("pk")
-            user_alert_object = UserAlertMonitor.objects.select_related(
-                "created_by", "project"
-            ).get(
-                id=user_alert_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            user_alert_object = self._base_monitor_queryset().get(id=user_alert_id)
             serializer = UserAlertMonitorDetailSerializer(
                 user_alert_object, context={"request": request}
             )
@@ -185,10 +253,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "A list of IDs or select_all flag is required for deletion"
                 )
 
-            user_alert_objects = UserAlertMonitor.objects.filter(
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization
-            )
+            user_alert_objects = self._base_monitor_queryset()
 
             if select_all:
                 if exclude_ids:
@@ -217,8 +282,11 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         try:
             instance = self.get_object()
             data = request.data.copy()
+            data.pop("organization", None)
+            data.pop("workspace", None)
+            data.pop("created_by", None)
 
-            serializer = UserAlertMonitorSerializer(instance, data=data, partial=True)
+            serializer = self.get_serializer(instance, data=data, partial=True)
             if serializer.is_valid():
                 updated_instance = serializer.save()
                 updated_instance.logs.append(
@@ -300,10 +368,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "A list of alert IDs or select_all flag is required."
                 )
 
-            user_alert_objects = UserAlertMonitor.objects.filter(
-                organization=getattr(request, "organization", None)
-                or request.user.organization
-            )
+            user_alert_objects = self._base_monitor_queryset()
 
             if select_all:
                 if exclude_ids:
@@ -408,6 +473,8 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             data["organization"] = (
                 getattr(request, "organization", None) or request.user.organization
             ).id
+            if getattr(request, "workspace", None):
+                data["workspace"] = request.workspace.id
             data["created_by"] = request.user.id
             data["logs"] = [
                 {
@@ -444,20 +511,16 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         data = request.validated_data
         org = getattr(request, "organization", None) or request.user.organization
         try:
-            monitor = UserAlertMonitor.objects.get(
+            monitor = self._base_monitor_queryset().get(
                 id=data["id"],
-                organization=org,
-                deleted=False,
             )
         except UserAlertMonitor.DoesNotExist:
             return self._gm.not_found(get_error_message("MONITOR_NOT_FOUND"))
 
         new_name = data["name"]
-        if UserAlertMonitor.objects.filter(
-            organization=org,
+        if self._base_monitor_queryset().filter(
             project=monitor.project,
             name=new_name,
-            deleted=False,
         ).exists():
             return self._gm.bad_request(
                 {"name": f"An alert with the name '{new_name}' already exists."}
@@ -513,12 +576,8 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             project_id = request.query_params.get("project_id")
             if not project_id:
                 return self._gm.bad_request({"project_id": "This field is required."})
-            if not Project.objects.filter(
-                id=project_id,
-                organization=org,
-                trace_type="observe",
-                deleted=False,
-            ).exists():
+            project = self._visible_observe_projects().filter(id=project_id).first()
+            if not project:
                 return self._gm.not_found("Project not found")
 
             system_options = [
@@ -544,7 +603,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 for eval_config in CustomEvalConfig.objects.select_related(
                     "eval_template"
                 ).filter(
-                    project_id=project_id,
+                    project=project,
                     project__organization=org,
                     deleted=False,
                     eval_template__deleted=False,
@@ -567,6 +626,8 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             data["organization"] = (
                 getattr(request, "organization", None) or request.user.organization
             ).id
+            if getattr(request, "workspace", None):
+                data["workspace"] = request.workspace.id
 
             # Remove the name , we don't need to validate it for preview
             if "name" in data:
@@ -648,13 +709,28 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = UserAlertMonitorLogSerializer
 
+    def _workspace_scope_q(self):
+        workspace = getattr(self.request, "workspace", None)
+        if not workspace:
+            return Q()
+        if getattr(workspace, "is_default", False):
+            return (
+                Q(alert__workspace=workspace)
+                | Q(
+                    alert__workspace__is_default=True,
+                    alert__workspace__organization=workspace.organization,
+                )
+                | Q(alert__workspace__isnull=True)
+            )
+        return Q(alert__workspace=workspace)
+
     def get_queryset(self):
-        # Get base queryset with automatic filtering from mixin
         queryset = (
             super()
             .get_queryset()
             .select_related("resolved_by", "alert")
             .filter(
+                self._workspace_scope_q(),
                 alert__organization=getattr(self.request, "organization", None)
                 or self.request.user.organization
             )

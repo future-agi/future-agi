@@ -163,6 +163,7 @@ from simulate.utils.test_execution import (
     LEGACY_SIM_COLUMN_ID_MAP,
 )
 from simulate.utils.test_execution_utils import TestExecutionUtils
+from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
@@ -232,6 +233,30 @@ def _voice_sim_gate_response(user_organization, gm):
     if not feat_check.allowed:
         return gm.forbidden_response(feat_check.reason)
     return None
+
+
+def _visible_eval_template_query(user_organization, workspace):
+    """Templates available from the active workspace plus global system templates."""
+    template_query = Q(organization__isnull=True)
+    if workspace is None:
+        return template_query | Q(organization=user_organization)
+
+    workspace_query = Q(organization=user_organization, workspace=workspace)
+    if getattr(workspace, "is_default", False):
+        workspace_query |= Q(
+            organization=user_organization,
+            workspace__is_default=True,
+            workspace__organization_id=user_organization.id,
+        ) | Q(organization=user_organization, workspace__isnull=True)
+
+    return template_query | workspace_query
+
+
+def _soft_delete_run_test_eval_configs(run_test):
+    SimulateEvalConfig.objects.filter(run_test=run_test, deleted=False).update(
+        deleted=True,
+        deleted_at=timezone.now(),
+    )
 
 
 class RunTestListView(APIView):
@@ -637,6 +662,7 @@ class RunTestDetailView(APIView):
             )
 
             # Soft delete the run test
+            _soft_delete_run_test_eval_configs(run_test)
             run_test.delete()  # This calls the custom delete method that sets deleted=True
 
             response_serializer = RunTestMessageResponseSerializer(
@@ -693,7 +719,11 @@ class RunTestExecutionView(APIView):
 
             # Get the run test
             run_test = get_object_or_404(
-                RunTest, id=run_test_id, organization=user_organization, deleted=False
+                RunTest,
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
             if (
@@ -1936,6 +1966,7 @@ class TestExecutionDetailView(APIView):
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
@@ -2523,6 +2554,7 @@ class PerformanceSummaryView(APIView):
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
@@ -3634,6 +3666,7 @@ class TestExecutionDeleteView(APIView):
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
@@ -3645,7 +3678,10 @@ class TestExecutionDeleteView(APIView):
                     "Cannot delete a test execution that is currently running."
                 )
 
-            # Delete the test execution (this will cascade to call executions)
+            now = timezone.now()
+            test_execution.calls.filter(deleted=False).update(
+                deleted=True, deleted_at=now
+            )
             test_execution.delete()
 
             return Response(
@@ -3799,8 +3835,10 @@ class CallExecutionDeleteView(APIView):
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
                 test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
                 deleted=False,
             )
 
@@ -3867,6 +3905,7 @@ class RunTestDeleteView(APIView):
                 )
 
             # Soft delete the run test
+            _soft_delete_run_test_eval_configs(run_test)
             run_test.delete()  # This calls the custom delete method that sets deleted=True
 
             return Response(
@@ -4339,8 +4378,10 @@ class AddEvalConfigView(APIView):
                     # Get EvalTemplate by ID
                     try:
                         eval_template = EvalTemplate.no_workspace_objects.get(
-                            Q(organization=user_organization)
-                            | Q(organization__isnull=True),
+                            _visible_eval_template_query(
+                                user_organization,
+                                getattr(request, "workspace", None),
+                            ),
                             id=template_id,
                         )
                     except EvalTemplate.DoesNotExist:
@@ -4680,7 +4721,20 @@ class UpdateEvalConfigView(APIView):
 
             # Update other fields if provided
             if "name" in validated:
-                eval_config.name = validated.get("name")
+                new_name = validated.get("name")
+                if (
+                    SimulateEvalConfig.objects.filter(
+                        run_test=run_test,
+                        name=new_name,
+                        deleted=False,
+                    )
+                    .exclude(id=eval_config.id)
+                    .exists()
+                ):
+                    return self._gm.bad_request(
+                        f"An evaluation config with the name '{new_name}' already exists in this run test. Please use a different name."
+                    )
+                eval_config.name = new_name
             if "model" in validated:
                 eval_config.model = validated.get("model")
             if "error_localizer" in validated:
@@ -5570,8 +5624,12 @@ class RunTestEvalExplanationSummaryView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            test_execution = TestExecution.objects.get(
-                id=test_execution_id, run_test__organization=organization
+            test_execution = get_object_or_404(
+                TestExecution,
+                run_test_workspace_filter(request, "run_test"),
+                id=test_execution_id,
+                run_test__organization=organization,
+                run_test__deleted=False,
             )
 
             if test_execution.eval_explanation_summary is None:
@@ -5589,7 +5647,7 @@ class RunTestEvalExplanationSummaryView(APIView):
                 }
             )
 
-        except TestExecution.DoesNotExist:
+        except (TestExecution.DoesNotExist, Http404):
             return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
             return self._gm.internal_server_error_response(
@@ -5626,8 +5684,12 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            test_execution = TestExecution.objects.get(
-                id=test_execution_id, run_test__organization=organization
+            test_execution = get_object_or_404(
+                TestExecution,
+                run_test_workspace_filter(request, "run_test"),
+                id=test_execution_id,
+                run_test__organization=organization,
+                run_test__deleted=False,
             )
             test_execution.eval_explanation_summary_status = (
                 EvalExplanationSummaryStatus.PENDING
@@ -5639,7 +5701,7 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                 {"message": "Summary refresh initiated successfully"}
             )
 
-        except TestExecution.DoesNotExist:
+        except (TestExecution.DoesNotExist, Http404):
             return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
             return self._gm.internal_server_error_response(
@@ -5674,8 +5736,12 @@ class TestExecutionOptimiserAnalysisView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            test_execution = TestExecution.objects.get(
-                id=test_execution_id, run_test__organization=organization
+            test_execution = get_object_or_404(
+                TestExecution,
+                run_test_workspace_filter(request, "run_test"),
+                id=test_execution_id,
+                run_test__organization=organization,
+                run_test__deleted=False,
             )
 
             optimiser = get_or_create_optimiser_for_test_execution(test_execution)
@@ -5684,7 +5750,7 @@ class TestExecutionOptimiserAnalysisView(APIView):
 
             return self._gm.success_response(result_data)
 
-        except TestExecution.DoesNotExist:
+        except (TestExecution.DoesNotExist, Http404):
             return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
             return self._gm.internal_server_error_response(
@@ -5721,8 +5787,12 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            test_execution = TestExecution.objects.get(
-                id=test_execution_id, run_test__organization=organization
+            test_execution = get_object_or_404(
+                TestExecution,
+                run_test_workspace_filter(request, "run_test"),
+                id=test_execution_id,
+                run_test__organization=organization,
+                run_test__deleted=False,
             )
 
             optimiser = get_or_create_optimiser_for_test_execution(test_execution)
@@ -5745,7 +5815,7 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
                     "Unable to prepare input data. Ensure test execution has completed calls."
                 )
 
-        except TestExecution.DoesNotExist:
+        except (TestExecution.DoesNotExist, Http404):
             return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
             return self._gm.internal_server_error_response(
@@ -6015,8 +6085,10 @@ class CallExecutionRerunView(APIView):
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
+                run_test__deleted=False,
             )
 
             # Reject rerun if test execution is in a non-terminal status
@@ -6218,6 +6290,8 @@ class CallExecutionRerunView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return self._gm.not_found("Test execution not found")
         except Exception as e:
             logger.error(f"Error in bulk call execution rerun: {str(e)}")
             traceback.print_exc()
@@ -6499,8 +6573,10 @@ class TestExecutionRerunView(APIView):
 
             run_test = get_object_or_404(
                 RunTest,
+                run_test_workspace_filter(request),
                 id=run_test_id,
                 organization=user_organization,
+                deleted=False,
             )
 
             rerun_type = request.validated_data["rerun_type"]
@@ -6645,6 +6721,8 @@ class TestExecutionRerunView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return self._gm.not_found("Run test not found")
         except Exception as e:
             logger.error(f"Error in bulk test execution rerun: {str(e)}")
             traceback.print_exc()
@@ -6696,7 +6774,11 @@ class RunNewEvalsOnTestExecutionView(APIView):
 
             # Get the run test
             run_test = get_object_or_404(
-                RunTest, id=run_test_id, organization=user_organization, deleted=False
+                RunTest,
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
             select_all = request.validated_data.get("select_all", False)
@@ -6916,6 +6998,8 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return self._gm.not_found("Run test not found")
         except Exception as e:
             logger.error(f"Error running new evaluations on test executions: {str(e)}")
             traceback.print_exc()

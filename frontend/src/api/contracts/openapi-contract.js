@@ -381,7 +381,9 @@ function queryParamsForWire(params = {}) {
     Object.entries(params).flatMap(([name, value]) => {
       if (value === null || value === undefined) return [];
       if (Array.isArray(value)) {
-        const values = value.filter((item) => item !== null && item !== undefined);
+        const values = value.filter(
+          (item) => item !== null && item !== undefined,
+        );
         return values.length ? [[name, values]] : [];
       }
       return [[name, value]];

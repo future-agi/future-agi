@@ -28,7 +28,10 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import { getRandomId, getUniqueColorPalette } from "src/utils/utils";
-import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
+import {
+  buildApiFilterFromPanelRow,
+  hydrateStoredFilterList,
+} from "src/api/contracts/filter-contract";
 
 /**
  * Converts graph selections to filter format compatible with the backend API.
@@ -258,21 +261,15 @@ const defaultFilterBase = {
     filter_value: "",
   },
 };
-const getDefaultDateRange = () => {
-  const getDateArray = () => {
-    return [
-      formatDate(
-        sub(new Date(), {
-          days: 7,
-        }),
-      ),
-      formatDate(endOfToday()),
-    ];
-  };
+const getDefaultDateRange = (dateOption = "7D") => {
+  const start =
+    dateOption === "6M"
+      ? sub(new Date(), { months: 6 })
+      : sub(new Date(), { days: 7 });
 
   return {
-    dateFilter: getDateArray(),
-    dateOption: "7D",
+    dateFilter: [formatDate(start), formatDate(endOfToday())],
+    dateOption,
   };
 };
 
@@ -638,6 +635,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const [simCallFilterSelectionMode, setSimCallFilterSelectionMode] =
     useState(false);
   const [simCallMeta, setSimCallMeta] = useState({
+    selectedCount: 0,
+    unavailableSelectedCount: 0,
     isAllOnPageSelected: false,
     currentPageSize: 0,
     totalPages: 1,
@@ -951,7 +950,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const projectSource = isUserMode
     ? PROJECT_SOURCE.OBSERVE
     : projectDetail?.source;
-  const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
+  const defaultDateFilter = useMemo(
+    () => getDefaultDateRange(isUserMode ? "6M" : "7D"),
+    [isUserMode],
+  );
 
   const [isPrimaryFilterOpen, setIsPrimaryFilterOpen] = useUrlState(
     `isFilterOpen-primary`,
@@ -1951,15 +1953,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
 
-    // Array.isArray guard: UsersView writes `filters` as an object, which
-    // can briefly leak during cross-tab transitions (route change is queued
-    // in startTransition while activeViewConfig updates synchronously).
-    const rawFilters = activeViewConfig.filters;
-    const nextFilters = (Array.isArray(rawFilters) ? rawFilters : []).map(
-      (f) => ({
-        ...f,
-        id: f.id || getRandomId(),
-      }),
+    // Hydrate persisted filters and upgrade the legacy pre-contract key names
+    // before they hit the strict API serializer.
+    const nextFilters = hydrateStoredFilterList(
+      activeViewConfig.filters,
+      getRandomId,
     );
     if (selectedTab === "trace") {
       setPrimaryTraceFilters(nextFilters);
@@ -1969,19 +1967,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
     // Apply extraFilters unconditionally (independent of compare mode).
     setExtraFilters(
-      Array.isArray(activeViewConfig.extra_filters)
-        ? activeViewConfig.extra_filters
-        : [],
+      hydrateStoredFilterList(activeViewConfig.extra_filters, getRandomId),
     );
 
     // Compare state — always replace, regardless of current showCompare state.
-    const rawCompareFilters = activeViewConfig.compare_filters;
-    const nextCompareFilters = (
-      Array.isArray(rawCompareFilters) ? rawCompareFilters : []
-    ).map((f) => ({
-      ...f,
-      id: f.id || getRandomId(),
-    }));
+    const nextCompareFilters = hydrateStoredFilterList(
+      activeViewConfig.compare_filters,
+      getRandomId,
+    );
     if (selectedTab === "trace") {
       setCompareTraceFilters(nextCompareFilters);
       if (activeViewConfig.compare_date_filter !== undefined) {
@@ -1993,7 +1986,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         setCompareSpansDateFilter(activeViewConfig.compare_date_filter);
       }
     }
-    setCompareExtraFilters(activeViewConfig.compare_extra_filters || []);
+    setCompareExtraFilters(
+      hydrateStoredFilterList(
+        activeViewConfig.compare_extra_filters,
+        getRandomId,
+      ),
+    );
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeViewConfig]);
@@ -2154,10 +2152,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       if (!raw) return;
       const saved = JSON.parse(raw);
       if (saved.filters?.length > 0) {
-        const filtersWithIds = saved.filters.map((f) => ({
-          ...f,
-          id: f.id || getRandomId(),
-        }));
+        const filtersWithIds = hydrateStoredFilterList(
+          saved.filters,
+          getRandomId,
+        );
         if (saved.tabType === "spans") {
           setPrimarySpanFilters(filtersWithIds);
         } else {
@@ -2165,15 +2163,21 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         }
       }
       if (saved.extra_filters?.length > 0) {
-        setExtraFiltersRaw(saved.extra_filters);
-        setFilterChipsSaved(true);
+        const extraFiltersWithIds = hydrateStoredFilterList(
+          saved.extra_filters,
+          getRandomId,
+        );
+        if (extraFiltersWithIds.length > 0) {
+          setExtraFiltersRaw(extraFiltersWithIds);
+          setFilterChipsSaved(true);
+        }
       }
       if (saved.showCompare) {
         if (saved.compare_filters?.length > 0) {
-          const compareFiltersWithIds = saved.compare_filters.map((f) => ({
-            ...f,
-            id: f.id || getRandomId(),
-          }));
+          const compareFiltersWithIds = hydrateStoredFilterList(
+            saved.compare_filters,
+            getRandomId,
+          );
           if (saved.tabType === "spans") {
             setCompareSpansFilters(compareFiltersWithIds);
           } else {
@@ -2188,7 +2192,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           }
         }
         if (saved.compare_extra_filters?.length > 0) {
-          setCompareExtraFiltersRaw(saved.compare_extra_filters);
+          setCompareExtraFiltersRaw(
+            hydrateStoredFilterList(saved.compare_extra_filters, getRandomId),
+          );
         }
       }
     } catch {
@@ -2470,9 +2476,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     if (!activeViewConfig) return false;
 
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineExtraFilters = activeViewConfig.extra_filters || [];
+    const baselineExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
     const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
-    const baselineColumnFilters = activeViewConfig.filters || [];
+    const baselineColumnFilters = hydrateStoredFilterList(
+      activeViewConfig.filters,
+    );
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
 
@@ -3528,6 +3538,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       id: "annotation-queue",
                       label: "Add to annotation queue",
                       icon: "mdi:clipboard-list-outline",
+                      disabled:
+                        !simCallFilterSelectionMode &&
+                        (selectedCallIds?.length || 0) > 0 &&
+                        (simCallMeta.unavailableSelectedCount || 0) >=
+                          (selectedCallIds?.length || 0),
+                      disabledReason:
+                        "Selected calls are still in progress. Wait for traces to finish before adding them to an annotation queue.",
                     },
                   ];
                 }

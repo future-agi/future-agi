@@ -352,6 +352,7 @@ class SQLQueryHandler:
             AND name != 'deterministic_evals'
             AND (%s IS NULL OR name ILIKE '%%' || %s || '%%')
             AND (%s IS NULL OR id = ANY(%s))
+            AND (owner = 'system' OR organization_id = %s)
         ),
         filtered_logs AS (
             SELECT *
@@ -412,6 +413,7 @@ class SQLQueryHandler:
                 used_template_ids if used_template_ids else None
             ),  # Check if the list is empty
             used_template_ids if used_template_ids else None,
+            org_id,  # template org scope
             org_id,  # org_id
             workspace_id,  # ws filter: parameter 1
             workspace_id,  # ws filter: parameter 2

@@ -1,8 +1,10 @@
 import PropTypes from "prop-types";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
+  alpha,
   Box,
   Checkbox,
+  Chip,
   CircularProgress,
   FormControlLabel,
   InputAdornment,
@@ -56,6 +58,7 @@ AnnotatorPicker.propTypes = {
   ),
   onChange: PropTypes.func.isRequired,
   creatorId: PropTypes.string,
+  highlightAutoAssigned: PropTypes.bool,
   isManager: PropTypes.bool,
 };
 
@@ -63,6 +66,7 @@ export default function AnnotatorPicker({
   value = [],
   onChange,
   creatorId,
+  highlightAutoAssigned = false,
   isManager = true,
 }) {
   const [search, setSearch] = useState("");
@@ -171,6 +175,9 @@ export default function AnnotatorPicker({
           const isCreator = creatorId && m.id === creatorId;
           const currentRoles =
             selectedMap.get(m.id) || (isCreator ? CREATOR_DEFAULT_ROLES : []);
+          const isAutoAssigned =
+            highlightAutoAssigned &&
+            currentRoles.includes(QUEUE_ROLES.ANNOTATOR);
           const rowReadOnly = !isManager;
           return (
             <Box
@@ -185,13 +192,31 @@ export default function AnnotatorPicker({
                 borderBottom: "1px solid",
                 borderColor: "divider",
                 "&:last-child": { borderBottom: 0 },
-                bgcolor: isSelected ? "action.selected" : "transparent",
-                "&:hover": {
-                  bgcolor: isSelected
-                    ? "action.selected"
-                    : !rowReadOnly
-                      ? "action.hover"
+                bgcolor: (theme) =>
+                  isAutoAssigned
+                    ? alpha(
+                        theme.palette.primary.main,
+                        theme.palette.mode === "dark" ? 0.18 : 0.1,
+                      )
+                    : isSelected
+                      ? "action.selected"
                       : "transparent",
+                boxShadow: (theme) =>
+                  isAutoAssigned
+                    ? `inset 3px 0 0 ${theme.palette.primary.main}`
+                    : "none",
+                "&:hover": {
+                  bgcolor: (theme) =>
+                    isAutoAssigned
+                      ? alpha(
+                          theme.palette.primary.main,
+                          theme.palette.mode === "dark" ? 0.24 : 0.14,
+                        )
+                      : isSelected
+                        ? "action.selected"
+                        : !rowReadOnly
+                          ? "action.hover"
+                          : "transparent",
                 },
               }}
             >
@@ -224,6 +249,15 @@ export default function AnnotatorPicker({
                   </Typography>
                 )}
               </Box>
+              {isAutoAssigned && (
+                <Chip
+                  label="Auto-assigned"
+                  size="small"
+                  color="primary"
+                  variant="soft"
+                  sx={{ height: 20, fontSize: 11, flexShrink: 0 }}
+                />
+              )}
 
               <Stack
                 direction="row"

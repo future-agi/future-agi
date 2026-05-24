@@ -23,7 +23,7 @@ const ExperimentEvalCellRenderer = ({ value, eGridCell, ...rest }) => {
     if (eGridCell?.style) {
       eGridCell.style.backgroundColor = backgroundColor || "";
     }
-  }, [eGridCell.style, backgroundColor]);
+  }, [eGridCell?.style, backgroundColor]);
 
   if (isNumeric) {
     return (
@@ -52,7 +52,7 @@ const ExperimentEvalCellRenderer = ({ value, eGridCell, ...rest }) => {
 };
 
 ExperimentEvalCellRenderer.propTypes = {
-  value: PropTypes.string,
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   eGridCell: PropTypes.object,
 };
 

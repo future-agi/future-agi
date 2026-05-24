@@ -7,13 +7,51 @@ Tests for trace error analysis endpoints.
 import uuid
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
+
+from accounts.models.organization import Organization
+from accounts.models.workspace import Workspace
+from model_hub.models.ai_model import AIModel
+from tracer.models.project import Project
+from tracer.models.trace import Trace
+from tracer.models.trace_error_analysis import (
+    ClusterSource,
+    ErrorClusterTraces,
+    FeedIssueStatus,
+    Priority,
+    TraceErrorGroup,
+)
+from tracer.models.trace_error_analysis_task import (
+    TraceErrorAnalysisTask,
+    TraceErrorTaskStatus,
+)
 
 
 def get_result(response):
     """Extract result from API response wrapper."""
     data = response.json()
     return data.get("result", data)
+
+
+def make_feed_group(project, cluster_id, *, priority=Priority.MEDIUM):
+    now = timezone.now()
+    return TraceErrorGroup.objects.create(
+        project=project,
+        cluster_id=cluster_id,
+        error_type=f"{cluster_id}-error",
+        source=ClusterSource.SCANNER,
+        issue_group="Tool Failures",
+        issue_category="Language-only",
+        fix_layer="Tools",
+        title=f"{cluster_id} test issue",
+        status=FeedIssueStatus.ESCALATING,
+        priority=priority,
+        first_seen=now,
+        last_seen=now,
+        error_count=1,
+        unique_traces=1,
+    )
 
 
 @pytest.mark.integration
@@ -92,6 +130,43 @@ class TestErrorClusterFeedAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_get_cluster_feed_filters_by_severity(self, auth_client, project):
+        """Severity filter should map frontend severity to backend priority."""
+        make_feed_group(project, "TEST-HIGH", priority=Priority.HIGH)
+        make_feed_group(project, "TEST-LOW", priority=Priority.LOW)
+
+        response = auth_client.get(
+            self.url,
+            {"project_id": str(project.id), "severity": "high"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = get_result(response)["data"]
+        assert {row["cluster_id"] for row in rows} == {"TEST-HIGH"}
+
+    def test_get_cluster_feed_sorts_by_severity(self, auth_client, project):
+        """Severity sort should not silently fall back to last_seen."""
+        make_feed_group(project, "TEST-LOW", priority=Priority.LOW)
+        make_feed_group(project, "TEST-HIGH", priority=Priority.HIGH)
+        make_feed_group(project, "TEST-CRITICAL", priority=Priority.URGENT)
+
+        response = auth_client.get(
+            self.url,
+            {
+                "project_id": str(project.id),
+                "sort_by": "severity",
+                "sort_dir": "desc",
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = get_result(response)["data"]
+        assert [row["cluster_id"] for row in rows[:3]] == [
+            "TEST-CRITICAL",
+            "TEST-HIGH",
+            "TEST-LOW",
+        ]
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -118,6 +193,52 @@ class TestErrorClusterDetailAPI:
             status.HTTP_404_NOT_FOUND,
         ]
 
+    def test_detail_tabs_do_not_expose_other_workspace_clusters(
+        self, auth_client, user, project
+    ):
+        """Tab endpoints must use the same workspace scope as list/detail."""
+        other_org = Organization.objects.create(name="Other Feed Org")
+        other_workspace = Workspace.objects.create(
+            name="Other Feed Workspace",
+            organization=other_org,
+            is_default=True,
+            is_active=True,
+            created_by=user,
+        )
+        other_project = Project.objects.create(
+            name="Other Feed Project",
+            organization=other_org,
+            workspace=other_workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        other_cluster = make_feed_group(other_project, "OTHER-FEED")
+        other_trace = Trace.objects.create(
+            project=other_project,
+            name="Other Trace",
+            input={"prompt": "hidden"},
+            output={"response": "hidden"},
+        )
+        ErrorClusterTraces.objects.create(
+            cluster=other_cluster,
+            trace=other_trace,
+        )
+
+        paths = [
+            f"/tracer/feed/issues/{other_cluster.cluster_id}/overview/",
+            f"/tracer/feed/issues/{other_cluster.cluster_id}/traces/",
+            f"/tracer/feed/issues/{other_cluster.cluster_id}/trends/",
+            f"/tracer/feed/issues/{other_cluster.cluster_id}/sidebar/",
+            (
+                f"/tracer/feed/issues/{other_cluster.cluster_id}/root-cause/"
+                f"?trace_id={other_trace.id}"
+            ),
+        ]
+
+        for path in paths:
+            response = auth_client.get(path)
+            assert response.status_code == status.HTTP_404_NOT_FOUND
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -136,6 +257,26 @@ class TestTraceErrorTaskAPI:
         data = response.json()
         # Should return task status info
         assert isinstance(data, dict)
+
+    def test_get_error_task_reactivates_soft_deleted_task(self, auth_client, project):
+        """Soft-deleted one-to-one task rows should not make GET return 500."""
+        task = TraceErrorAnalysisTask.objects.create(
+            project=project,
+            sampling_rate=0.42,
+            status=TraceErrorTaskStatus.PAUSED,
+        )
+        task.delete()
+
+        response = auth_client.get(f"/tracer/trace-error-task/{project.id}/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["project_id"] == str(project.id)
+        assert result["sampling_rate"] == 0.01
+        assert result["status"] == TraceErrorTaskStatus.WAITING
+        task.refresh_from_db()
+        assert task.deleted is False
+        assert task.deleted_at is None
 
     def test_create_error_task_unauthenticated(self, api_client, project):
         """Unauthenticated POST requests should be rejected."""

@@ -16,7 +16,13 @@ from tracer.models.trace_error_analysis import ClusterSource, FeedIssueStatus
 # ---------------------------------------------------------------------------
 
 SEVERITY_CHOICES = ("critical", "high", "medium", "low")
-SORT_BY_CHOICES = ("last_seen", "first_seen", "error_count", "unique_traces")
+SORT_BY_CHOICES = (
+    "last_seen",
+    "first_seen",
+    "error_count",
+    "unique_traces",
+    "severity",
+)
 SORT_DIR_CHOICES = ("asc", "desc")
 
 
@@ -31,6 +37,7 @@ class FeedListQuerySerializer(serializers.Serializer):
     project_id = serializers.UUIDField(required=False)
     search = serializers.CharField(required=False, allow_blank=True)
     status = serializers.ChoiceField(choices=FeedIssueStatus.choices, required=False)
+    severity = serializers.ChoiceField(choices=SEVERITY_CHOICES, required=False)
     fix_layer = serializers.CharField(required=False, allow_blank=True)
     source = serializers.ChoiceField(choices=ClusterSource.choices, required=False)
     issue_group = serializers.CharField(required=False, allow_blank=True)

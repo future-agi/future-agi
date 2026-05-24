@@ -5,7 +5,9 @@ computed-field annotations across all source types (trace, span, session,
 simulation, dataset_row).
 """
 
+import importlib.util
 import uuid
+from contextlib import ExitStack
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -134,6 +136,25 @@ def _items_url(queue_id):
     return f"{QUEUE_URL}{queue_id}/items/"
 
 
+def _allow_automation_rule_entitlements_if_available():
+    stack = ExitStack()
+    try:
+        entitlements_available = (
+            importlib.util.find_spec("ee.usage.services.entitlements") is not None
+        )
+    except ModuleNotFoundError:
+        entitlements_available = False
+
+    if entitlements_available:
+        stack.enter_context(
+            patch(
+                "ee.usage.services.entitlements.Entitlements.can_create",
+                return_value=SimpleNamespace(allowed=True),
+            )
+        )
+    return stack
+
+
 # ===========================================================================
 # Tests
 # ===========================================================================
@@ -146,10 +167,7 @@ class TestAutomationRulesE2E:
     @pytest.fixture(autouse=True)
     def _allow_automation_rule_entitlements(self):
         """These tests cover rule evaluation, not billing-limit enforcement."""
-        with patch(
-            "ee.usage.services.entitlements.Entitlements.can_create",
-            return_value=SimpleNamespace(allowed=True),
-        ):
+        with _allow_automation_rule_entitlements_if_available():
             yield
 
     @pytest.fixture(autouse=True)
@@ -271,6 +289,11 @@ class TestAutomationRulesE2E:
         assert result["matched"] == 3
         assert result["added"] == 3
         assert result["duplicates"] == 0
+        assert set(
+            QueueItem.objects.filter(queue_id=queue_id).values_list(
+                "workspace_id", flat=True
+            )
+        ) == {workspace.id}
 
     # -----------------------------------------------------------------------
     # 2. Conditions-based filtering
@@ -1529,6 +1552,112 @@ class TestAutomationRulesE2E:
         assert result["matched"] == 2
         assert result["added"] == 2
 
+    def test_evaluate_rule_simulation_eval_filter(
+        self, auth_client, organization, workspace
+    ):
+        """CallExecution rules should filter by SimulateEvalConfig output."""
+        from model_hub.models.evals_metric import EvalTemplate
+        from simulate.models import AgentDefinition, Scenarios
+        from simulate.models.eval_config import SimulateEvalConfig
+        from simulate.models.run_test import RunTest
+        from simulate.models.test_execution import CallExecution, TestExecution
+
+        agent_def = AgentDefinition.objects.create(
+            agent_name="Eval Filter Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+1234567000",
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        run_test = RunTest.objects.create(
+            name="Eval Filter Test",
+            agent_definition=agent_def,
+            organization=organization,
+            workspace=workspace,
+        )
+        template = EvalTemplate.objects.create(
+            name="Simulation Quality",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "score"},
+        )
+        eval_config = SimulateEvalConfig.objects.create(
+            name="Simulation Quality Config",
+            eval_template=template,
+            run_test=run_test,
+        )
+        test_exec = TestExecution.objects.create(
+            run_test=run_test,
+            status=TestExecution.ExecutionStatus.PENDING,
+            total_scenarios=1,
+            total_calls=2,
+            agent_definition=agent_def,
+        )
+        scenario = Scenarios.objects.create(
+            name="Eval Filter Scenario",
+            description="desc",
+            source="script",
+            scenario_type=Scenarios.ScenarioTypes.SCRIPT,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=agent_def,
+        )
+        match = CallExecution.objects.create(
+            test_execution=test_exec,
+            scenario=scenario,
+            status="completed",
+            simulation_call_type="voice",
+            eval_outputs={str(eval_config.id): {"output": 0.92}},
+        )
+        CallExecution.objects.create(
+            test_execution=test_exec,
+            scenario=scenario,
+            status="completed",
+            simulation_call_type="voice",
+            eval_outputs={str(eval_config.id): {"output": 0.35}},
+        )
+
+        queue_id = _create_queue(auth_client, name="Simulation eval filter Q")
+        AnnotationQueue.objects.filter(pk=queue_id).update(
+            agent_definition=agent_def
+        )
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "High quality calls",
+                "source_type": "call_execution",
+                "conditions": {
+                    "filter": [
+                        {
+                            "column_id": str(eval_config.id),
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "greater_than",
+                                "filter_value": 80,
+                                "col_type": "EVAL_METRIC",
+                            },
+                        }
+                    ],
+                    "scope": {"project_id": str(agent_def.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.get(queue_id=queue_id).call_execution_id == match.id
+
     # -----------------------------------------------------------------------
     # 21. Dataset row with canonical filters
     # -----------------------------------------------------------------------
@@ -1982,6 +2111,79 @@ class TestAutomationRulesE2E:
             )
         ) == {old_trace.id, new_trace.id}
 
+    def test_evaluate_rule_voice_trace_duration_filter(
+        self, auth_client, organization, workspace
+    ):
+        """Voice Trace rules must honor the Duration system metric."""
+        from tracer.models.observation_span import ObservationSpan
+
+        project = _create_project(organization, workspace, name="Voice Duration Rule")
+        short_trace = _create_trace(project, "short-call")
+        long_trace = _create_trace(project, "long-call")
+        now = timezone.now()
+        ObservationSpan.objects.create(
+            id=str(uuid.uuid4()),
+            project=project,
+            trace=short_trace,
+            name="short-root",
+            observation_type="conversation",
+            parent_span_id=None,
+            span_attributes={"call.duration": 12},
+            start_time=now,
+            end_time=now + timedelta(seconds=12),
+        )
+        ObservationSpan.objects.create(
+            id=str(uuid.uuid4()),
+            project=project,
+            trace=long_trace,
+            name="long-root",
+            observation_type="conversation",
+            parent_span_id=None,
+            span_attributes={"call.duration": 45},
+            start_time=now,
+            end_time=now + timedelta(seconds=45),
+        )
+
+        queue_id = _create_queue(auth_client, name="Voice duration rule")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Short calls",
+                "source_type": "trace",
+                "conditions": {
+                    "operator": "and",
+                    "rules": [],
+                    "filter": [
+                        {
+                            "column_id": "duration",
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "less_than_or_equal",
+                                "filter_value": 20,
+                                "col_type": "SYSTEM_METRIC",
+                            },
+                        }
+                    ],
+                    "scope": {
+                        "project_id": str(project.id),
+                        "is_voice_call": True,
+                    },
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+        resp = auth_client.post(
+            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+        )
+
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 1
+        assert result["added"] == 1
+        assert QueueItem.objects.get(queue_id=queue_id).trace_id == short_trace.id
+
     def test_evaluate_rule_span_observe_filter_payload(
         self, auth_client, organization, workspace, user
     ):
@@ -2200,6 +2402,11 @@ class TestAutomationRulesE2E:
         result = resp.data.get("result", resp.data)
         assert result["matched"] == 2
         assert result["added"] == 2
+        assert set(
+            QueueItem.objects.filter(queue_id=queue_id).values_list(
+                "workspace_id", flat=True
+            )
+        ) == {workspace.id}
         assert QueueItem.objects.filter(
             queue_id=queue_id,
             trace__project=project2,
@@ -2524,6 +2731,60 @@ class TestAutomationRulesE2E:
         assert result["matched"] == 0
         assert result["added"] == 0
         assert result["error"]
+
+    def test_evaluate_rule_filter_failure_returns_short_public_error(
+        self, auth_client, organization, workspace
+    ):
+        project = _create_project(organization, workspace, name="Filter Error Project")
+        queue_id = _create_queue(auth_client, name="Filter error queue")
+        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
+
+        resp = auth_client.post(
+            _rules_url(queue_id),
+            {
+                "name": "Filter error rule",
+                "source_type": "trace",
+                "conditions": {
+                    "filter": [
+                        {
+                            "column_id": str(uuid.uuid4()),
+                            "filter_config": {
+                                "filter_type": "number",
+                                "filter_op": "greater_than",
+                                "filter_value": 0.5,
+                                "col_type": "EVAL_METRIC",
+                            },
+                        }
+                    ],
+                    "scope": {"project_id": str(project.id)},
+                },
+                "enabled": True,
+            },
+            format="json",
+        )
+        rule_id = resp.data["id"]
+
+        long_internal_error = "SELECT " + ("very-long-internal-sql " * 80)
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            side_effect=RuntimeError(long_internal_error),
+        ):
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data.get("result", resp.data)
+        assert result["matched"] == 0
+        assert result["added"] == 0
+        assert result["duplicates"] == 0
+        assert result["error"] == (
+            "Rule evaluation failed while applying filters. Check the selected "
+            "fields and values, then try again."
+        )
+        assert "SELECT" not in result["error"]
+        assert len(result["error"]) < 140
 
     # -----------------------------------------------------------------------
     # 30. FIELD_MAPPING completeness — verify all source types have mappings
@@ -3078,10 +3339,7 @@ class TestAutomationRuleEvaluateAsyncContract:
 
     @pytest.fixture(autouse=True)
     def _allow_entitlements(self):
-        with patch(
-            "ee.usage.services.entitlements.Entitlements.can_create",
-            return_value=SimpleNamespace(allowed=True),
-        ):
+        with _allow_automation_rule_entitlements_if_available():
             yield
 
     def test_evaluate_returns_202_with_workflow_id(

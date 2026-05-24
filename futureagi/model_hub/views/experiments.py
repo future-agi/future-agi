@@ -2351,21 +2351,45 @@ class ExperimentStatsV2View(APIView):
 
 class ExperimentEvaluationStatsView(APIView):
     _gm = GeneralMethods()
+    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         responses={200: ExperimentEvaluationStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, experiment_id, evaluation_id):
         try:
-            # Get the experiment and its associated datasets
-            experiment = get_object_or_404(ExperimentsTable, id=experiment_id)
-
-            evaluation_model = get_object_or_404(UserEvalMetric, id=evaluation_id)
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            experiment = (
+                ExperimentsTable.objects.prefetch_related(
+                    "experiments_datasets__columns",
+                    "experiment_datasets__columns",
+                    "user_eval_template_ids",
+                )
+                .select_related("dataset")
+                .get(
+                    id=experiment_id,
+                    dataset__organization=organization,
+                    deleted=False,
+                )
+            )
+            evaluation_model = UserEvalMetric.objects.select_related("template").get(
+                id=evaluation_id,
+                organization=organization,
+                deleted=False,
+            )
 
             # Get all experiment datasets and their columns
-            exp_datasets = experiment.experiments_datasets.prefetch_related(
-                "columns"
-            ).all()
+            exp_datasets = (
+                experiment.experiment_datasets.prefetch_related("columns").filter(
+                    deleted=False
+                )
+                if experiment.snapshot_dataset_id
+                else experiment.experiments_datasets.prefetch_related(
+                    "columns"
+                ).filter(deleted=False)
+            )
             if not exp_datasets:
                 return self._gm.bad_request(
                     get_error_message("EXPERIMENT_DATASET_NOT_FOUND")
@@ -2383,6 +2407,7 @@ class ExperimentEvaluationStatsView(APIView):
             }
 
             # Process evaluation columns from all experiment datasets
+            evaluation_id_str = str(evaluation_model.id)
             eval_columns = []
             for exp_dataset in exp_datasets:
                 dataset_eval_columns = exp_dataset.columns.filter(
@@ -2390,6 +2415,9 @@ class ExperimentEvaluationStatsView(APIView):
                         SourceChoices.EXPERIMENT_EVALUATION.value,
                         SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
                     ]
+                ).filter(
+                    Q(source_id=evaluation_id_str)
+                    | Q(source_id__endswith=f"-sourceid-{evaluation_id_str}")
                 )
                 eval_columns.extend(dataset_eval_columns)
 
@@ -2470,6 +2498,8 @@ class ExperimentEvaluationStatsView(APIView):
 
             return self._gm.success_response(response_data)
 
+        except (ExperimentsTable.DoesNotExist, UserEvalMetric.DoesNotExist):
+            return self._gm.not_found(get_error_message("EXPERIMENT_NOT_FOUND"))
         except Exception as e:
             logger.exception(f"Error in fetching experiment's details: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_EXP_DATA"))
@@ -3021,7 +3051,14 @@ class AddExperimentEvalView(APIView):
             validated_data = request.validated_data
             save_as_template = validated_data.get("save_as_template", False)
             run = validated_data.get("run", False)
-            experiment = get_object_or_404(ExperimentsTable, id=experiment_id)
+            try:
+                experiment = ExperimentsTable.objects.select_related("dataset").get(
+                    id=experiment_id,
+                    dataset__organization=organization,
+                    deleted=False,
+                )
+            except ExperimentsTable.DoesNotExist:
+                return self._gm.not_found("Experiment not found")
 
             template_id = validated_data.get("template_id")
             # Save as template if requested
@@ -3081,9 +3118,14 @@ class AddExperimentEvalView(APIView):
 
             logger.info(f"CONFIG: {validated_data.get('config')}")
             selected_template = EvalTemplate.no_workspace_objects.get(id=template_id)
-            normalized_config = normalize_eval_runtime_config(
-                selected_template.config, validated_data.get("config", {})
-            )
+            try:
+                normalized_config = normalize_eval_runtime_config(
+                    selected_template.config, validated_data.get("config", {})
+                )
+                _validate_eval_metric_mapping(selected_template, normalized_config)
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
+            normalized_config = _with_default_reason_column(normalized_config)
             # Create UserEvalMetric
             # V2 experiments use snapshot_dataset for eval execution
             eval_dataset = experiment.snapshot_dataset or experiment.dataset
@@ -3803,6 +3845,8 @@ class ExperimentsTableV2View(APIView):
 
             return self._gm.success_response("Experiment created successfully.")
 
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error creating V2 experiment: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_CREATE_EXP"))
@@ -4111,6 +4155,26 @@ def _translate_single_mapping_value(value, column_mapping):
     return value  # No mapping found — keep original
 
 
+def _validate_eval_metric_mapping(template, config):
+    from model_hub.utils.eval_validators import (
+        get_required_mapping_keys_for_template,
+        validate_required_key_mapping,
+    )
+
+    missing_keys = validate_required_key_mapping(
+        (config or {}).get("mapping", {}),
+        get_required_mapping_keys_for_template(template),
+    )
+    if missing_keys:
+        raise ValueError(f"Missing required mapping keys: {', '.join(missing_keys)}")
+
+
+def _with_default_reason_column(config):
+    config = dict(config or {})
+    config.setdefault("reason_column", True)
+    return config
+
+
 def _create_eval_metrics_inline(
     eval_entries,
     experiment,
@@ -4144,13 +4208,15 @@ def _create_eval_metrics_inline(
     for entry in eval_entries:
         template = EvalTemplate.no_workspace_objects.get(id=entry["template_id"])
 
-        config = entry["config"]
+        config = _with_default_reason_column(entry["config"])
         # Translate original column UUIDs in mapping to snapshot column UUIDs
         if column_mapping and config.get("mapping"):
             config = {
                 **config,
                 "mapping": _translate_eval_mapping(config["mapping"], column_mapping),
             }
+
+        _validate_eval_metric_mapping(template, config)
 
         metric = UserEvalMetric.objects.create(
             name=entry["name"],
@@ -4194,10 +4260,12 @@ def _delete_base_eval_columns(experiment):
     )
     str_metric_ids = [str(mid) for mid in eval_metric_ids]
 
-    # Find base eval columns
     base_eval_cols = Column.objects.filter(
         dataset=snapshot_ds,
-        source=SourceChoices.EVALUATION.value,
+        source__in=[
+            SourceChoices.EVALUATION.value,
+            SourceChoices.EVALUATION_TAGS.value,
+        ],
         source_id__in=str_metric_ids,
         deleted=False,
     )
@@ -4234,23 +4302,32 @@ def _soft_delete_edt_and_columns(edt):
     now = timezone.now()
     snapshot_dataset = edt.experiment.snapshot_dataset
 
-    # 1. Soft-delete M2M-linked columns (prompt output column)
-    edt.columns.filter(deleted=False).update(deleted=True, deleted_at=now)
-
-    # 2. Soft-delete per-EDT eval columns + their reason columns
+    # Collect per-EDT eval columns before deleting M2M-linked columns because
+    # eval columns may also be present in edt.columns.
     edt_id_prefix = str(edt.id)
     eval_cols = Column.objects.filter(
         dataset=snapshot_dataset,
-        source=SourceChoices.EXPERIMENT_EVALUATION.value,
+        source__in=[
+            SourceChoices.EXPERIMENT_EVALUATION.value,
+            SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+        ],
         source_id__startswith=edt_id_prefix,
         deleted=False,
     )
-    # Collect source_ids to find matching reason columns
-    eval_source_ids = list(eval_cols.values_list("source_id", flat=True))
+    eval_col_keys = list(eval_cols.values_list("id", "source_id"))
+
+    # 1. Soft-delete M2M-linked columns (prompt output and any linked evals)
+    edt.columns.filter(deleted=False).update(deleted=True, deleted_at=now)
+
+    # 2. Soft-delete per-EDT eval columns + their reason columns
     eval_cols.update(deleted=True, deleted_at=now)
 
-    if eval_source_ids:
-        reason_source_ids = [f"{sid}-reason" for sid in eval_source_ids]
+    if eval_col_keys:
+        reason_source_ids = []
+        for col_id, source_id in eval_col_keys:
+            if source_id and "-sourceid-" in source_id:
+                metric_id = source_id.rsplit("-sourceid-", 1)[1]
+                reason_source_ids.append(f"{col_id}-sourceid-{metric_id}")
         Column.objects.filter(
             dataset=snapshot_dataset,
             source=SourceChoices.EVALUATION_REASON.value,
@@ -4713,10 +4790,12 @@ def _diff_and_update_evals(
             # FE gets snapshot UUIDs from GET detail, so incoming mapping
             # is already in snapshot UUIDs — no translation needed.
             incoming_mapping = (entry.get("config") or {}).get("mapping", {})
+            template = EvalTemplate.no_workspace_objects.get(id=entry["template_id"])
+            _validate_eval_metric_mapping(template, {"mapping": incoming_mapping})
 
             if _has_eval_changed(metric, entry, incoming_mapping):
                 # Update in-place — same metric ID → same column source_ids → no duplicates
-                new_config = entry["config"].copy()
+                new_config = _with_default_reason_column(entry["config"])
                 new_config["mapping"] = incoming_mapping
                 metric.name = entry["name"]
                 metric.template_id = entry["template_id"]
@@ -4959,27 +5038,14 @@ class ExperimentDeleteV2View(APIView):
                 except Exception:
                     pass
 
-            # Collect EDT IDs for column cleanup
-            edt_ids = list(
-                ExperimentDatasetTable.objects.filter(
-                    experiment__in=experiments
-                ).values_list("id", flat=True)
-            )
+            for exp in experiments:
+                _delete_base_eval_columns(exp)
 
-            # Soft-delete columns in snapshot datasets belonging to these EDTs
-            if edt_ids:
-                Column.objects.filter(
-                    source_id__in=[str(edt_id) for edt_id in edt_ids],
-                    source__in=[
-                        SourceChoices.EXPERIMENT.value,
-                        SourceChoices.EXPERIMENT_EVALUATION.value,
-                    ],
-                ).update(deleted=True)
-
-            # Soft-delete EDT records
-            ExperimentDatasetTable.objects.filter(experiment__in=experiments).update(
-                deleted=True
-            )
+            for edt in ExperimentDatasetTable.objects.filter(
+                experiment__in=experiments,
+                deleted=False,
+            ):
+                _soft_delete_edt_and_columns(edt)
 
             # Soft-delete experiments
             updated_count = experiments.update(deleted=True)
@@ -5191,7 +5257,7 @@ class ExperimentRerunCellsV2View(APIView):
                         row_ids=row_ids,
                         failed_only=failed_only,
                         eval_template_ids=eval_metric_ids,
-                        max_concurrent_rows=request.data.get("max_concurrent_rows", 10),
+                        max_concurrent_rows=data.get("max_concurrent_rows", 10),
                     )
 
                 elif source in (
@@ -5263,7 +5329,7 @@ class ExperimentRerunCellsV2View(APIView):
                         row_ids=row_ids,
                         failed_only=failed_only,
                         eval_template_ids=metric_id_strs,
-                        max_concurrent_rows=request.data.get("max_concurrent_rows", 10),
+                        max_concurrent_rows=data.get("max_concurrent_rows", 10),
                         eval_only=True,
                         edt_ids=edt_id_strs,
                     )
@@ -5318,7 +5384,7 @@ class ExperimentRerunCellsV2View(APIView):
                         row_ids=row_ids,
                         failed_only=failed_only,
                         eval_template_ids=metric_id_strs,
-                        max_concurrent_rows=request.data.get("max_concurrent_rows", 10),
+                        max_concurrent_rows=data.get("max_concurrent_rows", 10),
                         eval_only=True,
                         base_eval_only=True,
                     )
@@ -5447,7 +5513,7 @@ class ExperimentRerunCellsV2View(APIView):
                     row_ids=row_ids,
                     failed_only=failed_only,
                     eval_template_ids=metric_id_strs,
-                    max_concurrent_rows=request.data.get("max_concurrent_rows", 10),
+                    max_concurrent_rows=data.get("max_concurrent_rows", 10),
                     eval_only=True,
                     edt_ids=edt_id_strs if cells else [],
                 )
@@ -5580,7 +5646,7 @@ class ExperimentRerunCellsV2View(APIView):
                 row_ids=list(set(row_ids)),
                 failed_only=failed_only,
                 eval_template_ids=eval_template_ids,
-                max_concurrent_rows=request.data.get("max_concurrent_rows", 10),
+                max_concurrent_rows=data.get("max_concurrent_rows", 10),
             )
 
             logger.info(

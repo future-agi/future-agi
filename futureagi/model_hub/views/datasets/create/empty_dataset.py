@@ -23,7 +23,6 @@ from model_hub.serializers.develop_dataset_contracts import (
 from model_hub.serializers.develop_dataset import DatasetSerializer
 from model_hub.validators.dataset_validators import (
     validate_dataset_name_unique,
-    validate_empty_dataset_row_bound,
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
@@ -79,22 +78,6 @@ class CreateEmptyDatasetView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             is_sdk = data.get("is_sdk", False)
-
-            if not dataset_name:
-                return self._gm.bad_request(
-                    get_error_message("MISSING_NEW_DATASET_NAME")
-                )
-
-            # Enforce upper bound on row count (aligned with UI: max 10)
-            row_count = data.get("row", None)
-            if row_count is not None:
-                try:
-                    row_count = int(row_count)
-                    validate_empty_dataset_row_bound(row_count)
-                except (ValueError, TypeError):
-                    pass
-                except Exception as validation_err:
-                    return self._gm.bad_request(str(validation_err.detail[0]))
 
             try:
                 validate_dataset_name_unique(dataset_name, organization)

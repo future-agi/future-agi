@@ -129,6 +129,32 @@ def create_workspace_admin_user(organization, workspace):
     return user
 
 
+def create_workspace_member_user(organization, workspace):
+    user = User.objects.create_user(
+        email=f"workspace-member-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Workspace Member",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    org_membership = OrganizationMembership.no_workspace_objects.create(
+        user=user,
+        organization=organization,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=True,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        user=user,
+        workspace=workspace,
+        role=OrganizationRoles.WORKSPACE_MEMBER,
+        level=Level.MEMBER,
+        is_active=True,
+        organization_membership=org_membership,
+    )
+    return user
+
+
 # ---------------------------------------------------------------------------
 # 1.1 – List Queues
 # ---------------------------------------------------------------------------
@@ -136,7 +162,6 @@ def create_workspace_admin_user(organization, workspace):
 
 @pytest.mark.django_db
 class TestListQueues:
-
     def test_list_all_queues_empty(self, auth_client):
         """TC-1: Empty list."""
         resp = auth_client.get(QUEUE_URL)
@@ -200,7 +225,6 @@ class TestListQueues:
 
 @pytest.mark.django_db
 class TestCreateQueue:
-
     def test_create_with_name_only(self, auth_client):
         """TC-7: Create with name only, defaults to draft."""
         resp = create_queue(auth_client, name="Simple Queue")
@@ -229,6 +253,17 @@ class TestCreateQueue:
         )
         assert membership.role == AnnotatorRole.MANAGER.value
         assert set(membership.roles) == set(creator["roles"])
+
+    def test_model_create_gives_creator_all_roles(self, organization, workspace, user):
+        """Non-serializer queue creation keeps creator permissions intact."""
+        queue = AnnotationQueue.objects.create(
+            name=f"Direct Creator Queue {uuid.uuid4()}",
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+        )
+
+        assert_default_queue_full_access(queue.id, user)
 
     def test_create_with_labels_and_annotators(self, auth_client, user):
         """TC-8: Create with label_ids and annotator_ids."""
@@ -265,9 +300,7 @@ class TestCreateQueue:
         resp = create_queue(auth_client, name="Unique")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_create_checks_queue_plan_limit(
-        self, auth_client, organization, user
-    ):
+    def test_create_checks_queue_plan_limit(self, auth_client, organization, user):
         AnnotationQueue.objects.create(
             name="Existing Queue",
             organization=organization,
@@ -438,6 +471,68 @@ class TestCreateQueue:
             current_count=0,
         )
 
+    def test_get_or_create_default_limit_message_explains_org_queue_count(
+        self, auth_client, organization, user, workspace
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Default Queue Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        project = Project.objects.create(
+            name="Default Queue Limit Message Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        AnnotationQueue.objects.create(
+            name="Current Workspace Queue",
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        AnnotationQueue.objects.create(
+            name="Other Workspace Queue",
+            organization=organization,
+            workspace=other_workspace,
+            created_by=user,
+        )
+
+        with (
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch(
+                "tfc.ee_gating.check_ee_can_create",
+                side_effect=FeatureUnavailable(
+                    EEResource.ANNOTATION_QUEUES.value,
+                    detail="You've reached the 2 annotation queues limit",
+                    code="ENTITLEMENT_LIMIT",
+                    metadata={
+                        "resource": EEResource.ANNOTATION_QUEUES.value,
+                        "current_usage": 2,
+                        "limit": 2,
+                    },
+                ),
+            ),
+        ):
+            resp = auth_client.post(
+                f"{QUEUE_URL}get-or-create-default/",
+                {"project_id": str(project.id)},
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_402_PAYMENT_REQUIRED
+        assert "2 existing queues" in resp.data["error"]["message"]
+        assert "1 in the current workspace" in resp.data["error"]["message"]
+        assert "1 in other workspaces" in resp.data["error"]["message"]
+        assert resp.data["error"]["detail"]["current_usage"] == 2
+        assert resp.data["error"]["detail"]["workspace_usage"] == 1
+        assert resp.data["error"]["detail"]["other_workspace_usage"] == 1
+        assert not AnnotationQueue.objects.filter(
+            name__startswith="Default - Default Queue Limit Message Project"
+        ).exists()
+
     def test_get_or_create_default_gives_requester_full_manager_access(
         self, auth_client, organization, workspace, user
     ):
@@ -501,7 +596,6 @@ class TestCreateQueue:
 
 @pytest.mark.django_db
 class TestRetrieveQueue:
-
     def test_get_queue_by_id(self, auth_client):
         """TC-12: Retrieve includes nested labels/annotators."""
         create_queue(auth_client, name="Retrievable")
@@ -523,7 +617,6 @@ class TestRetrieveQueue:
 
 @pytest.mark.django_db
 class TestUpdateQueue:
-
     def test_update_name(self, auth_client):
         """TC-14: Update queue name."""
         create_queue(auth_client, name="Original")
@@ -688,7 +781,6 @@ class TestUpdateQueue:
 
 @pytest.mark.django_db
 class TestAnnotationQueueRoleBackfill:
-
     def test_backfill_command_upgrades_existing_creator_manager(
         self, organization, workspace, user
     ):
@@ -698,12 +790,9 @@ class TestAnnotationQueueRoleBackfill:
             workspace=workspace,
             created_by=user,
         )
-        membership = AnnotationQueueAnnotator.objects.create(
-            queue=queue,
-            user=user,
-            role=AnnotatorRole.MANAGER.value,
-            roles=[],
-        )
+        membership = AnnotationQueueAnnotator.objects.get(queue=queue, user=user)
+        membership.roles = []
+        membership.save(update_fields=["roles", "updated_at"])
 
         out = StringIO()
         call_command("backfill_annotation_queue_roles", stdout=out)
@@ -724,8 +813,9 @@ class TestAnnotationQueueRoleBackfill:
             name=f"Missing Creator Membership Queue {uuid.uuid4()}",
             organization=organization,
             workspace=workspace,
-            created_by=user,
         )
+        AnnotationQueue.objects.filter(pk=queue.pk).update(created_by=user)
+        queue.refresh_from_db()
 
         out = StringIO()
         call_command("backfill_annotation_queue_roles", stdout=out)
@@ -751,7 +841,6 @@ class TestAnnotationQueueRoleBackfill:
 
 @pytest.mark.django_db
 class TestArchiveAndRestoreQueue:
-
     def test_archive_queue(self, auth_client):
         """TC-18: Delete (archive) queue."""
         create_queue(auth_client, name="To Archive")
@@ -767,6 +856,19 @@ class TestArchiveAndRestoreQueue:
         resp = auth_client.get(QUEUE_URL)
         ids = [str(r["id"]) for r in resp.data["results"]]
         assert str(queue_id) not in ids
+
+    def test_archived_filter_lists_only_archived_queues(self, auth_client):
+        create_queue(auth_client, name="Archived Queue")
+        archived_queue_id = get_queue_id(auth_client, "Archived Queue")
+        auth_client.delete(queue_detail_url(archived_queue_id))
+        create_queue(auth_client, name="Active Queue")
+
+        resp = auth_client.get(QUEUE_URL, {"archived": "true"})
+
+        assert resp.status_code == status.HTTP_200_OK
+        ids = [str(r["id"]) for r in resp.data["results"]]
+        assert str(archived_queue_id) in ids
+        assert all(r["deleted"] is True for r in resp.data["results"])
 
     def test_restore_archived_queue(self, auth_client):
         """TC-20: Restore archived queue."""
@@ -789,7 +891,6 @@ class TestArchiveAndRestoreQueue:
 
 @pytest.mark.django_db
 class TestStatusTransitions:
-
     def _create_and_get_id(self, auth_client, name="Trans Q"):
         create_queue(auth_client, name=name)
         return get_queue_id(auth_client, name)
@@ -801,6 +902,31 @@ class TestStatusTransitions:
             queue_status_url(qid), {"status": "active"}, format="json"
         )
         assert resp.status_code == status.HTTP_200_OK
+
+    def test_annotator_cannot_change_queue_status(
+        self,
+        auth_client,
+        api_client,
+        organization,
+        workspace,
+    ):
+        qid = self._create_and_get_id(auth_client, "Annotator Status Lock")
+        annotator = create_workspace_member_user(organization, workspace)
+        AnnotationQueueAnnotator.objects.create(
+            queue_id=qid,
+            user=annotator,
+            role=AnnotatorRole.ANNOTATOR.value,
+            roles=[AnnotatorRole.ANNOTATOR.value],
+        )
+        api_client.force_authenticate(user=annotator)
+        api_client.set_workspace(workspace)
+
+        resp = api_client.post(
+            queue_status_url(qid), {"status": "active"}, format="json"
+        )
+
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+        assert "Only queue managers" in str(resp.data)
 
     def test_active_to_paused(self, auth_client):
         """TC-23: active → paused."""

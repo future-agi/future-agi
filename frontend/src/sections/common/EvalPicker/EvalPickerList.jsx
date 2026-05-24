@@ -178,7 +178,9 @@ const EvalDetailPanel = ({ evalData }) => {
   const { data: configData, isLoading } = useQuery({
     queryKey: ["evals", "detail", templateId],
     queryFn: async () => {
-      const { data } = await axios.get(endpoints.develop.eval.getEvalDetail(templateId));
+      const { data } = await axios.get(
+        endpoints.develop.eval.getEvalDetail(templateId),
+      );
       return data?.result;
     },
     enabled: !!templateId,
@@ -201,7 +203,8 @@ const EvalDetailPanel = ({ evalData }) => {
   const normalizedConfigData = normalizeEvalPickerEval(configData);
   const normalizedEvalData = normalizeEvalPickerEval(evalData);
 
-  const evalType = normalizedConfigData?.evalType || normalizedEvalData?.evalType || "llm";
+  const evalType =
+    normalizedConfigData?.evalType || normalizedEvalData?.evalType || "llm";
   const outputType =
     normalizedConfigData?.outputType || normalizedEvalData?.outputType || "";
   const description = configData?.description || evalData?.description || "";
@@ -222,7 +225,8 @@ const EvalDetailPanel = ({ evalData }) => {
     configData?.choicesMap ||
     {};
   const instructions = configData?.instructions || evalData?.instructions || "";
-  const code = getEvalCode(normalizedConfigData) || getEvalCode(normalizedEvalData);
+  const code =
+    getEvalCode(normalizedConfigData) || getEvalCode(normalizedEvalData);
   const codeLanguage =
     getEvalCodeLanguage(normalizedConfigData) ||
     getEvalCodeLanguage(normalizedEvalData);

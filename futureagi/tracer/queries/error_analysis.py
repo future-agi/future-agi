@@ -1035,15 +1035,33 @@ class TraceErrorAnalysisDB:
         Get or create a TraceErrorAnalysisTask for a project
         """
         try:
-            task, created = TraceErrorAnalysisTask.objects.get_or_create(
-                project=project,
-                deleted=False,
-                defaults={
-                    "sampling_rate": default_sampling_rate,  # Default 10%
-                    "status": TraceErrorTaskStatus.WAITING,
-                },
+            task = TraceErrorAnalysisTask.all_objects.filter(project=project).first()
+            if task:
+                if task.deleted:
+                    task.deleted = False
+                    task.deleted_at = None
+                    task.sampling_rate = default_sampling_rate
+                    task.status = TraceErrorTaskStatus.WAITING
+                    task.save(
+                        update_fields=[
+                            "deleted",
+                            "deleted_at",
+                            "sampling_rate",
+                            "status",
+                            "updated_at",
+                        ]
+                    )
+                    return task, True
+                return task, False
+
+            return (
+                TraceErrorAnalysisTask.objects.create(
+                    project=project,
+                    sampling_rate=default_sampling_rate,
+                    status=TraceErrorTaskStatus.WAITING,
+                ),
+                True,
             )
-            return task, created
         except Exception as e:
             logger.exception(f"Error in get_or_create_task_for_project: {str(e)}")
             return None, False

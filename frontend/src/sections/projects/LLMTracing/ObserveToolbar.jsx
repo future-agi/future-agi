@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PropTypes from "prop-types";
 import {
@@ -36,6 +36,8 @@ const DATE_OPTIONS = [
   { key: "12M", label: "Past 12M" },
   { key: "Custom", label: "Custom range" },
 ];
+
+const DIRECT_ID_FILTER_FIELDS = new Set(["trace_id", "span_id"]);
 
 const ObserveToolbar = ({
   // Mode: "traces" (default) | "sessions" | "users"
@@ -125,10 +127,15 @@ const ObserveToolbar = ({
     (mode === "traces" || mode === "sessions");
   const [displayAnchor, setDisplayAnchor] = useState(null);
   const filterButtonRef = useRef(null);
+  const [filterButtonEl, setFilterButtonEl] = useState(null);
   const [panelFilters, setPanelFilters] = useState(null); // stores raw panel-format filters
   const [dateAnchor, setDateAnchor] = useState(null);
   const [customDateOpen, setCustomDateOpen] = useState(false);
   const dateButtonRef = useRef(null);
+  const setFilterButtonNode = useCallback((node) => {
+    filterButtonRef.current = node;
+    setFilterButtonEl(node);
+  }, []);
 
   const handleDateOptionChange = (option) => {
     setDateAnchor(null);
@@ -232,8 +239,11 @@ const ObserveToolbar = ({
         EVAL_METRIC: "eval",
         ANNOTATION: "annotation",
       };
+      const isDirectIdFilter = DIRECT_ID_FILTER_FIELDS.has(gf.column_id);
       const rawColType =
-        gf.filter_config?.col_type || gf.col_type || "SYSTEM_METRIC";
+        gf.filter_config?.col_type ||
+        gf.col_type ||
+        (isDirectIdFilter ? undefined : "SYSTEM_METRIC");
       const rawFilterType = gf.filter_config?.filter_type;
       const isGlobalAnnotatorFilter = gf.column_id === "annotator";
       // Auto-migrate legacy saved views: thumbs annotations used to be
@@ -253,9 +263,11 @@ const ObserveToolbar = ({
         field: gf.column_id,
         fieldName:
           gf.display_name || (isGlobalAnnotatorFilter ? "Annotator" : null),
-        fieldCategory: isGlobalAnnotatorFilter
-          ? "annotation"
-          : colTypeReverseMap[rawColType] || "system",
+        fieldCategory: isDirectIdFilter
+          ? undefined
+          : isGlobalAnnotatorFilter
+            ? "annotation"
+            : colTypeReverseMap[rawColType] || "system",
         fieldType: isGlobalAnnotatorFilter
           ? "annotator"
           : isBooleanType
@@ -271,7 +283,11 @@ const ObserveToolbar = ({
                     : rawFilterType === "text" && rawColType === "ANNOTATION"
                       ? "text"
                       : "string",
-        apiColType: isGlobalAnnotatorFilter ? "SYSTEM_METRIC" : rawColType,
+        apiColType: isDirectIdFilter
+          ? undefined
+          : isGlobalAnnotatorFilter
+            ? "SYSTEM_METRIC"
+            : rawColType,
         operator: rawOp,
         value,
       };
@@ -381,7 +397,7 @@ const ObserveToolbar = ({
           {/* Filter — hidden in compare mode (each graph has its own) */}
           {!isCompareActive && (
             <Button
-              ref={filterButtonRef}
+              ref={setFilterButtonNode}
               variant="outlined"
               size="small"
               startIcon={
@@ -405,8 +421,10 @@ const ObserveToolbar = ({
 
           {/* Filter Panel (popover) */}
           <TraceFilterPanel
-            anchorEl={externalFilterAnchor || filterButtonRef.current}
-            open={isFilterOpen}
+            anchorEl={externalFilterAnchor || filterButtonEl}
+            open={
+              isFilterOpen && Boolean(externalFilterAnchor || filterButtonEl)
+            }
             onClose={onFilterToggle}
             currentFilters={panelFilters}
             filterFields={filterFields}

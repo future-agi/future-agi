@@ -17,6 +17,7 @@ from model_hub.services.eval_group import (
     apply_eval_group,
     create_eval_group,
     edit_eval_list_manager,
+    filter_eval_templates_for_group_scope,
 )
 from model_hub.utils.function_eval_params import get_function_params_schema
 from model_hub.views.utils.utils import fetch_required_keys_for_eval_template
@@ -113,8 +114,10 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 all_template_ids.add(template_id_str)
 
             # Single query to get all eval_templates
-            all_eval_templates = EvalTemplate.no_workspace_objects.filter(
-                id__in=list(all_template_ids)
+            all_eval_templates = filter_eval_templates_for_group_scope(
+                EvalTemplate.no_workspace_objects.filter(id__in=list(all_template_ids)),
+                getattr(request, "organization", None) or request.user.organization,
+                request.workspace,
             )
             template_id_to_template = {
                 str(template.id): template for template in all_eval_templates
@@ -180,8 +183,10 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                     evalgroup_id=eval_group.id
                 ).values_list("evaltemplate_id", flat=True)
             )
-            eval_templates = EvalTemplate.no_workspace_objects.filter(
-                id__in=template_ids
+            eval_templates = filter_eval_templates_for_group_scope(
+                EvalTemplate.no_workspace_objects.filter(id__in=template_ids),
+                getattr(request, "organization", None) or request.user.organization,
+                request.workspace,
             )
 
             if name:
@@ -376,8 +381,7 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
 
     def perform_destroy(self, instance):
         """Override destroy to implement soft delete"""
-        instance.deleted = True
-        instance.save()
+        instance.delete()
 
     @action(detail=False, methods=["post"], url_path="edit-eval-list")
     def edit_eval_list(self, request, *args, **kwargs):
@@ -408,10 +412,13 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 added_template_ids=added_template_ids,
                 deleted_template_ids=deleted_template_ids,
                 user=request.user,
+                workspace=request.workspace,
             )
 
             return self._gm.success_response("Eval group has been updated succesfully")
 
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in editing eval list: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -458,6 +465,8 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.success_response(response)
 
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in applying eval group: {str(e)}")
             return self._gm.internal_server_error_response(

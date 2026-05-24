@@ -68,6 +68,7 @@ import {
 import CallLogsGrid from "src/sections/agents/CallLogs/CallLogsGrid";
 import SelectAllBanner from "src/sections/projects/LLMTracing/SelectAllBanner";
 import { useGetProjectDetails } from "src/api/project/project-detail";
+import { useDebounce } from "src/hooks/use-debounce";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 import {
@@ -80,6 +81,7 @@ import {
   defaultFilter as sessionDefaultFilterBase,
 } from "src/sections/projects/SessionsView/common";
 import {
+  buildSessionSelectAllMeta,
   buildSessionSelectionFilters,
   buildSessionSelectorFilterFields,
   SESSION_DATE_FILTER_COLUMN,
@@ -102,6 +104,33 @@ function hasAppliedAnnotatorFilter(filters) {
     (filter) => filter?.column_id === "annotator" && apiFilterHasValue(filter),
   );
 }
+
+export function SelectionCheckboxNudge({ selectionCount }) {
+  if (selectionCount > 0) return null;
+
+  return (
+    <Alert
+      severity="info"
+      variant="outlined"
+      icon={<Iconify icon="mdi:checkbox-marked-outline" width={18} />}
+      sx={{
+        mt: 2,
+        borderRadius: 0.75,
+        "& .MuiAlert-message": {
+          width: "100%",
+        },
+      }}
+    >
+      <Typography variant="body2" fontWeight={600}>
+        Use the checkbox column to select rows before adding them to this queue.
+      </Typography>
+    </Alert>
+  );
+}
+
+SelectionCheckboxNudge.propTypes = {
+  selectionCount: PropTypes.number.isRequired,
+};
 
 export function buildAnnotatorFilterChipLabelMap(annotatorOptions = []) {
   const entries = annotatorOptions
@@ -803,6 +832,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
                 automatically, and you can add items from any selected source.
               </Alert>
             )}
+            <SelectionCheckboxNudge selectionCount={selectionCount} />
             {sourceType === "dataset_row" && (
               <DatasetRowSelector
                 onSetSelection={handleSetSelection}
@@ -823,7 +853,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               />
             )}
             {sourceType === "trace_session" && (
-              <SessionSelector onSetSelection={handleSetSelection} />
+              <SessionSelector
+                onSetSelection={handleSetSelection}
+                onSelectAll={handleSelectAll}
+              />
             )}
             {sourceType === "call_execution" && (
               <SimulationSelector onSetSelection={handleSetSelection} />
@@ -850,7 +883,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               sx={{ flex: "1 1 220px", minWidth: 0 }}
             >
               {selectionCount === 0
-                ? "Select rows with the checkbox column to add them."
+                ? "No rows selected"
                 : `${selectionCount} selected`}
             </Typography>
             <Button
@@ -1293,9 +1326,10 @@ GridLoadingOverlay.propTypes = {
 // ---------------------------------------------------------------------------
 // Dataset Row Selector – Same AG Grid as dataset view
 // ---------------------------------------------------------------------------
-function DatasetRowSelector({ onSetSelection, onSelectAll }) {
+export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   const [datasetId, setDatasetId] = useState("");
   const [search, setSearch] = useState("");
+  const debouncedSearch = useDebounce(search.trim(), 300);
   const [gridApi, setGridApi] = useState(null);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFiltersState] = useState([
@@ -1394,22 +1428,33 @@ function DatasetRowSelector({ onSetSelection, onSelectAll }) {
     }
   }, [datasetId, gridApi, queryClient]);
 
-  // Handle search
+  const applyDatasetSearch = useCallback(
+    (nextSearch) => {
+      searchRef.current = nextSearch.trim();
+      if (!gridApi || !datasetId) return;
+      const ds = createDataSource(
+        queryClient,
+        datasetId,
+        filtersRef,
+        searchRef,
+        setIsGridLoading,
+      );
+      gridApi.setGridOption("serverSideDatasource", ds);
+    },
+    [gridApi, datasetId, queryClient],
+  );
+
+  useEffect(() => {
+    applyDatasetSearch(debouncedSearch);
+  }, [applyDatasetSearch, debouncedSearch]);
+
   const handleSearchKeyDown = useCallback(
     (e) => {
-      if (e.key === "Enter" && gridApi) {
-        searchRef.current = search;
-        const ds = createDataSource(
-          queryClient,
-          datasetId,
-          filtersRef,
-          searchRef,
-          setIsGridLoading,
-        );
-        gridApi.setGridOption("serverSideDatasource", ds);
-      }
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      applyDatasetSearch(search);
     },
-    [gridApi, search, datasetId, queryClient],
+    [applyDatasetSearch, search],
   );
 
   // Handle row selection — detect select-all via getServerSideSelectionState
@@ -2869,6 +2914,8 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
           source="traces"
+          tab="spans"
+          isSpansView
           currentFilters={validatedMainFilters
             .filter((f) => f?.column_id)
             .map(apiFilterToPanel)}
@@ -3010,7 +3057,7 @@ SpanSelector.propTypes = {
 // ---------------------------------------------------------------------------
 const SESSION_ROWS_LIMIT = 30;
 
-function SessionSelector({ onSetSelection }) {
+function SessionSelector({ onSetSelection, onSelectAll }) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -3224,19 +3271,39 @@ function SessionSelector({ onSetSelection }) {
     }
   }, [dataSource, gridApi, projectId]);
 
-  // Handle row selection
+  const [pageSelectAllMeta, setPageSelectAllMeta] = useState(null);
+
+  // Handle row selection. Session rows use the backend `session_id` field as
+  // the row id; filter-mode select-all sends the same canonical ids to the API.
   const onSelectionChanged = useCallback(
     (event) => {
-      const ids = [];
-      event.api.forEachNode((node) => {
-        if (node.isSelected() && node.data?.session_id) {
-          ids.push(node.data.session_id);
-        }
-      });
+      const selectionState = event.api.getServerSideSelectionState?.() || {};
+
+      if (selectionState.selectAll) {
+        const selectAllMeta = buildSessionSelectAllMeta(event.api);
+        onSetSelection(selectAllMeta?.visibleRowIds || []);
+        setPageSelectAllMeta(selectAllMeta);
+        return;
+      }
+
+      const ids = selectionState.toggledNodes || [];
       onSetSelection(ids);
+      setPageSelectAllMeta(null);
     },
     [onSetSelection],
   );
+
+  const commitFilterModeSelectAll = useCallback(() => {
+    if (!pageSelectAllMeta) return;
+    onSelectAll({
+      totalCount: pageSelectAllMeta.totalCount,
+      excludedIds: pageSelectAllMeta.excludedIds,
+      projectId,
+      projectVersionId: versionId || undefined,
+      filters: filtersRef.current,
+    });
+    setPageSelectAllMeta(null);
+  }, [pageSelectAllMeta, onSelectAll, projectId, versionId]);
 
   const isFilterApplied = useMemo(
     () => filters.some((f) => f.column_id),
@@ -3250,6 +3317,7 @@ function SessionSelector({ onSetSelection }) {
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
+    setPageSelectAllMeta(null);
     onSetSelection([]);
   };
 
@@ -3259,6 +3327,7 @@ function SessionSelector({ onSetSelection }) {
     setFilters([{ ...sessionDefaultFilterBase, id: getRandomId() }]);
     setFilterAnchorEl(null);
     setFilterOpen(false);
+    setPageSelectAllMeta(null);
     onSetSelection([]);
   };
 
@@ -3509,6 +3578,24 @@ function SessionSelector({ onSetSelection }) {
             flexDirection: "column",
           }}
         >
+          <SelectAllBanner
+            visible={
+              !!pageSelectAllMeta &&
+              pageSelectAllMeta.totalCount > pageSelectAllMeta.visibleCount
+            }
+            visibleCount={pageSelectAllMeta?.visibleCount || 0}
+            totalMatching={
+              pageSelectAllMeta
+                ? Math.max(
+                    pageSelectAllMeta.totalCount -
+                      pageSelectAllMeta.excludedIds.size,
+                    0,
+                  )
+                : 0
+            }
+            noun="session"
+            onSelectAll={commitFilterModeSelectAll}
+          />
           <Box sx={{ flex: 1, position: "relative" }}>
             <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
@@ -3542,6 +3629,7 @@ function SessionSelector({ onSetSelection }) {
 
 SessionSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
+  onSelectAll: PropTypes.func.isRequired,
 };
 
 // ---------------------------------------------------------------------------

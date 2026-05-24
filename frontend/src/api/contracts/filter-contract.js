@@ -31,6 +31,27 @@ const API_FILTER_CONFIG_KEYS = new Set([
   "filter_value",
   "col_type",
 ]);
+const STORED_FILTER_ITEM_KEY_ALIASES = {
+  columnId: "column_id",
+  displayName: "display_name",
+  outputType: "output_type",
+  filterConfig: "filter_config",
+};
+const STORED_FILTER_CONFIG_KEY_ALIASES = {
+  colType: "col_type",
+  filterType: "filter_type",
+  filterOp: "filter_op",
+  filterValue: "filter_value",
+};
+const STORED_FILTER_OPERATOR_ALIASES = {
+  is: "equals",
+  is_not: "not_equals",
+  equal_to: "equals",
+  not_equal_to: "not_equals",
+  inBetween: "between",
+  notBetween: "not_between",
+  not_in_between: "not_between",
+};
 
 export const normalizeFilterType = (rawType) => {
   if (!rawType) return "text";
@@ -216,10 +237,70 @@ export const serializeFilterForApi = (filter) => {
       filter_type: filterType,
       filter_op: filterOp,
       filter_value: filterValue,
-      ...(config.col_type && { col_type: normalizeColumnType(config.col_type) }),
+      ...(config.col_type && {
+        col_type: normalizeColumnType(config.col_type),
+      }),
     },
   };
 };
 
 export const serializeFilterListForApi = (filters = []) =>
-  filters.filter((filter) => !isEmptyFilterDraft(filter)).map(serializeFilterForApi);
+  filters
+    .filter((filter) => !isEmptyFilterDraft(filter))
+    .map(serializeFilterForApi);
+
+const moveAliasKeys = (value, aliases) => {
+  const next = { ...value };
+  Object.entries(aliases).forEach(([oldKey, newKey]) => {
+    if (!(oldKey in next)) return;
+    if (!(newKey in next)) next[newKey] = next[oldKey];
+    delete next[oldKey];
+  });
+  return next;
+};
+
+const upgradeStoredFilterForHydration = (filter) => {
+  if (!filter || typeof filter !== "object") return filter;
+
+  const next = moveAliasKeys(filter, STORED_FILTER_ITEM_KEY_ALIASES);
+  const rootColType = next.colType || next.col_type;
+  delete next.colType;
+
+  if (next.filter_config && typeof next.filter_config === "object") {
+    const nextConfig = moveAliasKeys(
+      next.filter_config,
+      STORED_FILTER_CONFIG_KEY_ALIASES,
+    );
+    if (!nextConfig.col_type && rootColType) {
+      nextConfig.col_type = rootColType;
+    }
+    if (STORED_FILTER_OPERATOR_ALIASES[nextConfig.filter_op]) {
+      nextConfig.filter_op =
+        STORED_FILTER_OPERATOR_ALIASES[nextConfig.filter_op];
+    }
+    next.filter_config = nextConfig;
+  }
+
+  return next;
+};
+
+export const hydrateStoredFilterList = (filters = [], createId) => {
+  if (!Array.isArray(filters)) return [];
+
+  return filters.reduce((acc, filter) => {
+    try {
+      const upgraded = upgradeStoredFilterForHydration(filter);
+      const canonical = serializeFilterForApi(upgraded);
+      const id = filter.id || (createId ? createId() : undefined);
+      acc.push({
+        ...canonical,
+        ...(id ? { id } : {}),
+      });
+    } catch {
+      // Corrupted or unsupported localStorage entries are intentionally
+      // discarded; valid legacy persisted keys are upgraded above and will be
+      // written back in the canonical API contract on the next save.
+    }
+    return acc;
+  }, []);
+};

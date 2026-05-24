@@ -112,6 +112,15 @@ class _BadResponseView(APIView):
         return Response({"status": True, "result": {"wrong": "shape"}})
 
 
+class _NonStrictBadResponseView(APIView):
+    @validated_request(
+        request_serializer=_DemoRequestSerializer,
+        responses={200: _DemoResponseSerializer},
+    )
+    def post(self, request):
+        return Response({"status": True, "result": {"wrong": "shape"}})
+
+
 class _ListResponseView(APIView):
     @validated_request(
         responses={200: _DemoResultSerializer(many=True)},
@@ -379,6 +388,17 @@ def test_validated_request_can_strictly_validate_responses():
 
     assert response.status_code == 400
     assert "name" in response.data["result"]
+
+
+def test_validated_request_leaves_response_validation_non_strict_by_default():
+    factory = APIRequestFactory()
+
+    response = _NonStrictBadResponseView.as_view()(
+        factory.post("/", {"name": "Future AGI"})
+    )
+
+    assert response.status_code == 200
+    assert response.data == {"status": True, "result": {"wrong": "shape"}}
 
 
 def test_validated_request_can_validate_many_response_serializers():

@@ -457,6 +457,7 @@ class TestEvalTemplateBulkDeleteAPI:
         # Verify template is soft-deleted
         user_eval_template.refresh_from_db()
         assert user_eval_template.deleted is True
+        assert user_eval_template.deleted_at is not None
 
     def test_delete_system_templates_rejected(self, auth_client, system_eval_template):
         """System templates should not be deleted."""
@@ -519,3 +520,4 @@ class TestEvalTemplateBulkDeleteAPI:
 
         user_eval_template.refresh_from_db()
         assert user_eval_template.deleted is True
+        assert user_eval_template.deleted_at is not None

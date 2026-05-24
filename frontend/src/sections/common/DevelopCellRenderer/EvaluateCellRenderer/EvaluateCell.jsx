@@ -54,7 +54,6 @@ const EvaluateCell = ({
 }) => {
   const output = cellData?.valueInfos?.output || outputType;
 
-
   // Detect composite eval cells. The Phase B runner writes a `composite_id`
   // key and a `children` array into `value_infos` alongside the aggregate
   // score. Use either as a liveness signal so both newer (composite_id)
@@ -66,9 +65,9 @@ const EvaluateCell = ({
 
   const isComposite = Boolean(
     parsedValueInfos?.composite_id ||
-    (Array.isArray(parsedValueInfos?.children) &&
-      parsedValueInfos.children.length > 0 &&
-      parsedValueInfos.children[0]?.child_id),
+      (Array.isArray(parsedValueInfos?.children) &&
+        parsedValueInfos.children.length > 0 &&
+        parsedValueInfos.children[0]?.child_id),
   );
   const [compositeDialogOpen, setCompositeDialogOpen] = useState(false);
 
@@ -199,9 +198,7 @@ const EvaluateCell = ({
   }
   if (dataType === "float") {
     const hasValue = hasRenderableValue(cellData?.cellValue);
-    const bgColor = hasValue
-      ? interpolateColorBasedOnScore(value, 1)
-      : "";
+    const bgColor = hasValue ? interpolateColorBasedOnScore(value, 1) : "";
     return (
       <>
         <Box

@@ -248,6 +248,31 @@ class TestSecretKeyCustomActionsAPI:
         )
         assert delete_response.status_code == status.HTTP_200_OK
 
+    def test_get_secret_keys_masks_key_material(self, auth_client):
+        """Secret-key list must not return raw key material after creation."""
+        create_response = auth_client.post(
+            "/accounts/key/generate_secret_key/",
+            {"key_name": "Masked List Contract Key"},
+            format="json",
+        )
+        assert create_response.status_code == status.HTTP_200_OK
+        created = create_response.json().get("result", {})
+        key_id = created.get("key_id")
+        raw_api_key = created.get("api_key")
+        raw_secret_key = created.get("secret_key")
+
+        response = auth_client.get(
+            "/accounts/key/get_secret_keys/?search=Masked%20List%20Contract%20Key"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        table = response.json().get("result", {}).get("table", [])
+        row = next((item for item in table if str(item.get("id")) == str(key_id)), None)
+        assert row is not None
+        assert row["api_key"] != raw_api_key
+        assert row["secret_key"] != raw_secret_key
+        assert "*" in row["api_key"]
+        assert "*" in row["secret_key"]
+
 
 @pytest.mark.integration
 @pytest.mark.api

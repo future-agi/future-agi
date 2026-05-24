@@ -124,8 +124,7 @@ const TaskDetailPage = () => {
 
   const { mutate: renameTask } = useMutation({
     mutationFn: (newName) =>
-      axios.patch(endpoints.project.patchEvalTask(), {
-        eval_task_id: taskId,
+      axios.patch(endpoints.project.updateEvalTask(taskId), {
         name: newName,
       }),
     onSuccess: () => {
@@ -247,7 +246,7 @@ const TaskDetailPage = () => {
   }
 
   const status = (taskDetails.status || "").toLowerCase();
-  const canPause = status === "running" || status === "pending";
+  const canPause = status === "running";
   const canResume = status === "paused";
 
   // Pause/Resume stay in the header

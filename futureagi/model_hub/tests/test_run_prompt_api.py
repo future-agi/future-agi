@@ -934,6 +934,95 @@ class TestRunPromptOrganizationIsolation:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_cannot_direct_run_prompt_on_other_org_dataset(
+        self, auth_client, other_org_dataset
+    ):
+        """Test that direct run prompt cannot bind to another org's dataset."""
+        payload = {
+            "dataset_id": str(other_org_dataset.id),
+            "name": "Cross Org Direct Run Prompt",
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+
+        with patch(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+        ) as mock_task:
+            response = auth_client.post(
+                "/model-hub/run-prompt/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_task.assert_not_called()
+        assert not RunPrompter.objects.filter(name=payload["name"]).exists()
+
+    def test_run_prompt_for_rows_rejects_row_from_other_dataset(
+        self, auth_client, organization, workspace, run_prompter
+    ):
+        """Test row reruns only accept rows from the run prompt's dataset."""
+        other_dataset = Dataset.objects.create(
+            name="Same Org Other Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_row = Row.objects.create(dataset=other_dataset, order=0)
+        payload = {
+            "run_prompt_ids": [str(run_prompter.id)],
+            "row_ids": [str(other_row.id)],
+        }
+
+        with patch(
+            "model_hub.views.run_prompt.run_all_prompts_task.apply_async"
+        ) as mock_task:
+            response = auth_client.post(
+                "/model-hub/run-prompt-for-rows/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_task.assert_not_called()
+
+    def test_run_prompt_for_rows_rejects_mixed_run_prompt_datasets(
+        self, auth_client, organization, workspace, dataset, row, run_prompter
+    ):
+        """Test bulk row rerun does not mix run prompts from different datasets."""
+        other_dataset = Dataset.objects.create(
+            name="Second Prompt Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_run_prompter = RunPrompter.objects.create(
+            name="Other Dataset Run Prompter",
+            dataset=other_dataset,
+            organization=organization,
+            workspace=workspace,
+            status=StatusType.NOT_STARTED.value,
+            model="gpt-4",
+            messages=[{"role": "user", "content": "Test prompt"}],
+            run_prompt_config={},
+        )
+        payload = {
+            "run_prompt_ids": [str(run_prompter.id), str(other_run_prompter.id)],
+            "row_ids": [str(row.id)],
+        }
+
+        with patch(
+            "model_hub.views.run_prompt.run_all_prompts_task.apply_async"
+        ) as mock_task:
+            response = auth_client.post(
+                "/model-hub/run-prompt-for-rows/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_task.assert_not_called()
+
 
 # ==================== Config Variations Tests ====================
 

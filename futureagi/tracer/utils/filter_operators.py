@@ -14,11 +14,18 @@ from pathlib import Path
 
 @lru_cache(maxsize=1)
 def load_filter_contract() -> dict:
-    contract_path = (
-        Path(__file__).resolve().parents[3] / "api_contracts" / "filter_contract.json"
+    current_path = Path(__file__).resolve()
+    contract_paths = (
+        current_path.parents[3] / "api_contracts" / "filter_contract.json",
+        current_path.parents[1] / "contracts" / "filter_contract.json",
     )
-    with contract_path.open("r", encoding="utf-8") as fh:
-        return json.load(fh)
+    for contract_path in contract_paths:
+        if contract_path.exists():
+            with contract_path.open("r", encoding="utf-8") as fh:
+                return json.load(fh)
+    raise FileNotFoundError(
+        "Could not find filter_contract.json in api_contracts/ or tracer/contracts/"
+    )
 
 
 _CONTRACT = load_filter_contract()

@@ -107,6 +107,35 @@ const TraceGrid = React.forwardRef(
     const refreshGrid = useCallback(() => {
       gridRef?.current?.api?.refreshServerSide({ purge: true });
     }, [gridRef]);
+    const filterRequestKey = useMemo(
+      () =>
+        JSON.stringify({
+          filters,
+          extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
+          metricFilters: metricFilters || [],
+          hasEvalFilter,
+          dateInterval,
+          projectId,
+          enabled,
+        }),
+      [
+        filters,
+        extraFilters,
+        metricFilters,
+        hasEvalFilter,
+        dateInterval,
+        projectId,
+        enabled,
+      ],
+    );
+    const previousFilterRequestKeyRef = useRef(filterRequestKey);
+
+    useEffect(() => {
+      if (previousFilterRequestKeyRef.current === filterRequestKey) return;
+      previousFilterRequestKeyRef.current = filterRequestKey;
+      prefetchCache.current.clear();
+      refreshGrid();
+    }, [filterRequestKey, refreshGrid]);
 
     // Listen for refresh events from the header reload button
     useEffect(() => {

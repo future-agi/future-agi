@@ -129,7 +129,12 @@ describe("ViewConfigModal — config snapshot on save", () => {
     const stale = { filters: [canonicalFilter("status")] };
     renderWithCtx(() => fresh, {
       mode: "edit",
-      initialValues: { id: "v9", name: "Old", tab_type: "traces", config: stale },
+      initialValues: {
+        id: "v9",
+        name: "Old",
+        tab_type: "traces",
+        config: stale,
+      },
     });
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
@@ -141,7 +146,12 @@ describe("ViewConfigModal — config snapshot on save", () => {
     const stale = { filters: [canonicalFilter("status")] };
     renderWithCtx(() => null, {
       mode: "edit",
-      initialValues: { id: "v9", name: "Old", tab_type: "traces", config: stale },
+      initialValues: {
+        id: "v9",
+        name: "Old",
+        tab_type: "traces",
+        config: stale,
+      },
     });
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());

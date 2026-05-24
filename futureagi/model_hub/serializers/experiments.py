@@ -340,6 +340,11 @@ class ExperimentRerunCellsSerializer(serializers.Serializer):
         required=False,
         default=False,
     )
+    max_concurrent_rows = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=10,
+    )
 
     def validate(self, attrs):
         has_source_ids = bool(attrs.get("source_ids"))

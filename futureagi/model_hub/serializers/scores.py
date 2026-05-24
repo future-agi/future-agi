@@ -12,7 +12,9 @@ class ScoreSerializer(serializers.ModelSerializer):
     label_name = serializers.CharField(source="label.name", read_only=True)
     label_type = serializers.CharField(source="label.type", read_only=True)
     label_settings = serializers.JSONField(source="label.settings", read_only=True)
-    label_allow_notes = serializers.BooleanField(source="label.allow_notes", read_only=True)
+    label_allow_notes = serializers.BooleanField(
+        source="label.allow_notes", read_only=True
+    )
     annotator_name = serializers.CharField(
         source="annotator.name", read_only=True, default=None
     )
@@ -34,6 +36,7 @@ class ScoreSerializer(serializers.ModelSerializer):
             "label_settings",
             "label_allow_notes",
             "value",
+            "value_history",
             "score_source",
             "notes",
             "annotator",
@@ -73,9 +76,7 @@ class CreateScoreSerializer(StrictInputSerializer):
     # the source's default queue (auto-created if missing) so every Score
     # row has a non-null queue_item — required by the new (source, label,
     # annotator, queue_item) uniqueness.
-    queue_item_id = serializers.UUIDField(
-        required=False, allow_null=True, default=None
-    )
+    queue_item_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
 
 class ScoreListQuerySerializer(StrictInputSerializer):
@@ -150,9 +151,7 @@ class BulkCreateScoresSerializer(StrictInputSerializer):
         required=False, allow_blank=True, allow_null=True, default=None
     )
     # Optional explicit queue context — same rationale as in CreateScoreSerializer.
-    queue_item_id = serializers.UUIDField(
-        required=False, allow_null=True, default=None
-    )
+    queue_item_id = serializers.UUIDField(required=False, allow_null=True, default=None)
 
     def validate_scores(self, value):
         if not value:

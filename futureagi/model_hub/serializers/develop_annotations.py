@@ -32,6 +32,7 @@ class AnnotationLabelsListQuerySerializer(StrictInputSerializer):
     search = serializers.CharField(required=False, allow_blank=True)
     include_usage_count = serializers.BooleanField(required=False, default=False)
     include_archived = serializers.BooleanField(required=False, default=False)
+    archived = serializers.BooleanField(required=False)
 
 
 class BulkDestroyAnnotationsRequestSerializer(StrictInputSerializer):
@@ -145,6 +146,7 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
     )
     trace_annotations_count = serializers.IntegerField(read_only=True, required=False)
     annotation_count = serializers.IntegerField(read_only=True, required=False)
+    archived = serializers.BooleanField(source="deleted", read_only=True)
 
     class Meta:
         model = AnnotationsLabels
@@ -160,6 +162,7 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
             "created_at",
             "trace_annotations_count",
             "annotation_count",
+            "archived",
         ]
         read_only_fields = ["organization"]
 

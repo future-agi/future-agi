@@ -95,6 +95,7 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     )
     viewer_roles = serializers.SerializerMethodField()
     viewer_role = serializers.SerializerMethodField()
+    deleted = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = AnnotationQueue
@@ -127,6 +128,7 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             "created_by_name",
             "viewer_role",
             "viewer_roles",
+            "deleted",
             "created_at",
         ]
         read_only_fields = [
@@ -354,6 +356,8 @@ class QueueItemSerializer(serializers.ModelSerializer):
     reviewed_by_name = serializers.CharField(
         source="reviewed_by.name", read_only=True, default=None
     )
+    comment_count = serializers.SerializerMethodField()
+    open_feedback_count = serializers.SerializerMethodField()
 
     class Meta:
         model = QueueItem
@@ -380,6 +384,8 @@ class QueueItemSerializer(serializers.ModelSerializer):
             "reviewed_at",
             "review_notes",
             "source_preview",
+            "comment_count",
+            "open_feedback_count",
             "created_at",
         ]
         read_only_fields = ["queue"]
@@ -387,7 +393,11 @@ class QueueItemSerializer(serializers.ModelSerializer):
     def get_assigned_users(self, obj):
         assignments = obj.assignments.filter(deleted=False).select_related("user")
         return [
-            {"id": str(a.user_id), "name": a.user.name if a.user else None}
+            {
+                "id": str(a.user_id),
+                "name": a.user.name if a.user else None,
+                "email": a.user.email if a.user else None,
+            }
             for a in assignments
         ]
 
@@ -414,7 +424,7 @@ class QueueItemSerializer(serializers.ModelSerializer):
     def get_workflow_status_label(self, obj):
         status = self.get_workflow_status(obj)
         return {
-            "pending": "Pending",
+            "pending": "Pending Annotation",
             "in_progress": "In Progress",
             "in_review": "In Review",
             "needs_changes": "Needs Changes",
@@ -422,6 +432,24 @@ class QueueItemSerializer(serializers.ModelSerializer):
             "completed": "Completed",
             "skipped": "Skipped",
         }.get(status, status)
+
+    def get_comment_count(self, obj):
+        return QueueItemReviewComment.objects.filter(
+            queue_item=obj,
+            action=QueueItemReviewComment.ACTION_COMMENT,
+            deleted=False,
+        ).count()
+
+    def get_open_feedback_count(self, obj):
+        return QueueItemReviewThread.objects.filter(
+            queue_item=obj,
+            blocking=True,
+            status__in=[
+                QueueItemReviewThread.STATUS_OPEN,
+                QueueItemReviewThread.STATUS_REOPENED,
+            ],
+            deleted=False,
+        ).count()
 
     def create(self, validated_data):
         source_id = validated_data.pop("source_id", None)
@@ -544,6 +572,7 @@ class AnnotationQueueListQuerySerializer(StrictInputSerializer):
     status = serializers.CharField(required=False, allow_blank=True)
     search = serializers.CharField(required=False, allow_blank=True)
     include_counts = serializers.BooleanField(required=False)
+    archived = serializers.BooleanField(required=False, default=False)
 
 
 class QueueHardDeleteRequestSerializer(StrictInputSerializer):
@@ -746,11 +775,7 @@ class QueueItemAnnotateDetailQuerySerializer(StrictInputSerializer):
 
 
 class QueueItemNavigationRequestSerializer(StrictInputSerializer):
-    exclude = serializers.ListField(
-        child=serializers.CharField(),
-        required=False,
-        default=list,
-    )
+    exclude = RepeatedStringQueryParamField(required=False, default=list)
     exclude_review_status = serializers.CharField(required=False, allow_blank=True)
     include_completed = serializers.BooleanField(required=False, default=False)
 
@@ -926,7 +951,7 @@ class QueueForSourceItemSerializer(serializers.Serializer):
     source_id = serializers.CharField(allow_null=True)
 
 
-class QueueForSourceLabelSerializer(serializers.Serializer):
+class QueueLabelResultSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     name = serializers.CharField()
     type = serializers.CharField()
@@ -940,7 +965,7 @@ class QueueForSourceLabelSerializer(serializers.Serializer):
 class QueueForSourceEntrySerializer(serializers.Serializer):
     queue = QueueForSourceQueueSerializer()
     item = QueueForSourceItemSerializer(allow_null=True)
-    labels = QueueForSourceLabelSerializer(many=True)
+    labels = QueueLabelResultSerializer(many=True)
     existing_scores = serializers.DictField(child=serializers.JSONField())
     existing_notes = serializers.CharField(allow_blank=True)
     existing_label_notes = serializers.DictField(child=serializers.CharField())
@@ -987,20 +1012,9 @@ class QueueDefaultQueueSerializer(serializers.Serializer):
     is_default = serializers.BooleanField()
 
 
-class QueueDefaultLabelSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    name = serializers.CharField()
-    type = serializers.CharField()
-    settings = serializers.JSONField()
-    description = serializers.CharField(allow_blank=True, required=False)
-    allow_notes = serializers.BooleanField()
-    required = serializers.BooleanField()
-    order = serializers.IntegerField()
-
-
 class QueueDefaultResultSerializer(serializers.Serializer):
     queue = QueueDefaultQueueSerializer()
-    labels = QueueDefaultLabelSerializer(many=True)
+    labels = QueueLabelResultSerializer(many=True)
     created = serializers.BooleanField()
     action = serializers.ChoiceField(choices=["created", "restored", "fetched"])
 
@@ -1008,17 +1022,6 @@ class QueueDefaultResultSerializer(serializers.Serializer):
 class QueueDefaultResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = QueueDefaultResultSerializer()
-
-
-class QueueLabelResultSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    name = serializers.CharField()
-    type = serializers.CharField()
-    settings = serializers.JSONField()
-    description = serializers.CharField(allow_blank=True, required=False)
-    allow_notes = serializers.BooleanField()
-    required = serializers.BooleanField()
-    order = serializers.IntegerField()
 
 
 class QueueAddLabelResultSerializer(serializers.Serializer):
@@ -1062,6 +1065,23 @@ class QueueBulkRemoveItemsResultSerializer(serializers.Serializer):
 class QueueBulkRemoveItemsResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = QueueBulkRemoveItemsResultSerializer()
+
+
+class QueueBulkReviewItemsErrorSerializer(serializers.Serializer):
+    item_id = serializers.CharField()
+    error = serializers.CharField()
+
+
+class QueueBulkReviewItemsResultSerializer(serializers.Serializer):
+    reviewed = serializers.IntegerField()
+    reviewed_item_ids = serializers.ListField(child=serializers.UUIDField())
+    errors = QueueBulkReviewItemsErrorSerializer(many=True)
+    action = serializers.ChoiceField(choices=["approve", "request_changes", "reject"])
+
+
+class QueueBulkReviewItemsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = QueueBulkReviewItemsResultSerializer()
 
 
 class QueueSubmitAnnotationsResultSerializer(serializers.Serializer):
@@ -1213,9 +1233,7 @@ class AutomationRuleRulesField(serializers.JSONField):
         allowed_keys = {"field", "op", "value"}
         for index, rule in enumerate(value):
             if not isinstance(rule, dict):
-                raise serializers.ValidationError(
-                    f"rules[{index}] must be an object."
-                )
+                raise serializers.ValidationError(f"rules[{index}] must be an object.")
             unknown = sorted(set(rule) - allowed_keys)
             if unknown:
                 raise serializers.ValidationError(
@@ -1223,9 +1241,7 @@ class AutomationRuleRulesField(serializers.JSONField):
                 )
             field = str(rule.get("field") or "").strip()
             if not field:
-                raise serializers.ValidationError(
-                    f"rules[{index}].field is required."
-                )
+                raise serializers.ValidationError(f"rules[{index}].field is required.")
             op = str(rule.get("op") or "eq").strip()
             if not op:
                 raise serializers.ValidationError(f"rules[{index}].op is required.")
@@ -1325,6 +1341,24 @@ class ReviewItemRequestSerializer(StrictInputSerializer):
     )
 
 
+class BulkReviewItemsRequestSerializer(StrictInputSerializer):
+    item_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+    )
+    action = serializers.ChoiceField(choices=["approve", "request_changes", "reject"])
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        action = attrs.get("action")
+        notes = str(attrs.get("notes") or "").strip()
+        if action in {"request_changes", "reject"} and not notes:
+            raise serializers.ValidationError(
+                "Feedback is required when requesting changes."
+            )
+        return attrs
+
+
 class ImportAnnotationEntrySerializer(StrictInputSerializer):
     label_id = serializers.UUIDField()
     value = serializers.JSONField()
@@ -1382,6 +1416,8 @@ class QueueItemReviewCommentSerializer(serializers.ModelSerializer):
     target_annotator_email = serializers.SerializerMethodField()
     mentioned_users = serializers.SerializerMethodField()
     reactions = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
+    can_delete = serializers.SerializerMethodField()
 
     class Meta:
         model = QueueItemReviewComment
@@ -1403,7 +1439,10 @@ class QueueItemReviewCommentSerializer(serializers.ModelSerializer):
             "reviewer_id",
             "reviewer_name",
             "reviewer_email",
+            "can_edit",
+            "can_delete",
             "created_at",
+            "updated_at",
         ]
 
     def get_thread_id(self, obj):
@@ -1475,6 +1514,19 @@ class QueueItemReviewCommentSerializer(serializers.ModelSerializer):
             for emoji, user_ids in reactions.items()
             if isinstance(user_ids, list)
         ]
+
+    def get_can_edit(self, obj):
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+        return bool(
+            user
+            and getattr(user, "is_authenticated", False)
+            and obj.action == QueueItemReviewComment.ACTION_COMMENT
+            and str(obj.reviewer_id or "") == str(user.id)
+        )
+
+    def get_can_delete(self, obj):
+        return self.get_can_edit(obj)
 
 
 class QueueItemReviewThreadSerializer(serializers.ModelSerializer):

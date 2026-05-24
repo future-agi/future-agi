@@ -3,7 +3,7 @@ import json
 import traceback
 from collections import defaultdict
 from dataclasses import asdict
-from typing import Dict, List, Optional
+from typing import Dict
 
 try:
     import orjson
@@ -40,6 +40,7 @@ from django.db.models.functions import (
     Round,
 )
 from django.http import FileResponse
+from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -57,11 +58,10 @@ from tracer.models.observation_span import (
     EvalTargetType,
     ObservationSpan,
 )
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace import Trace
 
 session_logger = structlog.get_logger(__name__)
-from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.trace_session import TraceSession
 from tracer.serializers.eval_task import PaginationQuerySerializer
 from tracer.serializers.trace_session import (
@@ -71,6 +71,10 @@ from tracer.serializers.trace_session import (
     TraceSessionListQuerySerializer,
     TraceSessionRetrieveQuerySerializer,
     TraceSessionSerializer,
+)
+from tracer.services.clickhouse.graph_dispatch import (
+    fetch_annotation_graph_ch,
+    fetch_eval_graph_ch,
 )
 from tracer.utils.filters import FilterEngine, apply_created_at_filters
 from tracer.utils.helper import (
@@ -82,15 +86,129 @@ from tracer.utils.helper import (
 from tracer.utils.session import get_session_navigation
 
 
+def _get_request_organization(request):
+    return getattr(request, "organization", None) or getattr(
+        request.user, "organization", None
+    )
+
+
+def _project_workspace_scope_q(request, project_prefix="project__"):
+    organization = _get_request_organization(request)
+    scope = Q(**{f"{project_prefix}organization": organization})
+    workspace = getattr(request, "workspace", None)
+    if workspace:
+        if getattr(workspace, "is_default", False):
+            scope &= (
+                Q(**{f"{project_prefix}workspace": workspace})
+                | Q(
+                    **{
+                        f"{project_prefix}workspace__is_default": True,
+                        f"{project_prefix}workspace__organization": organization,
+                    }
+                )
+                | Q(**{f"{project_prefix}workspace__isnull": True})
+            )
+        else:
+            scope &= Q(**{f"{project_prefix}workspace": workspace})
+    return scope
+
+
+def _project_queryset_for_request(request):
+    manager = getattr(Project, "no_workspace_objects", Project.objects)
+    return manager.filter(
+        _project_workspace_scope_q(request, project_prefix=""),
+        deleted=False,
+    )
+
+
+def _trace_session_queryset_for_request(request):
+    manager = getattr(TraceSession, "no_workspace_objects", TraceSession.objects)
+    return manager.filter(
+        _project_workspace_scope_q(request),
+        project__deleted=False,
+        deleted=False,
+    )
+
+
+def _soft_delete_trace_session_tree(trace_sessions):
+    now = timezone.now()
+    sessions = list(trace_sessions)
+    if not sessions:
+        return
+
+    session_ids = [session.id for session in sessions]
+    trace_ids = list(
+        Trace.no_workspace_objects.filter(
+            session_id__in=session_ids,
+            deleted=False,
+        ).values_list("id", flat=True)
+    )
+
+    if trace_ids:
+        ObservationSpan.no_workspace_objects.filter(
+            trace_id__in=trace_ids,
+            deleted=False,
+        ).update(deleted=True, deleted_at=now)
+        EvalLogger.no_workspace_objects.filter(
+            trace_id__in=trace_ids,
+            deleted=False,
+        ).update(deleted=True, deleted_at=now)
+        Trace.no_workspace_objects.filter(
+            id__in=trace_ids,
+            deleted=False,
+        ).update(deleted=True, deleted_at=now)
+
+    EvalLogger.no_workspace_objects.filter(
+        trace_session_id__in=session_ids,
+        deleted=False,
+    ).update(deleted=True, deleted_at=now)
+    TraceSession.no_workspace_objects.filter(
+        id__in=session_ids,
+        deleted=False,
+    ).update(deleted=True, deleted_at=now)
+
+
 class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
     serializer_class = TraceSessionSerializer
 
+    def _empty_session_list_response(self, project=None, *, export=False):
+        if export:
+            return self._gm.success_response(
+                {
+                    "table": {
+                        "total_cost",
+                        "duration",
+                        "total_traces_count",
+                        "start_time",
+                        "end_time",
+                        "first_message",
+                        "last_message",
+                        "session_id",
+                        "created_at",
+                    }
+                }
+            )
+
+        return self._gm.success_response(
+            {
+                "metadata": {"total_rows": 0},
+                "table": [],
+                "config": (
+                    (project.session_config if project else None)
+                    or get_default_project_session_config()
+                ),
+            }
+        )
+
     def get_queryset(self):
         trace_session_id = self.kwargs.get("pk")
         # Get base queryset with automatic filtering from mixin
-        queryset = super().get_queryset()
+        queryset = super().get_queryset().filter(
+            _project_workspace_scope_q(self.request),
+            project__deleted=False,
+        )
 
         if trace_session_id:
             queryset = queryset.filter(id=trace_session_id)
@@ -100,6 +218,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             queryset = queryset.filter(project_id=project_id)
 
         return queryset
+
+    def perform_destroy(self, instance):
+        _soft_delete_trace_session_tree([instance])
 
     def retrieve(self, request, *args, **kwargs):
         try:
@@ -111,11 +232,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             query_data = query_serializer.validated_data
 
             trace_session_id = self.kwargs.get("pk")
-            trace_session = TraceSession.objects.get(
-                id=trace_session_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            trace_session = self.get_queryset().get(id=trace_session_id)
             project_id = trace_session.project.id
 
             # ClickHouse dispatch for session detail
@@ -451,9 +568,6 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         query_data,
     ):
         """Retrieve session detail from ClickHouse."""
-        serializer = self.get_serializer(trace_session_obj)
-        trace_session = serializer.data
-
         page_number = query_data["page_number"]
         page_size = query_data["page_size"]
         page_start = page_number * page_size
@@ -661,6 +775,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             query_params = query_serializer.validated_data
             project_id = str(query_params["project_id"])
+            if not _project_queryset_for_request(request).filter(id=project_id).exists():
+                return self._gm.bad_request("Project not found")
             column = query_params["column"]
             search = query_params.get("search", "")
             page = query_params.get("page", 0)
@@ -694,7 +810,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     if ch_column == "first_message"
                     else "argMax(input, start_time)"
                 )
-                search_clause = f"AND val ILIKE %(search)s" if search else ""
+                search_clause = "AND val ILIKE %(search)s" if search else ""
                 query = f"""
                 SELECT DISTINCT val FROM (
                     SELECT {agg_expr} AS val
@@ -770,11 +886,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         try:
             body = request.validated_data
             project_id = str(body["project_id"])
-            project = Project.objects.get(
-                id=project_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            project = _project_queryset_for_request(request).get(id=project_id)
 
             if not project_id or not project:
                 return self._gm.bad_request("project_id is required")
@@ -841,10 +953,70 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                             "CH session time-series failed",
                             error=str(e),
                         )
+                        session_logger.warning(
+                            "Falling back to Postgres session graph"
+                        )
 
             # --- EVAL / ANNOTATION: delegate to shared helpers ---
             # Filter traces to only those belonging to sessions
             elif metric_type in ("EVAL", "ANNOTATION"):
+                session_filters = [
+                    *filters,
+                    {
+                        "column_id": "trace_session_id",
+                        "filter_config": {
+                            "col_type": "SYSTEM_METRIC",
+                            "filter_type": "text",
+                            "filter_op": "is_not_null",
+                            "filter_value": None,
+                        },
+                    },
+                ]
+                if metric_type == "EVAL" and analytics.should_use_clickhouse(
+                    QueryType.EVAL_METRICS
+                ):
+                    try:
+                        return self._gm.success_response(
+                            fetch_eval_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=session_filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                            )
+                        )
+                    except Exception as e:
+                        session_logger.exception(
+                            "ClickHouse session eval graph failed",
+                            error=str(e),
+                        )
+                        session_logger.warning(
+                            "Falling back to Postgres session graph"
+                        )
+
+                if metric_type == "ANNOTATION" and analytics.should_use_clickhouse(
+                    QueryType.ANNOTATION_GRAPH
+                ):
+                    try:
+                        return self._gm.success_response(
+                            fetch_annotation_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=session_filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                                observe_type="trace",
+                            )
+                        )
+                    except Exception as e:
+                        session_logger.exception(
+                            "ClickHouse session annotation graph failed",
+                            error=str(e),
+                        )
+                        session_logger.warning(
+                            "Falling back to Postgres session graph"
+                        )
+
                 from tracer.utils.graphs_optimized import (
                     get_annotation_graph_data,
                     get_eval_graph_data,
@@ -914,15 +1086,19 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             org_scope = not project_id
             if org_scope:
                 org_project_ids = list(
-                    Project.objects.filter(
-                        organization=org,
+                    _project_queryset_for_request(request)
+                    .filter(
                         deleted=False,
                         trace_type__in=("observe", "experiment"),
-                    ).values_list("id", flat=True)
+                    )
+                    .exclude(source=ProjectSourceChoices.SIMULATOR.value)
+                    .values_list("id", flat=True)
                 )
                 project = None
             else:
-                project = Project.objects.get(id=project_id, organization=org)
+                project = _project_queryset_for_request(request).get(id=project_id)
+                if project.source == ProjectSourceChoices.SIMULATOR.value:
+                    return self._empty_session_list_response(project, export=export)
                 org_project_ids = None
 
             # ClickHouse dispatch
@@ -947,10 +1123,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         org_project_ids=org_project_ids,
                     )
                 except Exception as e:
-                    logger.warning(
-                        "ClickHouse session-list failed, falling back to PG",
+                    logger.exception(
+                        "ClickHouse session-list failed",
                         error=str(e),
                     )
+                    logger.warning("Falling back to Postgres session list")
 
             filters = validated_data.get("filters", [])
             sort_params = validated_data.get("sort_params", [])
@@ -967,32 +1144,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             if not trace_sessions_qs.exists():
-                if export:
-                    return self._gm.success_response(
-                        {
-                            "table": {
-                                "total_cost",
-                                "duration",
-                                "total_traces_count",
-                                "start_time",
-                                "end_time",
-                                "first_message",
-                                "last_message",
-                                "session_id",
-                                "created_at",
-                            }
-                        }
-                    )
-                return self._gm.success_response(
-                    {
-                        "metadata": {"total_rows": 0},
-                        "table": [],
-                        "config": (
-                            (project.session_config if project else None)
-                            or get_default_project_session_config()
-                        ),
-                    }
-                )
+                return self._empty_session_list_response(project, export=export)
 
             session_ids = trace_sessions_qs.values("id")
 
@@ -1400,51 +1552,17 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         sort_params = validated_data.get("sort_params", [])
         page_number = validated_data["page_number"]
         page_size = validated_data["page_size"]
-        org = getattr(request, "organization", None) or request.user.organization
         user_id_qp = validated_data.get("user_id")
 
-        # Support user_id injected as a structural filter (the cross-project
-        # user detail page prepends one). Extract the raw user_id string from
-        # either query_params or filters, strip it from the filter list, then
-        # resolve it to a set of EndUser UUIDs and pass an end_user_id IN(...)
-        # synthetic filter instead (the CH `spans` table keys users via the
-        # UUID column `end_user_id`, not the string `user_id`).
-        user_id_raw: Optional[str] = user_id_qp or None
-        _remaining: List[Dict] = []
-        for _f in filters:
-            _col, _cfg = FilterEngine._normalize_filter_params(_f)
-            _col_type = _cfg.get("col_type", "NORMAL")
-            if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value")
-                if isinstance(_val, list):
-                    _val = _val[0] if _val else None
-                if _val and not user_id_raw:
-                    user_id_raw = _val
-                continue
-            _remaining.append(_f)
-        filters = _remaining
-
-        # Resolve the raw user_id to a list of end_user UUIDs and inject as
-        # a synthetic end_user_id IN(...) filter. Scope by org (and project
-        # if we're in project mode).
-        if user_id_raw:
-            _eu_qs = EndUser.objects.filter(
-                user_id=user_id_raw,
-                organization=org,
-                deleted=False,
-            )
-            if not org_scope and project_id:
-                _eu_qs = _eu_qs.filter(project_id=project_id)
-            _ids = [str(u) for u in _eu_qs.values_list("id", flat=True)]
-            if not _ids:
-                _ids = ["00000000-0000-0000-0000-000000000000"]
+        if user_id_qp:
             filters.append(
                 {
-                    "column_id": "end_user_id",
+                    "column_id": "user_id",
                     "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
                         "filter_type": "text",
-                        "filter_op": "in",
-                        "filter_value": _ids,
+                        "filter_op": "equals",
+                        "filter_value": user_id_qp,
                     },
                 }
             )
@@ -1456,7 +1574,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             page_number=page_number,
             page_size=page_size,
             sort_params=sort_params,
-            user_id=None,  # user_id handled via end_user_id IN(...) synthetic filter
+            user_id=None,
         )
 
         # Phase 1: Light aggregation (no input column)
@@ -1785,11 +1903,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 return response
 
             project_id = str(validated_data["project_id"])
-            project = Project.objects.get(
-                id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
-            )
+            project = _project_queryset_for_request(request).get(id=project_id)
 
             result = response.data.get("result").get("table")
             df = pd.DataFrame(result) if result else pd.DataFrame(columns=result)
@@ -1843,6 +1957,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 EvalLogger.objects.filter(
                     trace_session_id=session.id,
                     target_type=EvalTargetType.SESSION,
+                    deleted=False,
                 )
                 .select_related(
                     "custom_eval_config",

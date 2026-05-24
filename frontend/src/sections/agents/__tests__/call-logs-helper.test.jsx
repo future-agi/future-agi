@@ -92,16 +92,13 @@ describe("useCallLogs", () => {
 
     await waitFor(() => expect(axiosMocks.get).toHaveBeenCalledTimes(1));
     expect(axiosMocks.agentGetCallLogs).not.toHaveBeenCalled();
-    expect(axiosMocks.get).toHaveBeenCalledWith(
-      axiosMocks.projectGetCallLogs,
-      {
-        params: {
-          page: 1,
-          page_size: 25,
-          project_id: "project-1",
-        },
+    expect(axiosMocks.get).toHaveBeenCalledWith(axiosMocks.projectGetCallLogs, {
+      params: {
+        page: 1,
+        page_size: 25,
+        project_id: "project-1",
       },
-    );
+    });
   });
 
   it("does not prefetch agent call logs without an agent version", () => {
@@ -121,4 +118,28 @@ describe("useCallLogs", () => {
   });
 });
 
-import { prefetchCallLogs, useCallLogs } from "../helper";
+describe("getCallLogsColumnDefs", () => {
+  it("keeps voice metric columns visible while page-size changes refetch rows", () => {
+    const headers = getCallLogsColumnDefs([], true, null, "project")
+      .filter((column) => !column.hide)
+      .map((column) => column.headerName);
+
+    expect(headers).toEqual(
+      expect.arrayContaining([
+        "Call Details",
+        "Status",
+        "Duration",
+        "Avg Latency",
+        "Turn Count",
+        "Tokens",
+        "Cost",
+      ]),
+    );
+  });
+});
+
+import {
+  getCallLogsColumnDefs,
+  prefetchCallLogs,
+  useCallLogs,
+} from "../helper";

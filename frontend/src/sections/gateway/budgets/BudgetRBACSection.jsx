@@ -567,47 +567,51 @@ const AuditLogTab = ({ gatewayId }) => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {logList.slice(0, 25).map((log) => (
-                <TableRow key={log.id}>
-                  <TableCell>
-                    <Typography variant="body2" fontSize="0.75rem">
-                      {log.startedAt
-                        ? new Date(log.startedAt).toLocaleString()
-                        : "\u2014"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {log.isError ? "Error" : "Request"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {log.model || "\u2014"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontFamily: "monospace", fontSize: "0.7rem" }}
-                    >
-                      {log.apiKeyId?.substring(0, 12) || "\u2014"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Typography variant="body2">
-                      {formatCost(log.cost)}
-                    </Typography>
-                  </TableCell>
-                  <TableCell>
-                    <Chip
-                      label={log.status_code || "\u2014"}
-                      color={log.isError ? "error" : "success"}
-                      size="small"
-                    />
-                  </TableCell>
-                </TableRow>
-              ))}
+              {logList.slice(0, 25).map((log) => {
+                const isError = log.is_error ?? Number(log.status_code) >= 400;
+
+                return (
+                  <TableRow key={log.id}>
+                    <TableCell>
+                      <Typography variant="body2" fontSize="0.75rem">
+                        {log.started_at
+                          ? new Date(log.started_at).toLocaleString()
+                          : "\u2014"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {isError ? "Error" : "Request"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {log.model || "\u2014"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography
+                        variant="body2"
+                        sx={{ fontFamily: "monospace", fontSize: "0.7rem" }}
+                      >
+                        {log.api_key_id?.substring(0, 12) || "\u2014"}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="body2">
+                        {formatCost(log.cost)}
+                      </Typography>
+                    </TableCell>
+                    <TableCell>
+                      <Chip
+                        label={log.status_code || "\u2014"}
+                        color={isError ? "error" : "success"}
+                        size="small"
+                      />
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
               {logList.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} align="center">

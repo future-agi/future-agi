@@ -21,6 +21,7 @@ from django.db.models import (
     Count,
     F,
     FloatField,
+    IntegerField,
     Q,
     QuerySet,
     Sum,
@@ -132,6 +133,7 @@ def _apply_filters(
     *,
     search: Optional[str] = None,
     status: Optional[str] = None,
+    severity: Optional[str] = None,
     fix_layer: Optional[str] = None,
     source: Optional[str] = None,
     issue_group: Optional[str] = None,
@@ -145,6 +147,8 @@ def _apply_filters(
         )
     if status:
         qs = qs.filter(status=status)
+    if severity:
+        qs = qs.filter(priority=severity_to_priority(severity))
     if fix_layer:
         qs = qs.filter(fix_layer=fix_layer)
     if source:
@@ -317,6 +321,7 @@ def list_clusters(
     *,
     search: Optional[str] = None,
     status: Optional[str] = None,
+    severity: Optional[str] = None,
     fix_layer: Optional[str] = None,
     source: Optional[str] = None,
     issue_group: Optional[str] = None,
@@ -332,6 +337,7 @@ def list_clusters(
         qs,
         search=search,
         status=status,
+        severity=severity,
         fix_layer=fix_layer,
         source=source,
         issue_group=issue_group,
@@ -339,11 +345,31 @@ def list_clusters(
     )
 
     # Sort
-    valid_sorts = {"last_seen", "first_seen", "error_count", "unique_traces"}
+    valid_sorts = {
+        "last_seen",
+        "first_seen",
+        "error_count",
+        "unique_traces",
+        "severity",
+    }
     if sort_by not in valid_sorts:
         sort_by = "last_seen"
-    order = f"-{sort_by}" if sort_dir == "desc" else sort_by
-    qs = qs.order_by(order)
+    if sort_by == "severity":
+        qs = qs.annotate(
+            severity_order=Case(
+                When(priority="low", then=Value(0)),
+                When(priority="medium", then=Value(1)),
+                When(priority="high", then=Value(2)),
+                When(priority="urgent", then=Value(3)),
+                default=Value(1),
+                output_field=IntegerField(),
+            )
+        )
+        order = "-severity_order" if sort_dir == "desc" else "severity_order"
+        qs = qs.order_by(order, "-last_seen")
+    else:
+        order = f"-{sort_by}" if sort_dir == "desc" else sort_by
+        qs = qs.order_by(order)
 
     total = qs.count()
     clusters = list(qs[offset : offset + limit])
@@ -411,7 +437,7 @@ def get_cluster_detail(
     qs = TraceErrorGroup.objects.filter(deleted=False).select_related(
         "project", "assignee", "success_trace"
     )
-    if project_ids:
+    if project_ids is not None:
         qs = qs.filter(project_id__in=project_ids)
     cluster = qs.filter(cluster_id=cluster_id).first()
     if not cluster:
@@ -470,7 +496,7 @@ def update_cluster(
 ) -> Optional[FeedDetailCore]:
     """Update status/severity/assignee on a cluster, return fresh detail."""
     qs = TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
-    if project_ids:
+    if project_ids is not None:
         qs = qs.filter(project_id__in=project_ids)
     cluster = qs.first()
     if not cluster:
@@ -1404,9 +1430,20 @@ def _fetch_representative_traces(
     ]
 
 
-def get_overview(cluster_id: str) -> Optional[OverviewResponse]:
+def _cluster_qs_for_access(
+    cluster_id: str, project_ids: Optional[List[str]] = None
+) -> QuerySet:
+    qs = TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
+    if project_ids is not None:
+        qs = qs.filter(project_id__in=project_ids)
+    return qs
+
+
+def get_overview(
+    cluster_id: str, project_ids: Optional[List[str]] = None
+) -> Optional[OverviewResponse]:
     """Full Overview tab payload for a cluster."""
-    cluster = TraceErrorGroup.objects.filter(cluster_id=cluster_id).first()
+    cluster = _cluster_qs_for_access(cluster_id, project_ids).first()
     if not cluster:
         return None
     project_id = str(cluster.project_id)
@@ -1554,10 +1591,13 @@ def _fetch_trace_rows(
 
 
 def get_traces_tab(
-    cluster_id: str, limit: int = 50, offset: int = 0
+    cluster_id: str,
+    project_ids: Optional[List[str]] = None,
+    limit: int = 50,
+    offset: int = 0,
 ) -> Optional[TracesTabResponse]:
     """Full Traces tab payload."""
-    if not TraceErrorGroup.objects.filter(cluster_id=cluster_id).exists():
+    if not _cluster_qs_for_access(cluster_id, project_ids).exists():
         return None
 
     aggregates = _fetch_traces_aggregates(cluster_id)
@@ -1831,9 +1871,11 @@ def _fetch_activity_heatmap(cluster_id: str, days: int = 30) -> List[List[Heatma
     ]
 
 
-def get_trends_tab(cluster_id: str, days: int = 14) -> Optional[TrendsTabResponse]:
+def get_trends_tab(
+    cluster_id: str, project_ids: Optional[List[str]] = None, days: int = 14
+) -> Optional[TrendsTabResponse]:
     """Full Trends tab payload."""
-    cluster = TraceErrorGroup.objects.filter(cluster_id=cluster_id).first()
+    cluster = _cluster_qs_for_access(cluster_id, project_ids).first()
     if not cluster:
         return None
     project_id = str(cluster.project_id)
@@ -2068,7 +2110,9 @@ def _fetch_co_occurring_issues(
 
 
 def get_sidebar(
-    cluster_id: str, trace_id: Optional[str] = None
+    cluster_id: str,
+    project_ids: Optional[List[str]] = None,
+    trace_id: Optional[str] = None,
 ) -> Optional[FeedSidebar]:
     """Full sidebar payload for a cluster.
 
@@ -2082,7 +2126,7 @@ def get_sidebar(
     trace" view.
     """
     cluster = (
-        TraceErrorGroup.objects.filter(cluster_id=cluster_id, deleted=False)
+        _cluster_qs_for_access(cluster_id, project_ids)
         .select_related("project")
         .first()
     )
@@ -2274,28 +2318,33 @@ def _deep_analysis_status(trace: Trace, has_analysis: bool) -> str:
     return status
 
 
-def _cluster_has_trace(cluster_id: str, trace_id: str) -> bool:
+def _cluster_has_trace(
+    cluster_id: str, trace_id: str, project_ids: Optional[List[str]] = None
+) -> bool:
     """Guardrail: the POST / GET endpoints only act on traces that are
     actually linked to the given cluster. Prevents a user from analyzing
     an arbitrary trace by hitting the wrong URL."""
-    return ErrorClusterTraces.objects.filter(
+    qs = ErrorClusterTraces.objects.filter(
         cluster__cluster_id=cluster_id, trace_id=trace_id
-    ).exists()
+    )
+    if project_ids is not None:
+        qs = qs.filter(cluster__project_id__in=project_ids)
+    return qs.exists()
 
 
-def get_deep_analysis(cluster_id: str, trace_id: str) -> Optional[DeepAnalysisResponse]:
+def get_deep_analysis(
+    cluster_id: str, trace_id: str, project_ids: Optional[List[str]] = None
+) -> Optional[DeepAnalysisResponse]:
     """Read the cached deep analysis for ``trace_id`` within ``cluster_id``.
 
     Returns ``None`` when the cluster doesn't exist or the trace isn't
     part of it. Otherwise always returns a response — the ``status``
     field tells the frontend whether data is available.
     """
-    if not TraceErrorGroup.objects.filter(
-        cluster_id=cluster_id, deleted=False
-    ).exists():
+    if not _cluster_qs_for_access(cluster_id, project_ids).exists():
         return None
 
-    if not _cluster_has_trace(cluster_id, trace_id):
+    if not _cluster_has_trace(cluster_id, trace_id, project_ids):
         return None
 
     trace = Trace.objects.filter(id=trace_id).only("error_analysis_status").first()
@@ -2344,7 +2393,10 @@ def get_deep_analysis(cluster_id: str, trace_id: str) -> Optional[DeepAnalysisRe
 
 
 def dispatch_deep_analysis(
-    cluster_id: str, trace_id: str, force: bool = False
+    cluster_id: str,
+    trace_id: str,
+    project_ids: Optional[List[str]] = None,
+    force: bool = False,
 ) -> Optional[DeepAnalysisDispatchResponse]:
     """POST handler for running deep analysis on a single trace.
 
@@ -2366,12 +2418,10 @@ def dispatch_deep_analysis(
     # slow transitive imports (agentic_eval, CH vector clients, etc).
     from tracer.tasks import run_deep_analysis_on_demand
 
-    if not TraceErrorGroup.objects.filter(
-        cluster_id=cluster_id, deleted=False
-    ).exists():
+    if not _cluster_qs_for_access(cluster_id, project_ids).exists():
         return None
 
-    if not _cluster_has_trace(cluster_id, trace_id):
+    if not _cluster_has_trace(cluster_id, trace_id, project_ids):
         return None
 
     trace = Trace.objects.filter(id=trace_id).only("error_analysis_status").first()

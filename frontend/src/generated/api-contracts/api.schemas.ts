@@ -1764,11 +1764,17 @@ export interface GraphExecutionListApi {
   readonly created_at?: string;
 }
 
-export type GraphExecutionListResultApiMetadata = {[key: string]: string};
+export interface PaginationMetadataApi {
+  total_count: number;
+  current_page: number;
+  page_size: number;
+  total_pages: number;
+  next_page?: number;
+}
 
 export interface GraphExecutionListResultApi {
   readonly executions?: readonly GraphExecutionListApi[];
-  readonly metadata?: GraphExecutionListResultApiMetadata;
+  metadata?: PaginationMetadataApi;
 }
 
 export interface GraphExecutionListResponseApi {
@@ -2293,14 +2299,36 @@ export interface APIKeyBulkResponseApi {
   result: APIKeyBulkItemApi[];
 }
 
+export type AgentccErrorResponseApiType = typeof AgentccErrorResponseApiType[keyof typeof AgentccErrorResponseApiType];
+
+
+export const AgentccErrorResponseApiType = {
+  validation_error: 'validation_error',
+  authentication_error: 'authentication_error',
+  payment_required: 'payment_required',
+  entitlement_error: 'entitlement_error',
+  permission_error: 'permission_error',
+  not_found: 'not_found',
+  conflict: 'conflict',
+  client_error: 'client_error',
+  rate_limit: 'rate_limit',
+  server_error: 'server_error',
+  service_unavailable: 'service_unavailable',
+  timeout: 'timeout',
+  api_error: 'api_error',
+} as const;
+
 export type AgentccErrorResponseApiDetails = {[key: string]: string[]};
 
 export interface AgentccErrorResponseApi {
-  status: boolean;
-  result?: string;
-  error?: string;
-  message?: string;
+  status?: boolean;
+  type?: AgentccErrorResponseApiType;
+  code?: string;
   detail?: string;
+  result?: string;
+  message?: string;
+  error?: string;
+  attr?: string;
   details?: AgentccErrorResponseApiDetails;
 }
 
@@ -2392,20 +2420,6 @@ export interface AgentccEmailAlertApi {
   readonly updated_at?: string;
 }
 
-export type GatewayListResponseApiResultItem = { [key: string]: unknown };
-
-export interface GatewayListResponseApi {
-  status: boolean;
-  result: GatewayListResponseApiResultItem[];
-}
-
-export type AgentccListResultResponseApiResultItem = { [key: string]: unknown };
-
-export interface AgentccListResultResponseApi {
-  status: boolean;
-  result: AgentccListResultResponseApiResultItem[];
-}
-
 export interface GatewaySummaryResultApi {
   /** @minLength 1 */
   id: string;
@@ -2417,6 +2431,18 @@ export interface GatewaySummaryResultApi {
   status: string;
   provider_count?: number;
   model_count?: number;
+}
+
+export interface GatewayListResponseApi {
+  status: boolean;
+  result: GatewaySummaryResultApi[];
+}
+
+export type AgentccListResultResponseApiResultItem = { [key: string]: unknown };
+
+export interface AgentccListResultResponseApi {
+  status: boolean;
+  result: AgentccListResultResponseApiResultItem[];
 }
 
 export interface GatewayDetailResponseApi {
@@ -2444,13 +2470,13 @@ export interface GatewayBatchCancelResponseApi {
 export type GatewayConfigProviderApiModelsItem = { [key: string]: unknown };
 
 export interface GatewayConfigProviderApi {
-  /** @minLength 1 */
   id: string;
   /** @minLength 1 */
   name: string;
   /** @minLength 1 */
   display_name: string;
   base_url: string;
+  /** Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set. */
   api_format: string;
   models: GatewayConfigProviderApiModelsItem[];
   is_active: boolean;
@@ -2598,6 +2624,7 @@ export interface GatewayMCPStatusResultApi {
   tools: number;
   resources: number;
   prompts: number;
+  /** Gateway MCP server statuses are adapter-specific objects; the Django fallback normalizes configured servers to objects with id and status. */
   servers: GatewayMCPStatusResultApiServersItem[];
 }
 
@@ -2609,7 +2636,10 @@ export interface GatewayMCPStatusResponseApi {
 export type GatewayProviderStatusApiModelsItem = { [key: string]: unknown };
 
 export interface GatewayProviderStatusApi {
-  /** @minLength 1 */
+  /**
+     * Provider key/name used by the gateway, not a database UUID.
+     * @minLength 1
+     */
   id: string;
   /** @minLength 1 */
   name: string;
@@ -2620,6 +2650,7 @@ export interface GatewayProviderStatusApi {
   circuit_state: string;
   display_name?: string;
   base_url?: string;
+  /** Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set. */
   api_format?: string;
   models?: GatewayProviderStatusApiModelsItem[];
   request_count?: number;
@@ -3032,7 +3063,58 @@ export interface AgentccOrgConfigApi {
   readonly updated_at?: string;
 }
 
-export type OrgConfigBulkResponseApiResult = {[key: string]: string};
+export type OrgConfigBulkItemApiProviders = {[key: string]: { [key: string]: unknown }};
+
+export type OrgConfigBulkItemApiGuardrails = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiRouting = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiCache = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiRateLimiting = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiBudgets = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiCostTracking = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiIpAcl = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiAlerting = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiPrivacy = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiToolPolicy = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiMcp = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiA2a = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiAudit = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiModelDatabase = { [key: string]: unknown };
+
+export type OrgConfigBulkItemApiModelMap = { [key: string]: unknown };
+
+export interface OrgConfigBulkItemApi {
+  providers: OrgConfigBulkItemApiProviders;
+  guardrails: OrgConfigBulkItemApiGuardrails;
+  routing: OrgConfigBulkItemApiRouting;
+  cache: OrgConfigBulkItemApiCache;
+  rate_limiting: OrgConfigBulkItemApiRateLimiting;
+  budgets: OrgConfigBulkItemApiBudgets;
+  cost_tracking: OrgConfigBulkItemApiCostTracking;
+  ip_acl: OrgConfigBulkItemApiIpAcl;
+  alerting: OrgConfigBulkItemApiAlerting;
+  privacy: OrgConfigBulkItemApiPrivacy;
+  tool_policy: OrgConfigBulkItemApiToolPolicy;
+  mcp: OrgConfigBulkItemApiMcp;
+  a2a: OrgConfigBulkItemApiA2a;
+  audit: OrgConfigBulkItemApiAudit;
+  model_database: OrgConfigBulkItemApiModelDatabase;
+  model_map: OrgConfigBulkItemApiModelMap;
+}
+
+export type OrgConfigBulkResponseApiResult = {[key: string]: OrgConfigBulkItemApi};
 
 export interface OrgConfigBulkResponseApi {
   status: boolean;
@@ -3262,11 +3344,40 @@ export interface AgentccShadowResultApi {
   readonly created_at?: string;
 }
 
-export type SpendSummaryResponseApiResult = {[key: string]: string};
+export type SpendSummaryResultApiPeriod = typeof SpendSummaryResultApiPeriod[keyof typeof SpendSummaryResultApiPeriod];
+
+
+export const SpendSummaryResultApiPeriod = {
+  daily: 'daily',
+  weekly: 'weekly',
+  monthly: 'monthly',
+  total: 'total',
+} as const;
+
+export type SpendSummaryOrgApiPerKey = {[key: string]: number};
+
+export type SpendSummaryOrgApiPerUser = {[key: string]: number};
+
+export type SpendSummaryOrgApiPerModel = {[key: string]: number};
+
+export interface SpendSummaryOrgApi {
+  total_spend: number;
+  per_key: SpendSummaryOrgApiPerKey;
+  per_user: SpendSummaryOrgApiPerUser;
+  per_model: SpendSummaryOrgApiPerModel;
+}
+
+export type SpendSummaryResultApiOrgs = {[key: string]: SpendSummaryOrgApi};
+
+export interface SpendSummaryResultApi {
+  period: SpendSummaryResultApiPeriod;
+  period_start: string;
+  orgs: SpendSummaryResultApiOrgs;
+}
 
 export interface SpendSummaryResponseApi {
   status: boolean;
-  result: SpendSummaryResponseApiResult;
+  result: SpendSummaryResultApi;
 }
 
 export type AgentccWebhookEventApiPayload = { [key: string]: unknown };
@@ -4398,11 +4509,110 @@ export interface IntegrationConnectionListApi {
   readonly created_at?: string;
 }
 
+export interface IntegrationConnectionListResultApi {
+  metadata: PaginationMetadataApi;
+  connections: IntegrationConnectionListApi[];
+}
+
+export interface IntegrationConnectionListResponseApi {
+  status?: boolean;
+  result: IntegrationConnectionListResultApi;
+}
+
+export type IntegrationErrorResponseApiType = typeof IntegrationErrorResponseApiType[keyof typeof IntegrationErrorResponseApiType];
+
+
+export const IntegrationErrorResponseApiType = {
+  validation_error: 'validation_error',
+  authentication_error: 'authentication_error',
+  payment_required: 'payment_required',
+  entitlement_error: 'entitlement_error',
+  permission_error: 'permission_error',
+  not_found: 'not_found',
+  conflict: 'conflict',
+  client_error: 'client_error',
+  rate_limit: 'rate_limit',
+  server_error: 'server_error',
+  service_unavailable: 'service_unavailable',
+  timeout: 'timeout',
+  api_error: 'api_error',
+} as const;
+
+export type IntegrationErrorResponseApiDetails = {[key: string]: string[]};
+
 export interface IntegrationErrorResponseApi {
   status?: boolean;
+  type?: IntegrationErrorResponseApiType;
+  code?: string;
+  detail?: string;
   result?: string;
   message?: string;
   error?: string;
+  attr?: string;
+  details?: IntegrationErrorResponseApiDetails;
+}
+
+export type IntegrationConnectionCreateApiPlatform = typeof IntegrationConnectionCreateApiPlatform[keyof typeof IntegrationConnectionCreateApiPlatform];
+
+
+export const IntegrationConnectionCreateApiPlatform = {
+  langfuse: 'langfuse',
+  datadog: 'datadog',
+  posthog: 'posthog',
+  pagerduty: 'pagerduty',
+  mixpanel: 'mixpanel',
+  cloud_storage: 'cloud_storage',
+  message_queue: 'message_queue',
+  linear: 'linear',
+} as const;
+
+export type IntegrationConnectionCreateApiCredentials = { [key: string]: unknown };
+
+export type IntegrationConnectionCreateApiBackfillOption = typeof IntegrationConnectionCreateApiBackfillOption[keyof typeof IntegrationConnectionCreateApiBackfillOption];
+
+
+export const IntegrationConnectionCreateApiBackfillOption = {
+  all: 'all',
+  from_date: 'from_date',
+  new_only: 'new_only',
+} as const;
+
+export type IntegrationConnectionCreateApiExportConfig = { [key: string]: unknown };
+
+export interface IntegrationConnectionCreateApi {
+  platform: IntegrationConnectionCreateApiPlatform;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  host_url?: string;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  public_key?: string;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  secret_key?: string;
+  ca_certificate?: string;
+  credentials?: IntegrationConnectionCreateApiCredentials;
+  /** Existing FutureAGI project ID. If null, a new project is created. */
+  project_id?: string;
+  /** Name for the new project (used when project_id is null). */
+  new_project_name?: string;
+  backfill_option?: IntegrationConnectionCreateApiBackfillOption;
+  backfill_from_date?: string;
+  backfill_to_date?: string;
+  /**
+     * @minimum 60
+     * @maximum 1800
+     */
+  sync_interval_seconds?: number;
+  display_name?: string;
+  external_project_name?: string;
+  export_config?: IntegrationConnectionCreateApiExportConfig;
 }
 
 export type IntegrationConnectionDetailApiPlatform = typeof IntegrationConnectionDetailApiPlatform[keyof typeof IntegrationConnectionDetailApiPlatform];
@@ -4489,6 +4699,114 @@ export interface IntegrationConnectionDetailApi {
   created_by?: string;
 }
 
+export interface IntegrationConnectionDetailResponseApi {
+  status?: boolean;
+  result: IntegrationConnectionDetailApi;
+}
+
+export type ValidateCredentialsApiPlatform = typeof ValidateCredentialsApiPlatform[keyof typeof ValidateCredentialsApiPlatform];
+
+
+export const ValidateCredentialsApiPlatform = {
+  langfuse: 'langfuse',
+  datadog: 'datadog',
+  posthog: 'posthog',
+  pagerduty: 'pagerduty',
+  mixpanel: 'mixpanel',
+  cloud_storage: 'cloud_storage',
+  message_queue: 'message_queue',
+  linear: 'linear',
+} as const;
+
+export type ValidateCredentialsApiCredentials = { [key: string]: unknown };
+
+export interface ValidateCredentialsApi {
+  platform: ValidateCredentialsApiPlatform;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  host_url?: string;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  public_key?: string;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  secret_key?: string;
+  ca_certificate?: string;
+  credentials?: ValidateCredentialsApiCredentials;
+}
+
+export interface IntegrationValidationProjectApi {
+  id?: string;
+  name?: string;
+}
+
+export interface IntegrationValidationViewerApi {
+  id?: string;
+  name?: string;
+  email?: string;
+}
+
+export interface IntegrationValidationResultApi {
+  valid: boolean;
+  projects?: IntegrationValidationProjectApi[];
+  /** @minimum 0 */
+  total_traces?: number;
+  error?: string;
+  viewer?: IntegrationValidationViewerApi;
+}
+
+export interface IntegrationValidationResponseApi {
+  status?: boolean;
+  result: IntegrationValidationResultApi;
+}
+
+export interface IntegrationConnectionUpdateApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  display_name?: string;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  public_key?: string;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  secret_key?: string;
+  /**
+     * @minLength 1
+     * @maxLength 500
+     */
+  host_url?: string;
+  ca_certificate?: string;
+  /**
+     * @minimum 60
+     * @maximum 3600
+     */
+  sync_interval_seconds?: number;
+}
+
+export interface IntegrationEmptyRequestApi { [key: string]: unknown }
+
+export interface IntegrationMessageResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface IntegrationMessageResponseApi {
+  status?: boolean;
+  result: IntegrationMessageResultApi;
+}
+
 export type SyncLogApiStatus = typeof SyncLogApiStatus[keyof typeof SyncLogApiStatus];
 
 
@@ -4518,6 +4836,16 @@ export interface SyncLogApi {
   readonly error_details?: SyncLogApiErrorDetails;
   readonly sync_from?: string;
   readonly sync_to?: string;
+}
+
+export interface SyncLogListResultApi {
+  metadata: PaginationMetadataApi;
+  sync_logs: SyncLogApi[];
+}
+
+export interface SyncLogListResponseApi {
+  status?: boolean;
+  result: SyncLogListResultApi;
 }
 
 export interface MCPUsageSummaryApi {
@@ -5083,6 +5411,7 @@ export interface AnnotationQueueApi {
   readonly created_by_name?: string;
   readonly viewer_role?: string;
   readonly viewer_roles?: string;
+  readonly deleted?: boolean;
   readonly created_at?: string;
 }
 
@@ -5104,15 +5433,15 @@ export interface QueueForSourceItemApi {
   source_id: string;
 }
 
-export type QueueForSourceLabelApiSettings = { [key: string]: unknown };
+export type QueueLabelResultApiSettings = { [key: string]: unknown };
 
-export interface QueueForSourceLabelApi {
+export interface QueueLabelResultApi {
   id: string;
   /** @minLength 1 */
   name: string;
   /** @minLength 1 */
   type: string;
-  settings: QueueForSourceLabelApiSettings;
+  settings: QueueLabelResultApiSettings;
   description?: string;
   allow_notes: boolean;
   required: boolean;
@@ -5128,7 +5457,7 @@ export type QueueForSourceEntryApiSpanNotesItem = { [key: string]: unknown };
 export interface QueueForSourceEntryApi {
   queue: QueueForSourceQueueApi;
   item: QueueForSourceItemApi;
-  labels: QueueForSourceLabelApi[];
+  labels: QueueLabelResultApi[];
   existing_scores: QueueForSourceEntryApiExistingScores;
   existing_notes: string;
   existing_label_notes: QueueForSourceEntryApiExistingLabelNotes;
@@ -5159,21 +5488,6 @@ export interface QueueDefaultQueueApi {
   is_default: boolean;
 }
 
-export type QueueDefaultLabelApiSettings = { [key: string]: unknown };
-
-export interface QueueDefaultLabelApi {
-  id: string;
-  /** @minLength 1 */
-  name: string;
-  /** @minLength 1 */
-  type: string;
-  settings: QueueDefaultLabelApiSettings;
-  description?: string;
-  allow_notes: boolean;
-  required: boolean;
-  order: number;
-}
-
 export type QueueDefaultResultApiAction = typeof QueueDefaultResultApiAction[keyof typeof QueueDefaultResultApiAction];
 
 
@@ -5185,7 +5499,7 @@ export const QueueDefaultResultApiAction = {
 
 export interface QueueDefaultResultApi {
   queue: QueueDefaultQueueApi;
-  labels: QueueDefaultLabelApi[];
+  labels: QueueLabelResultApi[];
   created: boolean;
   action: QueueDefaultResultApiAction;
 }
@@ -5198,21 +5512,6 @@ export interface QueueDefaultResponseApi {
 export interface QueueLabelRequestApi {
   label_id: string;
   required?: boolean;
-}
-
-export type QueueLabelResultApiSettings = { [key: string]: unknown };
-
-export interface QueueLabelResultApi {
-  id: string;
-  /** @minLength 1 */
-  name: string;
-  /** @minLength 1 */
-  type: string;
-  settings: QueueLabelResultApiSettings;
-  description?: string;
-  allow_notes: boolean;
-  required: boolean;
-  order: number;
 }
 
 export interface QueueAddLabelResultApi {
@@ -5634,6 +5933,8 @@ export interface QueueItemApi {
   reviewed_at?: string;
   review_notes?: string;
   readonly source_preview?: string;
+  readonly comment_count?: string;
+  readonly open_feedback_count?: string;
   readonly created_at?: string;
 }
 
@@ -5799,6 +6100,50 @@ export interface QueueBulkRemoveItemsResponseApi {
   result: QueueBulkRemoveItemsResultApi;
 }
 
+export type BulkReviewItemsRequestApiAction = typeof BulkReviewItemsRequestApiAction[keyof typeof BulkReviewItemsRequestApiAction];
+
+
+export const BulkReviewItemsRequestApiAction = {
+  approve: 'approve',
+  request_changes: 'request_changes',
+  reject: 'reject',
+} as const;
+
+export interface BulkReviewItemsRequestApi {
+  /** @minItems 1 */
+  item_ids: string[];
+  action: BulkReviewItemsRequestApiAction;
+  notes?: string;
+}
+
+export interface QueueBulkReviewItemsErrorApi {
+  /** @minLength 1 */
+  item_id: string;
+  /** @minLength 1 */
+  error: string;
+}
+
+export type QueueBulkReviewItemsResultApiAction = typeof QueueBulkReviewItemsResultApiAction[keyof typeof QueueBulkReviewItemsResultApiAction];
+
+
+export const QueueBulkReviewItemsResultApiAction = {
+  approve: 'approve',
+  request_changes: 'request_changes',
+  reject: 'reject',
+} as const;
+
+export interface QueueBulkReviewItemsResultApi {
+  reviewed: number;
+  reviewed_item_ids: string[];
+  errors: QueueBulkReviewItemsErrorApi[];
+  action: QueueBulkReviewItemsResultApiAction;
+}
+
+export interface QueueBulkReviewItemsResponseApi {
+  status?: boolean;
+  result: QueueBulkReviewItemsResultApi;
+}
+
 export type QueueNextItemResultApiItem = { [key: string]: unknown };
 
 export interface QueueNextItemResultApi {
@@ -5875,6 +6220,8 @@ export type ScoreApiLabelSettings = { [key: string]: unknown };
 
 export type ScoreApiValue = { [key: string]: unknown };
 
+export type ScoreApiValueHistory = { [key: string]: unknown };
+
 export interface ScoreApi {
   readonly id?: string;
   source_type: ScoreApiSourceType;
@@ -5887,6 +6234,7 @@ export interface ScoreApi {
   readonly label_settings?: ScoreApiLabelSettings;
   readonly label_allow_notes?: boolean;
   value: ScoreApiValue;
+  value_history?: ScoreApiValueHistory;
   score_source?: ScoreApiScoreSource;
   notes?: string;
   readonly annotator?: string;
@@ -7474,19 +7822,19 @@ export interface ConditionalColumnRequestApi {
   concurrency?: number;
 }
 
-export type DatasetDerivedVariableDetailApiSchema = { [key: string]: unknown };
+export type DerivedVariableDetailApiSchema = { [key: string]: unknown };
 
-export type DatasetDerivedVariableDetailApiRawSample = { [key: string]: unknown };
+export type DerivedVariableDetailApiRawSample = { [key: string]: unknown };
 
-export interface DatasetDerivedVariableDetailApi {
+export interface DerivedVariableDetailApi {
   paths?: string[];
-  schema?: DatasetDerivedVariableDetailApiSchema;
+  schema?: DerivedVariableDetailApiSchema;
   full_variables?: string[];
-  raw_sample?: DatasetDerivedVariableDetailApiRawSample;
+  raw_sample?: DerivedVariableDetailApiRawSample;
   is_json?: boolean;
 }
 
-export type DatasetDerivedVariablesResultApiDerivedVariables = {[key: string]: DatasetDerivedVariableDetailApi};
+export type DatasetDerivedVariablesResultApiDerivedVariables = {[key: string]: DerivedVariableDetailApi};
 
 export interface DatasetDerivedVariablesResultApi {
   derived_variables: DatasetDerivedVariablesResultApiDerivedVariables;
@@ -7904,7 +8252,10 @@ export interface CreateEmptyDatasetRequestApi {
   new_dataset_name: string;
   model_type?: string;
   is_sdk?: boolean;
-  /** @minimum 0 */
+  /**
+     * @minimum 0
+     * @maximum 10
+     */
   row?: number;
 }
 
@@ -8403,13 +8754,15 @@ export interface ExtractJsonColumnRequestApi {
   concurrency?: number;
 }
 
+export type DatasetTableMetadataApiStatus = { [key: string]: unknown };
+
 export interface DatasetTableMetadataApi {
   /** @minLength 1 */
   dataset_name: string;
   total_rows?: number;
   total_pages?: number;
   error_messages?: string[];
-  status?: string;
+  status?: DatasetTableMetadataApiStatus;
 }
 
 export type DatasetTableResultApiColumnConfigItem = { [key: string]: unknown };
@@ -10481,6 +10834,8 @@ export interface ExperimentRerunCellsApi {
   cells?: RerunCellEntryApi[];
   user_eval_metric_ids?: string[];
   failed_only?: boolean;
+  /** @minimum 1 */
+  max_concurrent_rows?: number;
 }
 
 export interface ExperimentWorkflowResultApi {
@@ -12096,18 +12451,6 @@ export interface DerivedVariablePreviewRequestApi {
   content: DerivedVariablePreviewRequestApiContent;
   /** @minLength 1 */
   column_name?: string;
-}
-
-export type DerivedVariableDetailApiSchema = { [key: string]: unknown };
-
-export type DerivedVariableDetailApiRawSample = { [key: string]: unknown };
-
-export interface DerivedVariableDetailApi {
-  paths?: string[];
-  schema?: DerivedVariableDetailApiSchema;
-  full_variables?: string[];
-  raw_sample?: DerivedVariableDetailApiRawSample;
-  is_json?: boolean;
 }
 
 export interface DerivedVariableDetailResponseApi {
@@ -13999,6 +14342,175 @@ export interface AgentVersionRestoreResponseApi {
   readonly message?: string;
   readonly agent?: AgentVersionRestoreResponseApiAgent;
   version?: AgentVersionResponseApi;
+}
+
+export type AgentDefinitionApiAgentType = typeof AgentDefinitionApiAgentType[keyof typeof AgentDefinitionApiAgentType];
+
+
+export const AgentDefinitionApiAgentType = {
+  voice: 'voice',
+  text: 'text',
+} as const;
+
+/**
+ * Language of the agent
+ */
+export type AgentDefinitionApiLanguage = typeof AgentDefinitionApiLanguage[keyof typeof AgentDefinitionApiLanguage];
+
+
+export const AgentDefinitionApiLanguage = {
+  ar: 'ar',
+  bg: 'bg',
+  zh: 'zh',
+  cs: 'cs',
+  da: 'da',
+  nl: 'nl',
+  en: 'en',
+  fi: 'fi',
+  fr: 'fr',
+  de: 'de',
+  el: 'el',
+  hi: 'hi',
+  hu: 'hu',
+  id: 'id',
+  it: 'it',
+  ja: 'ja',
+  ko: 'ko',
+  ms: 'ms',
+  no: 'no',
+  pl: 'pl',
+  pt: 'pt',
+  ro: 'ro',
+  ru: 'ru',
+  sk: 'sk',
+  es: 'es',
+  sv: 'sv',
+  tr: 'tr',
+  uk: 'uk',
+  vi: 'vi',
+} as const;
+
+/**
+ * Language of the agent
+ */
+export type AgentDefinitionApiLanguagesItem = typeof AgentDefinitionApiLanguagesItem[keyof typeof AgentDefinitionApiLanguagesItem];
+
+
+export const AgentDefinitionApiLanguagesItem = {
+  ar: 'ar',
+  bg: 'bg',
+  zh: 'zh',
+  cs: 'cs',
+  da: 'da',
+  nl: 'nl',
+  en: 'en',
+  fi: 'fi',
+  fr: 'fr',
+  de: 'de',
+  el: 'el',
+  hi: 'hi',
+  hu: 'hu',
+  id: 'id',
+  it: 'it',
+  ja: 'ja',
+  ko: 'ko',
+  ms: 'ms',
+  no: 'no',
+  pl: 'pl',
+  pt: 'pt',
+  ro: 'ro',
+  ru: 'ru',
+  sk: 'sk',
+  es: 'es',
+  sv: 'sv',
+  tr: 'tr',
+  uk: 'uk',
+  vi: 'vi',
+} as const;
+
+export type AgentDefinitionApiAuthenticationMethod = typeof AgentDefinitionApiAuthenticationMethod[keyof typeof AgentDefinitionApiAuthenticationMethod];
+
+
+export const AgentDefinitionApiAuthenticationMethod = {
+  api_key: 'api_key',
+} as const;
+
+/**
+ * Headers to be sent to the websocket server
+ */
+export type AgentDefinitionApiWebsocketHeaders = { [key: string]: unknown };
+
+/**
+ * Details of the model
+ */
+export type AgentDefinitionApiModelDetails = { [key: string]: unknown };
+
+export interface AgentDefinitionApi {
+  readonly id?: string;
+  /**
+     * Name of the AI agent
+     * @minLength 1
+     * @maxLength 255
+     */
+  agent_name: string;
+  agent_type?: AgentDefinitionApiAgentType;
+  /**
+     * Phone number associated with the AI agent
+     * @maxLength 50
+     */
+  contact_number?: string;
+  /** Whether the agent handles inbound calls */
+  inbound: boolean;
+  /**
+     * Detailed description of the AI agent's purpose and capabilities
+     * @minLength 1
+     */
+  description: string;
+  /**
+     * External identifier for the assistant
+     * @maxLength 255
+     */
+  assistant_id?: string;
+  /**
+     * Provider of the AI agent
+     * @maxLength 255
+     */
+  provider?: string;
+  /** Language of the agent */
+  language?: AgentDefinitionApiLanguage;
+  languages?: AgentDefinitionApiLanguagesItem[];
+  authentication_method?: AgentDefinitionApiAuthenticationMethod;
+  /**
+     * WebSocket URL for real-time communication with the agent
+     * @maxLength 500
+     */
+  websocket_url?: string;
+  /** Headers to be sent to the websocket server */
+  websocket_headers?: AgentDefinitionApiWebsocketHeaders;
+  readonly workspace?: string;
+  knowledge_base?: string;
+  /** Organization this agent definition belongs to */
+  readonly organization?: string;
+  /**
+     * API key for the agent
+     * @maxLength 255
+     */
+  api_key?: string;
+  readonly observability_provider?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  /**
+     * Model of the agent
+     * @maxLength 255
+     */
+  model?: string;
+  /** Details of the model */
+  model_details?: AgentDefinitionApiModelDetails;
+  /** @maxLength 500 */
+  livekit_url?: string;
+  /** @maxLength 255 */
+  livekit_api_key?: string;
+  livekit_api_secret?: string;
 }
 
 /**
@@ -22301,13 +22813,15 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type IntegrationsConnectionsList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: IntegrationConnectionListApi[];
+/**
+ * @minimum 0
+ */
+page_number?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+page_size?: number;
 };
 
 export type IntegrationsSyncLogsListParams = {
@@ -22319,13 +22833,16 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type IntegrationsSyncLogsList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: SyncLogApi[];
+/**
+ * @minimum 0
+ */
+page_number?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+page_size?: number;
+connection_id?: string;
 };
 
 export type ModelHubAnnotationQueuesListParams = {
@@ -22340,6 +22857,7 @@ limit?: number;
 status?: string;
 search?: string;
 include_counts?: boolean;
+archived?: boolean;
 };
 
 export type ModelHubAnnotationQueuesList200 = {
@@ -24198,6 +24716,7 @@ export type TracerFeedIssuesListParams = {
 project_id?: string;
 search?: string;
 status?: TracerFeedIssuesListStatus;
+severity?: TracerFeedIssuesListSeverity;
 fix_layer?: string;
 source?: TracerFeedIssuesListSource;
 issue_group?: string;
@@ -24228,6 +24747,16 @@ export const TracerFeedIssuesListStatus = {
   resolved: 'resolved',
 } as const;
 
+export type TracerFeedIssuesListSeverity = typeof TracerFeedIssuesListSeverity[keyof typeof TracerFeedIssuesListSeverity];
+
+
+export const TracerFeedIssuesListSeverity = {
+  critical: 'critical',
+  high: 'high',
+  medium: 'medium',
+  low: 'low',
+} as const;
+
 export type TracerFeedIssuesListSource = typeof TracerFeedIssuesListSource[keyof typeof TracerFeedIssuesListSource];
 
 
@@ -24244,6 +24773,7 @@ export const TracerFeedIssuesListSortBy = {
   first_seen: 'first_seen',
   error_count: 'error_count',
   unique_traces: 'unique_traces',
+  severity: 'severity',
 } as const;
 
 export type TracerFeedIssuesListSortDir = typeof TracerFeedIssuesListSortDir[keyof typeof TracerFeedIssuesListSortDir];

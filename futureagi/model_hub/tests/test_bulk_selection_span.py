@@ -370,6 +370,34 @@ class TestParityWithListEndpoint:
 
         assert {str(i) for i in resolver.ids} == list_ids == {seeded_spans[3].id}
 
+    def test_parity_legacy_name_alias_filters_span_name(
+        self, auth_client, observe_project, seeded_spans, organization
+    ):
+        seeded_spans[3].name = "vip tool span"
+        seeded_spans[3].save(update_fields=["name"])
+        seeded_spans[4].name = "ordinary tool span"
+        seeded_spans[4].save(update_fields=["name"])
+        filters = [
+            {
+                "column_id": "name",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "contains",
+                    "filter_value": "vip tool",
+                    "col_type": "SYSTEM_METRIC",
+                },
+            }
+        ]
+
+        resolver = resolve_filtered_span_ids(
+            project_id=observe_project.id,
+            filters=filters,
+            organization=organization,
+        )
+        list_ids = _list_endpoint_span_ids(auth_client, observe_project.id, filters)
+
+        assert {str(i) for i in resolver.ids} == list_ids == {seeded_spans[3].id}
+
     def test_parity_span_attribute_filter(
         self, auth_client, observe_project, seeded_spans, organization
     ):

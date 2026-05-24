@@ -8,6 +8,7 @@ import copy
 import structlog
 from django.conf import settings as django_settings
 
+from agentcc.contracts.gateway_admin import OrgConfig as GatewayOrgConfig
 from agentcc.models import AgentccOrgConfig
 from agentcc.org_config_defaults import normalize_cache_config
 from agentcc.services.gateway_client import GatewayClientError, get_gateway_client
@@ -479,7 +480,7 @@ def _transform_budgets(budgets):
 
 def _build_payload(org_id, config):
     """Build the config payload for the gateway, assembling providers from credentials."""
-    return {
+    payload = {
         "providers": _assemble_providers(org_id),
         "guardrails": _transform_guardrails(config.guardrails, org_id=org_id),
         "routing": config.routing,
@@ -497,6 +498,10 @@ def _build_payload(org_id, config):
         "model_database": config.model_database,
         "model_map": config.model_map,
     }
+    return GatewayOrgConfig.model_validate(payload).model_dump(
+        by_alias=True,
+        exclude_none=True,
+    )
 
 
 def push_org_config(org_id, config):

@@ -152,8 +152,13 @@ const DATE_OPS = [
   { value: "less_than", label: "before" },
   { value: "greater_than", label: "after" },
   { value: "equals", label: "on" },
+  { value: "not_equals", label: "not on" },
+  { value: "greater_than_or_equal", label: "on or after" },
+  { value: "less_than_or_equal", label: "on or before" },
   { value: "between", label: "between", range: true },
   { value: "not_between", label: "not between", range: true },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
 const BOOLEAN_OPS = [
@@ -169,15 +174,24 @@ const BOOLEAN_OPS = [
 const THUMBS_OPS = [
   { value: "equals", label: "is" },
   { value: "not_equals", label: "is not" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
-const ANNOTATOR_OPS = [{ value: "equals", label: "is" }];
+const ANNOTATOR_OPS = [
+  { value: "equals", label: "is" },
+  { value: "not_equals", label: "is not" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
+];
 
-// Direct ID columns on `spans` — the dashboard filter pipeline resolves
-// them via equality only (no col_type, no LIKE/IN expansion), so any
-// other operator silently no-ops. Restrict the UI accordingly.
-const ID_ONLY_FIELDS = new Set(["trace_id", "span_id"]);
-const ID_ONLY_OPS = [{ value: "equals", label: "is" }];
+// Direct UUID identifiers support exact multi-select through the canonical
+// list operators. Avoid substring/null operators for these fields.
+const ID_ONLY_FIELDS = new Set(["trace_id", "span_id", "session"]);
+const ID_ONLY_OPS = [
+  { value: "in", label: "equals" },
+  { value: "not_in", label: "not equals" },
+];
 
 const ARRAY_OPS = [
   { value: "contains", label: "contains" },
@@ -191,6 +205,8 @@ const CATEGORICAL_OPS = [
   { value: "not_equals", label: "is not" },
   { value: "contains", label: "contains" },
   { value: "not_contains", label: "not contains" },
+  { value: "is_null", label: "is null" },
+  { value: "is_not_null", label: "is not null" },
 ];
 
 const TEXT_OPS = [
@@ -320,6 +336,15 @@ const SINGLE_VALUE_OPS = new Set([
 
 // List ops — multi-select picker.
 const LIST_VALUE_OPS = new Set(["in", "not_in"]);
+const MULTI_VALUE_EQUALITY_TYPES = new Set([
+  "categorical",
+  "thumbs",
+  "annotator",
+]);
+
+export const shouldUseSingleSelectValuePicker = (filter, operator) =>
+  SINGLE_VALUE_OPS.has(operator) &&
+  !MULTI_VALUE_EQUALITY_TYPES.has(filter?.fieldType);
 
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
@@ -340,6 +365,38 @@ const EXCLUDED_METRICS = new Set([
   "cell_error_rate",
 ]);
 const PROPERTY_PICKER_RENDER_LIMIT = 250;
+
+const normalizePropertySearchText = (value) =>
+  String(value || "")
+    .toLowerCase()
+    .replace(/[_\-.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+export function filterPropertiesForPicker({
+  properties,
+  category = "all",
+  search = "",
+  hasCategorySidebar = true,
+}) {
+  const query = normalizePropertySearchText(search);
+  let list = properties || [];
+  if (hasCategorySidebar && category !== "all") {
+    list = list.filter((property) => property.category === category);
+  }
+  if (!query) return list;
+  return list.filter((property) => {
+    const name = normalizePropertySearchText(property.name);
+    const id = normalizePropertySearchText(property.id);
+    return name.includes(query) || id.includes(query);
+  });
+}
+
+const resolveFieldCategory = (explicitCategory, prop, fallback = "system") => {
+  if (explicitCategory !== undefined) return explicitCategory;
+  if (prop) return prop.category;
+  return fallback;
+};
 
 const ANNOTATOR_FILTER_PROPERTY = {
   id: "annotator",
@@ -391,19 +448,35 @@ function metricToTraceFilterProperty(m) {
 
 export function buildTraceFilterProperties(
   metrics,
-  { isSimulator = false } = {},
+  { isSimulator = false, sourceScope = null } = {},
 ) {
   const properties = metrics
     .filter((m) => {
       const name = m.name;
       const cat = m.category;
       const src = m.source;
+      const sources = Array.isArray(m.sources) ? m.sources : [];
+      const isSpanOnly =
+        (src === "spans" || sources.includes("spans")) &&
+        src !== "all" &&
+        src !== "both" &&
+        !sources.includes("all") &&
+        !sources.includes("both") &&
+        !sources.includes("traces");
+      const isSimulationMetric =
+        src === "simulation" || sources.includes("simulation");
 
       // Always exclude blacklisted metrics
       if (EXCLUDED_METRICS.has(name)) return false;
 
       // Exclude dataset-only metrics
       if (src === "datasets") return false;
+
+      if (sourceScope === "simulation" && !isSimulationMetric) return false;
+
+      // Span-only metrics are only available when the panel is bound to span
+      // rows. Trace/session/user panels should not render span row columns.
+      if (isSpanOnly && sourceScope !== "spans") return false;
 
       // Exclude simulation metrics for non-simulator projects
       if (src === "simulation" && !isSimulator) return false;
@@ -443,10 +516,15 @@ export function buildTraceFilterProperties(
 
 function useTraceFilterProperties(
   projectId,
-  { enabled = true, isSimulator = false } = {},
+  { enabled = true, isSimulator = false, sourceScope = null } = {},
 ) {
   return useQuery({
-    queryKey: ["trace-filter-properties-v2", projectId, isSimulator],
+    queryKey: [
+      "trace-filter-properties-v2",
+      projectId,
+      isSimulator,
+      sourceScope,
+    ],
     enabled: enabled && Boolean(projectId),
     queryFn: async () => {
       const params = {};
@@ -454,7 +532,8 @@ function useTraceFilterProperties(
       const { data } = await axios.get(endpoints.dashboard.metrics, { params });
       return data?.result?.metrics || [];
     },
-    select: (metrics) => buildTraceFilterProperties(metrics, { isSimulator }),
+    select: (metrics) =>
+      buildTraceFilterProperties(metrics, { isSimulator, sourceScope }),
     staleTime: 5 * 60_000,
     gcTime: 15 * 60_000,
   });
@@ -475,19 +554,16 @@ function PropertyPicker({
   const [category, setCategory] = useState("all");
   const hasCategorySidebar = categories && categories.length > 0;
 
-  const filtered = useMemo(() => {
-    let list = properties;
-    if (hasCategorySidebar && category !== "all")
-      list = list.filter((p) => p.category === category);
-    if (search) {
-      const q = search.toLowerCase();
-      list = list.filter(
-        (p) =>
-          p.name.toLowerCase().includes(q) || p.id.toLowerCase().includes(q),
-      );
-    }
-    return list;
-  }, [properties, category, search, hasCategorySidebar]);
+  const filtered = useMemo(
+    () =>
+      filterPropertiesForPicker({
+        properties,
+        category,
+        search,
+        hasCategorySidebar,
+      }),
+    [properties, category, search, hasCategorySidebar],
+  );
 
   const counts = useMemo(() => {
     const c = { all: properties.length };
@@ -1449,9 +1525,7 @@ function FilterRow({
         source={source}
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={
-          ID_ONLY_FIELDS.has(filter.field) || SINGLE_VALUE_OPS.has(safeOperator)
-        }
+        singleSelect={shouldUseSingleSelectValuePicker(filter, safeOperator)}
         onChange={(newVal) => updateRow({ value: newVal })}
       />
     );
@@ -1578,10 +1652,12 @@ const TraceFilterPanel = ({
   const { observeId: routeObserveId } = useParams();
   const observeId = projectIdProp || routeObserveId;
   const skipDynamicProperties = Boolean(propertiesOverride);
+  const dynamicPropertySource = isSpansView ? "spans" : "traces";
   const { data: dynamicProperties = [], isLoading: dynamicPropsLoading } =
     useTraceFilterProperties(observeId, {
       enabled: !skipDynamicProperties,
       isSimulator,
+      sourceScope: dynamicPropertySource,
     });
   // Merge: static trace fields + dynamic dashboard properties + any extra static fields
   const properties = useMemo(() => {
@@ -1713,9 +1789,18 @@ const TraceFilterPanel = ({
         const enriched = currentFilters.map((f) => {
           const prop = propertyById[f.field];
           const fieldType = f.fieldType || prop?.type || "string";
-          const hydratedOp =
-            (fieldType === "string" || fieldType === "text") &&
-            HYDRATE_STRING_OP[f.operator]
+          const ID_OP_HYDRATE = {
+            is: "in",
+            equals: "in",
+            "=": "in",
+            is_not: "not_in",
+            not_equals: "not_in",
+            "!=": "not_in",
+          };
+          const hydratedOp = ID_ONLY_FIELDS.has(f.field)
+            ? ID_OP_HYDRATE[f.operator] || f.operator
+            : (fieldType === "string" || fieldType === "text") &&
+                HYDRATE_STRING_OP[f.operator]
               ? HYDRATE_STRING_OP[f.operator]
               : f.operator;
           // Scalar legacy `equals` value → array for the multi-select picker.
@@ -1732,7 +1817,7 @@ const TraceFilterPanel = ({
           }
           return normalizeFilterRowOperator({
             ...f,
-            fieldCategory: f.fieldCategory || prop?.category || "system",
+            fieldCategory: resolveFieldCategory(f.fieldCategory, prop),
             fieldName: f.fieldName || prop?.name,
             fieldType,
             apiColType: f.apiColType || prop?.apiColType,
@@ -1755,7 +1840,7 @@ const TraceFilterPanel = ({
         return {
           field: t.field,
           fieldName: prop?.name || queryFieldDef?.label,
-          fieldCategory: prop?.category || queryFieldDef?.category || "system",
+          fieldCategory: resolveFieldCategory(undefined, prop || queryFieldDef),
           fieldType:
             prop?.type ||
             queryFieldDef?.panelType ||
@@ -1818,7 +1903,7 @@ const TraceFilterPanel = ({
         const fieldType = prop?.type || "string";
         return {
           field: f.field,
-          fieldCategory: prop?.category || "system",
+          fieldCategory: resolveFieldCategory(undefined, prop),
           fieldType,
           apiColType: prop?.apiColType,
           operator: f.operator || DEFAULT_OP_FOR_TYPE[fieldType] || "equals",

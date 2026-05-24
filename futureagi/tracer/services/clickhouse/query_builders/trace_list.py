@@ -133,7 +133,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         # Pagination
         offset = self.page_number * self.page_size
-        self.params["limit"] = self.page_size + 1  # +1 for has_more detection
+        self.params["limit"] = self.page_size
         self.params["offset"] = offset
 
         # Build optional filter fragment

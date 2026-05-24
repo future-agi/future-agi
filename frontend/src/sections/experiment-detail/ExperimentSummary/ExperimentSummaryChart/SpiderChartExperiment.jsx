@@ -197,7 +197,8 @@ const SpiderChartExperiment = ({ data, cols }) => {
                         color="text.primary"
                       >
                         {item}
-                        {cols?.[ind]?.output_type !== OutputTypes.NUMERIC && "%"}
+                        {cols?.[ind]?.output_type !== OutputTypes.NUMERIC &&
+                          "%"}
                       </Typography>
                     </Box>
                   );

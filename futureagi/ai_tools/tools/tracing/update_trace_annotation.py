@@ -1,6 +1,7 @@
 from typing import List, Optional
 from uuid import UUID
 
+import structlog
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -10,6 +11,9 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from model_hub.models.choices import QueueItemSourceType
+
+logger = structlog.get_logger(__name__)
 
 
 class UpdateTraceAnnotationInput(PydanticBaseModel):
@@ -143,7 +147,7 @@ class UpdateTraceAnnotationTool(BaseTool):
                     ).first()
                 default_item = (
                     resolve_default_queue_item_for_source(
-                        "observation_span",
+                        QueueItemSourceType.OBSERVATION_SPAN.value,
                         span_obj,
                         context.organization,
                         context.user,
@@ -156,9 +160,7 @@ class UpdateTraceAnnotationTool(BaseTool):
                     # write succeeds, but we don't accumulate an orphan
                     # Score row that the on_commit hook can no longer
                     # safely move under per-queue uniqueness.
-                    import structlog as _structlog
-
-                    _structlog.get_logger(__name__).warning(
+                    logger.warning(
                         "score_update_skip_no_default_queue_scope",
                         annotation_id=str(annotation.id),
                         label_id=str(label.pk),
@@ -172,7 +174,7 @@ class UpdateTraceAnnotationTool(BaseTool):
                         queue_item=default_item,
                         deleted=False,
                         defaults={
-                            "source_type": "observation_span",
+                            "source_type": QueueItemSourceType.OBSERVATION_SPAN.value,
                             "value": score_value,
                             "score_source": "human",
                             "organization": context.organization,

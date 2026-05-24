@@ -4,6 +4,7 @@ import {
   useUpdateSavedView,
   useUpdateWorkspaceSavedView,
 } from "src/api/project/saved-views";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 import React, {
@@ -318,7 +319,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const canSaveView = useMemo(() => {
     if (!activeViewConfig) return false;
 
-    const baselineExtraFilters = activeViewConfig.extra_filters || [];
+    const baselineExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
     const baselineDisplay = activeViewConfig.display || {};
     const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
@@ -666,7 +669,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         }
       }
     }
-    const nextExtraFilters = activeViewConfig.extra_filters || [];
+    const nextExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
     setExtraFilters((prev) => {
       if (prev.length === 0 && nextExtraFilters.length === 0) return prev;
       if (prev.length === nextExtraFilters.length) {

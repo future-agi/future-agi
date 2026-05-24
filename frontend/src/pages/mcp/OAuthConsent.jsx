@@ -68,7 +68,10 @@ export default function OAuthConsent() {
             setSelectedGroups(initial);
           } else {
             setError(
-              apiErrorMessage(response.data, "Failed to load authorization data."),
+              apiErrorMessage(
+                response.data,
+                "Failed to load authorization data.",
+              ),
             );
           }
         } catch (err) {
@@ -122,7 +125,10 @@ export default function OAuthConsent() {
           setSelectedGroups(initial);
         } else {
           setError(
-            apiErrorMessage(response.data, "Failed to load authorization data."),
+            apiErrorMessage(
+              response.data,
+              "Failed to load authorization data.",
+            ),
           );
         }
       } catch (err) {

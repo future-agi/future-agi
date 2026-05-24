@@ -50,6 +50,10 @@ class FeedDetailView(APIView):
         )
         if project_ids is None:
             return self._gm.forbidden_response("Access denied to this project")
+        if not project_ids:
+            return self._gm.forbidden_response(
+                "User not associated with an organization"
+            )
 
         try:
             detail = feed_service.get_feed_detail(cluster_id, project_ids)
@@ -74,6 +78,10 @@ class FeedDetailView(APIView):
         )
         if project_ids is None:
             return self._gm.forbidden_response("Access denied to this project")
+        if not project_ids:
+            return self._gm.forbidden_response(
+                "User not associated with an organization"
+            )
 
         payload = FeedUpdatePayload(
             status=request.validated_data.get("status"),

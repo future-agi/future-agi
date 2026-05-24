@@ -147,8 +147,8 @@ class SecretKeyAPIViewSet(ViewSet):
                 {
                     "id": key.id,
                     "key_name": key.name,
-                    "api_key": key.api_key,
-                    "secret_key": key.secret_key,
+                    "api_key": mask_key(key.api_key),
+                    "secret_key": mask_key(key.secret_key),
                     "created_by": key.user.name if key.user else None,
                     "created_at": key.created_at,
                     "enabled": key.enabled,

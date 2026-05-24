@@ -44,7 +44,9 @@ const categories = [
 ];
 
 const evalTemplateTags = (evalItem) =>
-  Array.isArray(evalItem?.eval_template_tags) ? evalItem.eval_template_tags : [];
+  Array.isArray(evalItem?.eval_template_tags)
+    ? evalItem.eval_template_tags
+    : [];
 
 const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
   const theme = useTheme();
@@ -59,7 +61,7 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
           eval_type: "previously_configured",
           search_text: searchText || "",
         },
-    }),
+      }),
     select: (d) => d?.data?.result?.evals,
   });
   const evals = useMemo(

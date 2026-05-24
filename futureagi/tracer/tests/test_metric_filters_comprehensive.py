@@ -160,7 +160,8 @@ class TestCHMetricFilters:
         assert "model" in where
         assert "tracer_eval_logger" in where
 
-    def test_camel_case_filter_format_is_ignored_by_backend_contract(self):
+    def test_camel_case_filter_format_is_supported_by_backend_contract(self):
+        """Frontend camelCase payloads are accepted by the CH filter builder."""
         filters = [
             {
                 "columnId": "has_eval",
@@ -172,10 +173,9 @@ class TestCHMetricFilters:
             }
         ]
         where, params = self._builder().translate(filters)
-        assert where == ""
-        assert params == {}
+        assert "tracer_eval_logger" in where
 
-    def test_has_annotation_camel_case_filter_format_is_ignored(self):
+    def test_has_annotation_camel_case_filter_format_is_supported(self):
         filters = [
             {
                 "columnId": "has_annotation",
@@ -187,8 +187,7 @@ class TestCHMetricFilters:
             }
         ]
         where, params = self._builder().translate(filters)
-        assert where == ""
-        assert params == {}
+        assert "trace_id NOT IN" in where
 
     def test_empty_filter_list(self):
         where, params = self._builder().translate([])

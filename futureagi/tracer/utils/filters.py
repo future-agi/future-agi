@@ -1,10 +1,10 @@
 import operator
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from enum import Enum
 from functools import reduce
 
-from django.db.models import Exists, F, FloatField, OuterRef, Q, TextField, Value
+from django.db.models import Exists, FloatField, OuterRef, Q, Value
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Round
 from django.utils.dateparse import parse_datetime as django_parse_datetime
@@ -136,6 +136,7 @@ class FilterEngine:
         "trace_id": "trace_id",
         "span_id": "id",
         "created_at": "created_at",
+        "name": "name",
         "run_name": "run_name",
         "span_name": "span_name",
         "trace_name": "trace_name",
@@ -153,21 +154,41 @@ class FilterEngine:
         "prompt_label_id": "prompt_label_id",
         "prompt_label_name": "prompt_label_name",
     }
+    SYSTEM_METRIC_FILTER_IDS = frozenset(DEFAULT_FIELD_MAP) | {
+        "avg_score",
+        "total_cost",
+        "total_traces_count",
+        "duration",
+        "end_time",
+        "first_message",
+        "last_message",
+        "has_eval",
+        "has_annotation",
+    }
 
     # Voice system metric IDs that need custom SYSTEM_METRIC handling.
     # These are filtered via JSON extraction from span_attributes rather
     # than direct column lookups.
     VOICE_SYSTEM_METRIC_IDS = {
+        "duration",
         "turn_count",
         "agent_talk_percentage",
         "avg_agent_latency_ms",
         "bot_wpm",
         "user_wpm",
         "user_interruption_count",
+        "user_interruption_rate",
         "ai_interruption_count",
+        "ai_interruption_rate",
     }
 
     VOICE_METRIC_DEFINITIONS = {
+        "duration": {
+            "json_keys": ["call.duration"],
+            "annotation": "_voice_duration_seconds",
+            "output_field": FloatField(),
+            "round": False,
+        },
         "turn_count": {
             "json_keys": ["call.total_turns"],
             "annotation": "_voice_turn_count",
@@ -199,10 +220,22 @@ class FilterEngine:
             "annotation": "_voice_user_interruptions",
             "output_field": FloatField(),
         },
+        "user_interruption_rate": {
+            "json_keys": ["user_interruption_rate"],
+            "annotation": "_voice_user_interruption_rate",
+            "output_field": FloatField(),
+            "round": False,
+        },
         "ai_interruption_count": {
             "json_keys": ["ai_interruption_count"],
             "annotation": "_voice_ai_interruptions",
             "output_field": FloatField(),
+        },
+        "ai_interruption_rate": {
+            "json_keys": ["ai_interruption_rate"],
+            "annotation": "_voice_ai_interruption_rate",
+            "output_field": FloatField(),
+            "round": False,
         },
     }
 
@@ -587,46 +620,7 @@ class FilterEngine:
                 continue
 
             # Skip if not a valid filter
-            if column_id in [
-                "avg_score",
-                "avg_latency",
-                "latency",
-                "latency_ms",
-                "avg_cost",
-                "cost",
-                "tokens",
-                "node_type",
-                "trace_id",
-                "span_id",
-                "created_at",
-                "run_name",
-                "span_name",
-                "trace_name",
-                "session_id",
-                "prompt_template_version",
-                "labels",
-                "avg_input_tokens",
-                "input_tokens",
-                "prompt_tokens",
-                "avg_output_tokens",
-                "output_tokens",
-                "completion_tokens",
-                "unique_traces",
-                "first_used",
-                "last_used",
-                "user_id",
-                "status",
-                "start_time",
-                "prompt_label_id",
-                "prompt_label_name",
-                "total_cost",
-                "total_tokens",
-                "total_traces_count",
-                "duration",
-                "end_time",
-                "first_message",
-                "last_message",
-            ]:
+            if column_id in FilterEngine.SYSTEM_METRIC_FILTER_IDS:
                 system_metrics_filter_conditions.append(
                     {"column_id": column_id, "filter_config": filter_config}
                 )
@@ -894,6 +888,8 @@ class FilterEngine:
                 annotations[annotation_name] = Round(
                     cast_expr / (cast_expr + Value(1)) * Value(100)
                 )
+            elif defn.get("round", True) is False:
+                annotations[annotation_name] = cast_expr
             else:
                 # All other metrics: round to integer.
                 annotations[annotation_name] = Round(cast_expr)
@@ -1169,7 +1165,6 @@ class FilterEngine:
             column_id, filter_config = FilterEngine._normalize_filter_params(
                 filter_item
             )
-            col_type = filter_config.get("col_type", ColType.EVAL_METRIC.value)
 
             if filter_config.get("col_type") == ColType.SPAN_ATTRIBUTE.value:
                 continue
@@ -1427,33 +1422,7 @@ class FilterEngine:
             if (
                 not column_id
                 or not filter_config
-                or column_id
-                in [
-                    "avg_score",
-                    "avg_latency",
-                    "avg_cost",
-                    "node_type",
-                    "trace_id",
-                    "span_id",
-                    "created_at",
-                    "run_name",
-                    "span_name",
-                    "trace_name",
-                    "session_id",
-                    "prompt_template_version",
-                    "labels",
-                    "avg_input_tokens",
-                    "avg_output_tokens",
-                    "unique_traces",
-                    "first_used",
-                    "last_used",
-                    "prompt_label_id",
-                    "user_id",
-                    "status",
-                    "start_time",
-                    "has_eval",
-                    "has_annotation",
-                ]
+                or column_id in FilterEngine.SYSTEM_METRIC_FILTER_IDS
             ):
                 continue
 

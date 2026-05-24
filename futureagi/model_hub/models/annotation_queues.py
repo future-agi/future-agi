@@ -211,6 +211,22 @@ class AnnotationQueue(BaseModel):
     def __str__(self):
         return f"AnnotationQueue: {self.name}"
 
+    def save(self, *args, **kwargs):
+        is_new = self._state.adding
+        super().save(*args, **kwargs)
+
+        if not is_new or not self.created_by_id:
+            return
+
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue=self,
+            user_id=self.created_by_id,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": FULL_ACCESS_QUEUE_ROLES,
+            },
+        )
+
 
 class AnnotationQueueLabel(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

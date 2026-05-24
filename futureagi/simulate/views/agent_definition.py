@@ -16,6 +16,7 @@ from rest_framework.viewsets import ModelViewSet
 from retell import Retell
 
 from simulate.models import AgentDefinition, AgentVersion
+from simulate.serializers.agent_definition import AgentDefinitionSerializer
 from simulate.serializers.requests.agent_definition import (
     AgentDefinitionBulkDeleteRequestSerializer,
     AgentDefinitionCreateRequestSerializer,
@@ -399,9 +400,14 @@ class AgentDefinitionDetailView(APIView):
 
 
 class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
-    permissions = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
     serializer_class = AgentDefinitionResponseSerializer
+
+    def get_serializer_class(self):
+        if getattr(self, "action", None) in {"create", "update", "partial_update"}:
+            return AgentDefinitionSerializer
+        return AgentDefinitionResponseSerializer
 
     def get_queryset(self):
         # select_related("credentials") avoids N+1 when
@@ -426,6 +432,14 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
     )
     def create(self, request, *args, **kwargs):
         return super().create(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        serializer.save(
+            organization=getattr(self.request, "organization", None)
+            or self.request.user.organization,
+            workspace=getattr(self.request, "workspace", None)
+            or getattr(self.request.user, "workspace", None),
+        )
 
     @swagger_auto_schema(
         responses={

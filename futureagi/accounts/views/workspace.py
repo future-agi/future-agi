@@ -8,7 +8,6 @@ from django.contrib.auth.tokens import (
 from django.db import transaction
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -44,7 +43,7 @@ class WorkspaceManagementView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={
             200: WorkspaceManagementListResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
@@ -502,7 +501,7 @@ class WorkspaceManagementView(APIView):
 
         return self._gm.success_response(response_data)
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={200: WorkspaceDeleteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def delete(self, request, workspace_id, *args, **kwargs):
@@ -547,7 +546,7 @@ class WorkspaceMembershipView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={
             200: WorkspaceMembersListResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
@@ -908,7 +907,7 @@ class WorkspaceMembershipView(APIView):
 
         return self._gm.create_response(response_data)
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={
             200: WorkspaceMemberRemoveResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,

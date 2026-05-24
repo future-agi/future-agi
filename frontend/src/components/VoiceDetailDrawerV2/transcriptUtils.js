@@ -292,7 +292,6 @@ export const computeCallMetrics = (turns) => {
     }
   }
 
-
   return {
     duration: lastEnd > 0 ? lastEnd : null,
     turnCount: userTurns.length + assistantTurns.length,

@@ -97,7 +97,10 @@ const EvalCellRenderer = ({ value: evalData }) => {
       return (
         <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
           {evalData?.value?.map((item, idx) => {
-            const label = typeof item === "object" ? (item?.choice ?? item?.value ?? JSON.stringify(item)) : item;
+            const label =
+              typeof item === "object"
+                ? item?.choice ?? item?.value ?? JSON.stringify(item)
+                : item;
             return (
               <Chip
                 color="primary"

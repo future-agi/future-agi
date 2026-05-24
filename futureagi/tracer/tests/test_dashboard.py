@@ -12,12 +12,17 @@ Covers:
 
 import uuid
 from datetime import date, datetime, timedelta
+import json
+from urllib.parse import urlencode
 from unittest.mock import MagicMock, patch
 
 import pytest
 from django.conf import settings as django_settings
 
+from accounts.models.workspace import Workspace
+from model_hub.models.ai_model import AIModel
 from tracer.models.dashboard import Dashboard, DashboardWidget
+from tracer.models.project import Project
 from tracer.serializers.dashboard import (
     DashboardCreateUpdateSerializer,
     DashboardDetailSerializer,
@@ -162,11 +167,15 @@ class TestDashboardCRUD:
         assert data["description"] == "A test dashboard"
 
     @pytest.mark.django_db
-    def test_delete_dashboard(self, auth_client, dashboard):
+    def test_delete_dashboard(self, auth_client, dashboard, dashboard_widget):
         response = auth_client.delete(f"/tracer/dashboard/{dashboard.id}/")
         assert response.status_code == 200
         dashboard.refresh_from_db()
+        dashboard_widget.refresh_from_db()
         assert dashboard.deleted is True
+        assert dashboard.deleted_at is not None
+        assert dashboard_widget.deleted is True
+        assert dashboard_widget.deleted_at is not None
 
     @pytest.mark.django_db
     def test_deleted_dashboard_not_in_list(self, auth_client, dashboard):
@@ -301,6 +310,64 @@ class TestMetricsEndpoint:
         metric_names = [m["name"] for m in data["metrics"]]
         assert "latency" in metric_names
         assert "cost" in metric_names
+        span_duration = next(
+            m for m in data["metrics"] if m["name"] == "latency_ms"
+        )
+        assert span_duration["display_name"] == "Duration"
+        assert span_duration["source"] == "spans"
+        assert span_duration["type"] == "number"
+
+    @pytest.mark.django_db
+    def test_metrics_returns_agent_scoped_simulation_eval_metrics(
+        self, auth_client, organization, workspace
+    ):
+        from model_hub.models.evals_metric import EvalTemplate
+        from simulate.models import AgentDefinition
+        from simulate.models.eval_config import SimulateEvalConfig
+        from simulate.models.run_test import RunTest
+
+        agent = AgentDefinition.objects.create(
+            agent_name="Metrics Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+1234567001",
+            inbound=True,
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        run_test = RunTest.objects.create(
+            name="Metrics Test",
+            agent_definition=agent,
+            organization=organization,
+            workspace=workspace,
+        )
+        template = EvalTemplate.objects.create(
+            name="Metrics Eval",
+            organization=organization,
+            workspace=workspace,
+            config={"output": "pass_fail"},
+        )
+        eval_config = SimulateEvalConfig.objects.create(
+            name="Metrics Eval Config",
+            eval_template=template,
+            run_test=run_test,
+        )
+
+        response = auth_client.get(
+            f"/tracer/dashboard/metrics/?agent_definition_id={agent.id}"
+        )
+
+        assert response.status_code == 200
+        metric = next(
+            m
+            for m in response.json()["result"]["metrics"]
+            if m["name"] == str(eval_config.id)
+        )
+        assert metric["display_name"] == "Metrics Eval Config"
+        assert metric["category"] == "eval_metric"
+        assert metric["source"] == "simulation"
+        assert metric["output_type"] == "PASS_FAIL"
+        assert metric["choices"] == ["Passed", "Failed"]
 
     @pytest.mark.django_db
     def test_metrics_includes_span_backed_annotation_labels(
@@ -370,6 +437,126 @@ class TestMetricsEndpoint:
         assert "call.bot_wpm" not in metric_names
         assert "call.user_wpm" not in metric_names
         assert "freeform.attr" in metric_names
+
+
+class TestChartsView:
+    @pytest.mark.django_db
+    def test_generated_chart_crud_routes_return_method_guards(self, auth_client):
+        chart_id = uuid.uuid4()
+        payload = {
+            "project_id": str(uuid.uuid4()),
+            "interval": "day",
+            "property": "average",
+            "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+        }
+        calls = [
+            auth_client.get("/tracer/charts/"),
+            auth_client.post("/tracer/charts/", payload, format="json"),
+            auth_client.get(f"/tracer/charts/{chart_id}/"),
+            auth_client.put(f"/tracer/charts/{chart_id}/", payload, format="json"),
+            auth_client.patch(
+                f"/tracer/charts/{chart_id}/", {"property": "p95"}, format="json"
+            ),
+            auth_client.delete(f"/tracer/charts/{chart_id}/"),
+        ]
+
+        for response in calls:
+            assert response.status_code == 405
+            assert "fetch_graph" in response.json()["detail"]
+
+    @pytest.mark.django_db
+    @patch("tracer.views.charts.get_system_metric_data")
+    def test_fetch_graph_supports_single_system_metric(
+        self, mock_system_metric_data, auth_client, observe_project
+    ):
+        mock_system_metric_data.return_value = {
+            "metric_name": "latency",
+            "data": [],
+        }
+
+        query = urlencode(
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": json.dumps(
+                    {"id": "latency", "type": "SYSTEM_METRIC"}
+                ),
+            }
+        )
+
+        response = auth_client.get(f"/tracer/charts/fetch_graph/?{query}")
+
+        assert response.status_code == 200
+        assert response.json()["result"]["metric_name"] == "latency"
+        mock_system_metric_data.assert_called_once()
+        assert mock_system_metric_data.call_args.kwargs["system_metric_filters"] == {
+            "project_id": str(observe_project.id)
+        }
+
+    @pytest.mark.django_db
+    @patch(
+        "tracer.services.clickhouse.query_service.AnalyticsQueryService.should_use_clickhouse",
+        return_value=False,
+    )
+    def test_fetch_graph_system_metric_uses_pg_fallback_when_clickhouse_disabled(
+        self, _mock_should_use_clickhouse, auth_client, observe_project
+    ):
+        query = urlencode(
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": json.dumps(
+                    {"id": "latency", "type": "SYSTEM_METRIC"}
+                ),
+            }
+        )
+
+        response = auth_client.get(f"/tracer/charts/fetch_graph/?{query}")
+
+        assert response.status_code == 200
+        result = response.json()["result"]
+        assert result["metric_name"] == "latency"
+        assert len(result["data"]) > 0
+        assert {"timestamp", "value", "primary_traffic"}.issubset(result["data"][0])
+
+    @pytest.mark.django_db
+    @patch("tracer.views.charts.get_system_metric_data")
+    def test_fetch_graph_rejects_same_org_other_workspace_project(
+        self, mock_system_metric_data, auth_client, organization, user
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_project = Project.objects.create(
+            name="Other workspace observe project",
+            organization=organization,
+            workspace=other_workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            metadata={},
+        )
+
+        query = urlencode(
+            {
+                "project_id": str(other_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": json.dumps(
+                    {"id": "latency", "type": "SYSTEM_METRIC"}
+                ),
+            }
+        )
+
+        response = auth_client.get(f"/tracer/charts/fetch_graph/?{query}")
+
+        assert response.status_code == 400
+        assert "Project does not exist" in str(response.json())
+        mock_system_metric_data.assert_not_called()
 
 
 # ===========================================================================

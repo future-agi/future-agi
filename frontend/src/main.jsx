@@ -80,7 +80,10 @@ initReddit();
 // Initialize Twitter (X) pixel (no-op if env vars are unset)
 initTwitter();
 
-if (CURRENT_ENVIRONMENT === "local") {
+if (
+  CURRENT_ENVIRONMENT === "local" &&
+  import.meta.env.VITE_ENABLE_MSW !== "false"
+) {
   logger.debug("STARTING MOCK SERVER");
   worker.start({ onUnhandledRequest: "bypass" });
 }

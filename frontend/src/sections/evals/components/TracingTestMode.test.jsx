@@ -12,7 +12,10 @@ describe("buildTracingPreviewListParams", () => {
           filter_config: {
             filter_type: "datetime",
             filter_op: "between",
-            filter_value: ["2025-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z"],
+            filter_value: [
+              "2025-01-01T00:00:00.000Z",
+              "2026-01-01T00:00:00.000Z",
+            ],
           },
         },
       ],

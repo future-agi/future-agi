@@ -10,6 +10,7 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from model_hub.models.choices import QueueItemSourceType
 
 
 class CreateTraceAnnotationInput(PydanticBaseModel):
@@ -157,7 +158,10 @@ class CreateTraceAnnotationTool(BaseTool):
         )
 
         default_item = resolve_default_queue_item_for_source(
-            "observation_span", span, context.organization, context.user
+            QueueItemSourceType.OBSERVATION_SPAN.value,
+            span,
+            context.organization,
+            context.user,
         )
         if default_item is None:
             return ToolResult.error(
@@ -173,7 +177,7 @@ class CreateTraceAnnotationTool(BaseTool):
             queue_item=default_item,
             deleted=False,
             defaults={
-                "source_type": "observation_span",
+                "source_type": QueueItemSourceType.OBSERVATION_SPAN.value,
                 "value": score_value,
                 "score_source": "human",
                 "notes": "",

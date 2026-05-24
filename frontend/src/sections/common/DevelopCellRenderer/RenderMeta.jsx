@@ -97,7 +97,7 @@ RenderMeta.propTypes = {
   meta: PropTypes.object,
   originType: PropTypes.string,
   showToken: PropTypes.bool,
-  valuesInfo: PropTypes.object,
+  valuesInfo: PropTypes.any,
 };
 
 export default RenderMeta;

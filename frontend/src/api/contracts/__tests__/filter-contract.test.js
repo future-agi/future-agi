@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildApiFilterFromPanelRow,
   coerceFilterValue,
+  hydrateStoredFilterList,
   isAllowedFilterOperator,
   normalizeFilterOperator,
   normalizeFilterType,
@@ -106,6 +107,26 @@ describe("filter contract", () => {
     expect(apiFilter.filter_config).not.toHaveProperty("filterOp");
   });
 
+  it("keeps direct id filters out of metric col_type routing", () => {
+    const apiFilter = buildApiFilterFromPanelRow({
+      field: "trace_id",
+      fieldName: "Trace ID",
+      fieldType: "string",
+      operator: "equals",
+      value: "trace-1",
+    });
+
+    expect(apiFilter).toEqual({
+      column_id: "trace_id",
+      display_name: "Trace ID",
+      filter_config: {
+        filter_type: "text",
+        filter_op: "equals",
+        filter_value: "trace-1",
+      },
+    });
+  });
+
   it("serializes filter UI state to the canonical API wire shape", () => {
     const apiFilter = serializeFilterForApi({
       id: "local-row-id",
@@ -116,10 +137,7 @@ describe("filter contract", () => {
       filter_config: {
         filter_type: "datetime",
         filter_op: "between",
-        filter_value: [
-          "2026-01-01T00:00:00.000Z",
-          "2026-01-02T00:00:00.000Z",
-        ],
+        filter_value: ["2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z"],
       },
     });
 
@@ -129,10 +147,7 @@ describe("filter contract", () => {
       filter_config: {
         filter_type: "datetime",
         filter_op: "between",
-        filter_value: [
-          "2026-01-01T00:00:00.000Z",
-          "2026-01-02T00:00:00.000Z",
-        ],
+        filter_value: ["2026-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z"],
       },
     });
     expect(apiFilter).not.toHaveProperty("id");
@@ -163,6 +178,73 @@ describe("filter contract", () => {
         },
       }),
     ).toThrow(/Unknown API filter_config keys/);
+  });
+
+  it("hydrates canonical and legacy stored filters", () => {
+    let idCounter = 0;
+
+    expect(
+      hydrateStoredFilterList(
+        [
+          {
+            column_id: "status",
+            filter_config: {
+              filter_type: "text",
+              filter_op: "equals",
+              filter_value: "OK",
+            },
+          },
+          {
+            columnId: "legacy-status",
+            displayName: "Legacy Status",
+            filterConfig: {
+              filterType: "text",
+              filterOp: "is",
+              filterValue: "OK",
+              colType: "SYSTEM_METRIC",
+            },
+          },
+        ],
+        () => `generated-${++idCounter}`,
+      ),
+    ).toEqual([
+      {
+        id: "generated-1",
+        column_id: "status",
+        filter_config: {
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: "OK",
+        },
+      },
+      {
+        id: "generated-2",
+        column_id: "legacy-status",
+        display_name: "Legacy Status",
+        filter_config: {
+          col_type: "SYSTEM_METRIC",
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: "OK",
+        },
+      },
+    ]);
+  });
+
+  it("drops unsupported stored filters after attempting legacy upgrade", () => {
+    expect(
+      hydrateStoredFilterList([
+        {
+          columnId: "bad-status",
+          unexpected: true,
+          filterConfig: {
+            filterType: "text",
+            filterOp: "equals",
+            filterValue: "OK",
+          },
+        },
+      ]),
+    ).toEqual([]);
   });
 
   it("drops empty UI draft filters before sending the filter list", () => {

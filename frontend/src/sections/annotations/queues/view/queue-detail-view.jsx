@@ -38,6 +38,7 @@ import {
   useQueueProgress,
   useRemoveQueueItem,
   useBulkRemoveQueueItems,
+  useBulkReviewItems,
   useAssignQueueItems,
   useDownloadAnnotationQueueExport,
   useUpdateAnnotationQueueStatus,
@@ -114,6 +115,8 @@ export default function QueueDetailView() {
   const { mutate: removeItem } = useRemoveQueueItem();
   const { mutate: bulkRemove, isPending: isBulkRemoving } =
     useBulkRemoveQueueItems();
+  const { mutate: bulkReview, isPending: isBulkReviewing } =
+    useBulkReviewItems();
   const { mutate: assignItems, isPending: isAssigningItems } =
     useAssignQueueItems();
   const { mutate: downloadExport, isPending: isDownloadingExport } =
@@ -166,6 +169,15 @@ export default function QueueDetailView() {
     queueStatus: queue?.status,
   });
 
+  const selectedReviewableItems = useMemo(
+    () =>
+      items.filter(
+        (item) =>
+          selectedIds.has(item.id) && item.review_status === "pending_review",
+      ),
+    [items, selectedIds],
+  );
+
   // Ordered tab labels based on role — items is always 0
   const tabLabels = useMemo(
     () =>
@@ -180,6 +192,14 @@ export default function QueueDetailView() {
   );
 
   const currentTab = tabLabels[activeTab] || "items";
+
+  const handleBack = useCallback(() => {
+    if (currentTab === "settings") {
+      setActiveTab(0);
+      return;
+    }
+    navigate(paths.dashboard.annotations.queues);
+  }, [currentTab, navigate]);
 
   const handleFilterChange = useCallback((field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value, page: 0 }));
@@ -228,6 +248,24 @@ export default function QueueDetailView() {
       { onSuccess: clearSelectedItems },
     );
   }, [queueId, selectedIds, bulkRemove, clearSelectedItems, isBulkRemoving]);
+
+  const handleBulkApprove = useCallback(() => {
+    if (selectedReviewableItems.length === 0 || isBulkReviewing) return;
+    bulkReview(
+      {
+        queueId,
+        itemIds: selectedReviewableItems.map((item) => item.id),
+        action: "approve",
+      },
+      { onSuccess: clearSelectedItems },
+    );
+  }, [
+    bulkReview,
+    clearSelectedItems,
+    isBulkReviewing,
+    queueId,
+    selectedReviewableItems,
+  ]);
 
   const handleAssign = useCallback(
     ({ itemIds, userIds, action }) => {
@@ -342,7 +380,10 @@ export default function QueueDetailView() {
         flexShrink={0}
       >
         <IconButton
-          onClick={() => navigate(paths.dashboard.annotations.queues)}
+          aria-label={
+            currentTab === "settings" ? "Back to queue items" : "Back to queues"
+          }
+          onClick={handleBack}
           size="small"
         >
           <Iconify icon="eva:arrow-back-fill" />
@@ -551,11 +592,11 @@ export default function QueueDetailView() {
                     label: o.label,
                     value: o.value,
                   }))}
-                  placeholder="All Statuses"
+                  placeholder="All Item Statuses"
                   multiple
                   checkbox
                   selectAll
-                  multipleAllLabel="All Statuses"
+                  multipleAllLabel="All Item Statuses"
                   showClear={false}
                   sx={{ minWidth: 160, flex: "1 1 170px" }}
                 />
@@ -635,17 +676,15 @@ export default function QueueDetailView() {
               >
                 {isManager && selectedIds.size > 0 && (
                   <>
-                    {isManager && !queue?.auto_assign && (
-                      <LoadingButton
-                        variant="outlined"
-                        size="medium"
-                        onClick={handleOpenBulkAssign}
-                        loading={isAssigningItems}
-                        disabled={isAssigningItems || isBulkRemoving}
-                      >
-                        Assign Selected ({selectedIds.size})
-                      </LoadingButton>
-                    )}
+                    <LoadingButton
+                      variant="outlined"
+                      size="medium"
+                      onClick={handleOpenBulkAssign}
+                      loading={isAssigningItems}
+                      disabled={isAssigningItems || isBulkRemoving}
+                    >
+                      Assign Selected ({selectedIds.size})
+                    </LoadingButton>
                     <LoadingButton
                       color="error"
                       variant="outlined"
@@ -657,6 +696,18 @@ export default function QueueDetailView() {
                       Remove Selected ({selectedIds.size})
                     </LoadingButton>
                   </>
+                )}
+                {canViewSubmissions && selectedReviewableItems.length > 0 && (
+                  <LoadingButton
+                    variant="outlined"
+                    size="medium"
+                    color="success"
+                    onClick={handleBulkApprove}
+                    loading={isBulkReviewing}
+                    disabled={isBulkReviewing}
+                  >
+                    Approve Selected ({selectedReviewableItems.length})
+                  </LoadingButton>
                 )}
                 {isManager && (
                   <Button
@@ -725,6 +776,7 @@ export default function QueueDetailView() {
               onAssign={isManager ? handleAssign : undefined}
               autoAssign={queue?.auto_assign ?? false}
               canManageItems={isManager}
+              canSelectItems={isManager || canViewSubmissions}
               addedSortDirection={
                 itemOrdering === "created_at" ? "asc" : "desc"
               }

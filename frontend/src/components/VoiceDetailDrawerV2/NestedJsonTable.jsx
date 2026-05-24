@@ -262,13 +262,10 @@ const ValueCell = ({ value, tokens }) => {
     startToggleTransition(() => setExpanded((v) => !v));
   };
 
-  const isObj = value != null && typeof value === "object" && !Array.isArray(value);
+  const isObj =
+    value != null && typeof value === "object" && !Array.isArray(value);
   const isArr = Array.isArray(value);
-  const count = isArr
-    ? value.length
-    : isObj
-      ? canonicalKeys(value).length
-      : 0;
+  const count = isArr ? value.length : isObj ? canonicalKeys(value).length : 0;
 
   if ((isObj || isArr) && count > 0) {
     return (

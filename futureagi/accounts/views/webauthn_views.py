@@ -2,7 +2,6 @@ import json
 
 import structlog
 from django.core.cache import cache
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -122,7 +121,7 @@ class PasskeyListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={
             200: WebAuthnCredentialSerializer(many=True),
             **ACCOUNTS_ERROR_RESPONSES,
@@ -156,7 +155,7 @@ class PasskeyDetailView(APIView):
 
         return Response({"id": str(passkey.id), "name": passkey.name})
 
-    @swagger_auto_schema(responses={204: "Passkey deleted.", **ACCOUNTS_ERROR_RESPONSES})
+    @validated_request(responses={204: "Passkey deleted.", **ACCOUNTS_ERROR_RESPONSES})
     def delete(self, request, pk):
         try:
             passkey = WebAuthnCredential.objects.get(id=pk, user=request.user)

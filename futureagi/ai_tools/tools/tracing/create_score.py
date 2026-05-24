@@ -10,6 +10,7 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from model_hub.models.choices import QueueItemSourceType
 
 
 class CreateScoreInput(PydanticBaseModel):
@@ -128,7 +129,11 @@ class CreateScoreTool(BaseTool):
             resolve_default_queue_item_for_source,
         )
 
-        score_source_type = "observation_span" if span else "trace"
+        score_source_type = (
+            QueueItemSourceType.OBSERVATION_SPAN.value
+            if span
+            else QueueItemSourceType.TRACE.value
+        )
         score_source_obj = span if span else trace
         default_item = resolve_default_queue_item_for_source(
             score_source_type,

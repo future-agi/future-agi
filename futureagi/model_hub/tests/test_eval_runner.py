@@ -14,8 +14,11 @@ Also tests key helper functions:
 """
 
 import uuid
+from datetime import timedelta
+from unittest.mock import patch
 
 import pytest
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
@@ -1059,6 +1062,158 @@ class TestTestEvaluationTemplateAPIView(EvalRunnerBaseTestCase):
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "unsupported" in str(response.data).lower()
+
+    def test_function_eval_uses_supplied_template_id_when_eval_type_duplicates(self):
+        """Function tests execute the requested template, not the latest same-type row."""
+        target_template = EvalTemplate.objects.create(
+            name="requested_custom_code_eval",
+            description="Requested Function template",
+            owner=OwnerChoices.USER.value,
+            organization=self.organization,
+            workspace=self.workspace,
+            eval_type="code",
+            config={
+                "required_keys": ["text"],
+                "eval_type_id": "CustomCodeEval",
+                "output": "Pass/Fail",
+                "function_params_schema": {
+                    "min_words": {"type": "integer", "default": None, "nullable": True},
+                    "max_words": {"type": "integer", "default": None, "nullable": True},
+                },
+            },
+            eval_tags=["FUNCTION"],
+        )
+        newer_same_type_template = EvalTemplate.objects.create(
+            name="newer_custom_code_eval",
+            description="Should not be selected",
+            owner=OwnerChoices.USER.value,
+            organization=self.organization,
+            workspace=self.workspace,
+            eval_type="code",
+            config={
+                "required_keys": ["text"],
+                "eval_type_id": "CustomCodeEval",
+                "output": "Pass/Fail",
+                "function_params_schema": {
+                    "min_words": {"type": "integer", "default": None, "nullable": True},
+                    "max_words": {"type": "integer", "default": None, "nullable": True},
+                },
+            },
+            eval_tags=["FUNCTION"],
+        )
+        now = timezone.now()
+        EvalTemplate.objects.filter(id=target_template.id).update(
+            updated_at=now - timedelta(minutes=5)
+        )
+        EvalTemplate.objects.filter(id=newer_same_type_template.id).update(
+            updated_at=now
+        )
+
+        data = {
+            "name": "test-selected-function-eval",
+            "template_type": "Function",
+            "template_id": str(target_template.id),
+            "eval_type_id": "CustomCodeEval",
+            "model": "",
+            "output_type": "Pass/Fail",
+            "required_keys": ["text"],
+            "input_data_types": {"text": "text"},
+            "config": {
+                "mapping": {"text": "hello"},
+                "config": {},
+                "params": {"min_words": "1", "max_words": "8"},
+            },
+        }
+        captured = {}
+
+        def fake_run_eval_func(config, mappings, template, org, *args, **kwargs):
+            captured["template_id"] = str(template.id)
+            captured["eval_id"] = kwargs.get("eval_id")
+            captured["params"] = config.get("params")
+            return {
+                "output": "Passed",
+                "reason": "matched requested template",
+                "metadata": {},
+                "log_id": uuid.uuid4(),
+            }
+
+        with patch(
+            "model_hub.views.separate_evals.run_eval_func",
+            side_effect=fake_run_eval_func,
+        ) as mocked_run:
+            response = self.client.post(
+                "/model-hub/test-evaluation/",
+                data,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        mocked_run.assert_called_once()
+        assert captured["template_id"] == str(target_template.id)
+        assert captured["template_id"] != str(newer_same_type_template.id)
+        assert captured["eval_id"] == "CustomCodeEval"
+        assert captured["params"] == {"min_words": 1, "max_words": 8}
+
+    def test_function_eval_rejects_template_id_eval_type_mismatch(self):
+        """Function tests reject a template_id that does not match eval_type_id."""
+        template = EvalTemplate.objects.create(
+            name="custom_code_eval_for_mismatch",
+            description="Mismatch Function template",
+            owner=OwnerChoices.USER.value,
+            organization=self.organization,
+            workspace=self.workspace,
+            eval_type="code",
+            config={
+                "required_keys": ["text"],
+                "eval_type_id": "CustomCodeEval",
+                "output": "Pass/Fail",
+            },
+            eval_tags=["FUNCTION"],
+        )
+        data = {
+            "name": "test-mismatched-function-eval",
+            "template_type": "Function",
+            "template_id": str(template.id),
+            "eval_type_id": "Contains",
+            "model": "",
+            "output_type": "Pass/Fail",
+            "required_keys": ["text"],
+            "input_data_types": {"text": "text"},
+            "config": {
+                "mapping": {"text": "hello"},
+                "config": {},
+                "params": {},
+            },
+        }
+
+        with patch("model_hub.views.separate_evals.run_eval_func") as mocked_run:
+            response = self.client.post(
+                "/model-hub/test-evaluation/",
+                data,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mocked_run.assert_not_called()
+        assert "does not match" in str(response.data).lower()
+
+    def test_eval_execution_response_contract_allows_null_metadata(self):
+        """Code eval test responses can include metadata=null."""
+        from model_hub.serializers.contracts import EvalExecutionResponseSerializer
+
+        serializer = EvalExecutionResponseSerializer(
+            data={
+                "status": True,
+                "result": {
+                    "output": "Passed",
+                    "reason": "ok",
+                    "metadata": None,
+                    "log_id": str(uuid.uuid4()),
+                },
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
 
     def test_function_eval_params_normalization_valid_integer(self):
         template_config = {

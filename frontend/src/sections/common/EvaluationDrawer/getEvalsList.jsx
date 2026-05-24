@@ -72,7 +72,8 @@ export const useRunEvalMutation = (
   const getEndpoint = useMemo(() => {
     switch (module) {
       case "experiment":
-        return (targetId) => endpoints.develop.experiment.runEvaluation(targetId);
+        return (targetId) =>
+          endpoints.develop.experiment.runEvaluation(targetId);
       case "workbench":
         return (targetId) =>
           endpoints.develop.runPrompt.runEvalsOnMultipleVersions(targetId);
@@ -88,7 +89,9 @@ export const useRunEvalMutation = (
      */
     mutationFn: (payload) => {
       if (!id) {
-        return Promise.reject(new Error("Cannot run evaluations without an id."));
+        return Promise.reject(
+          new Error("Cannot run evaluations without an id."),
+        );
       }
       return axios.post(getEndpoint(id), payload);
     },

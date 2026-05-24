@@ -1,4 +1,5 @@
 import structlog
+from django.http import Http404
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
@@ -6,7 +7,7 @@ from pydantic import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-from accounts.models.user import OrgApiKey
+from accounts.utils import get_request_organization
 from simulate.constants.installation_guide import CHAT_SDK_CODE, INSTALLATION_GUIDE
 from simulate.models import (
     CallExecution,
@@ -28,6 +29,7 @@ from simulate.services.chat_sim import initiate_chat, send_message_to_chat
 from simulate.services.test_executor import TestExecutor
 from simulate.utils.scenario_completeness import check_scenarios_incomplete
 from simulate.utils.test_execution_utils import generate_simulator_agent_prompt
+from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,
@@ -484,8 +486,17 @@ class ChatSendMessageView(APIView):
     def post(self, request, call_execution_id, *args, **kwargs):
         """Send a message to a chat execution"""
         try:
+            user_organization = get_request_organization(request)
+            if not user_organization:
+                return self.gm.not_found("Organization not found for the user.")
+
             call_execution = get_object_or_404(
-                CallExecution, id=call_execution_id, deleted=False
+                CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
+                id=call_execution_id,
+                deleted=False,
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             )
 
             if (
@@ -591,7 +602,7 @@ class ChatSendMessageView(APIView):
             )
             return self.gm.success_response(response_data.model_dump(exclude_none=True))
 
-        except CallExecution.DoesNotExist:
+        except (CallExecution.DoesNotExist, Http404):
             return self.gm.bad_request("Call execution not found")
         except ValidationError as e:
             return self.gm.bad_request(
@@ -642,32 +653,7 @@ class ChatSDKCodeView(APIView):
             except RunTest.DoesNotExist:
                 return self.gm.bad_request("Run test not found")
 
-            # Get organization API keys (system API key)
-            try:
-                org_api_key = OrgApiKey.objects.filter(
-                    organization=user_organization,
-                    type="user",
-                    enabled=True,
-                ).first()
-
-                if not org_api_key:
-                    # Create one if it doesn't exist
-                    org_api_key = OrgApiKey.objects.create(
-                        organization=user_organization, type="user", user=request.user
-                    )
-
-                fi_api_key = org_api_key.api_key
-                fi_secret_key = org_api_key.secret_key
-            except Exception as e:
-                logger.exception(f"Error retrieving API keys: {str(e)}")
-                return self.gm.bad_request("Failed to retrieve API keys")
-
-            # Render the SDK code template
-            rendered_code = CHAT_SDK_CODE.format(
-                fi_api_key=fi_api_key,
-                fi_secret_key=fi_secret_key,
-                run_test_name=run_test.name,
-            )
+            rendered_code = CHAT_SDK_CODE.format(run_test_name=run_test.name)
 
             return self.gm.success_response(
                 {

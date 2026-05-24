@@ -18,6 +18,7 @@ import { useUrlState } from "src/routes/hooks/use-url-state";
 import axios, { endpoints } from "src/utils/axios";
 import { useQuery } from "@tanstack/react-query";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
 import {
   useUpdateSavedView,
   useUpdateWorkspaceSavedView,
@@ -504,7 +505,7 @@ const UsersView = ({
         }
       }
       if (Array.isArray(config.extra_filters)) {
-        setExtraFilters(config.extra_filters);
+        setExtraFilters(hydrateStoredFilterList(config.extra_filters));
       }
       if (display.dateFilter) {
         setDateFilter(display.dateFilter);
@@ -553,7 +554,9 @@ const UsersView = ({
     if (!activeViewConfig) return false;
 
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineExtraFilters = activeViewConfig.extra_filters || [];
+    const baselineExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
     const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;

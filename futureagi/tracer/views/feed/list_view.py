@@ -61,6 +61,7 @@ class FeedListView(APIView):
                 project_ids=project_ids,
                 search=params.get("search") or None,
                 status=params.get("status"),
+                severity=params.get("severity"),
                 fix_layer=params.get("fix_layer") or None,
                 source=params.get("source"),
                 issue_group=params.get("issue_group") or None,

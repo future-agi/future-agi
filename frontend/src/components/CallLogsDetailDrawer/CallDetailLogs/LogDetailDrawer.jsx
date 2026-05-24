@@ -86,12 +86,12 @@ const LogDetailDrawerContent = ({
       lockVisible: true,
       sortable: false,
       filter: false,
-        resizable: true,
-        suppressHeaderMenuButton: true,
-        suppressHeaderContextMenu: true,
-        cellStyle: {
-          lineHeight: 1,
-          padding: "8px",
+      resizable: true,
+      suppressHeaderMenuButton: true,
+      suppressHeaderContextMenu: true,
+      cellStyle: {
+        lineHeight: 1,
+        padding: "8px",
         display: "flex",
         alignItems: "center",
         height: "100%",

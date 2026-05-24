@@ -22,7 +22,10 @@ import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectFie
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { useAddColumnApiCallStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
-import { useDatasetColumnConfig, useGetJsonColumnSchema } from "src/api/develop/develop-detail";
+import {
+  useDatasetColumnConfig,
+  useGetJsonColumnSchema,
+} from "src/api/develop/develop-detail";
 import { ShowComponent } from "src/components/show";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { transformDynamicColumnConfig } from "../common";
@@ -168,21 +171,40 @@ export const AddColumnApiCallChild = ({
     if (!dotCols.length) return true;
     const raw = getValues()?.config || {};
     const find = (t) => dotCols.find((c) => t?.includes(c.headerName));
-    const msg = (n) => `"${n}" contains a dot — rename the column to use it as a variable.`;
+    const msg = (n) =>
+      `"${n}" contains a dot — rename the column to use it as a variable.`;
 
     let col = find(raw.url);
-    if (col) { setError("config.url", { type: "manual", message: msg(col.headerName) }); return false; }
+    if (col) {
+      setError("config.url", { type: "manual", message: msg(col.headerName) });
+      return false;
+    }
     col = find(raw.body);
-    if (col) { setError("config.body", { type: "manual", message: msg(col.headerName) }); return false; }
+    if (col) {
+      setError("config.body", { type: "manual", message: msg(col.headerName) });
+      return false;
+    }
     for (let i = 0; i < (raw.params || []).length; i++) {
       if (raw.params[i]?.type !== "Variable") continue;
       col = find(raw.params[i].value);
-      if (col) { setError(`config.params.${i}.value`, { type: "manual", message: msg(col.headerName) }); return false; }
+      if (col) {
+        setError(`config.params.${i}.value`, {
+          type: "manual",
+          message: msg(col.headerName),
+        });
+        return false;
+      }
     }
     for (let i = 0; i < (raw.headers || []).length; i++) {
       if (raw.headers[i]?.type !== "Variable") continue;
       col = find(raw.headers[i].value);
-      if (col) { setError(`config.headers.${i}.value`, { type: "manual", message: msg(col.headerName) }); return false; }
+      if (col) {
+        setError(`config.headers.${i}.value`, {
+          type: "manual",
+          message: msg(col.headerName),
+        });
+        return false;
+      }
     }
     return true;
   };
@@ -201,7 +223,7 @@ export const AddColumnApiCallChild = ({
     setError("config.body", {
       type: "manual",
       message:
-        "This variable is not a JSON or array column. Wrap it in a JSON object, e.g. {\"key\": \"{{variable}}\"}",
+        'This variable is not a JSON or array column. Wrap it in a JSON object, e.g. {"key": "{{variable}}"}',
     });
     return false;
   };

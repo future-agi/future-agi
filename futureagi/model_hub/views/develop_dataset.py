@@ -84,6 +84,8 @@ from model_hub.constants import (
     MAX_KB_SIZE,
     PYTHON_ADD_COLS,
     PYTHON_ADD_ROWS,
+    SDK_API_KEY_PLACEHOLDER,
+    SDK_SECRET_KEY_PLACEHOLDER,
     UPDATE_KB_SDK_CODE,
     get_curl_ts_code,
 )
@@ -3788,11 +3790,6 @@ class AddStaticColumnView(APIView):
                 column_type = request.validated_data.get("column_type")
                 source = request.validated_data.get("source")
 
-                if not new_column_name or not column_type:
-                    return self._gm.bad_request(
-                        get_error_message("MISSING_COLUMN_NAME_AND_TYPE")
-                    )
-
                 if len(new_column_name) > 255:
                     return self._gm.bad_request(
                         get_error_message("COLUMN_NAME_TOO_LONG")
@@ -4033,13 +4030,16 @@ class DeleteColumnView(APIView):
 
     def delete(self, request, dataset_id, column_id, *args, **kwargs):
         try:
+            now = timezone.now()
             dataset = get_object_or_404(Dataset, id=dataset_id)
             column = get_object_or_404(Column, id=column_id, dataset=dataset)
 
             # Delete associated source model based on source type
             if column.source_id:
                 if column.source == SourceChoices.RUN_PROMPT.value:
-                    RunPrompter.objects.filter(id=column.source_id).update(deleted=True)
+                    RunPrompter.objects.filter(id=column.source_id).update(
+                        deleted=True, deleted_at=now
+                    )
                     # Clean up derived variables from associated prompt versions
                     try:
                         run_prompter = RunPrompter.objects.filter(
@@ -4089,7 +4089,8 @@ class DeleteColumnView(APIView):
                         )
                     if eval_metric:
                         eval_metric.deleted = True
-                        eval_metric.save(update_fields=["deleted"])
+                        eval_metric.deleted_at = now
+                        eval_metric.save(update_fields=["deleted", "deleted_at"])
                 if column.source == SourceChoices.ANNOTATION_LABEL.value:
                     source_parts = column.source_id.split("-sourceid-")
 
@@ -4117,32 +4118,37 @@ class DeleteColumnView(APIView):
                         annotation.columns.remove(col)
 
                     annotation.labels.remove(label)
-                    columns_to_delete.update(deleted=True)
+                    columns_to_delete.update(deleted=True, deleted_at=now)
 
                     annotation.save()
                     dataset.save()
 
             # delete all cells associated with the column
-            Cell.objects.filter(column=column).update(deleted=True)
+            Cell.objects.filter(column=column).update(deleted=True, deleted_at=now)
             # Delete cells where source_id starts with column.id
             Cell.objects.filter(column__source_id__startswith=f"{column.id}").update(
-                deleted=True
+                deleted=True, deleted_at=now
             )
 
-            # Remove column from column_order
+            # Remove deleted columns from dataset ordering/config.
+            columns_to_delete = Column.objects.filter(
+                Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
+            ).values_list("id", flat=True)
+            col_ids_to_remove = {str(c) for c in columns_to_delete}
+            update_fields = []
             if dataset.column_order:
-                # Get columns to delete (including those with source_id starting with column.id)
-                columns_to_delete = Column.objects.filter(
-                    Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
-                ).values_list("id", flat=True)
-
-                col_ids_to_remove = {str(c) for c in columns_to_delete}
                 dataset.column_order = [
                     col_id
                     for col_id in dataset.column_order
                     if col_id not in col_ids_to_remove
                 ]
-                dataset.save(update_fields=["column_order"])
+                update_fields.append("column_order")
+            if dataset.column_config:
+                for col_id in col_ids_to_remove:
+                    dataset.column_config.pop(col_id, None)
+                update_fields.append("column_config")
+            if update_fields:
+                dataset.save(update_fields=update_fields)
 
             # Update metrics BEFORE deleting columns — get_metrics_using_column
             # scopes by dataset via the Column row, which must still be
@@ -4159,7 +4165,7 @@ class DeleteColumnView(APIView):
             # Now safe to delete columns
             Column.objects.filter(
                 Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
-            ).update(deleted=True)
+            ).update(deleted=True, deleted_at=now)
 
             return self._gm.success_response("Column deleted successfully")
 
@@ -4177,6 +4183,7 @@ class DeleteRowView(APIView):
 
     def delete(self, request, dataset_id, *args, **kwargs):
         try:
+            now = timezone.now()
             dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
             row_ids = request.data.get("row_ids", [])
             selected_all_rows = request.data.get("selected_all_rows", False)
@@ -4198,19 +4205,23 @@ class DeleteRowView(APIView):
                 if row_ids and len(row_ids) > 0:
                     Row.objects.filter(dataset=dataset, deleted=False).exclude(
                         id__in=row_ids
-                    ).update(deleted=True)
+                    ).update(deleted=True, deleted_at=now)
                     Cell.objects.filter(dataset=dataset).exclude(
                         row_id__in=row_ids
-                    ).update(deleted=True)
+                    ).update(deleted=True, deleted_at=now)
                 else:
                     Row.objects.filter(dataset=dataset, deleted=False).update(
-                        deleted=True
+                        deleted=True, deleted_at=now
                     )
-                    Cell.objects.filter(dataset=dataset).update(deleted=True)
+                    Cell.objects.filter(dataset=dataset).update(
+                        deleted=True, deleted_at=now
+                    )
             else:
-                Row.objects.filter(id__in=row_ids, dataset=dataset).update(deleted=True)
+                Row.objects.filter(id__in=row_ids, dataset=dataset).update(
+                    deleted=True, deleted_at=now
+                )
                 Cell.objects.filter(row_id__in=row_ids, dataset=dataset).update(
-                    deleted=True
+                    deleted=True, deleted_at=now
                 )
 
             annotations = Annotations.objects.filter(dataset=dataset, deleted=False)
@@ -4335,24 +4346,27 @@ class AddSDKRowsView(APIView):
         try:
             dataset_name = request.validated_data.get("dataset_name")
             dataset_id = request.validated_data.get("dataset_id")
-
-            # Get dataset and verify it exists
-            if not dataset_name:
-                dataset = get_object_or_404(Dataset, id=dataset_id)
-            else:
-                dataset = get_object_or_404(
-                    Dataset,
-                    name=dataset_name,
-                    deleted=False,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
-
-            serialized_datset = DatasetSerializer(dataset)
-
             user_organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
+
+            # Get dataset and verify it exists
+            if not dataset_name:
+                dataset = Dataset.objects.filter(
+                    id=dataset_id,
+                    deleted=False,
+                    organization=user_organization,
+                ).first()
+            else:
+                dataset = Dataset.objects.filter(
+                    name=dataset_name,
+                    deleted=False,
+                    organization=user_organization,
+                ).first()
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
+            serialized_datset = DatasetSerializer(dataset)
 
             # --- Row Limit Check Start ---
             existing_rows_count = Row.objects.filter(
@@ -4373,34 +4387,6 @@ class AddSDKRowsView(APIView):
             call_log_row.save()
             # --- Row Limit Check End ---
 
-            apiKeys = OrgApiKey.objects.filter(
-                organization=user_organization,
-                type="user",
-                enabled=True,
-                user=request.user,
-            )
-            if len(apiKeys) == 0:
-                org_api_key = OrgApiKey.objects.create(
-                    organization=user_organization,
-                    type="user",
-                    enabled=True,
-                    user=request.user,
-                )
-                serialized_keys = OrgApiKeySerializer(
-                    org_api_key,
-                )
-
-            else:
-                apiKeys = OrgApiKey.objects.filter(
-                    organization=user_organization,
-                    type="user",
-                    enabled=True,
-                    user=request.user,
-                )
-                serialized_keys = OrgApiKeySerializer(
-                    apiKeys[0],
-                )
-
             (
                 CURL_ADD_COLUMN_REQUEST,
                 CURL_ADD_ROWS_REQUEST,
@@ -4408,25 +4394,28 @@ class AddSDKRowsView(APIView):
                 TYPESCRIPT_ADD_ROWS,
             ) = get_curl_ts_code(
                 dataset_id=dataset.id,
-                api_key=apiKeys[0].api_key,
-                secret_key=apiKeys[0].secret_key,
+                api_key=SDK_API_KEY_PLACEHOLDER,
+                secret_key=SDK_SECRET_KEY_PLACEHOLDER,
                 dataset_name=dataset.name,
             )
 
             response = {
-                "api_keys": serialized_keys.data,
+                "api_keys": {
+                    "api_key": SDK_API_KEY_PLACEHOLDER,
+                    "secret_key": SDK_SECRET_KEY_PLACEHOLDER,
+                },
                 "dataset": serialized_datset.data,
                 "code": {
                     "python_add_row": PYTHON_ADD_ROWS.format(
-                        apiKeys[0].api_key,
-                        apiKeys[0].secret_key,
+                        SDK_API_KEY_PLACEHOLDER,
+                        SDK_SECRET_KEY_PLACEHOLDER,
                         BASE_URL,
                         dataset.name,
                         dataset.name,
                     ),
                     "python_add_col": PYTHON_ADD_COLS.format(
-                        apiKeys[0].api_key,
-                        apiKeys[0].secret_key,
+                        SDK_API_KEY_PLACEHOLDER,
+                        SDK_SECRET_KEY_PLACEHOLDER,
                         BASE_URL,
                         dataset.name,
                         dataset.name,
@@ -4811,7 +4800,7 @@ class DeleteDatasetView(APIView):
                 _cascade_soft_delete_dataset_experiments(ds)
 
             # Bulk soft-delete datasets
-            updated_count = datasets.update(deleted=True)
+            updated_count = datasets.update(deleted=True, deleted_at=timezone.now())
 
             return self._gm.success_response(
                 f"{updated_count} datasets deleted successfully"
@@ -4839,11 +4828,6 @@ class UpdateColumnNameView(APIView):
     def put(self, request, dataset_id, column_id, *args, **kwargs):
         try:
             new_column_name = request.validated_data.get("new_column_name")
-
-            if not new_column_name:
-                return self._gm.bad_request(
-                    get_error_message("NEW_COLUMN_NAME_MISSING")
-                )
 
             if len(new_column_name) > 255:
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_TOO_LONG"))
@@ -5546,11 +5530,6 @@ class UpdateColumnTypeView(APIView):
             new_data_type = request.validated_data.get("new_column_type")
             preview = request.validated_data.get("preview", True)
             force_update = request.validated_data.get("force_update", False)
-
-            if not new_data_type:
-                return self._gm.bad_request(
-                    get_error_message("MISSING_NEW_COLUMN_TYPE")
-                )
 
             # Get dataset and column
             dataset = get_object_or_404(Dataset, id=dataset_id)
@@ -6986,23 +6965,19 @@ class GetEvalConfigView(APIView):
     def get(self, request, *args, **kwargs):
         try:
             eval_id = request.validated_query_data["eval_id"]
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
 
-            try:
-                template = EvalTemplate.no_workspace_objects.get(id=eval_id)
-            except EvalTemplate.DoesNotExist:
+            template = self._get_accessible_template(eval_id, organization)
+            if template is None:
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
             if template.owner == "user":
-                eval_data = self._get_user_structure(
-                    eval_id,
-                    getattr(request, "organization", None) or request.user.organization,
-                )
+                eval_data = self._get_user_structure(template)
                 eval_data.update({"owner": "user", "type": "user_built"})
                 return self._gm.success_response(eval_data)
             else:
-                eval_data = self._get_preset_structure(
-                    eval_id,
-                    getattr(request, "organization", None) or request.user.organization,
-                )
+                eval_data = self._get_preset_structure(template, organization)
                 eval_data.update({"owner": "system", "type": "futureagi_built"})
                 return self._gm.success_response(eval_data)
 
@@ -7012,10 +6987,18 @@ class GetEvalConfigView(APIView):
                 get_error_message("FAILED_TO_GET_EVAL_STRUCTURE")
             )
 
-    def _get_preset_structure(self, template_id, organization):
-        try:
-            template = EvalTemplate.no_workspace_objects.get(id=template_id)
+    def _get_accessible_template(self, template_id, organization):
+        return (
+            EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
+            .filter(
+                Q(owner=OwnerChoices.SYSTEM.value)
+                | Q(owner=OwnerChoices.USER.value, organization=organization)
+            )
+            .first()
+        )
 
+    def _get_preset_structure(self, template, organization):
+        try:
             final_config = template.config.get("config", {})
             function_params_schema, params = params_with_defaults_for_response(
                 template.config, {}
@@ -7072,12 +7055,8 @@ class GetEvalConfigView(APIView):
             logger.exception(f"Error in fetching eval structure: {str(e)}")
             raise e
 
-    def _get_user_structure(self, eval_id, organization):
+    def _get_user_structure(self, template):
         try:
-            template = get_object_or_404(
-                EvalTemplate, id=eval_id, organization=organization
-            )
-
             final_config = template.config.get("config", {})
             function_params_schema, params = params_with_defaults_for_response(
                 template.config, {"params": template.config.get("params", {})}
@@ -7464,6 +7443,7 @@ class DeleteEvalsView(APIView):
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
+            now = timezone.now()
             # Experiment-scoped evals live under source_id=experiment_id, not
             # dataset_id. Branch the lookup so experiment eval deletion doesn't
             # 404 against the dataset-scoped record.
@@ -7536,8 +7516,10 @@ class DeleteEvalsView(APIView):
                         snapshot_dataset = per_edt_cols[0].dataset
                         Cell.objects.filter(
                             column_id__in=col_ids, deleted=False
-                        ).update(deleted=True)
-                        Column.objects.filter(id__in=col_ids).update(deleted=True)
+                        ).update(deleted=True, deleted_at=now)
+                        Column.objects.filter(id__in=col_ids).update(
+                            deleted=True, deleted_at=now
+                        )
                         if snapshot_dataset.column_order:
                             col_id_strs = {str(cid) for cid in col_ids}
                             snapshot_dataset.column_order = [
@@ -7557,7 +7539,7 @@ class DeleteEvalsView(APIView):
                             Q(column=column)
                             | Q(column__source_id__startswith=f"{column.id}-sourceid-"),
                             deleted=False,
-                        ).update(deleted=True)
+                        ).update(deleted=True, deleted_at=now)
 
                         dataset = column.dataset
 
@@ -7599,11 +7581,12 @@ class DeleteEvalsView(APIView):
                             Q(id=column.id)
                             | Q(source_id__startswith=f"{column.id}-sourceid-"),
                             deleted=False,
-                        ).update(deleted=True)
+                        ).update(deleted=True, deleted_at=now)
 
                 # Delete the eval_metric itself when delete_column is True
                 eval_metric.deleted = True
-                eval_metric.save()
+                eval_metric.deleted_at = now
+                eval_metric.save(update_fields=["deleted", "deleted_at"])
             else:
                 # Only hide from sidebar if delete_column is False
                 eval_metric.show_in_sidebar = False
@@ -7757,6 +7740,19 @@ class EditAndRunUserEvalView(APIView):
                 new_config = normalize_eval_runtime_config(
                     eval_metric.template.config, new_config
                 )
+                from model_hub.utils.eval_validators import (
+                    get_required_mapping_keys_for_template,
+                    validate_required_key_mapping,
+                )
+
+                missing_keys = validate_required_key_mapping(
+                    new_config.get("mapping", {}),
+                    get_required_mapping_keys_for_template(eval_metric.template),
+                )
+                if missing_keys:
+                    return self._gm.bad_request(
+                        f"Missing required mapping keys: {', '.join(missing_keys)}"
+                    )
                 # Default reason_column to True if not specified by caller, so
                 # editing an eval never silently strips the reason column.
                 if "reason_column" not in new_config:
@@ -8056,14 +8052,13 @@ class AddUserEvalView(CreateAPIView):
                 )
 
             # Validate required mapping keys
-            from model_hub.utils.eval_validators import validate_required_key_mapping
+            from model_hub.utils.eval_validators import (
+                get_required_mapping_keys_for_template,
+                validate_required_key_mapping,
+            )
 
             mapping = validated_data.get("config", {}).get("mapping", {})
-            required_keys = (
-                template.config.get("required_keys", [])
-                if template.config and isinstance(template.config, dict)
-                else []
-            )
+            required_keys = get_required_mapping_keys_for_template(template)
             missing_keys = validate_required_key_mapping(mapping, required_keys)
             if missing_keys:
                 return self._gm.bad_request(
@@ -8298,7 +8293,8 @@ class PreviewRunEvalView(APIView):
                 protect_flash=protect_flash,
                 sdk_uuid=sdk_uuid,
             )
-            data_config = config.get("config")
+            runtime_config = normalize_eval_runtime_config(eval_template.config, config)
+            data_config = runtime_config.get("config")
 
             run_prompt_column = eval_template.config.get("run_prompt_column", False)
 
@@ -8325,6 +8321,7 @@ class PreviewRunEvalView(APIView):
                         source,
                         dataset_id,
                         model,
+                        runtime_config,
                     )
                     futures.append(future)
 
@@ -10673,6 +10670,15 @@ class FeedbackViewSet(viewsets.ModelViewSet):
     serializer_class = FeedbackSerializer
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
+
+    def get_queryset(self):
+        organization = getattr(self.request, "organization", None) or getattr(
+            self.request.user, "organization", None
+        )
+        queryset = Feedback.objects.all()
+        if organization:
+            queryset = queryset.filter(organization=organization)
+        return queryset.select_related("user", "user_eval_metric", "eval_template")
 
     def create(self, request, *args, **kwargs):
         try:
@@ -13687,6 +13693,21 @@ class AddCompareExperimentEvalView(APIView):
                 )
             except ValueError as e:
                 return self._gm.bad_request(str(e))
+            from model_hub.utils.eval_validators import (
+                get_required_mapping_keys_for_template,
+                validate_required_key_mapping,
+            )
+
+            missing_keys = validate_required_key_mapping(
+                normalized_config.get("mapping", {}),
+                get_required_mapping_keys_for_template(selected_template),
+            )
+            if missing_keys:
+                return self._gm.bad_request(
+                    f"Missing required mapping keys: {', '.join(missing_keys)}"
+                )
+            if "reason_column" not in normalized_config:
+                normalized_config["reason_column"] = True
             original_config = copy.deepcopy(normalized_config)
 
             # Helper to extract base column name and JSON path from column_name.path format
@@ -14441,45 +14462,24 @@ class CreateKnowledgeBaseView(APIView):
     )
     def get(self, request, *args, **kwargs):
         try:
-            org = getattr(request, "organization", None) or request.user.organization
-            request.query_params.get("kb_id", "YOUR_KB_ID")
             name = request.query_params.get("name", "")
-            type = request.query_params.get("type", "create")
+            kb_type = request.query_params.get("type", "create")
 
-            apiKeys = OrgApiKey.objects.filter(
-                organization=org, type="user", enabled=True, user=request.user
-            )
-            if len(apiKeys) == 0:
-                org_api_key = OrgApiKey.objects.create(
-                    organization=org, type="user", user=request.user
-                )
-                serialized_keys = OrgApiKeySerializer(
-                    org_api_key,
-                ).data
-
-            else:
-                apiKeys = OrgApiKey.objects.filter(
-                    organization=org, type="user", enabled=True, user=request.user
-                )
-                serialized_keys = OrgApiKeySerializer(
-                    apiKeys[0],
-                ).data
-
-            if type == "create":
+            if kb_type == "create":
                 code = CREATE_KB_SDK_CODE.format(
-                    serialized_keys["api_key"],
-                    serialized_keys["secret_key"],
-                    serialized_keys["api_key"],
-                    serialized_keys["secret_key"],
+                    SDK_API_KEY_PLACEHOLDER,
+                    SDK_SECRET_KEY_PLACEHOLDER,
+                    SDK_API_KEY_PLACEHOLDER,
+                    SDK_SECRET_KEY_PLACEHOLDER,
                     name,
                 )
             else:
                 code = UPDATE_KB_SDK_CODE.format(
-                    serialized_keys["api_key"],
-                    serialized_keys["secret_key"],
+                    SDK_API_KEY_PLACEHOLDER,
+                    SDK_SECRET_KEY_PLACEHOLDER,
                     name,
-                    serialized_keys["api_key"],
-                    serialized_keys["secret_key"],
+                    SDK_API_KEY_PLACEHOLDER,
+                    SDK_SECRET_KEY_PLACEHOLDER,
                     "UPDATED_KB_NAME",
                 )
             response = {
@@ -14761,20 +14761,31 @@ class CreateKnowledgeBaseView(APIView):
                     get_error_message("MISSING_KNOWLEDGE_BASE_ID_OR_ORGANIZATION")
                 )
 
-            # Cancel ingestion workflows for KBs in PROCESSING state
-            processing_kbs = KnowledgeBaseFile.objects.filter(
+            target_kbs = KnowledgeBaseFile.objects.filter(
                 id__in=kb_ids,
                 organization=org,
-                status=StatusType.PROCESSING.value,
-            ).values_list("id", flat=True)
-
-            for kb_id in processing_kbs:
-                cancel_kb_ingestion_workflow(kb_id)
-
-            remove_kb_files.delay(None, str(org.id), kb_ids)
-            KnowledgeBaseFile.objects.filter(id__in=kb_ids, organization=org).update(
-                deleted=True
+                deleted=False,
             )
+            target_kb_ids = list(target_kbs.values_list("id", flat=True))
+
+            if target_kb_ids:
+                # Cancel ingestion workflows for KBs in PROCESSING state
+                processing_kbs = target_kbs.filter(
+                    id__in=kb_ids,
+                    organization=org,
+                    status=StatusType.PROCESSING.value,
+                ).values_list("id", flat=True)
+
+                for kb_id in processing_kbs:
+                    cancel_kb_ingestion_workflow(kb_id)
+
+                remove_kb_files.delay(
+                    None, str(org.id), [str(kb_id) for kb_id in target_kb_ids]
+                )
+                KnowledgeBaseFile.objects.filter(id__in=target_kb_ids).update(
+                    deleted=True,
+                    deleted_at=timezone.now(),
+                )
             return self._gm.success_response("Successfully deleted the Knowledge Base")
 
         except Exception as e:
@@ -15023,7 +15034,7 @@ class ExistingKnowledgeBaseView(APIView):
                     get_error_message("MISSING_KNOWLEDGE_BASE_ID_OR_ORGANIZATION")
                 )
             kb = KnowledgeBaseFile.objects.prefetch_related("files").filter(
-                id=kb_id, organization=org
+                id=kb_id, organization=org, deleted=False
             )
 
             if not kb:
@@ -15159,7 +15170,7 @@ class ExistingKnowledgeBaseView(APIView):
     # Delete files from kb
     def delete(self, request, *args, **kwargs):
         try:
-            org = getattr(request, "organization", None) or request.user.organization.id
+            org = getattr(request, "organization", None) or request.user.organization
             kb_id = request.data.get("kb_id", None)
             delete_all = request.data.get("delete_all", False)
             file_ids = request.data.get("file_ids", [])
@@ -15171,32 +15182,57 @@ class ExistingKnowledgeBaseView(APIView):
                     get_error_message("MISSING_KNOWLEDGE_BASE_ID_OR_ORGANIZATION")
                 )
 
+            kb = KnowledgeBaseFile.objects.prefetch_related("files").filter(
+                id=kb_id,
+                organization=org,
+                deleted=False,
+            ).first()
+            if not kb:
+                return self._gm.bad_request(
+                    get_error_message("KNOWLEDGE_BASE_NOT_FOUND")
+                )
+
+            kb_files = kb.files.exclude(status=StatusType.DELETING.value)
+
             # Case 1: Delete all files except excluded ones
             if delete_all:
-                deleted_files = Files.objects.filter(
-                    knowledge_base_files__id=kb_id,
-                    knowledge_base_files__organization=org,
-                )
+                deleted_files = kb_files
                 if excluded_file_ids:
                     deleted_files = deleted_files.exclude(id__in=excluded_file_ids)
             # Case 2: Delete specific files by IDs or names
             else:
                 if file_ids:
-                    deleted_files = Files.objects.filter(id__in=file_ids)
+                    deleted_files = kb_files.filter(id__in=file_ids)
+                    found_file_ids = {
+                        str(file_id)
+                        for file_id in deleted_files.values_list("id", flat=True)
+                    }
+                    requested_file_ids = {str(file_id) for file_id in file_ids}
+                    if found_file_ids != requested_file_ids:
+                        return self._gm.bad_request(
+                            get_error_message("INVALID_FILES_PROVIDED")
+                        )
                 elif file_names:
-                    deleted_files = Files.objects.filter(
-                        knowledge_base_files__id=kb_id,
-                        name__in=file_names,
-                        knowledge_base_files__organization=org,
+                    deleted_files = kb_files.filter(name__in=file_names)
+                    found_file_names = set(
+                        deleted_files.values_list("name", flat=True)
                     )
+                    requested_file_names = set(file_names)
+                    if found_file_names != requested_file_names:
+                        return self._gm.bad_request(
+                            get_error_message("INVALID_FILES_PROVIDED")
+                        )
                 else:
                     return self._gm.bad_request(
                         get_error_message("MISSING_FILE_IDS_OR_NAMES")
                     )
 
-            deleted_files.update(status=StatusType.DELETING.value)
+            deleted_file_ids = list(deleted_files.values_list("id", flat=True))
+            Files.objects.filter(id__in=deleted_file_ids).update(
+                status=StatusType.DELETING.value
+            )
             remove_kb_files.delay(
-                list(deleted_files.values_list("id", flat=True)), str(org), kb_id
+                deleted_file_ids, str(org.id), kb_id
             )
 
             return self._gm.success_response("Deleting selected files")

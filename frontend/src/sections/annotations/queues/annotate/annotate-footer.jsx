@@ -39,6 +39,7 @@ export default function AnnotateFooter({
 
   return (
     <Box
+      data-testid="annotation-footer"
       sx={{
         position: "relative",
         flexShrink: 0,

@@ -2350,6 +2350,32 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 return self._gm.bad_request(
                     get_error_message("PROMPT_EVAL_CONFIG_IDS_REQUIRED")
                 )
+
+            try:
+                prompt_eval_config_ids = [
+                    str(UUID(str(config_id))) for config_id in prompt_eval_config_ids
+                ]
+            except (TypeError, ValueError):
+                return self._gm.bad_request("Invalid evaluation configuration id.")
+
+            existing_eval_configs = set(
+                str(config_id)
+                for config_id in PromptEvalConfig.objects.filter(
+                    id__in=prompt_eval_config_ids,
+                    prompt_template=template,
+                    deleted=False,
+                ).values_list("id", flat=True)
+            )
+            missing_eval_configs = [
+                config_id
+                for config_id in prompt_eval_config_ids
+                if config_id not in existing_eval_configs
+            ]
+            if missing_eval_configs:
+                return self._gm.bad_request(
+                    "Following evaluation configurations do not exist for this prompt "
+                    f"template: {', '.join(missing_eval_configs)}"
+                )
             # Check if all versions exist
             # existing_versions = PromptVersion.objects.filter(
             #     original_template=template,
@@ -3176,14 +3202,16 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             )
 
     def perform_destroy(self, instance):
+        now = timezone.now()
         instance.deleted = True
-        instance.save()
+        instance.deleted_at = now
+        instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
 
         # Mark all versions of the template as inactive
-        versions = PromptVersion.objects.filter(original_template=instance)
-        for version in versions:
-            version.deleted = True
-            version.save()
+        PromptVersion.objects.filter(original_template=instance).update(
+            deleted=True,
+            deleted_at=now,
+        )
 
     @action(detail=False, methods=["post"], url_path="generate-prompt")
     def generate_prompt(self, request):

@@ -10,13 +10,54 @@ import uuid
 import pytest
 from rest_framework import status
 
+from accounts.models.workspace import Workspace
+from model_hub.models.ai_model import AIModel
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus
+from tracer.models.project import Project
 
 
 def get_result(response):
     """Extract result from API response wrapper."""
     data = response.json()
     return data.get("result", data)
+
+
+def make_other_workspace_eval_task(project, user, custom_eval_config):
+    other_workspace = Workspace.objects.create(
+        name="Other Eval Task Workspace",
+        organization=project.organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    other_project = Project.objects.create(
+        name="Other Eval Task Project",
+        organization=project.organization,
+        workspace=other_workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+    task = EvalTask.objects.create(
+        project=other_project,
+        name="Other Workspace Eval Task",
+        run_type="continuous",
+        sampling_rate=100,
+        status=EvalTaskStatus.COMPLETED,
+    )
+    task.evals.add(custom_eval_config)
+    return task
+
+
+def make_custom_eval_config_for_project(project, custom_eval_config, name):
+    return CustomEvalConfig.objects.create(
+        name=name,
+        project=project,
+        eval_template=custom_eval_config.eval_template,
+        config=custom_eval_config.config or {},
+        mapping=custom_eval_config.mapping or {},
+        filters={},
+    )
 
 
 @pytest.mark.integration
@@ -64,6 +105,55 @@ class TestEvalTaskCreateAPI:
             },
             format="json",
         )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_create_eval_task_rejects_other_workspace_project(
+        self, auth_client, project, user, custom_eval_config
+    ):
+        """Task creation should not accept a project outside the active workspace."""
+        other_task = make_other_workspace_eval_task(project, user, custom_eval_config)
+
+        response = auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(other_task.project_id),
+                "name": "Cross Workspace Eval Task",
+                "run_type": "continuous",
+                "sampling_rate": 100,
+                "evals": [str(custom_eval_config.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_create_eval_task_rejects_other_project_eval_config(
+        self, auth_client, project, custom_eval_config
+    ):
+        """Task eval configs must belong to the selected task project."""
+        other_project = Project.objects.create(
+            name="Other Visible Eval Config Project",
+            organization=project.organization,
+            workspace=project.workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        other_config = make_custom_eval_config_for_project(
+            other_project, custom_eval_config, "Other Project Eval Config"
+        )
+
+        response = auth_client.post(
+            "/tracer/eval-task/",
+            {
+                "project": str(project.id),
+                "name": "Cross Project Eval Config Task",
+                "run_type": "continuous",
+                "sampling_rate": 100,
+                "evals": [str(other_config.id)],
+            },
+            format="json",
+        )
+
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
@@ -190,6 +280,23 @@ class TestEvalTaskListWithProjectNameAPI:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_list_with_project_name_excludes_other_workspace_tasks(
+        self, auth_client, project, user, eval_task, custom_eval_config
+    ):
+        """The org-level tasks route should still respect project workspace scope."""
+        other_task = make_other_workspace_eval_task(project, user, custom_eval_config)
+
+        response = auth_client.get(
+            "/tracer/eval-task/list_eval_tasks_with_project_name/",
+            {"page_number": "0", "page_size": "100"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = get_result(response)["table"]
+        ids = {row["id"] for row in rows}
+        assert str(eval_task.id) in ids
+        assert str(other_task.id) not in ids
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -213,6 +320,19 @@ class TestEvalTaskGetLogsAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         assert "errors_count" in data or "success_count" in data
+
+    def test_get_logs_rejects_other_workspace_task(
+        self, auth_client, project, user, custom_eval_config
+    ):
+        """Task logs should not resolve same-org tasks from another workspace."""
+        other_task = make_other_workspace_eval_task(project, user, custom_eval_config)
+
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_task_logs/",
+            {"eval_task_id": str(other_task.id)},
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.integration
@@ -379,6 +499,66 @@ class TestEvalTaskUpdateAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_update_eval_task_rejects_other_project_eval_config(
+        self, auth_client, project, eval_task, custom_eval_config
+    ):
+        """Task updates should not attach eval configs from another project."""
+        other_project = Project.objects.create(
+            name="Other Visible Eval Config Project For Update",
+            organization=project.organization,
+            workspace=project.workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        other_config = make_custom_eval_config_for_project(
+            other_project, custom_eval_config, "Other Project Eval Config Update"
+        )
+
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(eval_task.id),
+                "evals": [str(other_config.id)],
+                "edit_type": "edit_rerun",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not eval_task.evals.filter(id=other_config.id).exists()
+
+    def test_update_eval_task_rejects_empty_eval_list(self, auth_client, eval_task):
+        """A task cannot be updated to have no eval configs."""
+        response = auth_client.patch(
+            "/tracer/eval-task/update_eval_task/",
+            {
+                "eval_task_id": str(eval_task.id),
+                "evals": [],
+                "edit_type": "edit_rerun",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_partial_update_rename_does_not_require_edit_type(
+        self, auth_client, eval_task
+    ):
+        """Inline rename uses the detail PATCH route and should not rerun the task."""
+        eval_task.status = EvalTaskStatus.COMPLETED
+        eval_task.save(update_fields=["status"])
+
+        response = auth_client.patch(
+            f"/tracer/eval-task/{eval_task.id}/",
+            {"name": "Renamed Inline Task"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        eval_task.refresh_from_db()
+        assert eval_task.name == "Renamed Inline Task"
+        assert eval_task.status == EvalTaskStatus.COMPLETED
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -414,6 +594,19 @@ class TestEvalTaskGetDetailsAPI:
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
         assert get_result(response) == "Eval task not found"
+
+    def test_get_details_rejects_other_workspace_task(
+        self, auth_client, project, user, custom_eval_config
+    ):
+        """Task detail should not resolve same-org tasks from another workspace."""
+        other_task = make_other_workspace_eval_task(project, user, custom_eval_config)
+
+        response = auth_client.get(
+            "/tracer/eval-task/get_eval_details/",
+            {"eval_id": str(other_task.id)},
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
 
 @pytest.mark.integration

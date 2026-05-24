@@ -34,6 +34,39 @@ describe("ComplexFilter contract wiring", () => {
     expect(parsed.data.filter_config.filter_value).toEqual([10, 20]);
   });
 
+  it("accepts canonical scalar number filters from URL and persisted views", () => {
+    const schema = getComplexFilterValidation();
+    const parsed = schema.safeParse({
+      column_id: "latency",
+      filter_config: {
+        col_type: "SYSTEM_METRIC",
+        filter_type: "number",
+        filter_op: "greater_than",
+        filter_value: 1,
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.filter_config.filter_value).toBe(1);
+  });
+
+  it("accepts canonical scalar datetime filters from URL and persisted views", () => {
+    const schema = getComplexFilterValidation();
+    const parsed = schema.safeParse({
+      column_id: "created_at",
+      _meta: { parentProperty: "System Metrics" },
+      filter_config: {
+        col_type: "SYSTEM_METRIC",
+        filter_type: "datetime",
+        filter_op: "greater_than",
+        filter_value: "2026-05-13T18:30:00.000Z",
+      },
+    });
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.data.filter_config.filter_value).toMatch(/\.000Z$/);
+  });
+
   it("validates every generated filter type instead of a local subset", () => {
     const schema = getComplexFilterValidation();
 

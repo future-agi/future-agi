@@ -23,7 +23,6 @@ from django.db.models.functions import Coalesce, Greatest
 from django.shortcuts import get_object_or_404
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
@@ -660,14 +659,7 @@ class UserListAPIView(APIView):
             search_query = query.get("search", "")
             filter_status = query.get("filter_status", [])
             filter_role = query.get("filter_role", [])
-            sort_params_raw = query.get("sort", "")
-
-            sort_params = None
-            if sort_params_raw:
-                try:
-                    sort_params = json.loads(sort_params_raw)
-                except Exception:
-                    sort_params = [sort_params_raw]
+            ordering = query.get("sort", [])
 
             user = request.user
             organization = resolve_org(request)
@@ -907,104 +899,6 @@ class UserListAPIView(APIView):
             # Apply role filter on effective workspace role (after annotations)
             if filter_role:
                 users = users.filter(computed_workspace_role__in=filter_role)
-
-            # Parse bracket-style sort params if JSON not provided
-            if not sort_params:
-                sort_items = {}
-                for key in request.query_params.keys():
-                    # Matches sort[0][columnId] or sort[0][type]
-                    m = re.match(r"^sort\[(\d+)\]\[(columnId|type)\]$", key)
-                    if m:
-                        idx = int(m.group(1))
-                        subkey = m.group(2)
-                        sort_items.setdefault(idx, {})[subkey] = (
-                            request.query_params.get(key)
-                        )
-                if sort_items:
-                    sort_params = [sort_items[i] for i in sorted(sort_items.keys())]
-
-            # Apply sorting based on mapping
-            ordering = []
-            if sort_params:
-
-                def map_column_to_field(column_id: str) -> str:
-                    if not column_id:
-                        return None
-                    cid = str(column_id).strip()
-                    lc = cid.lower()
-                    mapping = {
-                        "name": "name",
-                        "email": "email",
-                        "role": "computed_role_rank",
-                        "status": "computed_status",
-                        "startdate": "created_at",
-                        "start_date": "created_at",
-                    }
-                    if lc in mapping:
-                        return mapping[lc]
-                    # handle camelCase
-                    if cid == "startDate":
-                        return "created_at"
-                    if cid == "lastUpdatedDate":
-                        return "created_at"
-                    return None
-
-                # Normalize JSON or bracket sort params into ordering list
-                if isinstance(sort_params, list):
-                    for item in sort_params:
-                        if isinstance(item, dict):
-                            column_id = (
-                                item.get("columnId")
-                                or item.get("id")
-                                or item.get("column")
-                            )
-                            sort_type = (
-                                item.get("type") or item.get("order") or item.get("dir")
-                            )
-                            field_name = map_column_to_field(column_id)
-                            if field_name:
-                                if str(sort_type).lower() in [
-                                    "desc",
-                                    "descending",
-                                    "down",
-                                    "false",
-                                ]:
-                                    ordering.append(f"-{field_name}")
-                                else:
-                                    ordering.append(field_name)
-                        elif isinstance(item, str):
-                            # e.g., "-name" or "name"
-                            if item.startswith("-"):
-                                base = item[1:]
-                                field_name = map_column_to_field(base)
-                                if field_name:
-                                    ordering.append(f"-{field_name}")
-                            else:
-                                field_name = map_column_to_field(item)
-                                if field_name:
-                                    ordering.append(field_name)
-                elif isinstance(sort_params, dict):
-                    column_id = (
-                        sort_params.get("columnId")
-                        or sort_params.get("id")
-                        or sort_params.get("column")
-                    )
-                    sort_type = (
-                        sort_params.get("type")
-                        or sort_params.get("order")
-                        or sort_params.get("dir")
-                    )
-                    field_name = map_column_to_field(column_id)
-                    if field_name:
-                        if str(sort_type).lower() in [
-                            "desc",
-                            "descending",
-                            "down",
-                            "false",
-                        ]:
-                            ordering.append(f"-{field_name}")
-                        else:
-                            ordering.append(field_name)
 
             if ordering:
                 users = users.order_by(*ordering)
@@ -1820,7 +1714,7 @@ class ManageTeamView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={200: TeamUsersResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def get(self, request, *args, **kwargs):
@@ -1869,9 +1763,13 @@ class ManageTeamView(APIView):
         # Get all organization members (primary + invited), deduplicated
         team_members_qs = User.objects.filter(
             Q(organization=organization) | Q(invited_organizations=organization),
-            name__icontains=search_query,
             is_active=is_active,
-        ).distinct()
+        )
+        if search_query:
+            team_members_qs = team_members_qs.filter(
+                Q(name__icontains=search_query) | Q(email__icontains=search_query)
+            )
+        team_members_qs = team_members_qs.distinct()
 
         total_count = team_members_qs.count()
 
@@ -2409,7 +2307,7 @@ class ManageTeamView(APIView):
             )
             raise
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={200: TeamRemoveResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def delete(self, request, member_id=None, *args, **kwargs):

@@ -1,5 +1,5 @@
 export const ITEM_STATUS_FILTER_OPTIONS = [
-  { value: "pending", label: "Pending" },
+  { value: "pending", label: "Pending Annotation" },
   { value: "in_review", label: "In Review" },
   { value: "needs_changes", label: "Needs Changes" },
   { value: "resubmitted", label: "Resubmitted" },

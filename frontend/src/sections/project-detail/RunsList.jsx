@@ -15,6 +15,8 @@ import {
   AllowedGroups,
   applyQuickFilters,
   getRunListColumnDefs,
+  normalizeRunListColumnConfig,
+  serializeRunListFilters,
 } from "./common";
 
 const RunsList = React.forwardRef(
@@ -162,7 +164,7 @@ const RunsList = React.forwardRef(
             // request has startRow and endRow get next page number and each page has 10 rows
             const pageNumber = Math.floor(request.startRow / 10);
 
-            const fil = [...filters];
+            const fil = serializeRunListFilters(filters);
 
             if (search && search?.length) {
               fil.push({
@@ -192,22 +194,12 @@ const RunsList = React.forwardRef(
                 },
               },
             );
-            const res = results?.data?.result;
+            const res = results?.data?.result || results?.data;
 
             const winnerConfig = res?.project_version_winnner_config || {};
-            const columns = res?.column_config?.map((o) => {
-              if (o.id === "avg_latency") {
-                return {
-                  ...o,
-                  value: winnerConfig["avg_latency_ms"] ?? null,
-                };
-              }
-
-              return {
-                ...o,
-                value: winnerConfig[o.id] ?? null,
-              };
-            });
+            const columns = res?.column_config?.map((column) =>
+              normalizeRunListColumnConfig(column, winnerConfig),
+            );
 
             setColumns(columns);
 

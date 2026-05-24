@@ -130,6 +130,7 @@ export default function CreateQueueDrawer({
 
   const labelIds = watch("label_ids");
   const annotators = watch("annotators");
+  const autoAssign = watch("autoAssign");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
 
   // RHF only re-runs field validation on user interaction with that field, so
@@ -365,10 +366,9 @@ export default function CreateQueueDrawer({
                   value={annotators}
                   onChange={(a) => setValue("annotators", a)}
                   creatorId={
-                    isEdit
-                      ? editQueue?.created_by
-                      : String(user?.id || "")
+                    isEdit ? editQueue?.created_by : String(user?.id || "")
                   }
+                  highlightAutoAssigned={autoAssign}
                   isManager
                 />
 

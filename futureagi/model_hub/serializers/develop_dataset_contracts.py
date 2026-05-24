@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from model_hub.serializers.contracts import DerivedVariableDetailSerializer
 from model_hub.serializers.develop_dataset import ColumnSerializer, DatasetSerializer
 
 
@@ -93,7 +94,7 @@ class DatasetTableMetadataSerializer(serializers.Serializer):
     error_messages = serializers.ListField(
         child=serializers.CharField(), required=False
     )
-    status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    status = serializers.JSONField(required=False, allow_null=True)
 
 
 class DatasetTableResultSerializer(serializers.Serializer):
@@ -254,19 +255,9 @@ class RunPromptColumnPreviewResponseSerializer(serializers.Serializer):
     result = RunPromptColumnPreviewResultSerializer()
 
 
-class DatasetDerivedVariableDetailSerializer(serializers.Serializer):
-    paths = serializers.ListField(child=serializers.CharField(), required=False)
-    schema = serializers.JSONField(required=False)
-    full_variables = serializers.ListField(
-        child=serializers.CharField(), required=False
-    )
-    raw_sample = serializers.JSONField(required=False, allow_null=True)
-    is_json = serializers.BooleanField(required=False)
-
-
 class DatasetDerivedVariablesResultSerializer(serializers.Serializer):
     derived_variables = serializers.DictField(
-        child=DatasetDerivedVariableDetailSerializer()
+        child=DerivedVariableDetailSerializer()
     )
 
 

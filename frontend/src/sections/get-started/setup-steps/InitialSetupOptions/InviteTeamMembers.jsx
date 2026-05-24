@@ -10,7 +10,7 @@ const InviteTeamMembers = () => {
         title="Invite team members"
         description="This tour will guide you through the key features and functionalities"
       />
-      <Box sx={{ height: "355px"}}>
+      <Box sx={{ height: "355px" }}>
         <SetupOrganization getStarted={true} />
       </Box>
     </Box>

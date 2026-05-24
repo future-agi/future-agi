@@ -6,7 +6,7 @@ query builders inherit from.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
 
@@ -174,13 +174,13 @@ class BaseQueryBuilder(ABC):
         end_date: Optional[datetime] = None
 
         for f in filters:
-            col_id = f.get("column_id")
-            config = f.get("filter_config") or {}
+            col_id = f.get("column_id") or f.get("columnId")
+            config = f.get("filter_config") or f.get("filterConfig") or {}
             if col_id not in ("created_at", "start_time"):
                 continue
 
-            op = config.get("filter_op")
-            val = config.get("filter_value")
+            op = config.get("filter_op") or config.get("filterOp")
+            val = config.get("filter_value", config.get("filterValue"))
 
             if op == "greater_than" and val:
                 start_date = _parse_dt(val)
@@ -201,12 +201,14 @@ class BaseQueryBuilder(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_timestamp(ts: datetime, interval: str) -> datetime:
+    def _normalize_timestamp(ts: date | datetime, interval: str) -> datetime:
         """Normalize *ts* to the start of its time bucket.
 
         Strips timezone info and truncates to the start of the given
         interval bucket.
         """
+        if isinstance(ts, date) and not isinstance(ts, datetime):
+            ts = datetime(ts.year, ts.month, ts.day)
         if ts.tzinfo:
             ts = ts.replace(tzinfo=None)
 

@@ -1,6 +1,7 @@
 import traceback
 
 from django.db import models
+from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 
@@ -114,14 +115,20 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         """Override destroy to implement soft delete"""
+        now = timezone.now()
 
         prompt_templates = PromptTemplate.objects.filter(prompt_folder=instance)
+        prompt_template_ids = list(prompt_templates.values_list("id", flat=True))
 
-        if prompt_templates.exists():
-            PromptVersion.objects.filter(original_template__in=prompt_templates).update(
-                deleted=True
+        if prompt_template_ids:
+            PromptVersion.objects.filter(
+                original_template_id__in=prompt_template_ids
+            ).update(
+                deleted=True,
+                deleted_at=now,
             )
-            prompt_templates.update(deleted=True)
+            prompt_templates.update(deleted=True, deleted_at=now)
 
         instance.deleted = True
-        instance.save()
+        instance.deleted_at = now
+        instance.save(update_fields=["deleted", "deleted_at", "updated_at"])

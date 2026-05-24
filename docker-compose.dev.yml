@@ -29,7 +29,8 @@ x-dev-backend-env: &dev-backend-env
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
 
-  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8090
+  AGENTCC_INTERNAL_URL: http://agentcc-gateway:8080
+  AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8080
   AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:-}
   RECAPTCHA_ENABLED: ${RECAPTCHA_ENABLED:-false}
   RECAPTCHA_SECRET_KEY: ${RECAPTCHA_SECRET_KEY:-}

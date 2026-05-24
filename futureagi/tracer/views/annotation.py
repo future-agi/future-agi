@@ -3,7 +3,9 @@ import json
 import structlog
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
+from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -46,10 +48,87 @@ ERROR_RESPONSES = {
 }
 
 
+def _get_request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _project_workspace_scope_q(request, project_prefix="project__"):
+    workspace = getattr(request, "workspace", None)
+    organization = _get_request_organization(request)
+    scope = Q(**{f"{project_prefix}organization": organization})
+
+    if workspace:
+        workspace_field = f"{project_prefix}workspace"
+        if getattr(workspace, "is_default", False):
+            scope &= (
+                Q(**{workspace_field: workspace})
+                | Q(
+                    **{
+                        f"{workspace_field}__is_default": True,
+                        f"{workspace_field}__organization": organization,
+                    }
+                )
+                | Q(**{f"{workspace_field}__isnull": True})
+            )
+        else:
+            scope &= Q(**{workspace_field: workspace})
+
+    return scope
+
+
+def _annotation_label_workspace_scope_q(request):
+    workspace = getattr(request, "workspace", None)
+    organization = _get_request_organization(request)
+    scope = Q(organization=organization)
+
+    if workspace:
+        if getattr(workspace, "is_default", False):
+            scope &= (
+                Q(workspace=workspace)
+                | Q(workspace__is_default=True, workspace__organization=organization)
+                | Q(workspace__isnull=True)
+            )
+        else:
+            scope &= Q(workspace=workspace)
+
+    return scope
+
+
 class TraceAnnotationView(ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     serializer_class = GetTraceAnnotationSerializer
+
+    def _unsupported_crud_response(self):
+        return Response(
+            {
+                "status": False,
+                "detail": (
+                    "TraceAnnotation CRUD is deprecated. Use "
+                    "/tracer/bulk-annotation/ to write annotations and "
+                    "/tracer/trace-annotation/get_annotation_values/ to read values."
+                ),
+            },
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def list(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def create(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def retrieve(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def update(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def partial_update(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def destroy(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
 
     # ------------------------------------------------------------------
     # ClickHouse helpers
@@ -57,6 +136,7 @@ class TraceAnnotationView(ModelViewSet):
 
     def _get_annotations_from_clickhouse(
         self,
+        request,
         observation_span_id,
         trace_id,
         annotators_list,
@@ -73,15 +153,35 @@ class TraceAnnotationView(ModelViewSet):
         analytics = AnalyticsQueryService()
 
         # -- Build the CH query ------------------------------------------------
-        conditions = ["_peerdb_is_deleted = 0"]
-        params: dict = {}
+        organization = _get_request_organization(request)
+        conditions = [
+            "_peerdb_is_deleted = 0",
+            "deleted = 0",
+            "organization_id = toUUID(%(organization_id)s)",
+        ]
+        params: dict = {"organization_id": str(organization.id)}
+
+        workspace = getattr(request, "workspace", None)
+        if workspace:
+            params["workspace_id"] = str(workspace.id)
+            if getattr(workspace, "is_default", False):
+                conditions.append(
+                    "(workspace_id = toUUID(%(workspace_id)s) OR isNull(workspace_id))"
+                )
+            else:
+                conditions.append("workspace_id = toUUID(%(workspace_id)s)")
 
         if observation_span_id:
             # Replicate PG logic: annotations on the span OR trace-level
             # annotations (observation_span_id IS NULL) for the same trace.
             try:
-                span_obj = ObservationSpan.objects.only("trace_id").get(
-                    id=observation_span_id
+                span_obj = (
+                    ObservationSpan.objects.filter(
+                        _project_workspace_scope_q(request),
+                        id=observation_span_id,
+                    )
+                    .only("trace_id")
+                    .get()
                 )
                 conditions.append(
                     "(observation_span_id = %(span_id)s"
@@ -245,13 +345,16 @@ class TraceAnnotationView(ModelViewSet):
             if analytics.should_use_clickhouse(QueryType.ANNOTATION_DETAIL):
                 try:
                     ch_annotations = self._get_annotations_from_clickhouse(
+                        request,
                         observation_span_id,
                         trace_id,
                         annotators_list,
                         exclude_annotators_list,
                     )
                     # Notes are always fetched from PG (not replicated to CH)
-                    notes_details = self._get_notes_from_pg(observation_span_id)
+                    notes_details = self._get_notes_from_pg(
+                        request, observation_span_id
+                    )
                     return self._gm.success_response(
                         {"annotations": ch_annotations, "notes": notes_details}
                     )
@@ -262,14 +365,20 @@ class TraceAnnotationView(ModelViewSet):
                     )
                     # Fall through to existing PG code
 
-            query_params = {"deleted": False}
+            query_params = {
+                "deleted": False,
+                "organization": _get_request_organization(request),
+            }
             if observation_span_id:
                 query_params["observation_span_id"] = observation_span_id
             elif trace_id:
                 query_params["observation_span__trace_id"] = trace_id
                 query_params["observation_span__parent_span_id__isnull"] = True
 
-            queryset = Score.objects.filter(**query_params)
+            queryset = Score.objects.filter(
+                _project_workspace_scope_q(request, "observation_span__project__"),
+                **query_params,
+            )
 
             if annotators_list:  # Include only these annotators
                 queryset = queryset.filter(annotator__in=annotators_list)
@@ -304,7 +413,7 @@ class TraceAnnotationView(ModelViewSet):
                     }
                 )
 
-            notes_details = self._get_notes_from_pg(observation_span_id)
+            notes_details = self._get_notes_from_pg(request, observation_span_id)
             return self._gm.success_response(
                 {"annotations": result, "notes": notes_details}
             )
@@ -313,11 +422,19 @@ class TraceAnnotationView(ModelViewSet):
             return self._gm.bad_request(f"error getting the annotation values {str(e)}")
 
     @staticmethod
-    def _get_notes_from_pg(observation_span_id):
+    def _get_notes_from_pg(request, observation_span_id):
         """Fetch span notes from PostgreSQL."""
         notes_details = []
-        notes = SpanNotes.objects.filter(span_id=observation_span_id).select_related(
-            "created_by_user"
+        if not observation_span_id:
+            return notes_details
+
+        notes = (
+            SpanNotes.objects.filter(
+                _project_workspace_scope_q(request, "span__project__"),
+                span_id=observation_span_id,
+            )
+            .select_related("created_by_user")
+            .order_by("-created_at")
         )
         for note in notes:
             notes_details.append(
@@ -422,6 +539,8 @@ class BulkAnnotationView(APIView):
 
     def _prefetch_data(self, request, records):
         """Pre-fetch all spans, annotation labels, and existing duplicates to avoid repeated DB hits."""
+        organization = _get_request_organization(request)
+
         # Pre-fetch all spans
         span_ids = [
             record.get("observation_span_id")
@@ -430,8 +549,11 @@ class BulkAnnotationView(APIView):
         ]
         span_map = {
             str(span.id): span
-            for span in ObservationSpan.objects.select_related("project").filter(
-                id__in=span_ids
+            for span in ObservationSpan.objects.select_related(
+                "project", "project__workspace"
+            ).filter(
+                _project_workspace_scope_q(request),
+                id__in=span_ids,
             )
         }
 
@@ -443,8 +565,12 @@ class BulkAnnotationView(APIView):
         }
         annotation_label_map = {
             str(lbl.id): lbl
-            for lbl in AnnotationsLabels.objects.select_related("project").filter(
-                id__in=label_ids
+            for lbl in AnnotationsLabels.objects.select_related(
+                "project", "workspace"
+            ).filter(
+                _annotation_label_workspace_scope_q(request),
+                id__in=label_ids,
+                deleted=False,
             )
         }
 
@@ -466,8 +592,6 @@ class BulkAnnotationView(APIView):
         # We OR the exact (span, label) tuples instead so the query returns
         # at most ``len(request_keys)`` rows.
         if request_keys:
-            from django.db.models import Q
-
             tuple_filter = Q()
             for span_id, label_id, _ in request_keys:
                 tuple_filter |= Q(
@@ -475,8 +599,10 @@ class BulkAnnotationView(APIView):
                     label_id=label_id,
                 )
             existing_duplicates = Score.objects.filter(
+                _project_workspace_scope_q(request, "observation_span__project__"),
                 tuple_filter,
                 annotator_id=current_user_id,
+                organization=organization,
                 deleted=False,
             )
         else:
@@ -498,6 +624,7 @@ class BulkAnnotationView(APIView):
         existing_notes_set = set()
         if note_keys:
             existing_notes = SpanNotes.objects.filter(
+                _project_workspace_scope_q(request, "span__project__"),
                 span_id__in=[k[0] for k in note_keys],
                 created_by_annotator=current_user_id,
                 notes__in=[k[2] for k in note_keys],
@@ -810,6 +937,7 @@ class BulkAnnotationView(APIView):
             value=value_fields,
             score_source="human",
             organization=span.project.organization,
+            workspace=span.project.workspace,
         )
         return {
             "error": None,
@@ -1077,7 +1205,7 @@ class BulkAnnotationView(APIView):
 
         for note_data in record.get("notes", []):
             try:
-                note_key = (span.id, request.user.id, note_data["text"])
+                note_key = (str(span.id), str(request.user.id), note_data["text"])
                 if note_key in note_seen:
                     continue  # skip duplicate in same payload
                 note_seen.add(note_key)

@@ -32,7 +32,9 @@ const categories = [
 ];
 
 const evalTemplateTags = (evalItem) =>
-  Array.isArray(evalItem?.eval_template_tags) ? evalItem.eval_template_tags : [];
+  Array.isArray(evalItem?.eval_template_tags)
+    ? evalItem.eval_template_tags
+    : [];
 
 const EvaluationTypes = ({
   onClose,
@@ -54,7 +56,7 @@ const EvaluationTypes = ({
           eval_type: "preset",
           search_text: searchDebounce || "",
         },
-    }),
+      }),
     select: (d) => d?.data?.result?.evals,
   });
   const evals = useMemo(

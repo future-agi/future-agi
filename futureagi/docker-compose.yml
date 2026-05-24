@@ -56,7 +56,8 @@ services:
       - TEMPORAL_HOST=temporal:7233
       - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
       - FAST_STARTUP=${FAST_STARTUP:-true}
-      - AGENTCC_INTERNAL_URL=http://agentcc-gateway:8090
+      - AGENTCC_INTERNAL_URL=http://agentcc-gateway:8080
+      - AGENTCC_GATEWAY_INTERNAL_URL=http://agentcc-gateway:8080
       - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
       # Read replica: uncomment to test read/write split locally (points to same DB)
       # - PGBOUNCER_READ_HOST=pgbouncer
@@ -102,7 +103,7 @@ services:
       context: ../agentcc-gateway
       dockerfile: Dockerfile
     ports:
-      - "${AGENTCC_GATEWAY_PORT:-8090}:8090"
+      - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
     volumes:
       - ../${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
       - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/Vertex_AI_Creds.json:ro

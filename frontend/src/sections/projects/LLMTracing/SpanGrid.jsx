@@ -212,9 +212,29 @@ const SpanGrid = React.forwardRef(
     // Prefetch cache: stores next page data so scroll feels instant
     const prefetchCache = useRef(new Map());
 
-    const refreshGrid = () => {
-      gridRef?.current?.api?.refreshServerSide();
-    };
+    const refreshGrid = useCallback(() => {
+      gridRef?.current?.api?.refreshServerSide({ purge: true });
+    }, [gridRef]);
+    const filterRequestKey = useMemo(
+      () =>
+        JSON.stringify({
+          filters,
+          extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
+          metricFilters: metricFilters || [],
+          hasEvalFilter,
+          observeId,
+          enabled,
+        }),
+      [filters, extraFilters, metricFilters, hasEvalFilter, observeId, enabled],
+    );
+    const previousFilterRequestKeyRef = useRef(filterRequestKey);
+
+    useEffect(() => {
+      if (previousFilterRequestKeyRef.current === filterRequestKey) return;
+      previousFilterRequestKeyRef.current = filterRequestKey;
+      prefetchCache.current.clear();
+      refreshGrid();
+    }, [filterRequestKey, refreshGrid]);
 
     // Clear AG Grid's internal selection when the project changes — the
     // zustand reset handled in the header only clears our mirror, not AG

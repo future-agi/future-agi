@@ -9,7 +9,7 @@ from rest_framework.views import APIView
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
-from model_hub.models.develop_dataset import Cell, Column
+from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import Feedback, UserEvalMetric
 from model_hub.models.experiments import ExperimentsTable
 from model_hub.serializers.contracts import (
@@ -46,6 +46,49 @@ def _get_experiment_or_error(experiment_id, organization, gm):
     return experiment, None
 
 
+def _get_experiment_metric_or_error(
+    experiment, organization, user_eval_metric_id, gm
+):
+    """Validate the metric belongs to the organization and this experiment."""
+    try:
+        user_eval_metric = experiment.user_eval_template_ids.select_related(
+            "template"
+        ).get(
+            id=user_eval_metric_id,
+            organization=organization,
+            deleted=False,
+        )
+    except (UserEvalMetric.DoesNotExist, ValidationError):
+        return None, gm.bad_request(get_error_message("MISSING_USER_EVAL_METRIC_ID"))
+
+    return user_eval_metric, None
+
+
+def _column_matches_metric(column, user_eval_metric):
+    source_id = str(column.source_id or "")
+    metric_id = str(user_eval_metric.id)
+    return source_id == metric_id or source_id.endswith(f"-sourceid-{metric_id}")
+
+
+def _get_feedback_column_or_error(experiment, source_id, user_eval_metric, gm):
+    try:
+        column = Column.objects.get(
+            id=source_id,
+            dataset_id=experiment.snapshot_dataset_id,
+            deleted=False,
+        )
+    except (Column.DoesNotExist, ValidationError):
+        return None, gm.bad_request(get_error_message("FAILED_TO_CREATE_FEEDBACK"))
+
+    if column.source not in {
+        SourceChoices.EXPERIMENT_EVALUATION.value,
+        SourceChoices.EVALUATION.value,
+    } or not _column_matches_metric(column, user_eval_metric):
+        return None, gm.bad_request(get_error_message("FAILED_TO_CREATE_FEEDBACK"))
+
+    return column, None
+
+
 class ExperimentFeedbackGetTemplateV2View(APIView):
     """Get evaluation template details for rendering the feedback form."""
 
@@ -72,12 +115,11 @@ class ExperimentFeedbackGetTemplateV2View(APIView):
                     get_error_message("USER_EVAL_METRIC_ID_REQUIRED")
                 )
 
-            try:
-                user_eval_metric = UserEvalMetric.objects.get(id=user_eval_metric_id)
-            except (UserEvalMetric.DoesNotExist, ValidationError):
-                return self._gm.bad_request(
-                    get_error_message("MISSING_USER_EVAL_METRIC_ID")
-                )
+            user_eval_metric, err = _get_experiment_metric_or_error(
+                experiment, organization, user_eval_metric_id, self._gm
+            )
+            if err:
+                return err
 
             eval_template = user_eval_metric.template
             if not eval_template:
@@ -150,6 +192,41 @@ class ExperimentFeedbackCreateV2View(APIView):
                 return err
 
             serializer = request.validated_serializer
+            data = serializer.validated_data
+            if data.get("source") != "experiment":
+                return self._gm.bad_request(
+                    get_error_message("FAILED_TO_CREATE_FEEDBACK")
+                )
+
+            source_id = data.get("source_id")
+            row_id = data.get("row_id")
+            submitted_metric = data.get("user_eval_metric")
+            if not submitted_metric:
+                return self._gm.bad_request(
+                    get_error_message("FAILED_TO_CREATE_FEEDBACK")
+                )
+            user_eval_metric, err = _get_experiment_metric_or_error(
+                experiment, organization, submitted_metric.id, self._gm
+            )
+            if err:
+                return self._gm.bad_request(
+                    get_error_message("FAILED_TO_CREATE_FEEDBACK")
+                )
+
+            _, err = _get_feedback_column_or_error(
+                experiment, source_id, user_eval_metric, self._gm
+            )
+            if err:
+                return err
+            if row_id and not Row.objects.filter(
+                id=row_id,
+                dataset_id=experiment.snapshot_dataset_id,
+                deleted=False,
+            ).exists():
+                return self._gm.bad_request(
+                    get_error_message("FAILED_TO_CREATE_FEEDBACK")
+                )
+
             feedback = serializer.save(
                 user=request.user,
                 organization=organization,
@@ -190,7 +267,36 @@ class ExperimentFeedbackDetailsV2View(APIView):
             user_eval_metric_id = request.query_params.get("user_eval_metric_id")
             row_id = request.query_params.get("row_id")
 
-            queryset = Feedback.objects.select_related("user").filter(deleted=False)
+            experiment_columns = list(
+                Column.objects.filter(
+                    dataset_id=experiment.snapshot_dataset_id,
+                    deleted=False,
+                    source__in=[
+                        SourceChoices.EXPERIMENT_EVALUATION.value,
+                        SourceChoices.EVALUATION.value,
+                    ],
+                )
+            )
+            if user_eval_metric_id:
+                user_eval_metric, err = _get_experiment_metric_or_error(
+                    experiment, organization, user_eval_metric_id, self._gm
+                )
+                if err:
+                    return self._gm.success_response(
+                        {"feedback": [], "total_count": 0}
+                    )
+                experiment_columns = [
+                    column
+                    for column in experiment_columns
+                    if _column_matches_metric(column, user_eval_metric)
+                ]
+
+            queryset = Feedback.objects.select_related("user").filter(
+                deleted=False,
+                organization=organization,
+                source="experiment",
+                source_id__in=[str(column.id) for column in experiment_columns],
+            )
 
             if user_eval_metric_id:
                 queryset = queryset.filter(user_eval_metric_id=user_eval_metric_id)
@@ -268,21 +374,38 @@ class ExperimentFeedbackSubmitV2View(APIView):
                 )
 
             # Load feedback
-            feedback = Feedback.objects.get(id=feedback_id, organization=organization)
+            feedback = Feedback.objects.get(
+                id=feedback_id,
+                organization=organization,
+                source="experiment",
+                deleted=False,
+            )
             feedback.action_type = action_type
 
             row_id = str(feedback.row_id)
 
             # Load eval column and dataset from snapshot
-            eval_column = Column.objects.get(id=feedback.source_id)
             snapshot_dataset_id = str(experiment.snapshot_dataset_id)
-
-            try:
-                user_eval_metric = UserEvalMetric.objects.get(id=user_eval_metric_id)
-            except UserEvalMetric.DoesNotExist:
+            user_eval_metric, err = _get_experiment_metric_or_error(
+                experiment, organization, user_eval_metric_id, self._gm
+            )
+            if err:
+                return err
+            if feedback.user_eval_metric_id != user_eval_metric.id:
                 return self._gm.bad_request(
                     get_error_message("MISSING_USER_EVAL_METRIC_ID")
                 )
+            eval_column, err = _get_feedback_column_or_error(
+                experiment, feedback.source_id, user_eval_metric, self._gm
+            )
+            if err:
+                return self._gm.bad_request("Evaluation column not found.")
+            if feedback.row_id and not Row.objects.filter(
+                id=feedback.row_id,
+                dataset_id=snapshot_dataset_id,
+                deleted=False,
+            ).exists():
+                return self._gm.bad_request("Feedback not found.")
 
             feedback.eval_template = user_eval_metric.template
             feedback.value = value if value else feedback.value

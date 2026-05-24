@@ -4,6 +4,7 @@ import threading
 import unicodedata
 import uuid
 from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 import structlog
 from django.conf import settings
@@ -39,7 +40,6 @@ from model_hub.models.choices import (
     AnnotationQueueStatusChoices,
     AnnotationTypeChoices,
     AnnotatorRole,
-    AssignmentStrategy,
     DataTypeChoices,
     QueueItemSourceType,
     QueueItemStatus,
@@ -55,31 +55,33 @@ from model_hub.serializers.annotation_queues import (
     AnnotationQueueListQuerySerializer,
     AnnotationQueueSerializer,
     AssignItemsSerializer,
-    AutomationRuleEvaluateResponseSerializer,
     AutomationRuleEvaluateAcceptedResponseSerializer,
+    AutomationRuleEvaluateResponseSerializer,
     AutomationRuleSerializer,
     BulkRemoveItemsSerializer,
+    BulkReviewItemsRequestSerializer,
     DiscussionCommentRequestSerializer,
     DiscussionReactionRequestSerializer,
     DiscussionThreadStatusRequestSerializer,
     ImportAnnotationsSerializer,
     QueueAddItemsResponseSerializer,
     QueueAddLabelResponseSerializer,
+    QueueAgreementResponseSerializer,
+    QueueAnalyticsResponseSerializer,
     QueueAnnotateDetailResponseSerializer,
     QueueAssignItemsResponseSerializer,
     QueueBulkRemoveItemsResponseSerializer,
+    QueueBulkReviewItemsResponseSerializer,
     QueueDefaultRequestSerializer,
     QueueDefaultResponseSerializer,
     QueueDiscussionResponseSerializer,
-    QueueAgreementResponseSerializer,
-    QueueAnalyticsResponseSerializer,
     QueueExportAnnotationsResponseSerializer,
     QueueExportFieldsResponseSerializer,
     QueueExportQuerySerializer,
     QueueExportToDatasetRequestSerializer,
     QueueExportToDatasetResponseSerializer,
-    QueueForSourceResponseSerializer,
     QueueForSourceQuerySerializer,
+    QueueForSourceResponseSerializer,
     QueueHardDeleteRequestSerializer,
     QueueHardDeleteResponseSerializer,
     QueueImportAnnotationsResponseSerializer,
@@ -112,10 +114,13 @@ from model_hub.services.bulk_selection import (
     resolve_filtered_trace_ids,
 )
 from model_hub.utils.annotation_queue_helpers import (
+    assign_items_to_all_annotators,
     auto_assign_items,
     calculate_agreement,
     evaluate_rule,
+    filter_available_source_ids_for_annotation,
     get_fk_field_name,
+    is_source_available_for_annotation,
     resolve_source_content,
     resolve_source_object,
 )
@@ -228,6 +233,90 @@ def _queue_item_user_scope(queryset, user, *, include_unassigned):
     return queryset.filter(assigned_to_user).distinct()
 
 
+def _queue_item_has_assignments(item):
+    return (
+        bool(getattr(item, "assigned_to_id", None))
+        or QueueItemAssignment.objects.filter(
+            queue_item=item,
+            deleted=False,
+        ).exists()
+    )
+
+
+def _queue_has_any_item_assignments(queue_id):
+    return (
+        QueueItem.objects.filter(
+            queue_id=queue_id,
+            deleted=False,
+            assigned_to__isnull=False,
+        ).exists()
+        or QueueItemAssignment.objects.filter(
+            queue_item__queue_id=queue_id,
+            queue_item__deleted=False,
+            deleted=False,
+        ).exists()
+    )
+
+
+def _queue_item_is_assigned_to_user(item, user):
+    user_id = getattr(user, "id", user)
+    if not user_id:
+        return False
+    return (
+        item.assigned_to_id == user_id
+        or QueueItemAssignment.objects.filter(
+            queue_item=item,
+            user_id=user_id,
+            deleted=False,
+        ).exists()
+    )
+
+
+def _manual_assignment_denial_reason(queue, item, user):
+    if getattr(queue, "auto_assign", False):
+        if not _queue_item_has_assignments(item):
+            return None
+        if _queue_item_is_assigned_to_user(item, user):
+            return None
+        if _is_queue_manager(queue, user):
+            return None
+        return "This item is assigned to another annotator."
+    if _scores_for_queue_item(item).filter(annotator=user).exists():
+        return None
+    if _has_open_rework_for_user(item, user):
+        return None
+    if _queue_item_is_assigned_to_user(item, user):
+        return None
+    if _is_queue_manager(queue, user) and not _queue_has_any_item_assignments(queue.id):
+        return None
+    if _queue_item_has_assignments(item):
+        return "This item is assigned to another annotator."
+    return "This item must be assigned before it can be annotated."
+
+
+def _can_user_discuss_queue_item(item, user, *, is_reviewer):
+    """Return whether the viewer may write discussion comments on this item."""
+    if is_reviewer:
+        return True
+    if not item or not user:
+        return False
+    if _targeted_rework_denies_user(item, user):
+        return False
+    queue = item.queue
+    if getattr(queue, "auto_assign", False):
+        if not _queue_item_has_assignments(item):
+            return True
+        return _queue_item_is_assigned_to_user(item, user) or _is_queue_manager(
+            queue,
+            user,
+        )
+    return _queue_item_user_scope(
+        QueueItem.objects.filter(pk=item.pk, queue_id=item.queue_id, deleted=False),
+        user,
+        include_unassigned=True,
+    ).exists()
+
+
 def _scope_targeted_rework_items(queryset, user):
     """Only route targeted review rework back to the targeted annotator."""
     if not user:
@@ -304,12 +393,16 @@ def _has_open_rework_for_user(item, user):
         return True
 
     # Legacy safety for pre-thread request-change comments.
-    return QueueItemReviewComment.objects.filter(
-        queue_item=item,
-        thread__isnull=True,
-        action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
-        deleted=False,
-    ).filter(Q(target_annotator__isnull=True) | Q(target_annotator=user)).exists()
+    return (
+        QueueItemReviewComment.objects.filter(
+            queue_item=item,
+            thread__isnull=True,
+            action=QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            deleted=False,
+        )
+        .filter(Q(target_annotator__isnull=True) | Q(target_annotator=user))
+        .exists()
+    )
 
 
 def _apply_review_status_filters_for_user(
@@ -369,23 +462,20 @@ def _apply_review_status_filters_for_user(
         queue_item_id=OuterRef("pk"),
         deleted=False,
     )
-    return (
-        queryset.annotate(
-            _pending_rework_thread_to_requester=Exists(targeted_threads_to_user),
-            _pending_global_rework_thread=Exists(global_rework_threads),
-            _pending_legacy_rework_to_requester=Exists(targeted_legacy_to_user),
-            _pending_global_legacy_rework=Exists(global_legacy_rework),
-            _requester_has_queue_score=Exists(requester_scores),
-            _item_has_queue_score=Exists(item_scores),
-        )
-        .exclude(
-            Q(review_status=exclude_review_status)
-            & (Q(_requester_has_queue_score=True) | Q(_item_has_queue_score=False))
-            & Q(_pending_rework_thread_to_requester=False)
-            & Q(_pending_global_rework_thread=False)
-            & Q(_pending_legacy_rework_to_requester=False)
-            & Q(_pending_global_legacy_rework=False)
-        )
+    return queryset.annotate(
+        _pending_rework_thread_to_requester=Exists(targeted_threads_to_user),
+        _pending_global_rework_thread=Exists(global_rework_threads),
+        _pending_legacy_rework_to_requester=Exists(targeted_legacy_to_user),
+        _pending_global_legacy_rework=Exists(global_legacy_rework),
+        _requester_has_queue_score=Exists(requester_scores),
+        _item_has_queue_score=Exists(item_scores),
+    ).exclude(
+        Q(review_status=exclude_review_status)
+        & (Q(_requester_has_queue_score=True) | Q(_item_has_queue_score=False))
+        & Q(_pending_rework_thread_to_requester=False)
+        & Q(_pending_global_rework_thread=False)
+        & Q(_pending_legacy_rework_to_requester=False)
+        & Q(_pending_global_legacy_rework=False)
     )
 
 
@@ -610,10 +700,13 @@ def _queue_item_annotation_owner_user_ids(item):
     recipient_ids.update(
         item.assigned_users.filter(is_active=True).values_list("id", flat=True)
     )
-    if item.assigned_to_id and User.objects.filter(
-        id=item.assigned_to_id,
-        is_active=True,
-    ).exists():
+    if (
+        item.assigned_to_id
+        and User.objects.filter(
+            id=item.assigned_to_id,
+            is_active=True,
+        ).exists()
+    ):
         recipient_ids.add(item.assigned_to_id)
     return recipient_ids
 
@@ -805,9 +898,9 @@ def _broadcast_annotation_discussion_update(item, comment, thread=None):
             "thread_id": str(thread.id) if thread else None,
             "action": comment.action,
             "thread_status": thread.status if thread else None,
-            "created_at": comment.created_at.isoformat()
-            if comment.created_at
-            else None,
+            "created_at": (
+                comment.created_at.isoformat() if comment.created_at else None
+            ),
         },
     }
 
@@ -919,9 +1012,7 @@ def _scores_for_queue_item(item):
     if not label_ids:
         return Score.objects.none()
 
-    return Score.objects.filter(
-        queue_item=item, label_id__in=label_ids, deleted=False
-    )
+    return Score.objects.filter(queue_item=item, label_id__in=label_ids, deleted=False)
 
 
 def _required_label_ids_for_queue(queue):
@@ -952,6 +1043,128 @@ def _item_has_required_label_coverage(item, required_label_ids=None):
     return all(
         counts.get(label_id, 0) >= required_count for label_id in required_label_ids
     )
+
+
+def _annotation_value_is_blank(value):
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value == ""
+    if isinstance(value, list):
+        return len(value) == 0
+    if isinstance(value, dict):
+        if "selected" in value:
+            selected = value.get("selected")
+            return selected is None or selected == []
+        if "text" in value:
+            return value.get("text") in (None, "")
+        if "rating" in value:
+            return value.get("rating") in (None, "", 0)
+        if "value" in value:
+            return value.get("value") in (None, "")
+    return False
+
+
+def _decimal_from_value(value, field_name):
+    try:
+        decimal_value = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a number.") from exc
+    if not decimal_value.is_finite():
+        raise ValueError(f"{field_name} must be a finite number.")
+    return decimal_value
+
+
+def _validate_numeric_annotation_value(label, value):
+    raw_value = value.get("value") if isinstance(value, dict) else value
+    numeric_value = _decimal_from_value(raw_value, label.name)
+    settings = label.settings or {}
+    min_value = _decimal_from_value(settings.get("min", 0), "min")
+    max_value = _decimal_from_value(settings.get("max", 0), "max")
+    step_size = _decimal_from_value(settings.get("step_size", 1), "step_size")
+
+    if numeric_value < min_value or numeric_value > max_value:
+        raise ValueError(f"{label.name} must be between {min_value} and {max_value}.")
+    if step_size <= 0:
+        raise ValueError(f"{label.name} has an invalid step size.")
+    if numeric_value != max_value and (numeric_value - min_value) % step_size != 0:
+        raise ValueError(f"{label.name} must match the configured step size.")
+
+
+def _validate_text_annotation_value(label, value):
+    raw_value = value.get("text") if isinstance(value, dict) else value
+    if not isinstance(raw_value, str):
+        raise ValueError(f"{label.name} must be text.")
+    settings = label.settings or {}
+    min_length = settings.get("min_length", 0)
+    max_length = settings.get("max_length")
+    if min_length is not None and len(raw_value) < int(min_length):
+        raise ValueError(f"{label.name} must be at least {min_length} characters.")
+    if max_length is not None and len(raw_value) > int(max_length):
+        raise ValueError(f"{label.name} must be at most {max_length} characters.")
+
+
+def _categorical_option_values(label):
+    values = set()
+    for option in (label.settings or {}).get("options") or []:
+        if isinstance(option, str):
+            values.add(option)
+        elif isinstance(option, dict):
+            option_label = option.get("label")
+            option_value = option.get("value")
+            if option_label is not None:
+                values.add(str(option_label))
+            if option_value is not None:
+                values.add(str(option_value))
+    return values
+
+
+def _validate_categorical_annotation_value(label, value):
+    selected = value.get("selected") if isinstance(value, dict) else value
+    if isinstance(selected, str):
+        selected = [selected]
+    if not isinstance(selected, list):
+        raise ValueError(f"{label.name} must select one of the configured options.")
+    selected = [str(item) for item in selected]
+    settings = label.settings or {}
+    if not settings.get("multi_choice", False) and len(selected) > 1:
+        raise ValueError(f"{label.name} allows only one selected option.")
+    allowed_values = _categorical_option_values(label)
+    unknown_values = [item for item in selected if item not in allowed_values]
+    if unknown_values:
+        raise ValueError(f"{label.name} contains an option that is not configured.")
+
+
+def _validate_star_annotation_value(label, value):
+    raw_value = value.get("rating") if isinstance(value, dict) else value
+    rating = _decimal_from_value(raw_value, label.name)
+    max_rating = int((label.settings or {}).get("no_of_stars") or 5)
+    if rating != rating.to_integral_value():
+        raise ValueError(f"{label.name} must be a whole-star rating.")
+    if rating < 1 or rating > max_rating:
+        raise ValueError(f"{label.name} must be between 1 and {max_rating}.")
+
+
+def _validate_thumbs_annotation_value(label, value):
+    raw_value = value.get("value") if isinstance(value, dict) else value
+    if raw_value not in {"up", "down"}:
+        raise ValueError(f"{label.name} must be thumbs up or thumbs down.")
+
+
+def _validate_annotation_value_for_label(label, value):
+    if _annotation_value_is_blank(value):
+        return
+
+    validators = {
+        AnnotationTypeChoices.NUMERIC.value: _validate_numeric_annotation_value,
+        AnnotationTypeChoices.TEXT.value: _validate_text_annotation_value,
+        AnnotationTypeChoices.CATEGORICAL.value: _validate_categorical_annotation_value,
+        AnnotationTypeChoices.STAR.value: _validate_star_annotation_value,
+        AnnotationTypeChoices.THUMBS_UP_DOWN.value: _validate_thumbs_annotation_value,
+    }
+    validator = validators.get(label.type)
+    if validator:
+        validator(label, value)
 
 
 QUEUE_ITEM_WORK_ORDERING = ("-created_at", "-id")
@@ -1046,9 +1259,9 @@ def _serialize_queue_item_note(note):
     return {
         "id": str(note.id),
         "notes": note.notes,
-        "annotator": note.annotator.email
-        if note.annotator_id and note.annotator
-        else None,
+        "annotator": (
+            note.annotator.email if note.annotator_id and note.annotator else None
+        ),
         "annotator_id": str(note.annotator_id) if note.annotator_id else None,
         "created_at": note.created_at.isoformat(),
     }
@@ -1060,9 +1273,9 @@ def _serialize_span_note(note):
         "notes": note.notes,
         "annotator": note.created_by_annotator
         or (note.created_by_user.name if note.created_by_user_id else None),
-        "annotator_id": str(note.created_by_user_id)
-        if note.created_by_user_id
-        else None,
+        "annotator_id": (
+            str(note.created_by_user_id) if note.created_by_user_id else None
+        ),
         "created_at": note.created_at.isoformat(),
     }
 
@@ -2273,6 +2486,17 @@ def _has_queue_role(queue_id, user, *roles):
     )
 
 
+def _has_explicit_queue_role(queue_id, user, *roles):
+    if not roles:
+        return False
+    return AnnotationQueueAnnotator.objects.filter(
+        annotation_queue_role_q(*roles),
+        queue_id=queue_id,
+        user=user,
+        deleted=False,
+    ).exists()
+
+
 def _queue_member_ids(queue_id):
     return {
         str(user_id)
@@ -2328,9 +2552,7 @@ def _split_mention_references(raw_mentions):
 
 def _queue_member_ids_from_emails(queue_id, emails):
     normalized_emails = {
-        str(email).strip().lower()
-        for email in emails
-        if str(email).strip()
+        str(email).strip().lower() for email in emails if str(email).strip()
     }
     if not normalized_emails:
         return set()
@@ -2483,19 +2705,7 @@ def _finalize_bulk_add(queue, items_to_create):
         auto_assign_items(queue, created)
         QueueItem.objects.bulk_update(created, ["assigned_to"])
     elif created and queue.auto_assign:
-        member_ids = list(
-            AnnotationQueueAnnotator.objects.filter(queue=queue, deleted=False)
-            .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
-            .values_list("user_id", flat=True)
-            .distinct()
-        )
-        if member_ids:
-            assignments = [
-                QueueItemAssignment(queue_item=item, user_id=uid)
-                for item in created
-                for uid in member_ids
-            ]
-            QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
+        assign_items_to_all_annotators(queue, created)
 
     # Re-activate the queue if it was completed and new items were added
     new_status = queue.status
@@ -2624,28 +2834,54 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     _gm = GeneralMethods()
 
     def get_queryset(self):
-        queryset = (
-            super()
-            .get_queryset()
-            .select_related("created_by")
-            .prefetch_related(
-                Prefetch(
-                    "queue_labels",
-                    queryset=AnnotationQueueLabel.objects.filter(
-                        deleted=False
-                    ).select_related("label"),
-                ),
-                Prefetch(
-                    "queue_annotators",
-                    queryset=AnnotationQueueAnnotator.objects.filter(
-                        deleted=False
-                    ).select_related("user"),
-                ),
-            )
-        )
-
         is_list_action = getattr(self, "action", None) == "list"
         query_params = getattr(self, "_validated_queue_list_query", {})
+        archived = bool(query_params.get("archived")) if is_list_action else False
+        if archived:
+            queryset = AnnotationQueue.all_objects.filter(deleted=True)
+            request = getattr(self, "request", None)
+            workspace = getattr(request, "workspace", None)
+            if workspace:
+                if getattr(workspace, "is_default", False):
+                    queryset = queryset.filter(
+                        Q(workspace=workspace)
+                        | Q(
+                            workspace__is_default=True,
+                            workspace__organization=workspace.organization,
+                        )
+                        | Q(
+                            workspace__isnull=True,
+                            organization=workspace.organization,
+                        )
+                    )
+                else:
+                    queryset = queryset.filter(workspace=workspace)
+
+            org = getattr(request, "organization", None) or getattr(
+                getattr(request, "user", None),
+                "organization",
+                None,
+            )
+            if org:
+                queryset = queryset.filter(organization=org)
+        else:
+            queryset = super().get_queryset()
+
+        queryset = queryset.select_related("created_by").prefetch_related(
+            Prefetch(
+                "queue_labels",
+                queryset=AnnotationQueueLabel.objects.filter(
+                    deleted=False
+                ).select_related("label"),
+            ),
+            Prefetch(
+                "queue_annotators",
+                queryset=AnnotationQueueAnnotator.objects.filter(
+                    deleted=False
+                ).select_related("user"),
+            ),
+        )
+
         status = query_params.get("status") if is_list_action else None
         search = query_params.get("search") if is_list_action else None
         include_counts = (
@@ -2768,6 +3004,14 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     def perform_update(self, serializer):
         old_strategy = serializer.instance.assignment_strategy
         instance = serializer.save()
+
+        # Keep existing items in sync with the source-of-truth queue assignment
+        # mode when managers toggle auto-assign or add annotators.
+        if instance.auto_assign and instance.assignment_strategy == "manual":
+            assign_items_to_all_annotators(
+                instance,
+                QueueItem.objects.filter(queue=instance, deleted=False),
+            )
 
         # Auto-assign existing unassigned items when switching to an auto strategy
         new_strategy = instance.assignment_strategy
@@ -2932,9 +3176,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         user_items = _queue_item_user_scope(
             items_qs,
             request.user,
-            include_unassigned=(
-                queue.assignment_strategy == AssignmentStrategy.MANUAL.value
-            ),
+            include_unassigned=False,
         )
         user_total = user_items.count()
         user_status_counts = {}
@@ -2946,7 +3188,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             - user_in_review,
             0,
         )
-        user_completed = user_status_counts.get(QueueItemStatus.COMPLETED.value, 0)
+        # For an annotator's own progress, pending review means their work is
+        # submitted even though the queue item is not finally approved yet.
+        user_completed = (
+            user_status_counts.get(QueueItemStatus.COMPLETED.value, 0) + user_in_review
+        )
         user_progress_pct = (
             round((user_completed / user_total) * 100, 1) if user_total > 0 else 0
         )
@@ -2980,16 +3226,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     @action(detail=True, methods=["post"], url_path="update-status")
     def update_status(self, request, pk=None):
         queue = self.get_object()
-        new_status = request.validated_data.get("status")
-
-        if not new_status:
-            return self._gm.bad_request("Status is required.")
-
-        valid_values = [c.value for c in AnnotationQueueStatusChoices]
-        if new_status not in valid_values:
-            return self._gm.bad_request(
-                f"Invalid status. Must be one of: {', '.join(valid_values)}"
+        if not _is_queue_manager(queue, request.user):
+            return self._gm.forbidden_response(
+                "Only queue managers can change queue status."
             )
+        new_status = request.validated_data.get("status")
 
         allowed = VALID_STATUS_TRANSITIONS.get(queue.status, set())
         if new_status not in allowed:
@@ -3035,9 +3276,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             )
         )
 
-        status_filter = _normalize_query_filter_value(
-            query_params.get("status")
-        )
+        status_filter = _normalize_query_filter_value(query_params.get("status"))
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)
 
@@ -3090,6 +3329,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     "source_type",
                     "status",
                     "order",
+                    "requires_review",
+                    "review_status",
+                    "reviewer_name",
+                    "reviewer_email",
+                    "reviewer_id",
+                    "reviewed_at",
+                    "review_notes",
                     "label_id",
                     "label_name",
                     "value",
@@ -3100,13 +3346,24 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 ]
             )
             for item_data in result:
+                review = item_data.get("review") or {}
+                item_columns = [
+                    item_data["item_id"],
+                    item_data["source_type"],
+                    item_data["status"],
+                    item_data["order"],
+                    review.get("requires_review"),
+                    review.get("status") or "",
+                    review.get("reviewed_by_name") or "",
+                    review.get("reviewed_by_email") or "",
+                    review.get("reviewed_by_id") or "",
+                    review.get("reviewed_at") or "",
+                    review.get("notes") or "",
+                ]
                 if not item_data["annotations"]:
                     writer.writerow(
                         [
-                            item_data["item_id"],
-                            item_data["source_type"],
-                            item_data["status"],
-                            item_data["order"],
+                            *item_columns,
                             "",
                             "",
                             "",
@@ -3119,17 +3376,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 for ann in item_data["annotations"]:
                     writer.writerow(
                         [
-                            item_data["item_id"],
-                            item_data["source_type"],
-                            item_data["status"],
-                            item_data["order"],
+                            *item_columns,
                             ann["label_id"],
                             ann["label_name"],
-                            (
-                                ann["value"]
-                                if not isinstance(ann["value"], dict)
-                                else str(ann["value"])
-                            ),
+                            _to_cell_str(ann["value"]),
                             ann["score_source"],
                             ann["notes"] or "",
                             ann["annotator_name"],
@@ -3156,10 +3406,39 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         queue = self.get_object()
         items_qs = QueueItem.objects.filter(queue=queue, deleted=False)
 
-        # Status breakdown
-        status_counts = {}
-        for row in items_qs.values("status").annotate(cnt=Count("id")):
-            status_counts[row["status"]] = row["cnt"]
+        # Status breakdown uses the same exposed workflow statuses as the item list.
+        # The DB-level in_progress state is internal and should not leak as a
+        # separate queue filter/analytics bucket.
+        addressed_review_items = set(
+            QueueItemReviewThread.objects.filter(
+                queue_item__queue=queue,
+                blocking=True,
+                status=QueueItemReviewThread.STATUS_ADDRESSED,
+                deleted=False,
+            ).values_list("queue_item_id", flat=True)
+        )
+        status_counts = {
+            "pending": 0,
+            "in_review": 0,
+            "needs_changes": 0,
+            "resubmitted": 0,
+            "completed": 0,
+            "skipped": 0,
+        }
+        for item in items_qs.only("id", "status", "review_status"):
+            if item.review_status == "pending_review":
+                if item.id in addressed_review_items:
+                    status_counts["resubmitted"] += 1
+                else:
+                    status_counts["in_review"] += 1
+            elif item.review_status == "rejected":
+                status_counts["needs_changes"] += 1
+            elif item.status == QueueItemStatus.IN_PROGRESS.value:
+                status_counts["in_review"] += 1
+            elif item.status in status_counts:
+                status_counts[item.status] += 1
+            else:
+                status_counts["pending"] += 1
 
         total = sum(status_counts.values())
         completed = status_counts.get("completed", 0)
@@ -3184,13 +3463,21 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
         # Annotator performance
         annotator_perf = list(
-            Score.objects.filter(queue_item__queue=queue, deleted=False)
+            Score.objects.filter(
+                queue_item__queue=queue,
+                queue_item__deleted=False,
+                deleted=False,
+            )
             .values("annotator", "annotator__name")
             .annotate(
-                completed=Count("id"),
+                completed=Count(
+                    "queue_item",
+                    filter=Q(queue_item__status=QueueItemStatus.COMPLETED.value),
+                    distinct=True,
+                ),
                 last_active=Max("created_at"),
             )
-            .order_by("-completed")
+            .order_by("-completed", "-last_active")
         )
 
         # Label distribution
@@ -3444,7 +3731,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             Row.objects.bulk_create(rows_to_create, batch_size=500)
 
         cells_to_create = []
-        mapped_column_ids = {columns[mapping["column"]].id for mapping in column_mapping}
+        mapped_column_ids = {
+            columns[mapping["column"]].id for mapping in column_mapping
+        }
         unmapped_existing_columns = [
             column
             for column in existing_columns.values()
@@ -3681,9 +3970,6 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         label_id = data.get("label_id")
         required = _is_truthy(data.get("required", True))
 
-        if not label_id:
-            return self._gm.bad_request("label_id is required.")
-
         if required:
             from tfc.ee_gating import EEFeature, check_ee_feature
 
@@ -3749,9 +4035,6 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         """Remove a label from an annotation queue."""
         queue = self.get_object()
         label_id = request.validated_data.get("label_id")
-
-        if not label_id:
-            return self._gm.bad_request("label_id is required.")
 
         deleted_count = AnnotationQueueLabel.objects.filter(
             queue=queue, label_id=label_id, deleted=False
@@ -3971,9 +4254,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         "id": str(item.id),
                         "status": item.status,
                         "source_type": item.source_type,
-                        "source_id": str(source_id_for_scores)
-                        if source_id_for_scores
-                        else None,
+                        "source_id": (
+                            str(source_id_for_scores) if source_id_for_scores else None
+                        ),
                     }
                     if item
                     else None
@@ -4238,9 +4521,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 include_unassigned=False,
             )
 
-        review_status = _normalize_query_filter_value(
-            query_params.get("review_status")
-        )
+        review_status = _normalize_query_filter_value(query_params.get("review_status"))
         if review_status:
             queryset = queryset.filter(review_status=review_status)
 
@@ -4271,6 +4552,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         serializer.save(
             queue=queue,
             organization=self.request.organization,
+            workspace=getattr(self.request, "workspace", None) or queue.workspace,
         )
 
     def create(self, request, *args, **kwargs):
@@ -4283,12 +4565,61 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return denied
         return super().create(request, *args, **kwargs)
 
+    def _soft_delete_items_and_children(self, items_qs):
+        item_ids = list(items_qs.values_list("id", flat=True))
+        if not item_ids:
+            return 0
+
+        now = timezone.now()
+        with transaction.atomic():
+            removed = QueueItem.objects.filter(
+                id__in=item_ids,
+                deleted=False,
+            ).update(
+                deleted=True,
+                deleted_at=now,
+                assigned_to_id=None,
+                reserved_by_id=None,
+                reserved_at=None,
+                reservation_expires_at=None,
+            )
+            QueueItemAssignment.objects.filter(
+                queue_item_id__in=item_ids,
+                deleted=False,
+            ).update(deleted=True, deleted_at=now)
+            QueueItemNote.no_workspace_objects.filter(
+                queue_item_id__in=item_ids,
+                deleted=False,
+            ).update(deleted=True, deleted_at=now)
+            Score.no_workspace_objects.filter(
+                queue_item_id__in=item_ids,
+                deleted=False,
+            ).update(deleted=True, deleted_at=now)
+            QueueItemReviewComment.no_workspace_objects.filter(
+                queue_item_id__in=item_ids,
+                deleted=False,
+            ).update(deleted=True, deleted_at=now)
+            QueueItemReviewThread.no_workspace_objects.filter(
+                queue_item_id__in=item_ids,
+                deleted=False,
+            ).update(deleted=True, deleted_at=now)
+
+        return removed
+
     def destroy(self, request, *args, **kwargs):
         item = self.get_object()
         denied = self._require_queue_manager(item.queue, request)
         if denied is not None:
             return denied
-        return super().destroy(request, *args, **kwargs)
+        self._soft_delete_items_and_children(
+            QueueItem.objects.filter(
+                pk=item.pk,
+                queue=item.queue,
+                organization=request.organization,
+                deleted=False,
+            )
+        )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @validated_request(
         request_serializer=AddItemsSerializer,
@@ -4316,13 +4647,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         data = request.validated_data
         if data.get("selection"):
-            return self._add_items_filter_mode(
-                request, queue, data["selection"]
-            )
+            return self._add_items_filter_mode(request, queue, data["selection"])
 
-        return self._add_items_enumerated(
-            request, queue, data["items"]
-        )
+        return self._add_items_enumerated(request, queue, data["items"])
 
     def _add_items_enumerated(self, request, queue, items_data):
         """Add QueueItems from an explicit list of (source_type, source_id) dicts."""
@@ -4357,6 +4684,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 errors.append(f"Not found: {source_type}={source_id}")
                 continue
 
+            is_available, unavailable_reason = is_source_available_for_annotation(
+                source_type, source_obj
+            )
+            if not is_available:
+                errors.append(unavailable_reason)
+                continue
+
             dup_filter = {
                 "queue": queue,
                 fk_field: source_obj,
@@ -4372,6 +4706,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     queue=queue,
                     source_type=source_type,
                     organization=request.organization,
+                    workspace=getattr(request, "workspace", None) or queue.workspace,
                     order=max_order,
                     **{fk_field: source_obj},
                 )
@@ -4457,17 +4792,29 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         resolved_ids = result.ids
         fk_field = get_fk_field_name(source_type)
+        (
+            available_ids,
+            unavailable_count,
+            unavailable_error,
+        ) = filter_available_source_ids_for_annotation(
+            source_type,
+            resolved_ids,
+            organization=request.organization,
+            workspace=getattr(request, "workspace", None),
+        )
+        errors = [unavailable_error] if unavailable_error else []
 
         # Duplicate detection in a single IN query — cheaper than per-row
         # .exists() checks for large resolved sets.
-        existing_ids = set(
-            QueueItem.objects.filter(
+        existing_ids = {
+            str(source_id)
+            for source_id in QueueItem.objects.filter(
                 queue=queue,
                 deleted=False,
-                **{f"{fk_field}_id__in": resolved_ids},
+                **{f"{fk_field}_id__in": available_ids},
             ).values_list(f"{fk_field}_id", flat=True)
-        )
-        fresh_ids = [tid for tid in resolved_ids if tid not in existing_ids]
+        }
+        fresh_ids = [tid for tid in available_ids if tid not in existing_ids]
         duplicates = len(existing_ids)
 
         max_order = (
@@ -4482,6 +4829,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 queue=queue,
                 source_type=source_type,
                 organization=request.organization,
+                workspace=getattr(request, "workspace", None) or queue.workspace,
                 order=max_order + i,
                 **{f"{fk_field}_id": tid},
             )
@@ -4497,6 +4845,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             source_type=source_type,
             total_matching=result.total_matching,
             exclude_count=len(exclude_ids),
+            unavailable_count=unavailable_count,
             added=added,
             duplicates=duplicates,
         )
@@ -4505,7 +4854,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             {
                 "added": added,
                 "duplicates": duplicates,
-                "errors": [],
+                "errors": errors,
                 "queue_status": new_status,
                 "total_matching": result.total_matching,
             }
@@ -4525,15 +4874,14 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return denied
 
         item_ids = request.validated_data["item_ids"]
-        if not item_ids:
-            return self._gm.bad_request("item_ids is required.")
 
-        removed = QueueItem.objects.filter(
+        items_qs = QueueItem.objects.filter(
             id__in=item_ids,
             queue_id=queue_id,
             organization=request.organization,
             deleted=False,
-        ).update(deleted=True, deleted_at=timezone.now())
+        )
+        removed = self._soft_delete_items_and_children(items_qs)
 
         return self._gm.success_response({"removed": removed})
 
@@ -4598,6 +4946,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         is_review_mode = is_reviewer and (
             review_status == "pending_review" or review_view
         )
+        if user and is_review_mode:
+            requester_scores = Score.objects.filter(
+                queue_item_id=OuterRef("pk"),
+                annotator=user,
+                deleted=False,
+            )
+            base_qs = base_qs.annotate(
+                _requester_has_review_score=Exists(requester_scores)
+            ).filter(_requester_has_review_score=False)
         base_qs = _apply_review_status_filters_for_user(
             base_qs,
             review_status=review_status,
@@ -4605,11 +4962,21 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             user=user,
             is_reviewer=is_review_mode,
         )
-        if user and queue and not queue.auto_assign and not is_review_mode:
+        if user and queue and not is_review_mode:
+            has_queue_assignments = _queue_has_any_item_assignments(queue_id)
+            should_scope_by_assignment = (
+                has_queue_assignments
+                if queue.auto_assign
+                else (not _is_queue_manager(queue, user) or has_queue_assignments)
+            )
+            if _is_queue_manager(queue, user):
+                should_scope_by_assignment = False
+
+        if user and queue and not is_review_mode and should_scope_by_assignment:
             base_qs = _queue_item_user_scope(
                 base_qs,
                 user,
-                include_unassigned=True,
+                include_unassigned=False,
             )
         if user and not is_reviewer and review_status != "pending_review":
             base_qs = _scope_targeted_rework_items(base_qs, user)
@@ -4652,7 +5019,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.not_found("Queue not found.")
 
         try:
-            item = QueueItem.objects.get(
+            item = QueueItem.objects.select_related("queue").get(
                 pk=pk,
                 queue_id=queue_id,
                 organization=request.organization,
@@ -4676,6 +5043,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         ):
             return self._gm.bad_request(
                 "Annotations can only be submitted when the queue is active."
+            )
+
+        if not _has_explicit_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.ANNOTATOR.value,
+            AnnotatorRole.MANAGER.value,
+        ):
+            return self._gm.forbidden_response(
+                "Only queue annotators or managers can annotate items."
             )
 
         if _targeted_rework_denies_user(
@@ -4726,31 +5103,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             queue.status = AnnotationQueueStatusChoices.ACTIVE.value
             queue.save(update_fields=["status", "updated_at"])
 
-        # Enforce assignment ownership: when auto_assign is False (manual mode),
-        # only assigned annotators (or managers/reviewers) may submit.
-        # When auto_assign is True, anyone can annotate any item.
-        if not item.queue.auto_assign:
-            has_assignments = QueueItemAssignment.objects.filter(
-                queue_item=item, deleted=False
-            ).exists() or bool(item.assigned_to_id)
-            if has_assignments:
-                is_assigned = (
-                    QueueItemAssignment.objects.filter(
-                        queue_item=item, user=request.user, deleted=False
-                    ).exists()
-                    or item.assigned_to_id == request.user.id
-                )
-                if not is_assigned:
-                    is_manager = _has_queue_role(
-                        queue_id,
-                        request.user,
-                        AnnotatorRole.MANAGER.value,
-                        AnnotatorRole.REVIEWER.value,
-                    )
-                    if not is_manager:
-                        return self._gm.forbidden_response(
-                            "This item is assigned to another annotator."
-                        )
+        assignment_denial_reason = _manual_assignment_denial_reason(
+            queue,
+            item,
+            request.user,
+        )
+        if assignment_denial_reason:
+            return self._gm.forbidden_response(assignment_denial_reason)
 
         data = request.validated_data
         annotations_data = data["annotations"]
@@ -4778,6 +5137,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
         )
 
+        annotations_to_save = []
         for ann_data in annotations_data:
             label_id = ann_data["label_id"]
             value = ann_data["value"]
@@ -4791,6 +5151,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             if label.pk not in queue_label_ids:
                 continue
 
+            if _annotation_value_is_blank(value):
+                continue
+            try:
+                _validate_annotation_value_for_label(label, value)
+            except ValueError as exc:
+                return self._gm.bad_request(str(exc))
+            annotations_to_save.append((ann_data, label, value))
+
+        for ann_data, label, value in annotations_to_save:
             per_label_notes = (
                 ann_data.get("notes", label_notes_fallback) if label.allow_notes else ""
             )
@@ -4977,9 +5346,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         self._maybe_auto_complete_queue(queue_id)
 
-        exclude_ids = self._parse_exclude_ids(
-            data.get("exclude", []), current_pk=pk
-        )
+        exclude_ids = self._parse_exclude_ids(data.get("exclude", []), current_pk=pk)
 
         next_item = self._get_next_pending_item(
             queue_id,
@@ -5024,6 +5391,22 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "This item was sent back to a different annotator."
             )
 
+        if not getattr(
+            item.queue, "is_default", False
+        ) and not _has_explicit_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.ANNOTATOR.value,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.MANAGER.value,
+        ):
+            return self._gm.forbidden_response(
+                "Only queue members can skip items in this queue."
+            )
+
+        if item.status == QueueItemStatus.COMPLETED.value:
+            return self._gm.bad_request("Completed items cannot be skipped.")
+
         if item.queue.requires_review and item.review_status == "pending_review":
             return self._gm.bad_request(
                 "This item is waiting for review and cannot be skipped."
@@ -5041,9 +5424,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             ]
         )
 
-        exclude_ids = self._parse_exclude_ids(
-            data.get("exclude", []), current_pk=pk
-        )
+        exclude_ids = self._parse_exclude_ids(data.get("exclude", []), current_pk=pk)
 
         next_item = self._get_next_pending_item(
             queue_id,
@@ -5080,7 +5461,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         review_status = query_params.get("review_status")
         exclude_review_status = query_params.get("exclude_review_status")
-        include_completed = _is_truthy(query_params.get("include_completed"))
+        queue = AnnotationQueue.objects.filter(
+            pk=queue_id,
+            organization=request.organization,
+            deleted=False,
+        ).first()
+        if queue is None:
+            return self._gm.not_found("Queue not found.")
+        include_completed = _is_truthy(query_params.get("include_completed")) or (
+            queue.status == AnnotationQueueStatusChoices.COMPLETED.value
+        )
         is_reviewer = _has_queue_role(
             queue_id,
             request.user,
@@ -5102,7 +5492,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             except QueueItem.DoesNotExist:
                 return self._gm.success_response({"item": None})
             prev_qs = QueueItem.objects.filter(queue_id=queue_id, deleted=False)
-            queue = AnnotationQueue.objects.filter(pk=queue_id).first()
             if not include_completed:
                 prev_qs = prev_qs.filter(
                     status__in=[
@@ -5122,11 +5511,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 queue
                 and not queue.auto_assign
                 and not is_review_navigation
+                and (
+                    not _is_queue_manager(queue, request.user)
+                    or _queue_has_any_item_assignments(queue_id)
+                )
             ):
                 prev_qs = _queue_item_user_scope(
                     prev_qs,
                     request.user,
-                    include_unassigned=True,
+                    include_unassigned=False,
                 )
             if not is_reviewer and review_status != "pending_review":
                 prev_qs = _scope_targeted_rework_items(prev_qs, request.user)
@@ -5184,7 +5577,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
         queue = item.queue
         now = timezone.now()
-        include_completed = _is_truthy(query_params.get("include_completed"))
+        include_completed = _is_truthy(query_params.get("include_completed")) or (
+            queue.status == AnnotationQueueStatusChoices.COMPLETED.value
+        )
         review_status = query_params.get("review_status")
         exclude_review_status = query_params.get("exclude_review_status")
         is_reviewer = _has_queue_role(
@@ -5203,6 +5598,14 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.forbidden_response(
                 "This item was sent back to a different annotator."
             )
+        if not is_review_detail and not is_reviewer:
+            assignment_denial_reason = _manual_assignment_denial_reason(
+                queue,
+                item,
+                request.user,
+            )
+            if assignment_denial_reason:
+                return self._gm.forbidden_response(assignment_denial_reason)
 
         # Reservation logic: opt-in via ?reserve=true query param
         reserve = _is_truthy(query_params.get("reserve"))
@@ -5273,18 +5676,20 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         notes_user_id = viewing_annotator_id or request.user.pk
         existing_notes = _existing_item_note_for_user(item, notes_user_id)
 
-        # Manual queues show overall progress. Distributed queues show the
-        # current annotator's slice, so "2/4" means their assigned workload,
-        # not the whole team's queue.
+        # Use assigned workload when the viewer has one. Managers without an
+        # assigned workload keep the full queue view for review/navigation.
         progress_qs = QueueItem.objects.filter(queue_id=queue_id, deleted=False)
-        if queue.assignment_strategy != AssignmentStrategy.MANUAL.value:
-            scoped_progress_qs = _queue_item_user_scope(
-                progress_qs,
-                viewing_annotator_id or request.user,
-                include_unassigned=False,
-            )
-            if viewing_annotator_id or scoped_progress_qs.exists():
-                progress_qs = scoped_progress_qs
+        scoped_progress_qs = _queue_item_user_scope(
+            progress_qs,
+            viewing_annotator_id or request.user,
+            include_unassigned=False,
+        )
+        if (
+            viewing_annotator_id
+            or scoped_progress_qs.exists()
+            or not _is_queue_manager(queue, request.user)
+        ):
+            progress_qs = scoped_progress_qs
         agg = progress_qs.aggregate(
             total=Count("id"),
             completed=Count("id", filter=Q(status=QueueItemStatus.COMPLETED.value)),
@@ -5301,15 +5706,25 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         user_items = _queue_item_user_scope(
             QueueItem.objects.filter(queue_id=queue_id, deleted=False),
             viewing_annotator_id or request.user,
-            include_unassigned=queue.assignment_strategy
-            == AssignmentStrategy.MANUAL.value,
+            include_unassigned=False,
         )
+        user_current_position = None
+        if user_items.filter(pk=item.pk).exists():
+            user_current_position = (
+                user_items.filter(
+                    Q(created_at__gt=item.created_at)
+                    | Q(created_at=item.created_at, id__gt=item.id)
+                ).count()
+                + 1
+            )
         user_agg = user_items.aggregate(
             user_total=Count("id", distinct=True),
             user_completed=Count(
                 "id",
                 distinct=True,
-                filter=Q(status=QueueItemStatus.COMPLETED.value),
+                # Same annotator-facing progress semantics as /progress/.
+                filter=Q(status=QueueItemStatus.COMPLETED.value)
+                | Q(review_status="pending_review"),
             ),
         )
 
@@ -5317,13 +5732,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         # (assigned to them, or unassigned). Reviewers/managers also get
         # items assigned to others, so they can navigate the full queue
         # in view-only mode.
-        if is_review_detail:
+        if (
+            is_review_detail
+            or _is_queue_manager(queue, request.user)
+            or (queue.auto_assign and not _queue_has_any_item_assignments(queue_id))
+        ):
             annotatable_qs = QueueItem.objects.filter(queue_id=queue_id, deleted=False)
         else:
             annotatable_qs = _queue_item_user_scope(
                 QueueItem.objects.filter(queue_id=queue_id, deleted=False),
                 request.user,
-                include_unassigned=True,
+                include_unassigned=False,
             )
         if not include_completed:
             annotatable_qs = annotatable_qs.filter(
@@ -5373,6 +5792,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "user_progress": {
                     "total": user_agg["user_total"],
                     "completed": user_agg["user_completed"],
+                    "current_position": user_current_position,
                 },
             },
             "next_item_id": str(next_item) if next_item else None,
@@ -5408,48 +5828,17 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         user_ids = data.get("user_ids", [])
         action = data.get("action", "add")
 
-        if not item_ids:
-            return self._gm.bad_request("item_ids is required.")
+        if getattr(queue, "is_default", False):
+            _ensure_default_queue_member_can_manage(queue, request.user)
 
-        is_manager = _is_queue_manager(queue, request.user)
-        if not is_manager:
-            user_ids_as_strings = {str(uid) for uid in user_ids}
-            is_self_assignment = (
-                action in {"add", "set"}
-                and user_ids_as_strings == {str(request.user.id)}
-                and _has_queue_role(
-                    queue_id,
-                    request.user,
-                    AnnotatorRole.ANNOTATOR.value,
-                    AnnotatorRole.MANAGER.value,
-                )
+        if not _has_explicit_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.MANAGER.value,
+        ):
+            return self._gm.forbidden_response(
+                "Only queue managers can manage queue item assignments."
             )
-            if not is_self_assignment:
-                denied = self._require_queue_manager(queue, request)
-                if denied is not None:
-                    return denied
-            elif queue.auto_assign:
-                return self._gm.bad_request(
-                    "Auto-assign queues do not need manual item assignment."
-                )
-            else:
-                requested_items = QueueItem.objects.filter(
-                    id__in=item_ids,
-                    queue_id=queue_id,
-                    organization=request.organization,
-                    deleted=False,
-                )
-                assigned_to_other = requested_items.exclude(
-                    Q(assigned_to__isnull=True) | Q(assigned_to=request.user)
-                ).exists()
-                has_other_assignment = QueueItemAssignment.objects.filter(
-                    queue_item__in=requested_items,
-                    deleted=False,
-                ).exclude(user=request.user).exists()
-                if assigned_to_other or has_other_assignment:
-                    return self._gm.forbidden_response(
-                        "Only queue managers can change items assigned to another annotator."
-                    )
 
         if not user_ids and action == "set":
             # Clear all assignments for these items
@@ -5467,6 +5856,19 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.success_response({"assigned": 0})
 
         # Validate all user_ids
+        user_ids_as_strings = {str(uid) for uid in user_ids}
+        if (
+            str(request.user.id) in user_ids_as_strings
+            and getattr(queue, "is_default", False)
+            and _has_queue_role(
+                queue_id,
+                request.user,
+                AnnotatorRole.ANNOTATOR.value,
+                AnnotatorRole.MANAGER.value,
+            )
+        ):
+            _ensure_default_queue_member_can_manage(queue, request.user)
+
         queue_member_ids = set(
             AnnotationQueueAnnotator.objects.filter(
                 queue_id=queue_id, deleted=False
@@ -5626,6 +6028,18 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             AnnotatorRole.REVIEWER.value,
             AnnotatorRole.MANAGER.value,
         )
+        if not _can_user_discuss_queue_item(
+            item,
+            request.user,
+            is_reviewer=is_reviewer,
+        ):
+            return (
+                None,
+                is_reviewer,
+                self._gm.forbidden_response(
+                    "Only assigned annotators, reviewers, or managers can discuss this item."
+                ),
+            )
         return item, is_reviewer, None
 
     def _set_discussion_thread_status(
@@ -5908,6 +6322,94 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         )
 
     @validated_request(
+        method="patch",
+        request_serializer=DiscussionCommentRequestSerializer,
+        request_methods=["PATCH"],
+        responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
+    )
+    @action(
+        detail=True,
+        methods=["patch", "delete"],
+        url_path=r"discussion/comments/(?P<comment_id>[^/.]+)",
+    )
+    def discussion_comment(self, request, queue_id=None, pk=None, comment_id=None):
+        """Edit or delete a non-blocking discussion comment."""
+        item, is_reviewer, error = self._discussion_item_and_role(
+            request,
+            queue_id,
+            pk,
+        )
+        if error:
+            return error
+
+        try:
+            comment_uuid = uuid.UUID(str(comment_id))
+        except (TypeError, ValueError):
+            return self._gm.bad_request("Invalid discussion comment.")
+
+        comment = (
+            _visible_review_comments(item, request.user, is_reviewer=is_reviewer)
+            .filter(id=comment_uuid, action=QueueItemReviewComment.ACTION_COMMENT)
+            .first()
+        )
+        if comment is None:
+            return self._gm.not_found("Discussion comment not found.")
+        if str(comment.reviewer_id or "") != str(request.user.id):
+            return self._gm.forbidden_response(
+                "Only the comment author can edit or delete this comment."
+            )
+
+        if request.method == "DELETE":
+            now = timezone.now()
+            comment.deleted = True
+            comment.deleted_at = now
+            comment.save(update_fields=["deleted", "deleted_at", "updated_at"])
+            if (
+                comment.thread_id
+                and not QueueItemReviewComment.objects.filter(
+                    thread_id=comment.thread_id,
+                    deleted=False,
+                ).exists()
+            ):
+                QueueItemReviewThread.objects.filter(pk=comment.thread_id).update(
+                    deleted=True,
+                    deleted_at=now,
+                    updated_at=now,
+                )
+            return self._gm.success_response(
+                _discussion_payload(item, request, is_reviewer=is_reviewer)
+            )
+
+        next_comment = str(request.validated_data.get("comment") or "").strip()
+        if not next_comment:
+            return self._gm.bad_request("Comment text is required.")
+
+        raw_mentions = request.validated_data.get("mentioned_user_ids", [])
+        mention_ids, mention_emails = _split_mention_references(raw_mentions)
+        mention_ids.update(_extract_mentioned_user_ids(next_comment))
+        mention_emails.update(_extract_mentioned_emails(next_comment))
+        mention_ids.update(_queue_member_ids_from_emails(queue_id, mention_emails))
+        if comment.target_annotator_id:
+            mention_ids.add(str(comment.target_annotator_id))
+        try:
+            mentioned_users = _queue_members_from_ids(queue_id, mention_ids)
+        except ValueError as exc:
+            return self._gm.bad_request(str(exc))
+
+        comment.comment = next_comment
+        comment.save(update_fields=["comment", "updated_at"])
+        comment.mentioned_users.set(mentioned_users)
+        return self._gm.success_response(
+            _discussion_payload(
+                item,
+                request,
+                is_reviewer=is_reviewer,
+                comment=comment,
+                thread=comment.thread,
+            )
+        )
+
+    @validated_request(
         request_serializer=DiscussionThreadStatusRequestSerializer,
         responses={200: QueueDiscussionResponseSerializer, **ERROR_RESPONSES},
     )
@@ -5916,7 +6418,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         methods=["post"],
         url_path=r"discussion/(?P<thread_id>[^/.]+)/resolve",
     )
-    def resolve_discussion_thread(self, request, queue_id=None, pk=None, thread_id=None):
+    def resolve_discussion_thread(
+        self, request, queue_id=None, pk=None, thread_id=None
+    ):
         return self._set_discussion_thread_status(
             request,
             queue_id=queue_id,
@@ -6010,6 +6514,157 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         )
 
     @validated_request(
+        request_serializer=BulkReviewItemsRequestSerializer,
+        responses={200: QueueBulkReviewItemsResponseSerializer, **ERROR_RESPONSES},
+    )
+    @action(detail=False, methods=["post"], url_path="bulk-review")
+    def bulk_review(self, request, queue_id=None):
+        """Approve or send back multiple pending-review items."""
+        if not _has_queue_role(
+            queue_id,
+            request.user,
+            AnnotatorRole.REVIEWER.value,
+            AnnotatorRole.MANAGER.value,
+        ):
+            return self._gm.forbidden_response(
+                "Only reviewers or managers can review items."
+            )
+
+        data = request.validated_data
+        requested_action = data["action"]
+        review_action = (
+            QueueItemReviewComment.ACTION_APPROVE
+            if requested_action == "approve"
+            else QueueItemReviewComment.ACTION_REQUEST_CHANGES
+        )
+        notes = str(data.get("notes") or "").strip()
+        item_ids = [str(item_id) for item_id in data["item_ids"]]
+        items = list(
+            QueueItem.objects.select_related("queue")
+            .filter(
+                id__in=item_ids,
+                queue_id=queue_id,
+                organization=request.organization,
+                deleted=False,
+            )
+            .order_by("order", "created_at")
+        )
+        found_ids = {str(item.id) for item in items}
+        errors = [
+            {"item_id": item_id, "error": "Queue item not found."}
+            for item_id in item_ids
+            if item_id not in found_ids
+        ]
+        reviewed = []
+        now = timezone.now()
+        workspace = getattr(request, "workspace", None)
+
+        for item in items:
+            item_scores = _scores_for_queue_item(item)
+            if item.review_status != "pending_review":
+                errors.append(
+                    {
+                        "item_id": str(item.id),
+                        "error": "Only items pending review can be bulk reviewed.",
+                    }
+                )
+                continue
+            if not item_scores.exists():
+                errors.append(
+                    {
+                        "item_id": str(item.id),
+                        "error": "Review requires at least one submitted annotation.",
+                    }
+                )
+                continue
+            if item_scores.filter(annotator=request.user).exists():
+                errors.append(
+                    {
+                        "item_id": str(item.id),
+                        "error": "You cannot review your own annotation.",
+                    }
+                )
+                continue
+            if (
+                review_action == QueueItemReviewComment.ACTION_APPROVE
+                and _open_blocking_review_threads(item).exists()
+            ):
+                errors.append(
+                    {
+                        "item_id": str(item.id),
+                        "error": "All requested changes must be addressed before approval.",
+                    }
+                )
+                continue
+
+            if review_action == QueueItemReviewComment.ACTION_APPROVE:
+                item.status = QueueItemStatus.COMPLETED.value
+                item.review_status = "approved"
+                comment_text = notes or "Approved."
+                thread_status = QueueItemReviewThread.STATUS_RESOLVED
+                QueueItemReviewThread.objects.filter(
+                    queue_item=item,
+                    status__in=[
+                        QueueItemReviewThread.STATUS_OPEN,
+                        QueueItemReviewThread.STATUS_REOPENED,
+                        QueueItemReviewThread.STATUS_ADDRESSED,
+                    ],
+                    deleted=False,
+                ).update(
+                    status=QueueItemReviewThread.STATUS_RESOLVED,
+                    resolved_by=request.user,
+                    resolved_at=now,
+                    updated_at=now,
+                )
+            else:
+                item.status = QueueItemStatus.IN_PROGRESS.value
+                item.review_status = "rejected"
+                comment_text = notes
+                thread_status = QueueItemReviewThread.STATUS_OPEN
+
+            created_comment = _create_review_thread_comment(
+                item=item,
+                reviewer=request.user,
+                action=review_action,
+                comment=comment_text,
+                organization=request.organization,
+                workspace=workspace,
+                blocking=review_action == QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+                status=thread_status,
+            )
+            item.reviewed_by = request.user
+            item.reviewed_at = now
+            item.review_notes = comment_text
+            self._clear_reservation(item)
+            item.save(
+                update_fields=[
+                    "status",
+                    "review_status",
+                    "reviewed_by",
+                    "reviewed_at",
+                    "review_notes",
+                    "reserved_by",
+                    "reserved_at",
+                    "reservation_expires_at",
+                    "updated_at",
+                ]
+            )
+            _notify_annotation_discussion(item, created_comment, created_comment.thread)
+            reviewed.append(str(item.id))
+
+        if reviewed:
+            self._maybe_auto_complete_queue(queue_id)
+
+        return self._gm.success_response(
+            {
+                "reviewed": len(reviewed),
+                "reviewed_item_ids": reviewed,
+                "errors": errors,
+                "action": requested_action,
+            }
+        )
+
+    @validated_request(
         request_serializer=ReviewItemRequestSerializer,
         responses={200: QueueReviewItemResponseSerializer, **ERROR_RESPONSES},
     )
@@ -6076,6 +6731,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.bad_request(
                 "Only items pending review can be approved or sent back."
             )
+
+        if (
+            review_action
+            in (
+                QueueItemReviewComment.ACTION_APPROVE,
+                QueueItemReviewComment.ACTION_REQUEST_CHANGES,
+            )
+            and _scores_for_queue_item(item).filter(annotator=request.user).exists()
+        ):
+            return self._gm.forbidden_response("You cannot review your own annotation.")
 
         notes = str(data.get("notes") or "").strip()
         raw_label_comments = data.get("label_comments") or []
@@ -6371,13 +7036,20 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         # Resolve source FK for Score creation
         source_fk_field = SCORE_SOURCE_FK_MAP.get(item.source_type)
         source_obj = getattr(item, source_fk_field) if source_fk_field else None
+        queue_label_ids = set(
+            item.queue.queue_labels.filter(deleted=False).values_list(
+                "label_id",
+                flat=True,
+            )
+        )
 
         imported = 0
         valid_sources = {c.value for c in ScoreSource}
         for ann_data in annotations_data:
             label_id = ann_data.get("label_id")
             value = ann_data.get("value")
-            score_source = ann_data.get("score_source", "imported")
+            score_source = ann_data.get("score_source") or ScoreSource.IMPORTED.value
+            notes = ann_data.get("notes", "")
 
             if not label_id or value is None:
                 continue
@@ -6390,6 +7062,15 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 label = AnnotationsLabels.objects.get(pk=label_id, deleted=False)
             except AnnotationsLabels.DoesNotExist:
                 continue
+
+            if label.pk not in queue_label_ids:
+                continue
+            if _annotation_value_is_blank(value):
+                continue
+            try:
+                _validate_annotation_value_for_label(label, value)
+            except ValueError as exc:
+                return self._gm.bad_request(str(exc))
 
             if source_obj and source_fk_field:
                 # Scope the upsert by queue_item so an import lands in this
@@ -6406,9 +7087,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     defaults={
                         "source_type": item.source_type,
                         "value": value,
-                        "score_source": score_source or "human",
-                        "notes": "",
+                        "score_source": score_source,
+                        "notes": notes,
                         "organization": request.organization,
+                        "workspace": getattr(request, "workspace", None)
+                        or item.workspace,
                     },
                 )
                 imported += 1
@@ -6464,11 +7147,12 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             current_count = AutomationRule.objects.filter(
                 organization=org, deleted=False
             ).count()
-            check = Entitlements.can_create(
-                str(org.id), "automation_rules", current_count
-            )
-            if not check.allowed:
-                return self._gm.forbidden_response(check.reason)
+            if Entitlements is not None:
+                check = Entitlements.can_create(
+                    str(org.id), "automation_rules", current_count
+                )
+                if not check.allowed:
+                    return self._gm.forbidden_response(check.reason)
         except ImportError:
             pass
 
@@ -6606,9 +7290,7 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         if not peek.get("truncated"):
             # Small enough to handle inline — user sees the result
             # immediately, no email overhead.
-            result = evaluate_rule(
-                rule, user=request.user, cap=RULE_RUN_SYNC_THRESHOLD
-            )
+            result = evaluate_rule(rule, user=request.user, cap=RULE_RUN_SYNC_THRESHOLD)
             return self._gm.success_response(result)
 
         # Large run — hand off to Temporal. task_id is suffixed with a
@@ -6628,14 +7310,11 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         # the view so the second click sees a fresh timestamp.
         previous_last_triggered_at = rule.last_triggered_at
         scheduled_at = timezone.now()
-        AutomationRule.objects.filter(pk=rule.pk).update(
-            last_triggered_at=scheduled_at
-        )
+        AutomationRule.objects.filter(pk=rule.pk).update(last_triggered_at=scheduled_at)
         rule.last_triggered_at = scheduled_at
 
         task_id = (
-            f"automation-rule-eval-{rule.pk}-"
-            f"{int(scheduled_at.timestamp() * 1000)}"
+            f"automation-rule-eval-{rule.pk}-{int(scheduled_at.timestamp() * 1000)}"
         )
 
         try:
@@ -6671,8 +7350,7 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 "status": "scheduled",
                 "workflow_id": workflow_id,
                 "message": (
-                    "We're preparing your data. You'll get an email when "
-                    "it's ready."
+                    "We're preparing your data. You'll get an email when it's ready."
                 ),
             },
             status=status.HTTP_202_ACCEPTED,

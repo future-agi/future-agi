@@ -15,12 +15,11 @@ from unittest.mock import MagicMock, patch
 import pytest
 from rest_framework import status
 
-# Per-class xfails: TestAnnotationsViewSet exercises the legacy ``Annotations``
-# model — deprecated path with active backend bugs (500 errors). User
-# confirmed the unified ``Score`` model is the canonical store; legacy
-# Annotations view will be retired in Phase 4. TestAnnotationSummaryView
-# tests don't mock the EE entitlement, so they get 403 in non-EE test
-# environments. See PLAN.md.
+# TestAnnotationSummaryView tests don't mock the EE entitlement, so they get
+# 403 in non-EE test environments. See PLAN.md. The legacy ``Annotations``
+# model is still exposed through generated frontend contracts, so these tests
+# lock its supported fallback behavior while unified ``Score`` remains the
+# canonical annotation store.
 from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
@@ -427,12 +426,6 @@ class TestAnnotationsLabelsViewSet:
 
 
 @pytest.mark.django_db
-@pytest.mark.xfail(
-    reason="Legacy Annotations model view returns 500 on create — pre-existing "
-    "backend bug. Path is on deprecation track (Phase 4). Use unified Score "
-    "model instead.",
-    strict=False,
-)
 class TestAnnotationsViewSet:
     """Tests for AnnotationsViewSet CRUD operations."""
 
@@ -447,14 +440,14 @@ class TestAnnotationsViewSet:
         assert response.status_code == status.HTTP_200_OK
 
     def test_create_annotation(
-        self, auth_client, dataset, user, annotation_label, column
+        self, auth_client, dataset, user, workspace, annotation_label, column
     ):
         """Test creating an annotation."""
         payload = {
             "name": "New Annotation",
             "dataset": str(dataset.id),
             "assigned_users": [str(user.id)],
-            "labels": [{"id": str(annotation_label.id), "required": True}],
+            "labels": [{"id": str(annotation_label.id), "required": False}],
             "responses": 1,
             "static_fields": [
                 {
@@ -466,7 +459,9 @@ class TestAnnotationsViewSet:
         }
         response = auth_client.post("/model-hub/annotations/", payload, format="json")
         assert response.status_code == status.HTTP_200_OK
-        assert Annotations.objects.filter(name="New Annotation").exists()
+        created = Annotations.objects.get(name="New Annotation")
+        assert created.workspace == workspace
+        assert created.labels.filter(id=annotation_label.id).exists()
 
     def test_create_annotation_responses_exceeds_users(
         self, auth_client, dataset, user, annotation_label
@@ -476,11 +471,26 @@ class TestAnnotationsViewSet:
             "name": "Invalid Annotation",
             "dataset": str(dataset.id),
             "assigned_users": [str(user.id)],  # Only 1 user
-            "labels": [str(annotation_label.id)],
+            "labels": [{"id": str(annotation_label.id), "required": False}],
             "responses": 5,  # More than users
         }
         response = auth_client.post("/model-hub/annotations/", payload, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Annotations.objects.filter(name="Invalid Annotation").exists()
+
+    def test_create_annotation_required_label_requires_entitlement(
+        self, auth_client, dataset, user, annotation_label
+    ):
+        """Required labels are plan-gated and should fail cleanly."""
+        payload = {
+            "name": "Required Label Annotation",
+            "dataset": str(dataset.id),
+            "assigned_users": [str(user.id)],
+            "labels": [{"id": str(annotation_label.id), "required": True}],
+            "responses": 1,
+        }
+        response = auth_client.post("/model-hub/annotations/", payload, format="json")
+        assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
 
     def test_retrieve_annotation(self, auth_client, annotation):
         """Test retrieving a specific annotation."""
@@ -495,7 +505,7 @@ class TestAnnotationsViewSet:
             "name": "Updated Annotation",
             "dataset": str(annotation.dataset.id),
             "labels": [
-                {"id": str(label.id), "required": True}
+                {"id": str(label.id), "required": False}
                 for label in annotation.labels.all()
             ],
             "responses": 1,
@@ -508,11 +518,91 @@ class TestAnnotationsViewSet:
         assert response.status_code == status.HTTP_200_OK
         annotation.refresh_from_db()
         assert annotation.name == "Updated Annotation"
+        assert annotation.labels.exists()
+
+    def test_update_annotation_required_label_requires_entitlement(
+        self, auth_client, annotation
+    ):
+        """Update should propagate required-label entitlement denial as 402."""
+        payload = {
+            "name": "Required Updated Annotation",
+            "dataset": str(annotation.dataset.id),
+            "labels": [
+                {"id": str(label.id), "required": True}
+                for label in annotation.labels.all()
+            ],
+            "responses": 1,
+        }
+        response = auth_client.put(
+            f"/model-hub/annotations/{annotation.id}/",
+            payload,
+            format="json",
+        )
+        assert response.status_code == status.HTTP_402_PAYMENT_REQUIRED
+
+    def test_partial_update_preserves_labels_and_assignees(
+        self, auth_client, annotation
+    ):
+        """PATCH name-only updates must not clear legacy M2M relationships."""
+        label_ids = set(annotation.labels.values_list("id", flat=True))
+        user_ids = set(annotation.assigned_users.values_list("id", flat=True))
+
+        response = auth_client.patch(
+            f"/model-hub/annotations/{annotation.id}/",
+            {"name": "Patched Annotation"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        annotation.refresh_from_db()
+        assert annotation.name == "Patched Annotation"
+        assert set(annotation.labels.values_list("id", flat=True)) == label_ids
+        assert set(annotation.assigned_users.values_list("id", flat=True)) == user_ids
 
     def test_delete_annotation(self, auth_client, annotation):
         """Test deleting an annotation."""
         response = auth_client.delete(f"/model-hub/annotations/{annotation.id}/")
         assert response.status_code == status.HTTP_200_OK
+
+    def test_delete_annotation_soft_deletes_generated_cells(
+        self, auth_client, annotation, annotation_label, row
+    ):
+        """Deleting an annotation should soft-delete generated columns and cells."""
+        generated_column = Column.objects.create(
+            name="Generated Annotation Column",
+            dataset=annotation.dataset,
+            data_type=DataTypeChoices.FLOAT.value,
+            source=SourceChoices.ANNOTATION_LABEL.value,
+            source_id=f"{annotation.id}-sourceid-{annotation_label.id}",
+        )
+        annotation.columns.add(generated_column)
+        generated_cell = Cell.objects.create(
+            dataset=annotation.dataset,
+            row=row,
+            column=generated_column,
+            value=None,
+            feedback_info={
+                "description": "reset note",
+                "annotation": {
+                    "user_id": None,
+                    "label_id": str(annotation_label.id),
+                    "annotation_id": str(annotation.id),
+                },
+            },
+        )
+
+        response = auth_client.delete(f"/model-hub/annotations/{annotation.id}/")
+
+        assert response.status_code == status.HTTP_200_OK
+        generated_column.refresh_from_db()
+        generated_cell.refresh_from_db()
+        assert generated_column.deleted is True
+        assert generated_column.deleted_at is not None
+        assert generated_cell.deleted is True
+        assert generated_cell.deleted_at is not None
+
+        response = auth_client.delete(f"/model-hub/annotations/{annotation.id}/")
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_bulk_destroy_annotations(self, auth_client, annotation):
         """Test bulk deleting annotations."""

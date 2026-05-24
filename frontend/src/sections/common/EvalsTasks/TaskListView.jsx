@@ -323,9 +323,11 @@ const TaskListView = ({
     [data],
   );
   const total =
-    data?.metadata?.total_count ||
-    data?.total ||
-    data?.total_count ||
+    data?.metadata?.total_rows ??
+    data?.metadata?.total_count ??
+    data?.total_rows ??
+    data?.total ??
+    data?.total_count ??
     items.length;
 
   // Pause/Resume mutations

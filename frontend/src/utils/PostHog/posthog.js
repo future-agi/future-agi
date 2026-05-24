@@ -25,8 +25,8 @@ export const initPostHog = () => {
       api_host: posthogHost,
       // Share cookie across *.futureagi.com so UTM/session survives marketing → app
       cross_subdomain_cookie: true,
-      cookie_domain:'.futureagi.com',
-      
+      cookie_domain: ".futureagi.com",
+
       // Autocapture — clicks, form submissions, pageviews
       autocapture: true,
       // Session replay
@@ -80,7 +80,6 @@ export const identifyPostHogUser = (userData = {}) => {
   if (!id) return;
 
   try {
-
     const setOnce = {};
     try {
       const utmString =
@@ -96,7 +95,10 @@ export const identifyPostHogUser = (userData = {}) => {
         if (utmCampaign) setOnce.$initial_utm_campaign = utmCampaign;
       }
     } catch (storageError) {
-      logger.debug("PostHog: could not read utm_params from storage", storageError);
+      logger.debug(
+        "PostHog: could not read utm_params from storage",
+        storageError,
+      );
     }
 
     // Identify user

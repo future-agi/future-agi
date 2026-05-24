@@ -11,6 +11,27 @@ class ApiSuccessResponseSerializer(serializers.Serializer):
     result = serializers.JSONField(required=False, allow_null=True)
 
 
+class StrictInputMixin:
+    """Reject unknown request fields so API aliases cannot drift in silently."""
+
+    def to_internal_value(self, data):
+        if hasattr(data, "keys"):
+            unknown = sorted(set(data.keys()) - set(self.fields.keys()))
+            if unknown:
+                raise serializers.ValidationError(
+                    {key: ["Unknown field."] for key in unknown}
+                )
+        return super().to_internal_value(data)
+
+
+class StrictInputSerializer(StrictInputMixin, serializers.Serializer):
+    """Base serializer for strict request/query contracts."""
+
+
+class StrictInputModelSerializer(StrictInputMixin, serializers.ModelSerializer):
+    """ModelSerializer variant for strict request/query contracts."""
+
+
 class EmptyRequestSerializer(serializers.Serializer):
     """Explicit contract for mutation endpoints that accept no request body."""
 
@@ -27,7 +48,11 @@ class EmptyRequestSerializer(serializers.Serializer):
         if hasattr(data, "__len__") and len(data) == 0:
             return {}
         raise serializers.ValidationError(
-            "This endpoint does not accept a request body."
+            {
+                serializers.api_settings.NON_FIELD_ERRORS_KEY: [
+                    "This endpoint does not accept a request body."
+                ]
+            }
         )
 
 
@@ -149,6 +174,16 @@ class ApiSelectionTooLargeErrorSerializer(serializers.Serializer):
     detail = serializers.CharField(required=False)
     message = serializers.CharField()
     error = ApiSelectionTooLargeDetailSerializer()
+
+
+class PaginationMetadataSerializer(serializers.Serializer):
+    """Common metadata shape for offset/page-number result envelopes."""
+
+    total_count = serializers.IntegerField()
+    current_page = serializers.IntegerField()
+    page_size = serializers.IntegerField()
+    total_pages = serializers.IntegerField()
+    next_page = serializers.IntegerField(required=False, allow_null=True)
 
 
 class HealthCheckResponseSerializer(serializers.Serializer):

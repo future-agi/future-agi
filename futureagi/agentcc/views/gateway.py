@@ -71,6 +71,16 @@ AGENTCC_GATEWAY_PUBLIC_URL = (
     os.environ.get("AGENTCC_GATEWAY_PUBLIC_URL", "") or AGENTCC_GATEWAY_URL
 )
 
+GATEWAY_BAD_REQUEST_RESPONSES = {
+    400: AgentccErrorResponseSerializer,
+}
+GATEWAY_NOT_FOUND_RESPONSES = {
+    404: AgentccErrorResponseSerializer,
+}
+GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES = {
+    **GATEWAY_BAD_REQUEST_RESPONSES,
+    **GATEWAY_NOT_FOUND_RESPONSES,
+}
 
 _BUDGET_LEVEL_KEY_ALIASES = {
     "orgLimit": "org_limit",
@@ -132,6 +142,9 @@ class AgentccGatewayViewSet(ViewSet):
     No DB model — returns a virtual singleton gateway with live health.
     """
 
+    # Keep action contracts explicit: each endpoint owns its success serializer,
+    # while shared error serializers live at module level. If this file grows
+    # further, split by gateway surface instead of hiding contracts in factories.
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
@@ -149,7 +162,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         responses={
             200: GatewayListResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         }
     )
     def list(self, request, *args, **kwargs):
@@ -175,7 +188,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         responses={
             200: GatewayDetailResponseSerializer,
-            404: AgentccErrorResponseSerializer,
+            **GATEWAY_NOT_FOUND_RESPONSES,
         }
     )
     def retrieve(self, request, *args, **kwargs):
@@ -224,7 +237,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=AgentccEmptyRequestSerializer,
         responses={
             200: GatewayHealthResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -295,7 +308,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         responses={
             200: GatewayConfigResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         }
     )
     @action(detail=True, methods=["get"])
@@ -366,7 +379,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=AgentccEmptyRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -388,7 +401,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayConfigPatchRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -466,7 +479,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayProviderUpdateRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -586,8 +599,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayNameRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
-            404: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -631,7 +643,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayToggleGuardrailRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -701,7 +713,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         responses={
             200: AgentccListResultResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         }
     )
     @action(detail=False, methods=["get"], url_path="protect-templates")
@@ -746,7 +758,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayNamedConfigRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -800,7 +812,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayPlaygroundTestRequestSerializer,
         responses={
             200: GatewayPlaygroundTestResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -944,7 +956,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayBudgetSetRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -987,7 +999,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayBudgetRemoveRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -1027,7 +1039,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayBatchSubmitRequestSerializer,
         responses={
             200: GatewayBatchSubmitResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -1054,8 +1066,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         responses={
             200: GatewayBatchDetailResponseSerializer,
-            400: AgentccErrorResponseSerializer,
-            404: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES,
         }
     )
     @action(detail=True, methods=["get"], url_path="get-batch")
@@ -1080,8 +1091,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayBatchRequestSerializer,
         responses={
             200: GatewayBatchCancelResponseSerializer,
-            400: AgentccErrorResponseSerializer,
-            404: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -1106,7 +1116,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         responses={
             200: GatewayProvidersResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         }
     )
     @action(detail=True, methods=["get"])
@@ -1216,7 +1226,7 @@ class AgentccGatewayViewSet(ViewSet):
     @swagger_auto_schema(
         responses={
             200: GatewayMCPStatusResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         }
     )
     @action(detail=True, methods=["get"], url_path="mcp-status")
@@ -1261,7 +1271,10 @@ class AgentccGatewayViewSet(ViewSet):
                         "tools": 0,
                         "resources": 0,
                         "prompts": 0,
-                        "servers": list(servers.keys()),
+                        "servers": [
+                            {"id": server_id, "status": "configured"}
+                            for server_id in servers.keys()
+                        ],
                     }
                 )
         except Exception as e:
@@ -1304,7 +1317,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayMCPServerUpdateRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -1347,8 +1360,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayMCPServerRemoveRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
-            404: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -1395,7 +1407,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayMCPGuardrailsUpdateRequestSerializer,
         responses={
             200: GatewayMutationResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )
@@ -1434,7 +1446,7 @@ class AgentccGatewayViewSet(ViewSet):
         request_serializer=GatewayMCPToolTestRequestSerializer,
         responses={
             200: GatewayMCPToolTestResponseSerializer,
-            400: AgentccErrorResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
         },
         reject_unknown_fields=True,
     )

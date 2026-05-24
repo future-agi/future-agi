@@ -21,6 +21,7 @@ from simulate.serializers.test_execution import (
 )
 from simulate.services.branch_deviation_analyzer import BranchDeviationAnalyzer
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
+from simulate.views.scoping import run_test_workspace_filter
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import EmptyRequestSerializer
 from tfc.utils.general_methods import GeneralMethods
@@ -54,8 +55,10 @@ class CallTranscriptView(APIView):
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
-                test_execution__organization=user_organization,
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             )
 
             # Get all transcripts for this call
@@ -111,8 +114,10 @@ class TestExecutionTranscriptsView(APIView):
 
             # Get all call executions for this test execution with prefetched transcripts
             call_executions = CallExecution.objects.filter(
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 test_execution_id=test_execution_id,
-                test_execution__organization=user_organization,
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             ).prefetch_related("transcripts", "scenario")
 
             all_transcripts = []
@@ -189,8 +194,10 @@ class CallBranchAnalysisView(APIView):
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
-                # test_execution__organization=user_organization
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             )
 
             # transcripts = CallTranscript.objects.filter(
@@ -277,8 +284,10 @@ class CallBranchAnalysisView(APIView):
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
-                test_execution__organization=user_organization,
+                test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
             )
 
             # Perform branch analysis

@@ -1,19 +1,11 @@
 import re
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from django.conf import settings
 from django.core.validators import URLValidator
 from django.db import transaction
 from rest_framework import serializers
-
-# LiveKit URLs are valid in either WebSocket form (wss://, ws://) or HTTP
-# form (https://, http://). The frontend stores whatever the user typed
-# and the backend converts the scheme at use-time in three places:
-# ValidateLiveKitCredentialsView, simulate.services.livekit.config, and
-# LiveKitBridgeConnector._http_url. So the validator just needs to accept
-# all four schemes.
-_LIVEKIT_URL_VALIDATOR = URLValidator(schemes=["http", "https", "ws", "wss"])
 
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion
@@ -22,6 +14,14 @@ from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
 
 MASKED_VALUE = "********"
+
+# LiveKit URLs are valid in either WebSocket form (wss://, ws://) or HTTP
+# form (https://, http://). The frontend stores whatever the user typed
+# and the backend converts the scheme at use-time in three places:
+# ValidateLiveKitCredentialsView, simulate.services.livekit.config, and
+# LiveKitBridgeConnector._http_url. So the validator just needs to accept
+# all four schemes.
+_LIVEKIT_URL_VALIDATOR = URLValidator(schemes=["http", "https", "ws", "wss"])
 
 
 def _is_masked(value: str) -> bool:
@@ -65,14 +65,14 @@ class ProviderCredentialsInput:
     """
 
     provider: str
-    api_key: Optional[str] = None
-    assistant_id: Optional[str] = None
-    livekit_url: Optional[str] = None
-    livekit_api_key: Optional[str] = None
-    livekit_api_secret: Optional[str] = None
-    livekit_agent_name: Optional[str] = None
-    livekit_config_json: Optional[dict[str, Any]] = None
-    livekit_max_concurrency: Optional[int] = None
+    api_key: str | None = None
+    assistant_id: str | None = None
+    livekit_url: str | None = None
+    livekit_api_key: str | None = None
+    livekit_api_secret: str | None = None
+    livekit_agent_name: str | None = None
+    livekit_config_json: dict[str, Any] | None = None
+    livekit_max_concurrency: int | None = None
 
 
 def _extract_credentials_input(
@@ -169,8 +169,18 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             "updated_at",
             "model",
             "model_details",
+            "livekit_url",
+            "livekit_api_key",
+            "livekit_api_secret",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+            "organization",
+            "workspace",
+            "observability_provider",
+        ]
 
     def to_representation(self, instance):
         """Read credentials from ProviderCredentials, fall back to AgentDefinition.
@@ -690,6 +700,12 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
             "inbound",
             "model",
             "model_details",
+            "livekit_url",
+            "livekit_api_key",
+            "livekit_api_secret",
+            "livekit_agent_name",
+            "livekit_config_json",
+            "livekit_max_concurrency",
         ]
 
     def __init__(self, *args, **kwargs):
@@ -749,6 +765,9 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
             # allow clearing when explicitly passed as null
             instance.knowledge_base = validated_data.get("knowledge_base")
         instance.save()
+
+        creds_input.provider = instance.provider or creds_input.provider
+        AgentDefinitionSerializer._sync_provider_credentials(instance, creds_input)
         return instance
 
     def to_representation(self, instance):

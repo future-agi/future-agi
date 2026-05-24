@@ -64,6 +64,57 @@ logger = structlog.get_logger(__name__)
 ## TODO: need a major revamp. queries are wrong.
 
 
+def _get_request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _project_workspace_scope_q(request, project_prefix="project__"):
+    workspace = getattr(request, "workspace", None)
+    if not workspace:
+        return Q()
+
+    workspace_field = f"{project_prefix}workspace"
+    organization_field = f"{project_prefix}organization_id"
+    organization = _get_request_organization(request)
+    organization_id = getattr(workspace, "organization_id", None) or getattr(
+        organization, "id", None
+    )
+
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{workspace_field: workspace})
+            | Q(
+                **{
+                    f"{workspace_field}__is_default": True,
+                    f"{workspace_field}__organization_id": organization_id,
+                }
+            )
+            | Q(
+                **{
+                    f"{workspace_field}__isnull": True,
+                    organization_field: organization_id,
+                }
+            )
+        )
+    return Q(**{workspace_field: workspace})
+
+
+def _soft_delete_project_version_tree(project_versions):
+    now = timezone.now()
+    deleted_ids = []
+    for project_version in project_versions:
+        project_version.traces.update(deleted=True, deleted_at=now)
+        project_version.winner_version.update(deleted=True, deleted_at=now)
+        project_version.observation_spans.update(deleted=True, deleted_at=now)
+
+        project_version.deleted = True
+        project_version.deleted_at = now
+        project_version.save(update_fields=["deleted", "deleted_at", "updated_at"])
+        deleted_ids.append(str(project_version.id))
+
+    return deleted_ids
+
+
 class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -72,8 +123,13 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
     def get_queryset(self):
         project_version_id = self.kwargs.get("pk")
 
-        # Get base queryset with automatic filtering from mixin
-        query_Set = super().get_queryset()
+        request_organization = _get_request_organization(self.request)
+
+        # Get base queryset with automatic filtering from mixin, then add an
+        # explicit organization guard for ProjectVersion's indirect project FK.
+        query_Set = super().get_queryset().filter(
+            project__organization=request_organization
+        )
 
         if project_version_id:
             return query_Set.filter(id=project_version_id)
@@ -93,6 +149,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
         return query_Set
 
+    def perform_destroy(self, instance):
+        _soft_delete_project_version_tree([instance])
+
     def create(self, request, *args, **kwargs):
         """
         Create a new project version.
@@ -103,8 +162,13 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             if serializer.is_valid():
                 project = serializer.validated_data.get("project")
 
-                # Get the count of existing versions for this project
-                version_num = ProjectVersion.objects.filter(project=project).count() + 1
+                # Get the count of existing versions for this project.
+                version_manager = getattr(
+                    ProjectVersion, "no_workspace_objects", ProjectVersion.objects
+                )
+                version_num = (
+                    version_manager.filter(project=project, deleted=False).count() + 1
+                )
                 version = f"v{version_num}"
 
                 serializer.validated_data["version"] = version
@@ -133,16 +197,17 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             if parsed_config is None:
                 return self._gm.bad_request(get_error_message("CONFIG_MISSING"))
 
+            request_organization = _get_request_organization(self.request)
             project = Project.objects.get(
+                _project_workspace_scope_q(self.request, project_prefix=""),
                 id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                organization=request_organization,
             )
             result = {}
 
             # Build the base query with all necessary annotations
             base_query = (
-                ObservationSpan.objects.filter(project_id=project_id)
+                ObservationSpan.objects.filter(project=project)
                 .values("project_version_id")
                 .annotate(
                     avg_latency_ms=Coalesce(
@@ -170,7 +235,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # Get all eval configs from the project version
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=EvalLogger.objects.filter(
-                    observation_span__project_id=project_id
+                    observation_span__project=project
                 )
                 .values("custom_eval_config_id")
                 .distinct(),
@@ -312,11 +377,15 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
                 # Update the project version with the calculated sum
                 project_version = ProjectVersion.objects.get(
-                    id=obj["project_version_id"]
+                    id=obj["project_version_id"],
+                    project=project,
                 )
                 project_version.avg_eval_score = sum
                 project_version.save(update_fields=["avg_eval_score"])
                 result[project_version.id] = sum
+
+            if not result:
+                return self._gm.bad_request("No project versions found for project")
 
             # Create dict with project version scores and ranks
             version_scores = {
@@ -344,8 +413,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             winner_id = sorted_versions[0][0]
             winner = ProjectVersion.objects.get(
                 id=winner_id,
-                project__organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                project=project,
             )
 
             try:
@@ -395,14 +463,19 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             else:
                 return self._gm.bad_request(serializer.errors)
 
-            request_organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
+            request_organization = _get_request_organization(request)
+
+            try:
+                project = Project.objects.get(
+                    _project_workspace_scope_q(request, project_prefix=""),
+                    id=project_id,
+                    organization=request_organization,
+                )
+            except Project.DoesNotExist:
+                return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
 
             # Build the base query with all necessary annotations
-            base_query = ObservationSpan.objects.filter(
-                project_id=project_id,
-            )
+            base_query = ObservationSpan.objects.filter(project=project)
 
             if project_version_ids:
                 base_query = base_query.filter(
@@ -431,19 +504,10 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 ),
             )
 
-            # Create a subquery for each eval config ID from project config
-            try:
-                project = Project.objects.get(
-                    id=project_id,
-                    organization=request_organization,
-                )
-            except Project.DoesNotExist:
-                return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
-
             # Get all eval configs from the project version
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=EvalLogger.objects.filter(
-                    observation_span__project_id=project_id
+                    observation_span__project=project
                 )
                 .values("custom_eval_config_id")
                 .distinct(),
@@ -556,7 +620,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Add Avg Annotations
-            annotation_labels = AnnotationsLabels.objects.filter(project__id=project_id)
+            annotation_labels = AnnotationsLabels.objects.filter(project=project)
             annotation_labels = annotation_labels.exclude(
                 type=AnnotationTypeChoices.TEXT.value
             )
@@ -967,27 +1031,18 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
         project_version_ids = self.request.data.get("ids", [])
 
         try:
-            # Bulk update deleted status and timestamp for all specified IDs
-            project_versions = ProjectVersion.objects.filter(id__in=project_version_ids)
-            for project_version in project_versions:
-                # Soft delete related models
-                project_version.traces.update(deleted=True, deleted_at=timezone.now())
-                project_version.winner_version.update(
-                    deleted=True, deleted_at=timezone.now()
-                )
-                project_version.observation_spans.update(
-                    deleted=True, deleted_at=timezone.now()
-                )
-
-                # Mark the project version as deleted
-                project_version.deleted = True
-                project_version.deleted_at = timezone.now()
-                project_version.save()
+            request_organization = _get_request_organization(self.request)
+            project_versions = ProjectVersion.objects.filter(
+                _project_workspace_scope_q(self.request),
+                id__in=project_version_ids,
+                project__organization=request_organization,
+            )
+            deleted_ids = _soft_delete_project_version_tree(project_versions)
 
             return self._gm.success_response(
                 {
                     "message": "Successfully deleted project versions",
-                    "deleted_ids": project_version_ids,
+                    "deleted_ids": deleted_ids,
                 }
             )
         except Exception as e:
@@ -1004,9 +1059,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             visibility = self.request.data.get("visibility", {})
             try:
                 project_version = ProjectVersion.objects.get(
+                    _project_workspace_scope_q(self.request),
                     id=project_version_id,
-                    project__organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
+                    project__organization=_get_request_organization(self.request),
                 )
             except ProjectVersion.DoesNotExist:
                 return self._gm.bad_request("Project version not found")
@@ -1069,9 +1124,9 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             project_version_id = self.request.data.get("project_version_id")
             annotation_values = self.request.data.get("annotation_values")
             project_version = ProjectVersion.objects.get(
+                _project_workspace_scope_q(self.request),
                 id=project_version_id,
-                project__organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                project__organization=_get_request_organization(self.request),
             )
 
             if not project_version:
@@ -1081,18 +1136,18 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
             if curr_annotation is None:
                 if annotation_values is not None:
-                    annotation_values["organization"] = (
-                        getattr(self.request, "organization", None)
-                        or self.request.user.organization
+                    annotation_values["organization"] = _get_request_organization(
+                        self.request
                     )
                     serializer = AnnotationProjectVersionMapperSerializer(
                         data=annotation_values
                     )
                     if serializer.is_valid():
                         annotation = serializer.save(
-                            organization=getattr(self.request, "organization", None)
-                            or self.request.user.organization
+                            organization=_get_request_organization(self.request)
                         )
+                    else:
+                        return self._gm.bad_request(serializer.errors)
                 else:
                     raise Exception("Annotation details are required")
             else:
@@ -1127,10 +1182,19 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             if not project_version_id:
                 raise Exception("Project version id is required")
 
+            project_version = ProjectVersion.objects.get(
+                _project_workspace_scope_q(self.request),
+                id=project_version_id,
+                project__organization=_get_request_organization(self.request),
+            )
+
             # Get trace IDs in a single query
-            trace_ids = Trace.objects.filter(
-                project_version_id=project_version_id
-            ).values_list("id", flat=True)
+            trace_ids = list(
+                Trace.objects.filter(
+                    project=project_version.project,
+                    project_version=project_version,
+                ).values_list("id", flat=True)
+            )
             if not trace_ids:
                 return self._gm.success_response(
                     {
@@ -1143,7 +1207,8 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
             # System Metrics - Optimize with aggregation
             spans_metrics = ObservationSpan.objects.filter(
-                trace_id__in=trace_ids
+                trace_id__in=trace_ids,
+                project=project_version.project,
             ).aggregate(
                 avg_latency=Avg("latency_ms", filter=Q(parent_span_id__isnull=True)),
                 avg_cost=Round(
@@ -1169,7 +1234,10 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             # Get spans for outlier detection with fewer fields
-            spans = ObservationSpan.objects.filter(trace_id__in=trace_ids).values(
+            spans = ObservationSpan.objects.filter(
+                trace_id__in=trace_ids,
+                project=project_version.project,
+            ).values(
                 "trace_id",
                 "latency_ms",
                 "total_tokens",
@@ -1352,13 +1420,12 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             query_data = query_serializer.validated_data
             project_id = str(query_data["project_id"])
 
-            request_organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
+            request_organization = _get_request_organization(request)
 
             # Get project and validate access
             try:
                 project = Project.objects.get(
+                    _project_workspace_scope_q(request, project_prefix=""),
                     id=project_id,
                     organization=request_organization,
                 )
@@ -1369,7 +1436,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             eval_configs = list(
                 CustomEvalConfig.objects.filter(
                     id__in=EvalLogger.objects.filter(
-                        observation_span__project_id=project_id
+                        observation_span__project=project
                     )
                     .values("custom_eval_config_id")
                     .distinct(),
@@ -1378,7 +1445,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             annotation_labels = list(
-                AnnotationsLabels.objects.filter(project__id=project_id).exclude(
+                AnnotationsLabels.objects.filter(project=project).exclude(
                     type=AnnotationTypeChoices.TEXT.value
                 )
             )
@@ -1397,7 +1464,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                 ObservationSpan.objects.filter(
                     Q(project_version__deleted=False)
                     | Q(project_version__deleted=None),
-                    project_id=project_id,
+                    project=project,
                 )
                 .values("project_version_id")
                 .annotate(

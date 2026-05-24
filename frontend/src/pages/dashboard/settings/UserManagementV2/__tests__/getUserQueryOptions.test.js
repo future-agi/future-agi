@@ -47,9 +47,9 @@ describe("getUserQueryOptions", () => {
 
   it("converts AG Grid sort models at the UI boundary", async () => {
     expect(gridSortModelToMemberListSort([])).toBe("-created_at");
-    expect(gridSortModelToMemberListSort([{ colId: "email", sort: "asc" }])).toBe(
-      "email",
-    );
+    expect(
+      gridSortModelToMemberListSort([{ colId: "email", sort: "asc" }]),
+    ).toBe("email");
     expect(
       gridSortModelToMemberListSort([{ colId: "created_at", sort: "desc" }]),
     ).toBe("-created_at");

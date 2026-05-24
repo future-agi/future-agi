@@ -1,9 +1,19 @@
 from django.db import migrations
 
 
-FIELD_ID_ALIASES = {
+FILTER_ITEM_KEY_ALIASES = {
+    "columnId": "column_id",
+    "displayName": "display_name",
+    "outputType": "output_type",
+    "filterConfig": "filter_config",
+}
+
+SYSTEM_FIELD_ID_ALIASES = {
     "traceId": "trace_id",
+    "spanId": "span_id",
+    "sessionId": "session_id",
     "traceName": "trace_name",
+    "spanName": "span_name",
     "nodeType": "node_type",
     "userId": "user_id",
     "projectName": "project_name",
@@ -14,7 +24,13 @@ FIELD_ID_ALIASES = {
     "callType": "call_type",
     "datasetName": "dataset_name",
     "createdAt": "created_at",
+    "updatedAt": "updated_at",
+    "latencyMs": "latency_ms",
+    "totalTokens": "total_tokens",
+    "inputTokens": "input_tokens",
+    "outputTokens": "output_tokens",
 }
+SYSTEM_FIELD_COL_TYPES = {None, "", "SYSTEM_METRIC", "NORMAL"}
 
 FILTER_CONFIG_KEY_ALIASES = {
     "colType": "col_type",
@@ -22,10 +38,32 @@ FILTER_CONFIG_KEY_ALIASES = {
     "filterOp": "filter_op",
     "filterValue": "filter_value",
 }
+FILTER_OP_ALIASES = {
+    "is": "equals",
+    "is_not": "not_equals",
+    "equal_to": "equals",
+    "not_equal_to": "not_equals",
+    "inBetween": "between",
+    "notBetween": "not_between",
+    "not_in_between": "not_between",
+}
 
 
 def _canonical_field_id(value):
-    return FIELD_ID_ALIASES.get(value, value)
+    return SYSTEM_FIELD_ID_ALIASES.get(value, value)
+
+
+def _move_alias_keys(value, aliases):
+    changed = False
+    next_value = dict(value)
+    for old_key, new_key in aliases.items():
+        if old_key not in next_value:
+            continue
+        if new_key not in next_value:
+            next_value[new_key] = next_value[old_key]
+        del next_value[old_key]
+        changed = True
+    return next_value, changed
 
 
 def _canonical_filter(filter_item):
@@ -33,30 +71,49 @@ def _canonical_filter(filter_item):
         return filter_item, False
 
     changed = False
-    next_item = dict(filter_item)
-    if "columnId" in next_item and "column_id" not in next_item:
-        next_item["column_id"] = next_item.pop("columnId")
-        changed = True
+    next_item, item_changed = _move_alias_keys(filter_item, FILTER_ITEM_KEY_ALIASES)
+    changed = changed or item_changed
 
-    if "filterConfig" in next_item and "filter_config" not in next_item:
-        next_item["filter_config"] = next_item.pop("filterConfig")
+    root_col_type = next_item.pop("colType", None)
+    if "col_type" in next_item:
+        root_col_type = root_col_type or next_item.pop("col_type")
         changed = True
-
-    if "column_id" in next_item:
-        column_id = _canonical_field_id(next_item["column_id"])
-        if column_id != next_item["column_id"]:
-            next_item["column_id"] = column_id
+    if root_col_type is not None:
+        changed = True
+    for ui_key in ("id", "_meta"):
+        if ui_key in next_item:
+            del next_item[ui_key]
             changed = True
 
     config = next_item.get("filter_config")
     if isinstance(config, dict):
-        next_config = dict(config)
-        for old_key, new_key in FILTER_CONFIG_KEY_ALIASES.items():
-            if old_key in next_config and new_key not in next_config:
-                next_config[new_key] = next_config.pop(old_key)
-                changed = True
+        next_config, config_changed = _move_alias_keys(
+            config, FILTER_CONFIG_KEY_ALIASES
+        )
+        changed = changed or config_changed
+
+        if root_col_type and not next_config.get("col_type"):
+            next_config["col_type"] = root_col_type
+            changed = True
+
+        filter_op = next_config.get("filter_op")
+        canonical_op = FILTER_OP_ALIASES.get(filter_op)
+        if canonical_op:
+            next_config["filter_op"] = canonical_op
+            changed = True
+
         if next_config != config:
             next_item["filter_config"] = next_config
+
+    column_id = next_item.get("column_id")
+    config_col_type = (
+        next_item.get("filter_config", {}).get("col_type")
+        if isinstance(next_item.get("filter_config"), dict)
+        else None
+    )
+    if column_id in SYSTEM_FIELD_ID_ALIASES and config_col_type in SYSTEM_FIELD_COL_TYPES:
+        next_item["column_id"] = SYSTEM_FIELD_ID_ALIASES[column_id]
+        changed = True
 
     return next_item, changed
 
@@ -80,6 +137,12 @@ def _canonical_conditions(conditions):
 
     changed = False
     next_conditions = dict(conditions)
+
+    if "filters" in next_conditions:
+        if "filter" not in next_conditions:
+            next_conditions["filter"] = next_conditions["filters"]
+        del next_conditions["filters"]
+        changed = True
 
     for key in ("filter", "filters"):
         filters = next_conditions.get(key)

@@ -117,12 +117,19 @@ const resolveContextOptions = (dataInjection) => {
   }
   const opts = [];
   if (dataInjection.full_row || dataInjection.fullRow) opts.push("dataset_row");
-  if (dataInjection.span_context || dataInjection.spanContext) opts.push("span_context");
-  if (dataInjection.trace_context || dataInjection.traceContext) opts.push("trace_context");
-  if (dataInjection.session_context || dataInjection.sessionContext) opts.push("session_context");
-  if (dataInjection.call_context || dataInjection.callContext) opts.push("call_context");
+  if (dataInjection.span_context || dataInjection.spanContext)
+    opts.push("span_context");
+  if (dataInjection.trace_context || dataInjection.traceContext)
+    opts.push("trace_context");
+  if (dataInjection.session_context || dataInjection.sessionContext)
+    opts.push("session_context");
+  if (dataInjection.call_context || dataInjection.callContext)
+    opts.push("call_context");
   if (opts.length > 0) return opts;
-  if (dataInjection.variables_only === false || dataInjection.variablesOnly === false) {
+  if (
+    dataInjection.variables_only === false ||
+    dataInjection.variablesOnly === false
+  ) {
     return ["full_row"];
   }
   return ["variables_only"];
@@ -243,7 +250,7 @@ const EvalCreatePage = () => {
             setInstructions(d.instructions || "");
             setCode(config.code || d.code || PYTHON_CODE_TEMPLATE);
             setCodeLanguage(config.language || "python");
-            setModel(config.model || d.model || ("turing_large"));
+            setModel(config.model || d.model || "turing_large");
             setOutputType(d.output_type_normalized || "pass_fail");
             setPassThreshold(d.pass_threshold ?? 0.5);
             setChoiceScores(d.choice_scores || {});
@@ -325,7 +332,8 @@ const EvalCreatePage = () => {
       if (contextOptions.includes("dataset_row")) flags.full_row = true;
       if (contextOptions.includes("span_context")) flags.span_context = true;
       if (contextOptions.includes("trace_context")) flags.trace_context = true;
-      if (contextOptions.includes("session_context")) flags.session_context = true;
+      if (contextOptions.includes("session_context"))
+        flags.session_context = true;
       if (contextOptions.includes("call_context")) flags.call_context = true;
       // If nothing specific matched, default to full_row for backward compat
       return Object.keys(flags).length > 0 ? flags : { full_row: true };
@@ -481,6 +489,12 @@ const EvalCreatePage = () => {
         }
         return acc;
       }, {});
+      const pinnedVersions = selectedChildren.reduce((acc, child) => {
+        if (child.pinned_version_id) {
+          acc[child.child_id] = child.pinned_version_id;
+        }
+        return acc;
+      }, {});
       const payload = {
         name: compositeName.trim(),
         description: compositeDescription || null,
@@ -489,6 +503,8 @@ const EvalCreatePage = () => {
         aggregation_function: aggregationFunction,
         composite_child_axis: compositeChildAxis,
         child_weights: Object.keys(weights).length > 0 ? weights : null,
+        child_pinned_versions:
+          Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
       };
       const result = await createComposite.mutateAsync(payload);
       enqueueSnackbar("Composite evaluation created successfully", {
@@ -570,8 +586,7 @@ const EvalCreatePage = () => {
   // excluded: the save button is already disabled while `isLoading`, so the
   // user can't double-fire, and including it here would open a dialog about
   // "clearing test results" when there are none to clear.
-  const hasProgressToDiscard =
-    testPassed || testError !== null || isTesting;
+  const hasProgressToDiscard = testPassed || testError !== null || isTesting;
 
   const handleModeChange = useCallback(
     (_, val) => {
@@ -1313,8 +1328,13 @@ const EvalCreatePage = () => {
                   } else if (mode === "composite" && !hasCompositeChildren) {
                     testDisabledReason =
                       "Add at least one child evaluation to run a test.";
-                  } else if (mode !== "composite" && evalType === "code" && !hasCode) {
-                    testDisabledReason = "Write some code before running a test.";
+                  } else if (
+                    mode !== "composite" &&
+                    evalType === "code" &&
+                    !hasCode
+                  ) {
+                    testDisabledReason =
+                      "Write some code before running a test.";
                   } else if (
                     mode !== "composite" &&
                     evalType !== "code" &&
@@ -1329,8 +1349,8 @@ const EvalCreatePage = () => {
                   ) {
                     testDisabledReason =
                       templateFormat === "jinja"
-                        ? 'Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) so test input can be passed in.'
-                        : 'Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) so test input can be passed in.';
+                        ? "Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) so test input can be passed in."
+                        : "Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) so test input can be passed in.";
                   }
 
                   return (
@@ -1378,7 +1398,8 @@ const EvalCreatePage = () => {
                         "Add at least one child evaluation before saving.";
                     }
                   } else if (!name.trim()) {
-                    saveDisabledReason = "Give this evaluation a name before saving.";
+                    saveDisabledReason =
+                      "Give this evaluation a name before saving.";
                   } else if (evalType === "code" && !code.trim()) {
                     saveDisabledReason = "Write some code before saving.";
                   } else if (evalType !== "code" && !instructions.trim()) {

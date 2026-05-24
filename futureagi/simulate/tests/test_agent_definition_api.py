@@ -666,11 +666,46 @@ class TestFetchAssistantFromProvider:
             {"assistant_id": "a", "api_key": "b", "provider": "vapi"},
             format="json",
         )
-        # ViewSet uses `permissions` (not `permission_classes`), so
-        # unauthenticated requests may pass through to validation/execution.
-        # Accept 400 (validation/provider error) or 401/403 (auth denied).
         assert response.status_code in [
-            status.HTTP_400_BAD_REQUEST,
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestAgentDefinitionOperationsCRUD:
+    """Regression coverage for the router-backed agent definition CRUD API."""
+
+    URL = "/simulate/api/agent-definition-operations/"
+
+    def test_text_agent_crud_does_not_use_read_only_serializer(self, auth_client):
+        payload = {
+            "agent_name": "Operations Text Bot",
+            "agent_type": "text",
+            "inbound": True,
+            "languages": ["en"],
+            "description": "Created through the operations ViewSet.",
+            "model": "gpt-4o-mini",
+            "model_details": {"source": "test"},
+        }
+        response = auth_client.post(self.URL, payload, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
+        created = response.json()
+        agent_id = created["id"]
+        assert created["agent_name"] == payload["agent_name"]
+        assert created["inbound"] is True
+
+        patch_response = auth_client.patch(
+            f"{self.URL}{agent_id}/",
+            {"description": "Updated through the operations ViewSet."},
+            format="json",
+        )
+        assert patch_response.status_code == status.HTTP_200_OK
+        assert patch_response.json()["description"] == (
+            "Updated through the operations ViewSet."
+        )
+
+        delete_response = auth_client.delete(f"{self.URL}{agent_id}/")
+        assert delete_response.status_code == status.HTTP_204_NO_CONTENT

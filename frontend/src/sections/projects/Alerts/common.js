@@ -30,6 +30,50 @@ const formatYAxisValue = (value) => {
   return value.toFixed(2);
 };
 
+export const normalizeAlertFilters = (filters = {}) => {
+  const observationType =
+    filters?.observationType ?? filters?.observation_type ?? [];
+  const spanAttributesFilters =
+    filters?.spanAttributesFilters ?? filters?.span_attributes_filters ?? [];
+
+  return {
+    ...filters,
+    observationType,
+    observation_type: filters?.observation_type ?? observationType,
+    spanAttributesFilters,
+    span_attributes_filters:
+      filters?.span_attributes_filters ?? spanAttributesFilters,
+  };
+};
+
+export const normalizeAlertListRow = (row = {}) => ({
+  ...row,
+  metricType: row?.metricType ?? row?.metric_type,
+  lastTriggered: row?.lastTriggered ?? row?.last_triggered,
+  noOfAlerts: row?.noOfAlerts ?? row?.no_of_alerts ?? 0,
+  isMute: row?.isMute ?? row?.is_mute ?? false,
+  filters: normalizeAlertFilters(row?.filters),
+});
+
+export const isAlertMuted = (row) => Boolean(row?.isMute ?? row?.is_mute);
+
+export const getAlertFilterValue = (data) => {
+  const filters = [];
+  const normalizedFilters = normalizeAlertFilters(data?.filters);
+  const observationTypes = normalizedFilters.observationType ?? [];
+  if (observationTypes?.length > 0) {
+    filters.push(`Span Type is ${_.toUpper(observationTypes.join(", "))}`);
+  }
+  const spanAttributes = normalizedFilters.spanAttributesFilters ?? [];
+  if (spanAttributes.length > 0) {
+    const customAttributeString = `Custom attribute is ${spanAttributes
+      .map((f) => `(${f.columnId ?? f.column_id})`)
+      .join(",")}`;
+    filters.push(customAttributeString);
+  }
+  return filters;
+};
+
 export const alertTypes = [
   {
     category: "Application performance alerts",

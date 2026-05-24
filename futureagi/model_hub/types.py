@@ -315,6 +315,7 @@ class CompositeCreateRequest(BaseModel):
     aggregation_enabled: bool = True
     aggregation_function: str = "weighted_avg"
     child_weights: dict[str, float] | None = None
+    child_pinned_versions: dict[str, str | None] | None = None
     # Empty string means legacy / unset: no homogeneity enforcement.
     # Frontend always sends a real axis.
     composite_child_axis: str = ""
@@ -365,6 +366,7 @@ class CompositeUpdateRequest(BaseModel):
         default=None, min_length=1, max_length=50
     )
     child_weights: dict[str, float] | None = None
+    child_pinned_versions: dict[str, str | None] | None = None
     composite_child_axis: str | None = None
 
 

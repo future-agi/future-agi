@@ -172,6 +172,8 @@ class EditEvalTaskSerializer(serializers.Serializer):
         )
 
     def validate_evals(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one eval config is required.")
         try:
             eval_objects = list(
                 CustomEvalConfig.objects.filter(id__in=value, deleted=False)

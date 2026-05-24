@@ -2,6 +2,7 @@ import json
 
 from rest_framework import serializers
 
+from tfc.utils.api_serializers import StrictInputMixin, StrictInputSerializer
 from tfc.utils.serializer_fields import JSON_VALUE_SCHEMA, JsonValueField
 from tracer.utils.filter_operators import (
     FILTER_TYPE_ALLOWED_OPS,
@@ -116,17 +117,8 @@ FILTER_CONFIG_REQUIRED_KEYS = set(FILTER_CONFIG_SCHEMA["required"])
 EVAL_TASK_FILTER_ALLOWED_KEYS = set(EVAL_TASK_FILTERS_SCHEMA["properties"])
 
 
-class StrictInputSerializer(serializers.Serializer):
-    """Reject unknown request fields so aliases cannot drift back in silently."""
-
-    def to_internal_value(self, data):
-        if hasattr(data, "keys"):
-            unknown = sorted(set(data.keys()) - set(self.fields.keys()))
-            if unknown:
-                raise serializers.ValidationError(
-                    {key: ["Unknown field."] for key in unknown}
-                )
-        return super().to_internal_value(data)
+class RejectUnknownFieldsMixin(StrictInputMixin):
+    """Backward-compatible name for strict request serializers."""
 
 
 class ObserveGraphMetricConfigField(serializers.JSONField):

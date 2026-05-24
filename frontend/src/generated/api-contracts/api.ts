@@ -58,6 +58,7 @@ import type {
   AdminPricingListResponseApi,
   AdminPricingMutationRequestApi,
   AdminPricingMutationResponseApi,
+  AgentDefinitionApi,
   AgentDefinitionBulkDeleteRequestApi,
   AgentDefinitionBulkDeleteResponseApi,
   AgentDefinitionCreateRequestApi,
@@ -211,6 +212,7 @@ import type {
   BulkDestroyAnnotationsRequestApi,
   BulkDestroyAnnotationsResponseApi,
   BulkRemoveItemsApi,
+  BulkReviewItemsRequestApi,
   CICDJobApi,
   CallBranchAnalysisResponseApi,
   CallBranchDeviationCreateResponseApi,
@@ -539,12 +541,17 @@ import type {
   HuggingFaceDatasetListResponseApi,
   ImagineAnalysisResponseApi,
   ImportAnnotationsApi,
+  IntegrationConnectionCreateApi,
   IntegrationConnectionDetailApi,
+  IntegrationConnectionDetailResponseApi,
   IntegrationConnectionListApi,
+  IntegrationConnectionListResponseApi,
+  IntegrationConnectionUpdateApi,
+  IntegrationEmptyRequestApi,
   IntegrationErrorResponseApi,
-  IntegrationsConnectionsList200,
+  IntegrationMessageResponseApi,
+  IntegrationValidationResponseApi,
   IntegrationsConnectionsListParams,
-  IntegrationsSyncLogsList200,
   IntegrationsSyncLogsListParams,
   InviteCancelApi,
   InviteCreateApi,
@@ -846,6 +853,7 @@ import type {
   QueueAnnotateDetailResponseApi,
   QueueAssignItemsResponseApi,
   QueueBulkRemoveItemsResponseApi,
+  QueueBulkReviewItemsResponseApi,
   QueueDefaultRequestApi,
   QueueDefaultResponseApi,
   QueueDiscussionResponseApi,
@@ -1037,6 +1045,7 @@ import type {
   SwitchWorkspaceApi,
   SwitchWorkspaceResponseApi,
   SyncLogApi,
+  SyncLogListResponseApi,
   SyntheticDataApi,
   SyntheticDatasetConfigApi,
   SyntheticDatasetConfigResponseApi,
@@ -1292,6 +1301,7 @@ import type {
   UsersResponseApi,
   ValidateCELRequestApi,
   ValidateCELResponseApi,
+  ValidateCredentialsApi,
   ValidateLiveKitCredentialsRequestApi,
   ValidateLiveKitCredentialsResponseApi,
   VectorDBColumnRequestApi,
@@ -19172,7 +19182,7 @@ export const healthList = async ( options?: RequestInit): Promise<healthListResp
 
 
 export type integrationsConnectionsListResponse200 = {
-  data: IntegrationsConnectionsList200
+  data: IntegrationConnectionListResponseApi
   status: 200
 }
 
@@ -19241,7 +19251,7 @@ export const integrationsConnectionsList = async (params?: IntegrationsConnectio
 
 
 export type integrationsConnectionsCreateResponse201 = {
-  data: IntegrationConnectionListApi
+  data: IntegrationConnectionDetailResponseApi
   status: 201
 }
 
@@ -19285,7 +19295,7 @@ export const getIntegrationsConnectionsCreateUrl = () => {
 /**
  * API endpoints for managing integration connections.
  */
-export const integrationsConnectionsCreate = async (integrationConnectionListApi: NonReadonly<IntegrationConnectionListApi>, options?: RequestInit): Promise<integrationsConnectionsCreateResponse> => {
+export const integrationsConnectionsCreate = async (integrationConnectionCreateApi: IntegrationConnectionCreateApi, options?: RequestInit): Promise<integrationsConnectionsCreateResponse> => {
 
   return apiMutator<integrationsConnectionsCreateResponse>(getIntegrationsConnectionsCreateUrl(),
   {
@@ -19293,15 +19303,15 @@ export const integrationsConnectionsCreate = async (integrationConnectionListApi
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      integrationConnectionListApi,)
+      integrationConnectionCreateApi,)
   }
 );}
 
 
 
-export type integrationsConnectionsValidateCredentialsResponse201 = {
-  data: IntegrationConnectionListApi
-  status: 201
+export type integrationsConnectionsValidateCredentialsResponse200 = {
+  data: IntegrationValidationResponseApi
+  status: 200
 }
 
 export type integrationsConnectionsValidateCredentialsResponse400 = {
@@ -19321,10 +19331,10 @@ export type integrationsConnectionsValidateCredentialsResponse500 = {
 
 export type integrationsConnectionsValidateCredentialsResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
 }
 
-export type integrationsConnectionsValidateCredentialsResponseSuccess = (integrationsConnectionsValidateCredentialsResponse201) & {
+export type integrationsConnectionsValidateCredentialsResponseSuccess = (integrationsConnectionsValidateCredentialsResponse200) & {
   headers: Headers;
 };
 export type integrationsConnectionsValidateCredentialsResponseError = (integrationsConnectionsValidateCredentialsResponse400 | integrationsConnectionsValidateCredentialsResponse404 | integrationsConnectionsValidateCredentialsResponse500 | integrationsConnectionsValidateCredentialsResponseDefault) & {
@@ -19344,7 +19354,7 @@ export const getIntegrationsConnectionsValidateCredentialsUrl = () => {
 /**
  * Validate platform credentials without creating a connection.
  */
-export const integrationsConnectionsValidateCredentials = async (integrationConnectionListApi: NonReadonly<IntegrationConnectionListApi>, options?: RequestInit): Promise<integrationsConnectionsValidateCredentialsResponse> => {
+export const integrationsConnectionsValidateCredentials = async (validateCredentialsApi: ValidateCredentialsApi, options?: RequestInit): Promise<integrationsConnectionsValidateCredentialsResponse> => {
 
   return apiMutator<integrationsConnectionsValidateCredentialsResponse>(getIntegrationsConnectionsValidateCredentialsUrl(),
   {
@@ -19352,7 +19362,7 @@ export const integrationsConnectionsValidateCredentials = async (integrationConn
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      integrationConnectionListApi,)
+      validateCredentialsApi,)
   }
 );}
 
@@ -19477,7 +19487,7 @@ export const integrationsConnectionsUpdate = async (id: string,
 
 
 export type integrationsConnectionsPartialUpdateResponse200 = {
-  data: IntegrationConnectionListApi
+  data: IntegrationConnectionDetailResponseApi
   status: 200
 }
 
@@ -19522,7 +19532,7 @@ export const getIntegrationsConnectionsPartialUpdateUrl = (id: string,) => {
  * API endpoints for managing integration connections.
  */
 export const integrationsConnectionsPartialUpdate = async (id: string,
-    integrationConnectionListApi: NonReadonly<IntegrationConnectionListApi>, options?: RequestInit): Promise<integrationsConnectionsPartialUpdateResponse> => {
+    integrationConnectionUpdateApi: IntegrationConnectionUpdateApi, options?: RequestInit): Promise<integrationsConnectionsPartialUpdateResponse> => {
 
   return apiMutator<integrationsConnectionsPartialUpdateResponse>(getIntegrationsConnectionsPartialUpdateUrl(id),
   {
@@ -19530,7 +19540,7 @@ export const integrationsConnectionsPartialUpdate = async (id: string,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      integrationConnectionListApi,)
+      integrationConnectionUpdateApi,)
   }
 );}
 
@@ -19594,9 +19604,9 @@ export const integrationsConnectionsDelete = async (id: string, options?: Reques
 
 
 
-export type integrationsConnectionsPauseResponse201 = {
-  data: IntegrationConnectionListApi
-  status: 201
+export type integrationsConnectionsPauseResponse200 = {
+  data: IntegrationConnectionDetailResponseApi
+  status: 200
 }
 
 export type integrationsConnectionsPauseResponse400 = {
@@ -19616,10 +19626,10 @@ export type integrationsConnectionsPauseResponse500 = {
 
 export type integrationsConnectionsPauseResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
 }
 
-export type integrationsConnectionsPauseResponseSuccess = (integrationsConnectionsPauseResponse201) & {
+export type integrationsConnectionsPauseResponseSuccess = (integrationsConnectionsPauseResponse200) & {
   headers: Headers;
 };
 export type integrationsConnectionsPauseResponseError = (integrationsConnectionsPauseResponse400 | integrationsConnectionsPauseResponse404 | integrationsConnectionsPauseResponse500 | integrationsConnectionsPauseResponseDefault) & {
@@ -19640,7 +19650,7 @@ export const getIntegrationsConnectionsPauseUrl = (id: string,) => {
  * Pause syncing for this connection.
  */
 export const integrationsConnectionsPause = async (id: string,
-    integrationConnectionListApi: NonReadonly<IntegrationConnectionListApi>, options?: RequestInit): Promise<integrationsConnectionsPauseResponse> => {
+    integrationEmptyRequestApi: IntegrationEmptyRequestApi, options?: RequestInit): Promise<integrationsConnectionsPauseResponse> => {
 
   return apiMutator<integrationsConnectionsPauseResponse>(getIntegrationsConnectionsPauseUrl(id),
   {
@@ -19648,15 +19658,15 @@ export const integrationsConnectionsPause = async (id: string,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      integrationConnectionListApi,)
+      integrationEmptyRequestApi,)
   }
 );}
 
 
 
-export type integrationsConnectionsResumeResponse201 = {
-  data: IntegrationConnectionListApi
-  status: 201
+export type integrationsConnectionsResumeResponse200 = {
+  data: IntegrationConnectionDetailResponseApi
+  status: 200
 }
 
 export type integrationsConnectionsResumeResponse400 = {
@@ -19676,10 +19686,10 @@ export type integrationsConnectionsResumeResponse500 = {
 
 export type integrationsConnectionsResumeResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 500>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
 }
 
-export type integrationsConnectionsResumeResponseSuccess = (integrationsConnectionsResumeResponse201) & {
+export type integrationsConnectionsResumeResponseSuccess = (integrationsConnectionsResumeResponse200) & {
   headers: Headers;
 };
 export type integrationsConnectionsResumeResponseError = (integrationsConnectionsResumeResponse400 | integrationsConnectionsResumeResponse404 | integrationsConnectionsResumeResponse500 | integrationsConnectionsResumeResponseDefault) & {
@@ -19700,7 +19710,7 @@ export const getIntegrationsConnectionsResumeUrl = (id: string,) => {
  * Resume syncing for a paused connection.
  */
 export const integrationsConnectionsResume = async (id: string,
-    integrationConnectionListApi: NonReadonly<IntegrationConnectionListApi>, options?: RequestInit): Promise<integrationsConnectionsResumeResponse> => {
+    integrationEmptyRequestApi: IntegrationEmptyRequestApi, options?: RequestInit): Promise<integrationsConnectionsResumeResponse> => {
 
   return apiMutator<integrationsConnectionsResumeResponse>(getIntegrationsConnectionsResumeUrl(id),
   {
@@ -19708,15 +19718,15 @@ export const integrationsConnectionsResume = async (id: string,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      integrationConnectionListApi,)
+      integrationEmptyRequestApi,)
   }
 );}
 
 
 
-export type integrationsConnectionsSyncNowResponse201 = {
-  data: IntegrationConnectionListApi
-  status: 201
+export type integrationsConnectionsSyncNowResponse200 = {
+  data: IntegrationMessageResponseApi
+  status: 200
 }
 
 export type integrationsConnectionsSyncNowResponse400 = {
@@ -19741,10 +19751,10 @@ export type integrationsConnectionsSyncNowResponse500 = {
 
 export type integrationsConnectionsSyncNowResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201 | 400 | 404 | 409 | 500>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 409 | 500>
 }
 
-export type integrationsConnectionsSyncNowResponseSuccess = (integrationsConnectionsSyncNowResponse201) & {
+export type integrationsConnectionsSyncNowResponseSuccess = (integrationsConnectionsSyncNowResponse200) & {
   headers: Headers;
 };
 export type integrationsConnectionsSyncNowResponseError = (integrationsConnectionsSyncNowResponse400 | integrationsConnectionsSyncNowResponse404 | integrationsConnectionsSyncNowResponse409 | integrationsConnectionsSyncNowResponse500 | integrationsConnectionsSyncNowResponseDefault) & {
@@ -19765,7 +19775,7 @@ export const getIntegrationsConnectionsSyncNowUrl = (id: string,) => {
  * Trigger an immediate sync for this connection.
  */
 export const integrationsConnectionsSyncNow = async (id: string,
-    integrationConnectionListApi: NonReadonly<IntegrationConnectionListApi>, options?: RequestInit): Promise<integrationsConnectionsSyncNowResponse> => {
+    integrationEmptyRequestApi: IntegrationEmptyRequestApi, options?: RequestInit): Promise<integrationsConnectionsSyncNowResponse> => {
 
   return apiMutator<integrationsConnectionsSyncNowResponse>(getIntegrationsConnectionsSyncNowUrl(id),
   {
@@ -19773,14 +19783,14 @@ export const integrationsConnectionsSyncNow = async (id: string,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      integrationConnectionListApi,)
+      integrationEmptyRequestApi,)
   }
 );}
 
 
 
 export type integrationsSyncLogsListResponse200 = {
-  data: IntegrationsSyncLogsList200
+  data: SyncLogListResponseApi
   status: 200
 }
 
@@ -22848,6 +22858,76 @@ export const modelHubAnnotationQueuesItemsBulkRemove = async (queueId: string,
 
 
 
+export type modelHubAnnotationQueuesItemsBulkReviewResponse200 = {
+  data: QueueBulkReviewItemsResponseApi
+  status: 200
+}
+
+export type modelHubAnnotationQueuesItemsBulkReviewResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type modelHubAnnotationQueuesItemsBulkReviewResponse403 = {
+  data: ApiTextErrorResponseApi
+  status: 403
+}
+
+export type modelHubAnnotationQueuesItemsBulkReviewResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type modelHubAnnotationQueuesItemsBulkReviewResponse409 = {
+  data: ApiTextErrorResponseApi
+  status: 409
+}
+
+export type modelHubAnnotationQueuesItemsBulkReviewResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type modelHubAnnotationQueuesItemsBulkReviewResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
+}
+
+export type modelHubAnnotationQueuesItemsBulkReviewResponseSuccess = (modelHubAnnotationQueuesItemsBulkReviewResponse200) & {
+  headers: Headers;
+};
+export type modelHubAnnotationQueuesItemsBulkReviewResponseError = (modelHubAnnotationQueuesItemsBulkReviewResponse400 | modelHubAnnotationQueuesItemsBulkReviewResponse403 | modelHubAnnotationQueuesItemsBulkReviewResponse404 | modelHubAnnotationQueuesItemsBulkReviewResponse409 | modelHubAnnotationQueuesItemsBulkReviewResponse500 | modelHubAnnotationQueuesItemsBulkReviewResponseDefault) & {
+  headers: Headers;
+};
+
+export type modelHubAnnotationQueuesItemsBulkReviewResponse = (modelHubAnnotationQueuesItemsBulkReviewResponseSuccess | modelHubAnnotationQueuesItemsBulkReviewResponseError)
+
+export const getModelHubAnnotationQueuesItemsBulkReviewUrl = (queueId: string,) => {
+
+
+
+
+  return `/model-hub/annotation-queues/${queueId}/items/bulk-review/`
+}
+
+/**
+ * Approve or send back multiple pending-review items.
+ */
+export const modelHubAnnotationQueuesItemsBulkReview = async (queueId: string,
+    bulkReviewItemsRequestApi: BulkReviewItemsRequestApi, options?: RequestInit): Promise<modelHubAnnotationQueuesItemsBulkReviewResponse> => {
+
+  return apiMutator<modelHubAnnotationQueuesItemsBulkReviewResponse>(getModelHubAnnotationQueuesItemsBulkReviewUrl(queueId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      bulkReviewItemsRequestApi,)
+  }
+);}
+
+
+
 export type modelHubAnnotationQueuesItemsNextItemResponse200 = {
   data: QueueNextItemResponseApi
   status: 200
@@ -23613,6 +23693,127 @@ export const modelHubAnnotationQueuesItemsDiscussionCreate = async (queueId: str
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       discussionCommentRequestApi,)
+  }
+);}
+
+
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse200 = {
+  data: QueueDiscussionResponseApi
+  status: 200
+}
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse403 = {
+  data: ApiTextErrorResponseApi
+  status: 403
+}
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse409 = {
+  data: ApiTextErrorResponseApi
+  status: 409
+}
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
+}
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseSuccess = (modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseError = (modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse400 | modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse403 | modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse404 | modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse409 | modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse500 | modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse = (modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseSuccess | modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseError)
+
+export const getModelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateUrl = (queueId: string,
+    id: string,
+    commentId: string,) => {
+
+
+
+
+  return `/model-hub/annotation-queues/${queueId}/items/${id}/discussion/comments/${commentId}/`
+}
+
+/**
+ * Edit or delete a non-blocking discussion comment.
+ */
+export const modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdate = async (queueId: string,
+    id: string,
+    commentId: string,
+    discussionCommentRequestApi: DiscussionCommentRequestApi, options?: RequestInit): Promise<modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse> => {
+
+  return apiMutator<modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse>(getModelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateUrl(queueId,id,commentId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      discussionCommentRequestApi,)
+  }
+);}
+
+
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponse204 = {
+  data: void
+  status: 204
+}
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 204>
+}
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseSuccess = (modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponse204) & {
+  headers: Headers;
+};
+export type modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseError = (modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponse = (modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseSuccess | modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponseError)
+
+export const getModelHubAnnotationQueuesItemsDiscussionCommentsDeleteUrl = (queueId: string,
+    id: string,
+    commentId: string,) => {
+
+
+
+
+  return `/model-hub/annotation-queues/${queueId}/items/${id}/discussion/comments/${commentId}/`
+}
+
+/**
+ * Edit or delete a non-blocking discussion comment.
+ */
+export const modelHubAnnotationQueuesItemsDiscussionCommentsDelete = async (queueId: string,
+    id: string,
+    commentId: string, options?: RequestInit): Promise<modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponse> => {
+
+  return apiMutator<modelHubAnnotationQueuesItemsDiscussionCommentsDeleteResponse>(getModelHubAnnotationQueuesItemsDiscussionCommentsDeleteUrl(queueId,id,commentId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
   }
 );}
 
@@ -51234,7 +51435,7 @@ export const simulateApiAgentDefinitionOperationsList = async (params?: Simulate
 
 
 export type simulateApiAgentDefinitionOperationsCreateResponse201 = {
-  data: AgentDefinitionResponseApi
+  data: AgentDefinitionApi
   status: 201
 }
 
@@ -51270,7 +51471,7 @@ export const getSimulateApiAgentDefinitionOperationsCreateUrl = () => {
   return `/simulate/api/agent-definition-operations/`
 }
 
-export const simulateApiAgentDefinitionOperationsCreate = async (agentDefinitionResponseApi: NonReadonly<AgentDefinitionResponseApi>, options?: RequestInit): Promise<simulateApiAgentDefinitionOperationsCreateResponse> => {
+export const simulateApiAgentDefinitionOperationsCreate = async (agentDefinitionApi: NonReadonly<AgentDefinitionApi>, options?: RequestInit): Promise<simulateApiAgentDefinitionOperationsCreateResponse> => {
 
   return apiMutator<simulateApiAgentDefinitionOperationsCreateResponse>(getSimulateApiAgentDefinitionOperationsCreateUrl(),
   {
@@ -51278,7 +51479,7 @@ export const simulateApiAgentDefinitionOperationsCreate = async (agentDefinition
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      agentDefinitionResponseApi,)
+      agentDefinitionApi,)
   }
 );}
 
@@ -51395,7 +51596,7 @@ export const simulateApiAgentDefinitionOperationsRead = async (id: string, optio
 
 
 export type simulateApiAgentDefinitionOperationsUpdateResponse200 = {
-  data: AgentDefinitionResponseApi
+  data: AgentDefinitionApi
   status: 200
 }
 
@@ -51437,7 +51638,7 @@ export const getSimulateApiAgentDefinitionOperationsUpdateUrl = (id: string,) =>
 }
 
 export const simulateApiAgentDefinitionOperationsUpdate = async (id: string,
-    agentDefinitionResponseApi: NonReadonly<AgentDefinitionResponseApi>, options?: RequestInit): Promise<simulateApiAgentDefinitionOperationsUpdateResponse> => {
+    agentDefinitionApi: NonReadonly<AgentDefinitionApi>, options?: RequestInit): Promise<simulateApiAgentDefinitionOperationsUpdateResponse> => {
 
   return apiMutator<simulateApiAgentDefinitionOperationsUpdateResponse>(getSimulateApiAgentDefinitionOperationsUpdateUrl(id),
   {
@@ -51445,14 +51646,14 @@ export const simulateApiAgentDefinitionOperationsUpdate = async (id: string,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      agentDefinitionResponseApi,)
+      agentDefinitionApi,)
   }
 );}
 
 
 
 export type simulateApiAgentDefinitionOperationsPartialUpdateResponse200 = {
-  data: AgentDefinitionResponseApi
+  data: AgentDefinitionApi
   status: 200
 }
 
@@ -51494,7 +51695,7 @@ export const getSimulateApiAgentDefinitionOperationsPartialUpdateUrl = (id: stri
 }
 
 export const simulateApiAgentDefinitionOperationsPartialUpdate = async (id: string,
-    agentDefinitionResponseApi: NonReadonly<AgentDefinitionResponseApi>, options?: RequestInit): Promise<simulateApiAgentDefinitionOperationsPartialUpdateResponse> => {
+    agentDefinitionApi: NonReadonly<AgentDefinitionApi>, options?: RequestInit): Promise<simulateApiAgentDefinitionOperationsPartialUpdateResponse> => {
 
   return apiMutator<simulateApiAgentDefinitionOperationsPartialUpdateResponse>(getSimulateApiAgentDefinitionOperationsPartialUpdateUrl(id),
   {
@@ -51502,7 +51703,7 @@ export const simulateApiAgentDefinitionOperationsPartialUpdate = async (id: stri
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      agentDefinitionResponseApi,)
+      agentDefinitionApi,)
   }
 );}
 
@@ -68031,6 +68232,13 @@ export const getTracerUserAlertsListUrl = (params?: TracerUserAlertsListParams,)
   return stringifiedParams.length > 0 ? `/tracer/user-alerts/?${stringifiedParams}` : `/tracer/user-alerts/`
 }
 
+/**
+ * ``get_queryset`` returns ``(page_queryset, total_count)`` for list
+requests because ``list_monitors`` also needs the total count. DRF's
+default ``list`` expects only a queryset, so keep the root endpoint
+explicit instead of letting DRF serialize the tuple incorrectly.
+ * @summary Return the paginated root monitor list.
+ */
 export const tracerUserAlertsList = async (params?: TracerUserAlertsListParams, options?: RequestInit): Promise<tracerUserAlertsListResponse> => {
 
   return apiMutator<tracerUserAlertsListResponse>(getTracerUserAlertsListUrl(params),

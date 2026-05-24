@@ -29,7 +29,11 @@ from model_hub.models.choices import (
     StatusType,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import (
+    CompositeEvalChild,
+    EvalTemplate,
+    UserEvalMetric,
+)
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
 from model_hub.models.run_prompt import RunPrompter
 from tfc.middleware.workspace_context import set_workspace_context
@@ -149,6 +153,34 @@ def eval_template(db, organization, workspace):
         criteria="Evaluate the following: {{output}}",
         model="gpt-4",
     )
+
+
+@pytest.fixture
+def composite_eval_template(db, organization, workspace):
+    child_output = EvalTemplate.objects.create(
+        name="experiment-composite-child-output",
+        organization=organization,
+        workspace=workspace,
+        config={"required_keys": ["output"]},
+        eval_type="code",
+    )
+    child_expected = EvalTemplate.objects.create(
+        name="experiment-composite-child-expected",
+        organization=organization,
+        workspace=workspace,
+        config={"required_keys": ["expected"]},
+        eval_type="code",
+    )
+    parent = EvalTemplate.objects.create(
+        name="experiment-composite-parent",
+        organization=organization,
+        workspace=workspace,
+        template_type="composite",
+        config={},
+    )
+    CompositeEvalChild.objects.create(parent=parent, child=child_output, order=0)
+    CompositeEvalChild.objects.create(parent=parent, child=child_expected, order=1)
+    return parent
 
 
 @pytest.fixture
@@ -680,6 +712,12 @@ class TestAddExperimentEvalView:
             )
 
         assert response.status_code == status.HTTP_200_OK
+        metric = UserEvalMetric.objects.get(
+            name="experiment-eval",
+            template=eval_template,
+            source_id=str(experiment.id),
+        )
+        assert metric.config["reason_column"] is True
 
     def test_add_experiment_eval_missing_name(
         self, auth_client, experiment, experiment_dataset, eval_template
@@ -711,6 +749,204 @@ class TestAddExperimentEvalView:
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
+
+    def test_add_experiment_eval_rejects_composite_missing_child_required_mapping(
+        self, auth_client, experiment, composite_eval_template
+    ):
+        """Experiment eval binding must validate child-required composite keys."""
+        payload = {
+            "name": "experiment-composite-missing",
+            "template_id": str(composite_eval_template.id),
+            "config": {
+                "mapping": {"output": "output_column"},
+            },
+        }
+
+        response = auth_client.post(
+            f"/model-hub/experiments/{experiment.id}/add-eval/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "expected" in str(response.data)
+        assert not UserEvalMetric.objects.filter(
+            name="experiment-composite-missing",
+            template=composite_eval_template,
+            source_id=str(experiment.id),
+            deleted=False,
+        ).exists()
+
+    def test_add_experiment_eval_rejects_other_org_experiment(
+        self, auth_client, eval_template
+    ):
+        """A known experiment UUID from another org cannot receive eval metrics."""
+        other_org = Organization.objects.create(name="Other Organization")
+        other_user = User.objects.create_user(
+            email="other@example.com",
+            password="testpassword123",
+            name="Other User",
+            organization=other_org,
+        )
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=other_org,
+            is_default=True,
+            created_by=other_user,
+        )
+        other_dataset = Dataset.objects.create(
+            name="Other Dataset",
+            organization=other_org,
+            workspace=other_workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_output = Column.objects.create(
+            name="Other Output",
+            dataset=other_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.RUN_PROMPT.value,
+        )
+        other_experiment = ExperimentsTable.objects.create(
+            name="Other Experiment",
+            dataset=other_dataset,
+            column=other_output,
+            status=StatusType.COMPLETED.value,
+        )
+
+        response = auth_client.post(
+            f"/model-hub/experiments/{other_experiment.id}/add-eval/",
+            {
+                "name": "other-org-experiment-eval",
+                "template_id": str(eval_template.id),
+                "config": {"mapping": {"output": "output_column"}},
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert not UserEvalMetric.objects.filter(
+            name="other-org-experiment-eval",
+            source_id=str(other_experiment.id),
+        ).exists()
+
+
+@pytest.mark.django_db
+class TestExperimentInlineEvalMetrics:
+    def test_create_eval_metrics_inline_defaults_reason_column(
+        self,
+        experiment,
+        dataset,
+        organization,
+        user,
+        workspace,
+        eval_template,
+    ):
+        from model_hub.views.experiments import _create_eval_metrics_inline
+
+        metrics = _create_eval_metrics_inline(
+            eval_entries=[
+                {
+                    "name": "inline-default-reason",
+                    "template_id": eval_template.id,
+                    "config": {"mapping": {"output": "output_column"}},
+                    "model": "turing_small",
+                }
+            ],
+            experiment=experiment,
+            snapshot_dataset=dataset,
+            organization=organization,
+            user=user,
+            workspace=workspace,
+        )
+
+        assert metrics[0].config["reason_column"] is True
+
+    def test_create_eval_metrics_inline_rejects_composite_missing_child_required_mapping(
+        self,
+        experiment,
+        dataset,
+        organization,
+        user,
+        workspace,
+        composite_eval_template,
+    ):
+        from model_hub.views.experiments import _create_eval_metrics_inline
+
+        with pytest.raises(ValueError, match="expected"):
+            _create_eval_metrics_inline(
+                eval_entries=[
+                    {
+                        "name": "inline-composite-missing",
+                        "template_id": composite_eval_template.id,
+                        "config": {"mapping": {"output": "output_column"}},
+                        "model": "turing_small",
+                    }
+                ],
+                experiment=experiment,
+                snapshot_dataset=dataset,
+                organization=organization,
+                user=user,
+                workspace=workspace,
+            )
+
+        assert not UserEvalMetric.objects.filter(
+            name="inline-composite-missing",
+            template=composite_eval_template,
+            source_id=str(experiment.id),
+            deleted=False,
+        ).exists()
+
+    def test_diff_and_update_evals_rejects_composite_missing_child_required_mapping(
+        self,
+        experiment,
+        dataset,
+        organization,
+        user,
+        workspace,
+        composite_eval_template,
+    ):
+        from model_hub.views.experiments import _diff_and_update_evals
+
+        metric = UserEvalMetric.objects.create(
+            name="existing-inline-composite",
+            organization=organization,
+            workspace=workspace,
+            dataset=dataset,
+            template=composite_eval_template,
+            config={
+                "mapping": {
+                    "output": "output_column",
+                    "expected": "expected_column",
+                }
+            },
+            status=StatusType.EXPERIMENT_EVALUATION.value,
+            source_id=str(experiment.id),
+            user=user,
+        )
+        experiment.user_eval_template_ids.add(metric)
+
+        with pytest.raises(ValueError, match="expected"):
+            _diff_and_update_evals(
+                experiment=experiment,
+                new_eval_entries=[
+                    {
+                        "id": metric.id,
+                        "name": "existing-inline-composite",
+                        "template_id": composite_eval_template.id,
+                        "config": {"mapping": {"output": "output_column"}},
+                        "model": "turing_small",
+                    }
+                ],
+                organization=organization,
+                user=user,
+                workspace=workspace,
+            )
+
+        metric.refresh_from_db()
+        assert metric.config["mapping"] == {
+            "output": "output_column",
+            "expected": "expected_column",
+        }
 
 
 # ==================== RunAdditionalEvaluationsView Tests ====================

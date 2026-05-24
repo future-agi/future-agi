@@ -2100,6 +2100,57 @@ class TestGetAnnotationLabelsLegacy:
         assert resp.status_code == 400
         assert "projectId" in str(resp.data)
 
+    def test_project_trace_config_includes_all_label_types_before_scores(
+        self,
+        api_client,
+        user,
+        project,
+        observation_span,
+        star_label,
+        thumbs_label,
+        numeric_label,
+        text_label,
+        categorical_label,
+        monkeypatch,
+    ):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "should_use_clickhouse",
+            lambda self, query_type: False,
+        )
+        api_client.force_authenticate(user=user)
+        resp = api_client.get(
+            "/tracer/trace/list_traces_of_session/",
+            {
+                "project_id": str(project.id),
+                "page_number": 0,
+                "page_size": 30,
+            },
+        )
+
+        assert observation_span.trace_id
+        assert resp.status_code == 200, resp.data
+        result = _result(resp)
+        annotation_cols = [
+            c
+            for c in result["config"]
+            if c.get("group_by") == "Annotation Metrics"
+        ]
+        cols_by_id = {str(c["id"]): c for c in annotation_cols}
+        expected_types = {
+            str(star_label.id): AnnotationTypeChoices.STAR.value,
+            str(thumbs_label.id): AnnotationTypeChoices.THUMBS_UP_DOWN.value,
+            str(numeric_label.id): AnnotationTypeChoices.NUMERIC.value,
+            str(text_label.id): AnnotationTypeChoices.TEXT.value,
+            str(categorical_label.id): AnnotationTypeChoices.CATEGORICAL.value,
+        }
+
+        assert set(expected_types) <= set(cols_by_id)
+        for label_id, label_type in expected_types.items():
+            assert cols_by_id[label_id]["annotation_label_type"] == label_type
+
 
 # ===========================================================================
 # 31. GET /tracer/trace-annotation/get_annotation_values/

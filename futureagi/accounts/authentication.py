@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import re
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -38,6 +39,37 @@ logger = structlog.get_logger(__name__)
 # Rate limiting settings with defaults
 MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
 IP_BLOCK_DURATION: int = getattr(settings, "IP_BLOCK_DURATION", 3600)
+
+ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS = (
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/"
+        r"(?:assign|bulk-review)/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"(?:annotations/submit|complete|skip|release|review)/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"discussion/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"discussion/comments/[^/]+(?:/reaction)?/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"discussion/[^/]+/(?:resolve|reopen)/?$"
+    ),
+)
+
+
+def _is_annotation_queue_role_scoped_write_path(path):
+    """Allow queue-role checks in the annotation views to own these writes."""
+    return any(
+        pattern.search(path or "")
+        for pattern in ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS
+    )
 
 
 class APIKeyAuthentication(BaseAuthentication):
@@ -169,7 +201,7 @@ class APIKeyAuthentication(BaseAuthentication):
 
         should_skip_write_check = any(
             excluded_path in request.path for excluded_path in excluded_paths
-        )
+        ) or _is_annotation_queue_role_scoped_write_path(request.path)
 
         if (
             request.method in ["POST", "PUT", "PATCH", "DELETE"]

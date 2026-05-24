@@ -274,6 +274,57 @@ ScoreValue.propTypes = {
   onShowRaw: PropTypes.func,
 };
 
+function ValueHistory({ ann, onShowRaw }) {
+  const history = Array.isArray(ann.value_history) ? ann.value_history : [];
+  if (!history.length) return null;
+
+  return (
+    <Stack spacing={0.35} sx={{ pl: 3.25, pr: 0.5, mb: 0.25 }}>
+      {history.map((entry, index) => (
+        <Stack
+          key={`${ann.id}-history-${index}`}
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{ minHeight: 20 }}
+        >
+          <Typography
+            variant="caption"
+            color="text.disabled"
+            sx={{ minWidth: 90, flexShrink: 0, fontSize: 10.5 }}
+          >
+            Previous {index + 1}
+          </Typography>
+          <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden", opacity: 0.8 }}>
+            <ScoreValue
+              value={entry.value}
+              labelType={ann.label_type}
+              labelSettings={ann.label_settings}
+              onShowRaw={onShowRaw}
+            />
+          </Box>
+          {entry.at && (
+            <Tooltip title={fDateTime(entry.at)} placement="top">
+              <Typography
+                variant="caption"
+                color="text.disabled"
+                sx={{ fontSize: 10.5, flexShrink: 0 }}
+              >
+                {fToNowStrict(entry.at)}
+              </Typography>
+            </Tooltip>
+          )}
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+
+ValueHistory.propTypes = {
+  ann: PropTypes.object.isRequired,
+  onShowRaw: PropTypes.func,
+};
+
 AnnotationHistory.propTypes = {
   queueId: PropTypes.string.isRequired,
   itemId: PropTypes.string,
@@ -379,76 +430,78 @@ export default function AnnotationHistory({ queueId, itemId }) {
                   )}
                 </Stack>
                 {group.items.map((ann) => (
-                  <Stack
-                    key={ann.id}
-                    direction="row"
-                    alignItems="center"
-                    spacing={1}
-                    sx={ROW_SX}
-                  >
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      title={ann.label_name}
-                      sx={{
-                        minWidth: 90,
-                        flexShrink: 0,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        fontSize: 11.5,
-                      }}
+                  <React.Fragment key={ann.id}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      spacing={1}
+                      sx={ROW_SX}
                     >
-                      {ann.label_name}
-                    </Typography>
-                    <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
-                      <ScoreValue
-                        value={ann.value}
-                        labelType={ann.label_type}
-                        labelSettings={ann.label_settings}
-                        onShowRaw={handleShowRaw}
-                      />
-                    </Box>
-                    {isEdited(ann) && (
-                      <Tooltip
-                        placement="top"
-                        title={
-                          <Box>
-                            <Box>Edited {fToNowStrict(ann.updated_at)}</Box>
-                            <Box sx={{ opacity: 0.75 }}>
-                              First submitted {fToNowStrict(ann.created_at)}
-                            </Box>
-                          </Box>
-                        }
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        title={ann.label_name}
+                        sx={{
+                          minWidth: 90,
+                          flexShrink: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          fontSize: 11.5,
+                        }}
                       >
-                        <Typography
-                          component="span"
-                          variant="caption"
-                          sx={{
-                            fontSize: 10.5,
-                            fontStyle: "italic",
-                            color: "text.disabled",
-                            lineHeight: 1,
-                            flexShrink: 0,
-                          }}
+                        {ann.label_name}
+                      </Typography>
+                      <Box sx={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
+                        <ScoreValue
+                          value={ann.value}
+                          labelType={ann.label_type}
+                          labelSettings={ann.label_settings}
+                          onShowRaw={handleShowRaw}
+                        />
+                      </Box>
+                      {isEdited(ann) && (
+                        <Tooltip
+                          placement="top"
+                          title={
+                            <Box>
+                              <Box>Edited {fToNowStrict(ann.updated_at)}</Box>
+                              <Box sx={{ opacity: 0.75 }}>
+                                First submitted {fToNowStrict(ann.created_at)}
+                              </Box>
+                            </Box>
+                          }
                         >
-                          edited
-                        </Typography>
-                      </Tooltip>
-                    )}
-                    {ann.notes && (
-                      <Tooltip title={ann.notes} placement="top">
-                        <Box sx={{ display: "flex", alignItems: "center" }}>
-                          <Iconify
-                            icon="eva:message-square-outline"
-                            width={12}
-                            sx={{ color: "text.disabled" }}
-                          />
-                        </Box>
-                      </Tooltip>
-                    )}
-                    <SourceDot source={ann.score_source} />
-                  </Stack>
+                          <Typography
+                            component="span"
+                            variant="caption"
+                            sx={{
+                              fontSize: 10.5,
+                              fontStyle: "italic",
+                              color: "text.disabled",
+                              lineHeight: 1,
+                              flexShrink: 0,
+                            }}
+                          >
+                            edited
+                          </Typography>
+                        </Tooltip>
+                      )}
+                      {ann.notes && (
+                        <Tooltip title={ann.notes} placement="top">
+                          <Box sx={{ display: "flex", alignItems: "center" }}>
+                            <Iconify
+                              icon="eva:message-square-outline"
+                              width={12}
+                              sx={{ color: "text.disabled" }}
+                            />
+                          </Box>
+                        </Tooltip>
+                      )}
+                      <SourceDot source={ann.score_source} />
+                    </Stack>
+                    <ValueHistory ann={ann} onShowRaw={handleShowRaw} />
+                  </React.Fragment>
                 ))}
               </Box>
             ))}

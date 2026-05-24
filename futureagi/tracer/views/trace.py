@@ -6,6 +6,7 @@ import traceback
 from dataclasses import asdict
 from datetime import datetime
 from typing import Any, Dict, List
+from uuid import UUID
 
 import pandas as pd
 import structlog
@@ -32,6 +33,7 @@ from django.db.models import (
 from django.db.models.functions import Cast, Coalesce, Floor, JSONObject, NullIf, Round
 from django.http import FileResponse, HttpResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers
 from rest_framework.decorators import action
@@ -44,7 +46,6 @@ logger = structlog.get_logger(__name__)
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
-from model_hub.utils.SQL_queries import SQLQueryHandler
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
@@ -80,6 +81,12 @@ from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
     EvalMetricsQueryBuilder,
     TimeSeriesQueryBuilder,
+    UserListQueryBuilder,
+)
+from tracer.services.clickhouse.graph_dispatch import (
+    fetch_annotation_graph_ch,
+    fetch_eval_graph_ch,
+    fetch_system_metric_graph_ch,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
 from tracer.services.observability_providers import ObservabilityService
@@ -134,6 +141,422 @@ def _sanitize_nonfinite_floats(value):
     if isinstance(value, tuple):
         return tuple(_sanitize_nonfinite_floats(v) for v in value)
     return value
+
+
+_SIMULATOR_CALL_EXECUTION_KEYS = (
+    "fi.simulator.call_execution_id",
+    "fi.simulator.callExecutionId",
+    "call_execution_id",
+    "callExecutionId",
+)
+
+
+def _first_string_value(*sources, keys):
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for key in keys:
+            value = source.get(key)
+            if value not in (None, ""):
+                return str(value)
+
+        fi = source.get("fi")
+        if isinstance(fi, dict):
+            simulator = fi.get("simulator")
+            if isinstance(simulator, dict):
+                value = simulator.get("call_execution_id") or simulator.get(
+                    "callExecutionId"
+                )
+                if value not in (None, ""):
+                    return str(value)
+    return None
+
+
+def _is_uuid(value):
+    try:
+        UUID(str(value))
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _safe_float(value, default=0.0):
+    try:
+        parsed = float(value or 0)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(parsed):
+        return default
+    return parsed
+
+
+def _build_agent_graph_pg(project_id, filters, builder):
+    """Build a small PostgreSQL-backed agent graph when ClickHouse is unavailable."""
+    spans_qs = (
+        ObservationSpan.no_workspace_objects.filter(
+            project_id=project_id,
+            deleted=False,
+            trace__deleted=False,
+            project__deleted=False,
+            start_time__gte=builder.start_date,
+            start_time__lt=builder.end_date,
+        )
+        .exclude(start_time__isnull=True)
+        .order_by("-created_at")
+    )
+
+    span_rows = list(
+        spans_qs.values(
+            "id",
+            "trace_id",
+            "parent_span_id",
+            "name",
+            "observation_type",
+            "latency_ms",
+            "total_tokens",
+            "cost",
+            "status",
+            "created_at",
+            "start_time",
+        )[:5000]
+    )
+
+    span_objects = []
+    for row in span_rows:
+        obj = {
+            **row,
+            "id": str(row["id"]),
+            "trace_id": str(row["trace_id"]),
+            "parent_span_id": str(row["parent_span_id"] or ""),
+            "system_metrics": {
+                "latency": row.get("latency_ms"),
+                "latency_ms": row.get("latency_ms"),
+                "total_tokens": row.get("total_tokens"),
+                "tokens": row.get("total_tokens"),
+                "cost": row.get("cost"),
+                "status": row.get("status"),
+                "name": row.get("name"),
+                "span_name": row.get("name"),
+            },
+        }
+        span_objects.append(obj)
+
+    if filters:
+        try:
+            span_objects = FilterEngine(span_objects).apply_filters(filters)
+        except Exception as exc:
+            logger.warning(
+                "Agent graph PG fallback could not apply filters",
+                error=str(exc),
+            )
+
+    node_map = {}
+    edge_map = {}
+    all_span_by_id = {str(row["id"]): row for row in span_rows}
+
+    def node_id(name, node_type):
+        return AgentGraphQueryBuilder._make_node_id(
+            str(name or ""),
+            str(node_type or "unknown"),
+        )
+
+    def ensure_node(name, node_type):
+        nid = node_id(name, node_type)
+        if nid not in node_map:
+            node_map[nid] = {
+                "id": nid,
+                "name": str(name or ""),
+                "type": str(node_type or "unknown"),
+                "span_count": 0,
+                "_latency_sum": 0.0,
+                "_latency_count": 0,
+                "total_tokens": 0,
+                "total_cost": 0.0,
+                "error_count": 0,
+                "_trace_ids": set(),
+            }
+        return node_map[nid]
+
+    for row in span_objects:
+        node = ensure_node(row.get("name"), row.get("observation_type"))
+        node["span_count"] += 1
+        latency = row.get("latency_ms")
+        if latency is not None:
+            node["_latency_sum"] += _safe_float(latency)
+            node["_latency_count"] += 1
+        node["total_tokens"] += int(row.get("total_tokens") or 0)
+        node["total_cost"] += _safe_float(row.get("cost"))
+        node["error_count"] += 1 if row.get("status") == "ERROR" else 0
+        node["_trace_ids"].add(str(row.get("trace_id")))
+
+    for child in span_objects:
+        parent_id = child.get("parent_span_id")
+        if not parent_id:
+            continue
+        parent = all_span_by_id.get(str(parent_id))
+        if not parent:
+            continue
+
+        source_name = parent.get("name")
+        source_type = parent.get("observation_type")
+        target_name = child.get("name")
+        target_type = child.get("observation_type")
+        ensure_node(source_name, source_type)
+        ensure_node(target_name, target_type)
+        key = (source_name, source_type, target_name, target_type)
+        edge = edge_map.setdefault(
+            key,
+            {
+                "source": node_id(source_name, source_type),
+                "target": node_id(target_name, target_type),
+                "transition_count": 0,
+                "_latency_sum": 0.0,
+                "_latency_count": 0,
+                "total_tokens": 0,
+                "total_cost": 0.0,
+                "error_count": 0,
+                "_trace_ids": set(),
+            },
+        )
+        edge["transition_count"] += 1
+        latency = child.get("latency_ms")
+        if latency is not None:
+            edge["_latency_sum"] += _safe_float(latency)
+            edge["_latency_count"] += 1
+        edge["total_tokens"] += int(child.get("total_tokens") or 0)
+        edge["total_cost"] += _safe_float(child.get("cost"))
+        edge["error_count"] += 1 if child.get("status") == "ERROR" else 0
+        edge["_trace_ids"].add(str(child.get("trace_id")))
+
+    nodes = []
+    for node in node_map.values():
+        latency_count = node.pop("_latency_count")
+        latency_sum = node.pop("_latency_sum")
+        trace_ids = node.pop("_trace_ids")
+        node["avg_latency_ms"] = (
+            round(latency_sum / latency_count, 2) if latency_count else 0
+        )
+        node["total_cost"] = round(node["total_cost"], 6)
+        node["trace_count"] = len(trace_ids)
+        nodes.append(node)
+
+    edges = []
+    for edge in edge_map.values():
+        latency_count = edge.pop("_latency_count")
+        latency_sum = edge.pop("_latency_sum")
+        trace_ids = edge.pop("_trace_ids")
+        edge["avg_latency_ms"] = (
+            round(latency_sum / latency_count, 2) if latency_count else 0
+        )
+        edge["total_cost"] = round(edge["total_cost"], 6)
+        edge["trace_count"] = len(trace_ids)
+        edge["is_self_loop"] = edge["source"] == edge["target"]
+        edges.append(edge)
+
+    nodes.sort(key=lambda item: item["span_count"], reverse=True)
+    edges.sort(key=lambda item: item["transition_count"], reverse=True)
+    return {
+        "nodes": nodes[: builder.max_nodes],
+        "edges": edges[: builder.max_edges],
+    }
+
+
+def _get_request_organization(request):
+    return getattr(request, "organization", None) or getattr(
+        getattr(request, "user", None), "organization", None
+    )
+
+
+def _project_workspace_scope_q(request, project_prefix="project__"):
+    organization = _get_request_organization(request)
+    scope = Q(**{f"{project_prefix}organization": organization})
+
+    workspace = getattr(request, "workspace", None)
+    if workspace:
+        if getattr(workspace, "is_default", False):
+            scope &= (
+                Q(**{f"{project_prefix}workspace": workspace})
+                | Q(
+                    **{
+                        f"{project_prefix}workspace__is_default": True,
+                        f"{project_prefix}workspace__organization": organization,
+                    }
+                )
+                | Q(**{f"{project_prefix}workspace__isnull": True})
+            )
+        else:
+            scope &= Q(**{f"{project_prefix}workspace": workspace})
+
+    return scope
+
+
+def _project_queryset_for_request(request):
+    project_manager = getattr(Project, "no_workspace_objects", Project.objects)
+    return project_manager.filter(
+        _project_workspace_scope_q(request, project_prefix=""),
+        deleted=False,
+    )
+
+
+def _project_version_queryset_for_request(request):
+    project_version_manager = getattr(
+        ProjectVersion, "no_workspace_objects", ProjectVersion.objects
+    )
+    return project_version_manager.filter(
+        _project_workspace_scope_q(request),
+        deleted=False,
+        project__deleted=False,
+    )
+
+
+def _trace_session_queryset_for_request(request):
+    trace_session_manager = getattr(
+        TraceSession, "no_workspace_objects", TraceSession.objects
+    )
+    return trace_session_manager.filter(
+        _project_workspace_scope_q(request),
+        deleted=False,
+        project__deleted=False,
+    )
+
+
+def _soft_delete_trace_tree(traces):
+    now = timezone.now()
+    trace_ids = [trace.id for trace in traces if trace]
+    if not trace_ids:
+        return []
+
+    ObservationSpan.no_workspace_objects.filter(trace_id__in=trace_ids).update(
+        deleted=True, deleted_at=now
+    )
+    EvalLogger.no_workspace_objects.filter(trace_id__in=trace_ids).update(
+        deleted=True, deleted_at=now
+    )
+    try:
+        from tracer.models.trace_annotation import TraceAnnotation
+
+        TraceAnnotation.no_workspace_objects.filter(trace_id__in=trace_ids).update(
+            deleted=True, deleted_at=now
+        )
+    except Exception:
+        logger.warning("trace_annotation_soft_delete_failed", trace_ids=trace_ids)
+
+    Trace.no_workspace_objects.filter(id__in=trace_ids).update(
+        deleted=True, deleted_at=now
+    )
+    return [str(trace_id) for trace_id in trace_ids]
+
+
+def _simulation_context_for_voice_call(
+    *,
+    organization_id,
+    span_attributes=None,
+    eval_attributes=None,
+    raw_log=None,
+    metadata=None,
+    processed_log=None,
+):
+    """Return canonical simulator context for a voice trace, if one exists."""
+
+    call_execution_id = _first_string_value(
+        span_attributes,
+        eval_attributes,
+        raw_log,
+        metadata,
+        processed_log,
+        keys=_SIMULATOR_CALL_EXECUTION_KEYS,
+    )
+
+    call = None
+    if call_execution_id:
+        if not _is_uuid(call_execution_id):
+            logger.warning(
+                "voice_call_invalid_simulator_call_execution_id",
+                call_execution_id=call_execution_id,
+            )
+        else:
+            try:
+                from simulate.models.test_execution import CallExecution
+
+                call = (
+                    CallExecution.objects.select_related("test_execution", "scenario")
+                    .filter(
+                        id=call_execution_id,
+                        test_execution__run_test__organization_id=organization_id,
+                    )
+                    .first()
+                )
+            except Exception:
+                logger.warning(
+                    "voice_call_simulation_context_lookup_failed",
+                    call_execution_id=call_execution_id,
+                )
+
+    if call is None:
+        provider_call_id = None
+        if isinstance(processed_log, dict):
+            provider_call_id = processed_log.get("call_id")
+        if provider_call_id is None and isinstance(raw_log, dict):
+            provider_call_id = raw_log.get("id") or raw_log.get("call_id")
+
+        if provider_call_id:
+            try:
+                from simulate.models.test_execution import CallExecution
+
+                call = (
+                    CallExecution.objects.select_related("test_execution", "scenario")
+                    .filter(
+                        Q(customer_call_id=provider_call_id)
+                        | Q(service_provider_call_id=provider_call_id),
+                        test_execution__run_test__organization_id=organization_id,
+                    )
+                    .order_by("-created_at")
+                    .first()
+                )
+            except Exception:
+                logger.warning(
+                    "voice_call_simulation_context_lookup_failed",
+                    provider_call_id=str(provider_call_id),
+                )
+
+    if call is None:
+        return {}
+
+    scenario_graph = {}
+    scenario_graph_id = None
+    if call.scenario_id:
+        try:
+            from simulate.models.scenario_graph import ScenarioGraph
+
+            graph = (
+                ScenarioGraph.objects.filter(
+                    scenario_id=call.scenario_id, is_active=True
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if graph:
+                scenario_graph_id = str(graph.id)
+                scenario_graph = (
+                    graph.graph_config.get("graph_data", {})
+                    if isinstance(graph.graph_config, dict)
+                    else {}
+                )
+        except Exception:
+            logger.warning(
+                "voice_call_scenario_graph_lookup_failed",
+                call_execution_id=str(call.id),
+                scenario_id=str(call.scenario_id),
+            )
+
+    return {
+        "call_execution_id": str(call.id),
+        "test_execution_id": str(call.test_execution_id),
+        "scenario_id": str(call.scenario_id) if call.scenario_id else None,
+        "scenario_name": call.scenario.name if call.scenario_id else None,
+        "scenario_graph_id": scenario_graph_id,
+        "scenario_graph": scenario_graph,
+    }
 
 
 def _build_annotation_map_from_scores(trace_ids, annotation_label_ids, label_types):
@@ -618,6 +1041,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Get base queryset with automatic filtering from mixin
         query_Set = super().get_queryset()
+        organization = _get_request_organization(self.request)
+        if organization:
+            query_Set = query_Set.filter(project__organization=organization)
 
         if trace_id:
             return query_Set.filter(id=trace_id)
@@ -640,12 +1066,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         return query_Set
 
+    def perform_destroy(self, instance):
+        _soft_delete_trace_tree([instance])
+
     def retrieve(self, request, *args, **kwargs):
         """
         Retrieve a trace by its ID.
         """
         try:
             trace_id = kwargs.get("pk")
+            accessible_trace = self.get_queryset().filter(id=trace_id).first()
+            if not accessible_trace:
+                raise Trace.DoesNotExist
 
             # ClickHouse dispatch for trace detail
             analytics = AnalyticsQueryService()
@@ -657,11 +1089,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         "CH trace retrieve failed, falling back to PG", error=str(e)
                     )
 
-            trace = Trace.objects.get(
-                id=trace_id,
-                project__organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
-            )
+            trace = accessible_trace
             serializer = self.get_serializer(trace)
             trace = serializer.data
             observation_spans_response = get_observation_spans(
@@ -1448,7 +1876,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         """Update tags for a trace."""
         try:
             trace_id = kwargs.get("pk")
-            trace = Trace.objects.get(id=trace_id)
+            trace = self.get_queryset().get(id=trace_id)
             tags = request.validated_data["tags"]
             trace.tags = tags
             trace.save(update_fields=["tags", "updated_at"])
@@ -1488,11 +1916,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         """
         try:
             project_id = self.request.query_params.get("project_id", None)
-            project = Project.objects.get(
-                id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
-            )
+            project = _project_queryset_for_request(self.request).filter(
+                id=project_id
+            ).first()
 
             if not project_id or not project or project.trace_type != "observe":
                 return self._gm.bad_request(
@@ -1560,14 +1986,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         try:
             query_params = request.validated_query_data
             project_version_id = str(query_params["project_version_id"])
-            project_version = None
-            try:
-                project_version = ProjectVersion.objects.get(
-                    id=project_version_id,
-                    project__organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
-                )
-            except ProjectVersion.DoesNotExist:
+            project_version = _project_version_queryset_for_request(request).filter(
+                id=project_version_id
+            ).first()
+            if not project_version:
                 raise Exception("Project version not found")  # noqa: B904
 
             # ClickHouse dispatch
@@ -1578,13 +2000,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         request, project_version_id, analytics, query_params
                     )
                 except Exception as e:
-                    logger.warning(
-                        "ClickHouse trace-list failed, falling back to PG", error=str(e)
+                    logger.exception(
+                        "ClickHouse trace-list failed",
+                        error=str(e),
                     )
-                    # Fall through to existing PG code
+                    logger.warning("Falling back to Postgres trace list")
 
             # Base query with annotations
-            base_query = Trace.objects.filter(project_version_id=project_version_id)
+            base_query = Trace.objects.filter(
+                project=project_version.project,
+                project_version=project_version,
+            )
 
             # Add trace_ids filter if provided
             trace_ids = query_params["trace_ids"]
@@ -1944,11 +2370,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         try:
             body = request.validated_data
             project_id = str(body["project_id"])
-            project = Project.objects.get(
-                id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
-            )
+            project = _project_queryset_for_request(self.request).filter(
+                id=project_id
+            ).first()
 
             if not project_id or not project or project.trace_type != "observe":
                 return self._gm.bad_request(
@@ -1959,59 +2383,160 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             property = body["property"]
             filters = body["filters"]
             interval = body["interval"]
+            req_data_config = body["req_data_config"]
 
-            # Base query with annotations
+            type = req_data_config.get("type", None)
+            if type not in ["EVAL", "ANNOTATION", "SYSTEM_METRIC"]:
+                return self._gm.bad_request("Filter property type is not valid")
+
+            analytics = AnalyticsQueryService()
+            if type == "SYSTEM_METRIC":
+                if analytics.should_use_clickhouse(QueryType.TIME_SERIES):
+                    try:
+                        return self._gm.success_response(
+                            fetch_system_metric_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=filters,
+                                interval=interval,
+                                metric_id=req_data_config.get("id", "latency"),
+                            )
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "ClickHouse trace time-series graph failed",
+                            error=str(e),
+                        )
+                        logger.warning("Falling back to Postgres trace graph")
+            elif type == "EVAL":
+                if analytics.should_use_clickhouse(QueryType.EVAL_METRICS):
+                    try:
+                        return self._gm.success_response(
+                            fetch_eval_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                            )
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "ClickHouse trace eval graph failed",
+                            error=str(e),
+                        )
+                        logger.warning("Falling back to Postgres trace graph")
+            elif type == "ANNOTATION":
+                if analytics.should_use_clickhouse(QueryType.ANNOTATION_GRAPH):
+                    try:
+                        return self._gm.success_response(
+                            fetch_annotation_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                                observe_type="trace",
+                            )
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "ClickHouse trace annotation graph failed",
+                            error=str(e),
+                        )
+                        logger.warning("Falling back to Postgres trace graph")
+
+            if type in ("SYSTEM_METRIC", "EVAL", "ANNOTATION"):
+                logger.warning(
+                    "Observe trace graph is using the legacy PG path because "
+                    "ClickHouse is disabled for this query type",
+                    graph_type=type,
+                )
+
+            root_span_qs = (
+                ObservationSpan.objects.filter(trace_id=OuterRef("id"))
+                .filter(Q(parent_span_id__isnull=True) | Q(parent_span_id=""))
+                .order_by("start_time")
+            )
+            all_span_qs = ObservationSpan.objects.filter(trace_id=OuterRef("id"))
+
+            # Legacy fallback for test/local environments with ClickHouse
+            # routes disabled. Observe production routes above must return
+            # before this ORM path so filters are evaluated by ClickHouse.
             base_query = Trace.objects.filter(project_id=project_id).annotate(
+                row_avg_latency_ms=Coalesce(
+                    Subquery(root_span_qs.values("latency_ms")[:1]),
+                    0,
+                    output_field=IntegerField(),
+                ),
+                row_avg_cost=Coalesce(
+                    Subquery(
+                        all_span_qs.values("trace_id")
+                        .annotate(total=Sum("cost"))
+                        .values("total")[:1]
+                    ),
+                    0.0,
+                    output_field=FloatField(),
+                ),
+                total_tokens=Coalesce(
+                    Subquery(
+                        all_span_qs.values("trace_id")
+                        .annotate(total=Sum("total_tokens"))
+                        .values("total")[:1]
+                    ),
+                    0,
+                    output_field=IntegerField(),
+                ),
+                avg_input_tokens=Coalesce(
+                    Subquery(
+                        all_span_qs.values("trace_id")
+                        .annotate(total=Sum("prompt_tokens"))
+                        .values("total")[:1]
+                    ),
+                    0,
+                    output_field=IntegerField(),
+                ),
+                avg_output_tokens=Coalesce(
+                    Subquery(
+                        all_span_qs.values("trace_id")
+                        .annotate(total=Sum("completion_tokens"))
+                        .values("total")[:1]
+                    ),
+                    0,
+                    output_field=IntegerField(),
+                ),
                 node_type=Subquery(
-                    ObservationSpan.objects.filter(
-                        trace_id=OuterRef("id"), parent_span_id__isnull=True
-                    ).values("observation_type")[:1]
+                    root_span_qs.values("observation_type")[:1]
                 ),
                 trace_name=Subquery(
-                    ObservationSpan.objects.filter(
-                        trace_id=OuterRef("id"), parent_span_id__isnull=True
-                    ).values("name")[:1]
+                    root_span_qs.values("name")[:1]
                 ),
                 trace_id=F("id"),
                 # Fetch span_attributes from root span (fallback to eval_attributes for old data)
                 span_attributes=Subquery(
-                    ObservationSpan.objects.filter(
-                        trace_id=OuterRef("id"), parent_span_id__isnull=True
-                    )
-                    .annotate(_attrs=Coalesce("span_attributes", "eval_attributes"))
-                    .values("_attrs")[:1]
+                    root_span_qs.annotate(
+                        _attrs=Coalesce("span_attributes", "eval_attributes")
+                    ).values("_attrs")[:1]
                 ),
                 user_id=Subquery(
-                    ObservationSpan.objects.filter(
-                        trace_id=OuterRef("id"), parent_span_id__isnull=True
-                    ).values("end_user__user_id")[:1]
+                    root_span_qs.values("end_user__user_id")[:1]
                 ),
                 start_time=Coalesce(
-                    Subquery(
-                        ObservationSpan.objects.filter(
-                            trace_id=OuterRef("id"), parent_span_id__isnull=True
-                        )
-                        .order_by("start_time")
-                        .values("start_time")[:1]
-                    ),
+                    Subquery(root_span_qs.values("start_time")[:1]),
                     "created_at",
                 ),
                 status=Case(
                     # Highest priority: any ERROR
                     When(
                         Exists(
-                            ObservationSpan.objects.filter(
-                                trace_id=OuterRef("id"), parent_span_id__isnull=True
-                            ).filter(status="ERROR")
+                            root_span_qs.filter(status="ERROR")
                         ),
                         then=Value("ERROR"),
                     ),
                     # Next: any OK
                     When(
                         Exists(
-                            ObservationSpan.objects.filter(
-                                trace_id=OuterRef("id"), parent_span_id__isnull=True
-                            ).filter(status="OK")
+                            root_span_qs.filter(status="OK")
                         ),
                         then=Value("OK"),
                     ),
@@ -2211,84 +2736,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     base_query = base_query.filter(has_annotation_condition)
 
             filtered_trace_queryset = base_query
-            req_data_config = body["req_data_config"]
-
-            type = req_data_config.get("type", None)
-            if type not in ["EVAL", "ANNOTATION", "SYSTEM_METRIC"]:
-                return self._gm.bad_request("Filter property type is not valid")
-
-            # ClickHouse dispatch for system metrics
-            analytics = AnalyticsQueryService()
-
-            if type == "SYSTEM_METRIC" and analytics.should_use_clickhouse(
-                QueryType.TIME_SERIES
-            ):
-                try:
-                    metric_id = req_data_config.get("id", "latency")
-                    builder = TimeSeriesQueryBuilder(
-                        project_id=str(project_id),
-                        filters=filters,
-                        interval=interval,
-                    )
-                    query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=30000)
-                    ch_data = builder.format_result(result.data, result.columns or [])
-                    # CH now returns all metric keys directly
-                    metric_key = metric_id if metric_id in ch_data else "latency"
-                    metric_points = ch_data.get(metric_key, [])
-                    traffic_points = ch_data.get("traffic", [])
-                    # Build traffic lookup by timestamp
-                    traffic_by_ts = {
-                        t.get("timestamp"): t.get("traffic", 0) for t in traffic_points
-                    }
-                    graph_data = {
-                        "metric_name": metric_id,
-                        "data": [
-                            {
-                                "timestamp": p.get("timestamp"),
-                                "value": p.get("value", 0),
-                                "primary_traffic": traffic_by_ts.get(
-                                    p.get("timestamp"), 0
-                                ),
-                            }
-                            for p in metric_points
-                        ],
-                    }
-                    return self._gm.success_response(graph_data)
-                except Exception as e:
-                    logger.warning(
-                        "ClickHouse time-series failed, falling back to PG",
-                        error=str(e),
-                    )
-                    # Fall through to existing PG code below
-
-            if type == "EVAL" and analytics.should_use_clickhouse(
-                QueryType.EVAL_METRICS
-            ):
-                try:
-                    eval_config_id = req_data_config.get("id")
-                    eval_output_type = req_data_config.get("eval_output_type", "SCORE")
-                    choices = req_data_config.get("choices", [])
-                    builder = EvalMetricsQueryBuilder(
-                        project_id=str(project_id),
-                        custom_eval_config_id=str(eval_config_id),
-                        filters=filters,
-                        interval=interval,
-                        eval_output_type=eval_output_type,
-                        choices=choices,
-                    )
-                    query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=30000)
-                    graph_data = builder.format_result(
-                        result.data, result.columns or []
-                    )
-                    return self._gm.success_response(graph_data)
-                except Exception as e:
-                    logger.warning(
-                        "ClickHouse eval-metrics failed, falling back to PG",
-                        error=str(e),
-                    )
-                    # Fall through to existing PG code below
 
             if type == "EVAL":
                 graph_data = get_eval_graph_data(
@@ -2369,16 +2816,33 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         try:
             traces_data = self.request.data.get("traces", [])
             for trace in traces_data:
-                trace["project"] = Project.objects.get(
-                    id=trace["project"],
-                    organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
-                )
-                trace["project_version"] = ProjectVersion.objects.get(
-                    id=trace["project_version"],
-                    project__organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
-                )
+                project = _project_queryset_for_request(request).filter(
+                    id=trace.get("project")
+                ).first()
+                if not project:
+                    raise ValueError("Project not found")
+
+                project_version = None
+                project_version_id = trace.get("project_version")
+                if project_version_id:
+                    project_version = _project_version_queryset_for_request(
+                        request
+                    ).filter(id=project_version_id).first()
+                    if not project_version or project_version.project_id != project.id:
+                        raise ValueError("Project version not found")
+
+                session = None
+                session_id = trace.get("session")
+                if session_id:
+                    session = _trace_session_queryset_for_request(request).filter(
+                        id=session_id
+                    ).first()
+                    if not session or session.project_id != project.id:
+                        raise ValueError("Session not found")
+
+                trace["project"] = project
+                trace["project_version"] = project_version
+                trace["session"] = session
             traces = [Trace(**trace) for trace in traces_data]
             added_traces = Trace.objects.bulk_create(traces)
             traceIds = [trace.id for trace in added_traces]
@@ -2404,13 +2868,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     {"trace_comparison": {}, "total_traces": 0, "index": 0}
                 )
 
-            # First verify all project versions exist in the database
-            existing_versions = ProjectVersion.objects.filter(
+            # First verify all project versions are visible in this workspace.
+            existing_versions = _project_version_queryset_for_request(request).filter(
                 id__in=project_version_ids
             )
-            if len(existing_versions) != len(project_version_ids):
-                existing_ids = {str(v.id) for v in existing_versions}
-                missing_ids = {str(id) for id in project_version_ids} - existing_ids
+            existing_ids = {str(v.id) for v in existing_versions}
+            requested_ids = [str(project_version_id) for project_version_id in project_version_ids]
+            if len(existing_ids) != len(requested_ids):
+                missing_ids = set(requested_ids) - existing_ids
                 return self._gm.success_response(
                     {
                         "trace_comparison": {},
@@ -2419,6 +2884,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         "message": f"Some project versions not found: {', '.join(missing_ids)}",
                     }
                 )
+            project_version_ids = requested_ids
 
             # Get all traces for the project versions in a single query
             traces = (
@@ -2650,10 +3116,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             query = request.validated_query_data
             trace_id = str(query["trace_id"])
             project_version_id = str(query["project_version_id"])
+            project_version = _project_version_queryset_for_request(request).filter(
+                id=project_version_id
+            ).first()
+            if not project_version:
+                raise Exception("Project version not found")  # noqa: B904
 
             # Base query with annotations
             base_query = Trace.objects.filter(
-                project_version_id=project_version_id
+                project=project_version.project,
+                project_version=project_version,
             ).annotate(
                 node_type=Subquery(
                     ObservationSpan.objects.filter(trace_id=OuterRef("id")).values(
@@ -2795,11 +3267,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         )
                     }
                 )
-            try:
-                project_version = ProjectVersion.objects.get(id=project_version_id)
-            except ProjectVersion.DoesNotExist:
-                raise Exception("Project version not found")  # noqa: B904
-
             # Add Root Span Annotations
             annotation_labels = get_annotation_labels_for_project(
                 project_version.project.id
@@ -2915,11 +3382,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 if validated_data.get("session_id")
                 else None
             )
-
-            org = (
-                getattr(self.request, "organization", None)
-                or self.request.user.organization
-            )
+            org = _get_request_organization(request)
 
             # Org-scoped mode: when no project_id is supplied the caller wants
             # traces from every project in the org (e.g. the cross-project
@@ -2927,15 +3390,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             org_scope = not project_id
             if org_scope:
                 org_project_ids = list(
-                    Project.objects.filter(
-                        organization=org,
-                        deleted=False,
+                    _project_queryset_for_request(request)
+                    .filter(
                         trace_type__in=("observe", "experiment"),
-                    ).values_list("id", flat=True)
+                    )
+                    .values_list("id", flat=True)
                 )
             else:
-                project = Project.objects.get(id=project_id, organization=org)
-                if project.trace_type not in ("observe", "experiment"):
+                project = _project_queryset_for_request(request).filter(
+                    id=project_id
+                ).first()
+                if not project or project.trace_type not in ("observe", "experiment"):
                     raise Exception("Project should be of type observe or experiment")
                 org_project_ids = None
 
@@ -2952,9 +3417,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         org=org,
                     )
                 except Exception as e:
-                    logger.warning(
-                        "CH traces-of-session failed, falling back to PG", error=str(e)
+                    logger.exception(
+                        "CH traces-of-session failed",
+                        error=str(e),
                     )
+                    logger.warning("Falling back to Postgres traces-of-session list")
 
             # Get pagination parameters
             page_number = validated_data["page_number"]
@@ -3403,10 +3870,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         analytics,
                     )
                 except Exception as e:
-                    logger.warning(
-                        "CH voice-call-list failed, falling back to PG",
+                    logger.exception(
+                        "CH voice-call-list failed",
                         error=str(e),
                     )
+                    return self._gm.bad_request("ClickHouse voice call list failed")
 
             # Build optimized base query: only traces whose root span is a conversation
             root_span_qs = ObservationSpan.objects.filter(
@@ -3668,13 +4136,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             if root_span is None:
                 return self._gm.not_found("No conversation root span found")
 
-            attrs = root_span.span_attributes or root_span.eval_attributes or {}
+            span_attrs = root_span.span_attributes or {}
+            eval_attrs = root_span.eval_attributes or {}
+            attrs = span_attrs or eval_attrs or {}
             metadata = root_span.metadata or {}
             raw_log = attrs.get("raw_log") or {}
             provider = root_span.provider or "vapi"
 
             processed_log = ObservabilityService.process_raw_logs(
                 raw_log, provider, span_attributes=attrs
+            )
+            simulation_context = _simulation_context_for_voice_call(
+                organization_id=request.user.organization_id,
+                span_attributes=span_attrs,
+                eval_attributes=eval_attrs,
+                raw_log=raw_log,
+                metadata=metadata,
+                processed_log=processed_log,
             )
             voice_metrics = self._extract_voice_turn_and_talk_metrics(attrs, raw_log)
 
@@ -3765,6 +4243,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # those with an unrelated span-aggregate of our own spans.
             result = {
                 **processed_log,
+                **simulation_context,
                 "id": str(trace.id),
                 "trace_id": str(trace.id),
                 "project_id": str(trace.project_id),
@@ -3809,6 +4288,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             latency_ms,
             provider,
             span_attributes_raw,
+            eval_attributes,
             span_attr_str,
             span_attr_num,
             metadata_map
@@ -3841,6 +4321,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             )
         except (json.JSONDecodeError, TypeError):
             span_attrs = {}
+        eval_attrs_raw = row.get("eval_attributes", "{}")
+        try:
+            eval_attrs = (
+                json.loads(eval_attrs_raw)
+                if isinstance(eval_attrs_raw, str)
+                else (eval_attrs_raw or {})
+            )
+        except (json.JSONDecodeError, TypeError):
+            eval_attrs = {}
 
         raw_log = span_attrs.get("raw_log") or {}
         metadata = {}
@@ -3850,6 +4339,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         processed_log = ObservabilityService.process_raw_logs(
             raw_log, provider, span_attributes=span_attrs
+        )
+        simulation_context = _simulation_context_for_voice_call(
+            organization_id=request.user.organization_id,
+            span_attributes=span_attrs,
+            eval_attributes=eval_attrs,
+            raw_log=raw_log,
+            metadata=metadata,
+            processed_log=processed_log,
         )
         voice_metrics = self._extract_voice_turn_and_talk_metrics(span_attrs, raw_log)
 
@@ -4080,6 +4577,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # back to raw_log provider metrics on the frontend.
         result = {
             **processed_log,
+            **simulation_context,
             "id": str(trace_id),
             "trace_id": str(trace_id),
             "project_id": str(project_id),
@@ -4217,12 +4715,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             trace_id = str(query["trace_id"])
             project_id = str(query["project_id"])
 
-            project = Project.objects.get(
-                id=project_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
-            if project.trace_type != "observe":
+            project = _project_queryset_for_request(request).filter(
+                id=project_id
+            ).first()
+            if not project or project.trace_type != "observe":
                 raise Exception("Project should be of type observe")
 
             filters = query["filters"]
@@ -4235,13 +4731,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         request, trace_id, project_id, filters, analytics
                     )
                 except Exception as e:
-                    logger.warning(
-                        "CH get_trace_id_by_index_observe failed, falling back to PG",
+                    logger.exception(
+                        "CH get_trace_id_by_index_observe failed",
                         error=str(e),
                     )
+                    logger.warning("Falling back to Postgres trace observe navigation")
 
             # PG fallback — base query with annotations
-            base_query = Trace.objects.filter(project_id=project_id).annotate(
+            base_query = Trace.objects.filter(project=project).annotate(
                 node_type=Subquery(
                     ObservationSpan.objects.filter(
                         trace_id=OuterRef("id"), parent_span_id__isnull=True
@@ -4500,9 +4997,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             validated_data = serializer.validated_data
             project_id = str(validated_data["project_id"])
 
-            project = Project.no_workspace_objects.get(
-                id=project_id, organization=request.user.organization
-            )
+            project = _project_queryset_for_request(request).filter(
+                id=project_id
+            ).first()
+            if not project:
+                return self._gm.bad_request("Project not found")
 
             # Check if project has voice/conversation traces
             has_voice_traces = ObservationSpan.objects.filter(
@@ -4781,50 +5280,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     },
                 }
             )
-
-        # Resolve user_id filter values (strings) to end_user_id UUIDs.
-        # `spans` only populates `end_user_id` on the user-facing child span,
-        # not the root span the trace list queries. A direct equality on the
-        # root-span `end_user_id` would miss most traces, so we rewrite the
-        # filter to a `trace_id IN (subquery)` condition using a dedicated
-        # col_type that the CH filter builder handles specially.
-        if org is None:
-            org = getattr(request, "organization", None) or request.user.organization
-        _resolved: List[Dict] = []
-        for _f in filters:
-            _col, _cfg = FilterEngine._normalize_filter_params(_f)
-            _col_type = _cfg.get("col_type", "NORMAL")
-            if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value")
-                _vals = _val if isinstance(_val, list) else [_val]
-                _vals = [v for v in _vals if v]
-                if not _vals:
-                    _resolved.append(_f)
-                    continue
-                _eu_qs = EndUser.objects.filter(
-                    user_id__in=_vals,
-                    organization=org,
-                    deleted=False,
-                )
-                if not org_scope and project_id:
-                    _eu_qs = _eu_qs.filter(project_id=project_id)
-                _ids = [str(u) for u in _eu_qs.values_list("id", flat=True)]
-                if not _ids:
-                    _ids = ["00000000-0000-0000-0000-000000000000"]
-                _resolved.append(
-                    {
-                        "column_id": "end_user_id",
-                        "filter_config": {
-                            "col_type": "TRACE_END_USER",
-                            "filter_type": "text",
-                            "filter_op": "in",
-                            "filter_value": _ids,
-                        },
-                    }
-                )
-                continue
-            _resolved.append(_f)
-        filters = _resolved
 
         # Get eval config IDs. Project mode uses a CH dict-lookup (fast);
         # org mode uses a PG scan because the CH dict-lookup takes a single
@@ -5156,8 +5611,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # paginated spans.  The denormalized `spans` table has empty
         # span_attributes_raw (MV wasn't in place during initial sync),
         # but the CDC source `tracer_observation_span` has full data.
+        page_rows = result.data[:page_size]
         span_ids = [
-            str(row.get("span_id", "")) for row in result.data if row.get("span_id")
+            str(row.get("span_id", "")) for row in page_rows if row.get("span_id")
         ]
         attrs_map = {}
         if span_ids:
@@ -5188,7 +5644,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
-        trace_ids = [str(row.get("trace_id", "")) for row in result.data]
+        trace_ids = [str(row.get("trace_id", "")) for row in page_rows]
 
         # Phase 2: Eval scores
         eval_map = {}
@@ -5220,7 +5676,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Assemble results
         results = []
-        for row in result.data:
+        for row in page_rows:
             trace_id = str(row.get("trace_id", ""))
             span_id = str(row.get("span_id", ""))
             provider = row.get("provider") or "vapi"
@@ -5532,10 +5988,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         Computes nodes (distinct span types/names) and edges (parent→child
         transitions) across all traces in the given time window.
         """
+        project_id = None
+        filters = []
+        builder = None
         try:
             query = request.validated_query_data
             project_id = str(query["project_id"])
             filters = query["filters"]
+
+            project = _project_queryset_for_request(request).filter(
+                id=project_id
+            ).first()
+            if not project:
+                return self._gm.bad_request("Project not found")
 
             builder = AgentGraphQueryBuilder(
                 project_id=project_id,
@@ -5562,10 +6027,32 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 node_result.data,
                 node_result.columns or [],
             )
+            has_pg_spans = ObservationSpan.no_workspace_objects.filter(
+                project_id=project_id,
+                deleted=False,
+                trace__deleted=False,
+                project__deleted=False,
+            ).exists()
+            if not result.get("nodes") and has_pg_spans:
+                logger.warning(
+                    "ClickHouse agent graph returned no nodes, falling back to PG",
+                    project_id=project_id,
+                )
+                result = _build_agent_graph_pg(project_id, filters, builder)
             return self._gm.success_response(result)
 
         except Exception as e:
             logger.exception("agent_graph failed", error=str(e))
+            if project_id and builder:
+                try:
+                    return self._gm.success_response(
+                        _build_agent_graph_pg(project_id, filters, builder)
+                    )
+                except Exception as fallback_error:
+                    logger.exception(
+                        "agent_graph PG fallback failed",
+                        error=str(fallback_error),
+                    )
             return self._gm.bad_request("Failed to compute agent graph")
 
 
@@ -5604,88 +6091,28 @@ class UsersView(APIView):
                 page_size = 10
                 current_page = 0
 
-            column_mapping = {
-                "user_id": "user_id",
-                "activated_at": "created_at",
-                "avg_trace_latency": "avg_latency_trace",
-                "total_cost": "total_cost",
-                "total_tokens": "total_tokens",
-                "input_tokens": "input_tokens",
-                "output_tokens": "output_tokens",
-                "num_traces": "num_traces",
-                # NOTE: num_sessions is computed in the SQL as COALESCE(fo.num_sessions, 0).
-                # Filtering with "equals 0" must match NULL session aggregates (no sessions),
-                # so we coalesce in the filter expression as well.
-                "num_sessions": "COALESCE(fo.num_sessions, 0)",
-                "avg_session_duration": "avg_session_duration_seconds",
-                "num_llm_calls": "num_llm_calls",
-                "num_guardrails_triggered": "num_guardrails_triggered",
-                "last_active": "la.last_active",
-                "num_active_days": "num_active_days",
-                "num_traces_with_errors": "num_traces_with_errors",
-                "bool_eval_pass_rate": "bool_eval_pass_rate",
-                "avg_output_float": "avg_output_float",
-                "user_id_hash": "user_id_hash",
-                "user_id_type": "user_id_type",
-            }
+            analytics = AnalyticsQueryService()
+            if not analytics.should_use_clickhouse(QueryType.SPAN_LIST):
+                return self._gm.bad_request("ClickHouse user list route disabled")
 
-            column = None
-            sort_order = None
-            sort_param = sort_params[0] if sort_params else {}
-            if sort_param:
-                column = sort_param.get("column_id")
-                column = column_mapping.get(column, None)
-                direction = sort_param.get("direction", "asc")
-                if direction == "desc":
-                    sort_order = "DESC"
-                else:
-                    sort_order = "ASC"
-
-            query_params = {
-                "org_id": organization_id,
-                "project_id": project_id,
-                "search_name": search_name,
-                "limit": limit,
-                "offset": offset,
-                "filters": filters,
-                "column_map": column_mapping,
-                "workspace_id": request.workspace.id,
-            }
-
-            if column and sort_order:
-                query_params["sort_by"] = column
-                query_params["sort_order"] = sort_order
-
-            results = SQLQueryHandler.get_spans_by_end_users(**query_params)
-            output = []
-            count = 0
-            for result in results:
-                output.append(
-                    {
-                        "user_id": result[0],
-                        "total_cost": round(result[1], 6) if result[1] else 0,
-                        "total_tokens": result[2],
-                        "input_tokens": result[3],
-                        "output_tokens": result[4],
-                        "num_traces": result[5],
-                        "num_sessions": result[6],
-                        "avg_session_duration": result[7],
-                        "avg_trace_latency": result[8],
-                        "num_llm_calls": result[9],
-                        "num_guardrails_triggered": result[10],
-                        "activated_at": result[11],
-                        "last_active": result[12],
-                        "num_active_days": result[13],
-                        "num_traces_with_errors": result[14],
-                        "bool_eval_pass_rate": result[15],
-                        "avg_output_float": result[16],
-                        "project_id": result[17],
-                        "user_id_type": result[19],
-                        "user_id_hash": result[20],
-                        "end_user_id": result[21],
-                    }
-                )
-                count = result[18]
+            builder = UserListQueryBuilder(
+                organization_id=str(organization_id),
+                workspace_id=str(request.workspace.id),
+                project_id=project_id,
+                search=search_name,
+                limit=limit,
+                offset=offset,
+                filters=filters,
+                sort_params=sort_params,
+                include_null_workspace=bool(
+                    getattr(request.workspace, "is_default", False)
+                ),
+            )
+            query, params = builder.build()
+            result = analytics.execute_ch_query(query, params, timeout_ms=30000)
+            formatted = builder.format_rows(result.data)
+            output = formatted["table"]
+            count = formatted["total_count"]
 
             # Enrich with aggregated span attributes from ClickHouse
             end_user_ids = [

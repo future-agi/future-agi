@@ -75,4 +75,26 @@ describe("AnnotatorPicker", () => {
       },
     ]);
   });
+
+  it("highlights annotator members when auto-assign is enabled", () => {
+    render(
+      <AnnotatorPicker
+        value={[
+          {
+            userId: "user-1",
+            role: "annotator",
+            roles: ["annotator"],
+          },
+        ]}
+        onChange={vi.fn()}
+        highlightAutoAssigned
+      />,
+    );
+
+    const aliceRow = within(screen.getByTestId("annotator-row-user-1"));
+    expect(aliceRow.getByText("Auto-assigned")).toBeInTheDocument();
+
+    const bobRow = within(screen.getByTestId("annotator-row-user-2"));
+    expect(bobRow.queryByText("Auto-assigned")).not.toBeInTheDocument();
+  });
 });

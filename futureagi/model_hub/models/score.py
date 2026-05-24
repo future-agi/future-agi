@@ -3,6 +3,7 @@ import uuid
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.db.models import Q
+from django.utils import timezone
 
 from accounts.models.organization import Organization
 from accounts.models.user import User
@@ -86,6 +87,7 @@ class Score(BaseModel):
         related_name="scores",
     )
     value = models.JSONField()
+    value_history = models.JSONField(default=list, blank=True)
 
     # ── Who scored it ────────────────────────────────────────────────────
     annotator = models.ForeignKey(
@@ -242,6 +244,38 @@ class Score(BaseModel):
                 name="unique_score_row_label_null_annotator",
             ),
         ]
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        should_track_value_change = update_fields is None or "value" in update_fields
+
+        if self.pk and not self._state.adding and should_track_value_change:
+            try:
+                previous = self.__class__.no_workspace_objects.only(
+                    "value",
+                    "value_history",
+                    "created_at",
+                    "updated_at",
+                ).get(pk=self.pk)
+            except self.__class__.DoesNotExist:
+                previous = None
+
+            if previous is not None and previous.value != self.value:
+                history = list(previous.value_history or [])
+                previous_at = (
+                    previous.updated_at or previous.created_at or timezone.now()
+                )
+                history.append(
+                    {
+                        "value": previous.value,
+                        "at": previous_at.isoformat(),
+                    }
+                )
+                self.value_history = history
+                if update_fields is not None:
+                    kwargs["update_fields"] = set(update_fields) | {"value_history"}
+
+        super().save(*args, **kwargs)
 
     def clean(self):
         super().clean()

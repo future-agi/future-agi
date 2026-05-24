@@ -131,7 +131,7 @@ const COLUMNS = [
   { id: "severity", label: "Severity", sortable: true, width: 100 },
   { id: "status", label: "Status", sortable: false, width: 118 },
   { id: "traceCount", label: "Events", sortable: true, width: 85 },
-  { id: "usersAffected", label: "Users", sortable: true, width: 75 },
+  { id: "usersAffected", label: "Users", sortable: false, width: 75 },
   { id: "fixLayer", label: "Fix Layer", sortable: false, width: 120 },
   { id: "trends", label: "Trend (14d)", sortable: false, width: 130 },
   { id: "lastSeen", label: "Last seen", sortable: true, width: 120 },

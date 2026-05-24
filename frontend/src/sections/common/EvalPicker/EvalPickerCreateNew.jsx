@@ -34,7 +34,9 @@ import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useCreateEval } from "src/sections/evals/hooks/useCreateEval";
 import { useUpdateEval } from "src/sections/evals/hooks/useEvalDetail";
 import { useCreateCompositeEval } from "src/sections/evals/hooks/useCompositeEval";
-import ModelSelector, { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import ModelSelector, {
+  FAGI_MODEL_VALUES,
+} from "src/sections/evals/components/ModelSelector";
 import InstructionEditor from "src/sections/evals/components/InstructionEditor";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import LLMPromptEditor from "src/sections/evals/components/LLMPromptEditor";
@@ -147,9 +149,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     () => contextOptionsForRowType(sourceRowType) || ["variables_only"],
   );
 
-
   const handleSourceRowTypeChange = useCallback((rt) => {
-    const map =  TRACING_ROW_TYPE_TO_KEY;
+    const map = TRACING_ROW_TYPE_TO_KEY;
     const key = map[rt];
     const seeded = key ? contextOptionsForRowType(key) : null;
     if (seeded) setContextOptions(seeded);
@@ -1049,7 +1050,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-
             </Box>
           }
           rightPanel={
@@ -1264,9 +1264,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           </Typography>
         )}
 
-        <ShowComponent
-          condition={!hasDataInjection }
-        >
+        <ShowComponent condition={!hasDataInjection}>
           <Button
             variant="outlined"
             size="small"

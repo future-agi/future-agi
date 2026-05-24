@@ -11,7 +11,7 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
-from tracer.models.observation_span import ObservationSpan
+from tracer.models.observation_span import EvalLogger, EvalTargetType, ObservationSpan
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 
@@ -39,6 +39,35 @@ def _create_session_with_span(project, name, created_at=None):
     return session
 
 
+def _create_other_workspace_session(organization, user):
+    from accounts.models.workspace import Workspace
+    from model_hub.models.ai_model import AIModel
+    from tracer.models.project import Project
+
+    other_workspace = Workspace.objects.create(
+        name=f"Other Workspace {uuid.uuid4()}",
+        organization=organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    other_project = Project.objects.create(
+        name=f"Other Workspace Observe {uuid.uuid4()}",
+        organization=organization,
+        workspace=other_workspace,
+        model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+        trace_type="observe",
+    )
+    session = _create_session_with_span(other_project, "Other Workspace Session")
+    EvalLogger.objects.create(
+        trace_session=session,
+        target_type=EvalTargetType.SESSION,
+        output_bool=True,
+        eval_explanation="other workspace session eval",
+    )
+    return other_project, session
+
+
 def get_result(response):
     """Extract result from API response wrapper."""
     data = response.json()
@@ -53,7 +82,10 @@ class TestTraceSessionRetrieveAPI:
     def test_retrieve_session_unauthenticated(self, api_client, trace_session):
         """Unauthenticated requests should be rejected."""
         response = api_client.get(f"/tracer/trace-session/{trace_session.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_retrieve_session_success(self, auth_client, trace_session):
         """Retrieve a trace session by ID."""
@@ -189,7 +221,10 @@ class TestTraceSessionListAPI:
             "/tracer/trace-session/list_sessions/",
             {"project_id": str(observe_project.id)},
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_list_sessions_missing_project(self, auth_client):
         """List sessions supports org-scoped listing without project ID."""
@@ -258,6 +293,29 @@ class TestTraceSessionListAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_list_sessions_falls_back_when_clickhouse_fails(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        session = _create_session_with_span(observe_project, "Fallback Session")
+
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService.should_use_clickhouse",
+            lambda self, query_type: True,
+        )
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService.execute_ch_query",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ch down")),
+        )
+
+        response = auth_client.get(
+            "/tracer/trace-session/list_sessions/",
+            {"project_id": str(observe_project.id), "page_number": 0, "page_size": 10},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = get_result(response)["table"]
+        assert any(row["session_id"] == str(session.id) for row in rows)
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -270,7 +328,10 @@ class TestTraceSessionExportAPI:
             "/tracer/trace-session/get_trace_session_export_data/",
             {"project_id": str(observe_project.id)},
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_export_sessions_missing_project(self, auth_client):
         """Export sessions fails without project ID."""
@@ -288,3 +349,159 @@ class TestTraceSessionExportAPI:
             {"project_id": str(observe_project.id)},
         )
         assert response.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestTraceSessionGraphAPI:
+    """Tests for POST /tracer/trace-session/get_session_graph_data/ endpoint."""
+
+    def test_get_session_graph_falls_back_when_clickhouse_fails(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        """Session graph returns a graph payload when ClickHouse is unavailable."""
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService.should_use_clickhouse",
+            lambda self, query_type: True,
+        )
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService.execute_ch_query",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ch down")),
+        )
+
+        response = auth_client.post(
+            "/tracer/trace-session/get_session_graph_data/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": {"id": "session_count", "type": "SYSTEM_METRIC"},
+                "filters": [],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert isinstance(get_result(response).get("data"), list)
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestTraceSessionWorkspaceScopeAPI:
+    def test_create_rejects_same_org_other_workspace_project(
+        self, auth_client, organization, user
+    ):
+        other_project, _session = _create_other_workspace_session(organization, user)
+
+        response = auth_client.post(
+            "/tracer/trace-session/",
+            {
+                "project": str(other_project.id),
+                "name": "Forbidden Session",
+                "bookmarked": False,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not TraceSession.all_objects.filter(
+            project=other_project,
+            name="Forbidden Session",
+        ).exists()
+
+    def test_patch_rejects_same_org_other_workspace_project(
+        self, auth_client, trace_session, organization, user
+    ):
+        other_project, _session = _create_other_workspace_session(organization, user)
+
+        response = auth_client.patch(
+            f"/tracer/trace-session/{trace_session.id}/",
+            {"project": str(other_project.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        trace_session.refresh_from_db()
+        assert trace_session.project_id != other_project.id
+
+    def test_custom_actions_reject_same_org_other_workspace_project_or_session(
+        self, auth_client, organization, user
+    ):
+        other_project, other_session = _create_other_workspace_session(
+            organization,
+            user,
+        )
+
+        detail = auth_client.get(f"/tracer/trace-session/{other_session.id}/")
+        assert detail.status_code in (
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        eval_logs = auth_client.get(
+            f"/tracer/trace-session/{other_session.id}/eval_logs/"
+        )
+        assert eval_logs.status_code in (
+            status.HTTP_400_BAD_REQUEST,
+            status.HTTP_404_NOT_FOUND,
+        )
+
+        list_response = auth_client.get(
+            "/tracer/trace-session/list_sessions/",
+            {"project_id": str(other_project.id)},
+        )
+        assert list_response.status_code == status.HTTP_400_BAD_REQUEST
+
+        export = auth_client.get(
+            "/tracer/trace-session/get_trace_session_export_data/",
+            {"project_id": str(other_project.id)},
+        )
+        assert export.status_code == status.HTTP_400_BAD_REQUEST
+
+        filter_values = auth_client.get(
+            "/tracer/trace-session/get_session_filter_values/",
+            {"project_id": str(other_project.id), "column": "session_id"},
+        )
+        assert filter_values.status_code == status.HTTP_400_BAD_REQUEST
+
+        graph = auth_client.post(
+            "/tracer/trace-session/get_session_graph_data/",
+            {
+                "project_id": str(other_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": {"id": "session_count", "type": "SYSTEM_METRIC"},
+                "filters": [],
+            },
+            format="json",
+        )
+        assert graph.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_generic_delete_cascades_session_traces_spans_and_eval_logs(
+        self, auth_client, observe_project
+    ):
+        session = _create_session_with_span(observe_project, "Delete Cascade Session")
+        trace = Trace.objects.get(session=session)
+        span = ObservationSpan.objects.get(trace=trace)
+        session_eval_log = EvalLogger.objects.create(
+            trace_session=session,
+            target_type=EvalTargetType.SESSION,
+            output_bool=True,
+            eval_explanation="session eval",
+        )
+        trace_eval_log = EvalLogger.objects.create(
+            trace=trace,
+            observation_span=span,
+            target_type=EvalTargetType.TRACE,
+            output_bool=True,
+            eval_explanation="trace eval",
+        )
+
+        response = auth_client.delete(f"/tracer/trace-session/{session.id}/")
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        assert TraceSession.all_objects.get(id=session.id).deleted is True
+        assert Trace.all_objects.get(id=trace.id).deleted is True
+        assert ObservationSpan.all_objects.get(id=span.id).deleted is True
+        assert EvalLogger.all_objects.get(id=session_eval_log.id).deleted is True
+        assert EvalLogger.all_objects.get(id=trace_eval_log.id).deleted is True

@@ -24,6 +24,11 @@ const FormSearchSelectFieldState = React.forwardRef(
       multipleAllLabel,
       placeholder = "Select Option",
       sx,
+      noOptions,
+      emptyMessage,
+      onScrollEnd,
+      isFetchingNextPage,
+      selectAll,
       // Filter ``shrink`` out of ``rest`` — see rhf-text-field.jsx note.
       // eslint-disable-next-line no-unused-vars
       shrink: _shrink,
@@ -286,6 +291,11 @@ const FormSearchSelectFieldState = React.forwardRef(
           setSearchedValue={setSearchedValue}
           multiple={multiple}
           createLabel={createLabel}
+          noOptions={noOptions}
+          emptyMessage={emptyMessage}
+          onScrollEnd={onScrollEnd}
+          isFetchingNextPage={isFetchingNextPage}
+          selectAll={selectAll}
           {...rest}
         />
       </>
@@ -314,5 +324,10 @@ FormSearchSelectFieldState.propTypes = {
   multiple: PropTypes.bool,
   multipleAllLabel: PropTypes.string,
   placeholder: PropTypes.string,
+  noOptions: PropTypes.string,
+  emptyMessage: PropTypes.string,
+  onScrollEnd: PropTypes.func,
+  isFetchingNextPage: PropTypes.bool,
+  selectAll: PropTypes.bool,
   shrink: PropTypes.bool,
 };

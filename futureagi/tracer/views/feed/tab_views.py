@@ -36,6 +36,7 @@ from tracer.serializers.feed import (
     TrendsTabResponseSerializer,
 )
 from tracer.utils import feed as feed_service
+from tracer.views.feed._permissions import resolve_requested_project_ids
 
 logger = structlog.get_logger(__name__)
 
@@ -45,6 +46,15 @@ ERROR_RESPONSES = {
     404: ApiErrorResponseSerializer,
     500: ApiErrorResponseSerializer,
 }
+
+
+def _accessible_project_ids_or_response(request, gm):
+    project_ids = resolve_requested_project_ids(request, None)
+    if project_ids is None:
+        return None, gm.forbidden_response("Access denied to this project")
+    if not project_ids:
+        return None, gm.forbidden_response("User not associated with an organization")
+    return project_ids, None
 
 
 class FeedOverviewView(APIView):
@@ -57,8 +67,12 @@ class FeedOverviewView(APIView):
         responses={200: OverviewApiResponseSerializer, **ERROR_RESPONSES},
     )
     def get(self, request, cluster_id: str):
+        project_ids, response = _accessible_project_ids_or_response(request, self._gm)
+        if response is not None:
+            return response
+
         try:
-            result = feed_service.get_overview_tab(cluster_id)
+            result = feed_service.get_overview_tab(cluster_id, project_ids)
         except Exception:
             logger.exception("feed_overview_failed", cluster_id=cluster_id)
             return self._gm.bad_request("Failed to fetch overview")
@@ -81,9 +95,14 @@ class FeedTracesView(APIView):
     )
     def get(self, request, cluster_id: str):
         params = request.validated_query_data
+        project_ids, response = _accessible_project_ids_or_response(request, self._gm)
+        if response is not None:
+            return response
+
         try:
             result = feed_service.get_traces_tab(
                 cluster_id,
+                project_ids,
                 limit=params.get("limit", 50),
                 offset=params.get("offset", 0),
             )
@@ -109,8 +128,12 @@ class FeedTrendsView(APIView):
     )
     def get(self, request, cluster_id: str):
         days = request.validated_query_data.get("days", 14)
+        project_ids, response = _accessible_project_ids_or_response(request, self._gm)
+        if response is not None:
+            return response
+
         try:
-            result = feed_service.get_trends_tab(cluster_id, days=days)
+            result = feed_service.get_trends_tab(cluster_id, project_ids, days=days)
         except Exception:
             logger.exception("feed_trends_failed", cluster_id=cluster_id)
             return self._gm.bad_request("Failed to fetch trends")
@@ -139,9 +162,14 @@ class FeedSidebarView(APIView):
     )
     def get(self, request, cluster_id: str):
         trace_id = request.validated_query_data.get("trace_id") or None
+        project_ids, response = _accessible_project_ids_or_response(request, self._gm)
+        if response is not None:
+            return response
 
         try:
-            result = feed_service.get_sidebar(cluster_id, trace_id=trace_id)
+            result = feed_service.get_sidebar(
+                cluster_id, project_ids, trace_id=trace_id
+            )
         except Exception:
             logger.exception("feed_sidebar_failed", cluster_id=cluster_id)
             return self._gm.bad_request("Failed to fetch sidebar")
@@ -170,9 +198,14 @@ class FeedRootCauseView(APIView):
     )
     def get(self, request, cluster_id: str):
         trace_id = request.validated_query_data["trace_id"]
+        project_ids, response = _accessible_project_ids_or_response(request, self._gm)
+        if response is not None:
+            return response
 
         try:
-            result = feed_service.get_deep_analysis(cluster_id, trace_id=trace_id)
+            result = feed_service.get_deep_analysis(
+                cluster_id, project_ids, trace_id=trace_id
+            )
         except Exception:
             logger.exception(
                 "feed_root_cause_failed",
@@ -209,10 +242,13 @@ class FeedDeepAnalysisView(APIView):
     def post(self, request, cluster_id: str):
         trace_id = request.validated_data["trace_id"]
         force = request.validated_data.get("force", False)
+        project_ids, response = _accessible_project_ids_or_response(request, self._gm)
+        if response is not None:
+            return response
 
         try:
             result = feed_service.dispatch_deep_analysis(
-                cluster_id, trace_id=trace_id, force=force
+                cluster_id, project_ids, trace_id=trace_id, force=force
             )
         except Exception:
             logger.exception(

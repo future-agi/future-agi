@@ -4,7 +4,6 @@ import structlog
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import UserRateThrottle
@@ -76,7 +75,7 @@ class TwoFactorStatusView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={200: TwoFactorStatusSerializer, **ACCOUNTS_ERROR_RESPONSES}
     )
     def get(self, request):
@@ -385,7 +384,7 @@ class RecoveryCodesView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={
             200: RecoveryCodesRemainingResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
@@ -453,7 +452,7 @@ class OrgTwoFactorPolicyView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={
             200: OrgTwoFactorPolicyResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,

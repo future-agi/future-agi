@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from agent_playground.models.graph_execution import GraphExecution
 from agent_playground.models.node_execution import NodeExecution
+from tfc.utils.api_serializers import PaginationMetadataSerializer
 
 
 class NodeExecutionBriefSerializer(serializers.ModelSerializer):
@@ -54,7 +55,7 @@ class GraphExecutionSerializer(serializers.ModelSerializer):
 
 class GraphExecutionListResultSerializer(serializers.Serializer):
     executions = GraphExecutionListSerializer(many=True, read_only=True)
-    metadata = serializers.DictField(read_only=True)
+    metadata = PaginationMetadataSerializer(read_only=True)
 
 
 class GraphExecutionListResponseSerializer(serializers.Serializer):

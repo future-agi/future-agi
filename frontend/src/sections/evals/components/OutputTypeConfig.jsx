@@ -129,7 +129,7 @@ const OutputTypeConfig = ({
               onChoiceScoresChange({ "Choice 1": 0.5 });
             }
           }}
-          sx={{px:0.25}}
+          sx={{ px: 0.25 }}
         >
           <FormControlLabel
             value="pass_fail"
@@ -450,7 +450,7 @@ const OutputTypeConfig = ({
                   Allow multiple choices (LLM can select more than one)
                 </Typography>
               }
-              sx={{ mt: 0.5, px:0.25 }}
+              sx={{ mt: 0.5, px: 0.25 }}
             />
           </Box>
         </Box>

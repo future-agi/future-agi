@@ -9,12 +9,10 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from accounts.models.user import OrgApiKey
 from accounts.utils import get_request_organization
 
 logger = structlog.get_logger(__name__)
 from analytics.utils import mixpanel_slack_notfy, track_mixpanel_event
-from model_hub.utils.SQL_queries import SQLQueryHandler
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
 from tfc.utils.api_contracts import validated_request
@@ -23,7 +21,7 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.eval_task import EvalTask
 from tracer.models.monitor import UserAlertMonitor, UserAlertMonitorLog
-from tracer.models.observation_span import EndUser, ObservationSpan
+from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
@@ -41,6 +39,16 @@ from tracer.serializers.project import (
     ProjectUserMetricsRequestSerializer,
     ProjectUsersAggregateGraphDataRequestSerializer,
 )
+from tracer.services.clickhouse.graph_dispatch import (
+    fetch_annotation_graph_ch,
+    fetch_eval_graph_ch,
+)
+from tracer.services.clickhouse.query_builders import (
+    ClickHouseFilterBuilder,
+    TimeSeriesQueryBuilder,
+    UserListQueryBuilder,
+)
+from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
 from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
@@ -48,8 +56,6 @@ from tracer.utils.constants import (
     ORG_KEYS,
     PROTOTYPE_CODEBLOCK,
 )
-from tracer.utils.filters import FilterEngine
-from tracer.utils.graphs import GraphEngine
 from tracer.utils.graphs_optimized import get_all_system_metrics
 from tracer.utils.helper import get_default_project_version_config, get_sort_query
 
@@ -58,6 +64,59 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
     serializer_class = ProjectSerializer
+
+    def _request_organization(self):
+        return get_request_organization(self.request) or self.request.user.organization
+
+    def _workspace_scope_q(self):
+        workspace = getattr(self.request, "workspace", None)
+        if not workspace:
+            return models.Q()
+
+        if getattr(workspace, "is_default", False):
+            return (
+                models.Q(workspace=workspace)
+                | models.Q(
+                    workspace__is_default=True,
+                    workspace__organization=workspace.organization,
+                )
+                | models.Q(workspace__isnull=True)
+            )
+
+        return models.Q(workspace=workspace)
+
+    def _project_scope_queryset(self):
+        return Project.no_workspace_objects.filter(
+            self._workspace_scope_q(),
+            organization=self._request_organization(),
+        )
+
+    def _get_project_in_scope(self, project_id):
+        if not project_id:
+            return None
+        return self._project_scope_queryset().filter(id=project_id).first()
+
+    def _soft_delete_projects(self, projects, project_type):
+        now = timezone.now()
+        if project_type == "experiment":
+            ProjectVersion.objects.filter(project__in=projects).update(
+                deleted=True, deleted_at=now
+            )
+        else:
+            TraceSession.objects.filter(project__in=projects).update(
+                deleted=True, deleted_at=now
+            )
+        Trace.objects.filter(project__in=projects).update(deleted=True, deleted_at=now)
+        ObservationSpan.objects.filter(project__in=projects).update(
+            deleted=True, deleted_at=now
+        )
+        UserAlertMonitor.objects.filter(project__in=projects).update(
+            deleted=True, deleted_at=now
+        )
+        EvalTask.objects.filter(project__in=projects).update(
+            deleted=True, deleted_at=now
+        )
+        projects.update(deleted=True, deleted_at=now)
 
     def get_queryset(self):
         # Get base queryset with automatic filtering from mixin
@@ -207,35 +266,9 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             project_type = request.data.get("project_type", "experiment")
             if not project_ids:
                 return self._gm.bad_request(get_error_message("PROJECT_ID_REQUIRED"))
-            projects = Project.objects.filter(
-                id__in=project_ids,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            projects = self._project_scope_queryset().filter(id__in=project_ids)
             if projects.exists():
-                if project_type == "experiment":
-                    ProjectVersion.objects.filter(project__in=projects).update(
-                        deleted=True, deleted_at=timezone.now()
-                    )
-                else:
-                    TraceSession.objects.filter(project__in=projects).update(
-                        deleted=True, deleted_at=timezone.now()
-                    )
-                Trace.objects.filter(project__in=projects).update(
-                    deleted=True, deleted_at=timezone.now()
-                )
-                ObservationSpan.objects.filter(project__in=projects).update(
-                    deleted=True, deleted_at=timezone.now()
-                )
-                UserAlertMonitor.objects.filter(project__in=projects).update(
-                    deleted=True, deleted_at=timezone.now()
-                )
-
-                EvalTask.objects.filter(project__in=projects).update(
-                    deleted=True, deleted_at=timezone.now()
-                )
-
-                projects.update(deleted=True, deleted_at=timezone.now())
+                self._soft_delete_projects(projects, project_type)
 
                 return self._gm.success_response(
                     "Successfully deleted the selected projects"
@@ -249,18 +282,25 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
             return self._gm.bad_request(get_error_message("FAILED_TO_DELETE_PROJECT"))
 
+    def destroy(self, request, *args, **kwargs):
+        try:
+            project = self.get_object()
+            self._soft_delete_projects(
+                self._project_scope_queryset().filter(id=project.id),
+                project.trace_type,
+            )
+            return self._gm.success_response("Successfully deleted the project")
+        except Exception as e:
+            logger.exception(f"Error in deleting the project: {str(e)}")
+            return self._gm.bad_request(get_error_message("FAILED_TO_DELETE_PROJECT"))
+
     @action(detail=False, methods=["post"])
     def update_project_config(self, request, *args, **kwargs):
         try:
             project_id = self.request.data.get("project_id")
             visibility = self.request.data.get("visibility", {})
-            try:
-                project = Project.objects.get(
-                    id=project_id,
-                    organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
-                )
-            except Project.DoesNotExist:
+            project = self._get_project_in_scope(project_id)
+            if not project:
                 return self._gm.bad_request("Project not found")
             config = project.config
 
@@ -292,11 +332,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 new_name = validated_data["name"]
                 sampling_rate = validated_data.get("sampling_rate")
 
-                project = Project.objects.filter(
-                    id=project_id,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).first()
+                project = self._get_project_in_scope(project_id)
 
                 if not project:
                     return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
@@ -349,13 +385,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         try:
             project_id = self.request.data.get("project_id")
             visibility = self.request.data.get("visibility", {})
-            try:
-                project = Project.objects.get(
-                    id=project_id,
-                    organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
-                )
-            except Project.DoesNotExist:
+            project = self._get_project_in_scope(project_id)
+            if not project:
                 return self._gm.bad_request("Project not found")
 
             config = project.session_config or []
@@ -402,7 +433,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     if tag:
                         queryset = queryset.filter(tags__contains=[tag])
 
-            ALLOWED_SORT_FIELDS = {"name", "created_at", "updated_at", "issues"}
+            ALLOWED_SORT_FIELDS = {"name", "created_at", "updated_at"}
             raw_sort = self.request.query_params.get("sort_by", "created_at")
             # CH-only fields can't be sorted in PG — fall back to created_at
             sort_by = raw_sort if raw_sort in ALLOWED_SORT_FIELDS else "created_at"
@@ -605,6 +636,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         project_id = str(query_params["project_id"])
 
         try:
+            if not self._get_project_in_scope(project_id):
+                return self._gm.bad_request("Project not found.")
             response_data = get_all_system_metrics(
                 interval=query_params["interval"],
                 filters=query_params["filters"],
@@ -631,73 +664,51 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             end_user_id = str(body["end_user_id"])
             project_id = str(body["project_id"])
             filters = body["filters"]
-            try:
-                end_user = EndUser.objects.get(
-                    id=end_user_id,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    project_id=project_id,
-                )
-            except EndUser.DoesNotExist:
-                return self._gm.bad_request("User not found for the given end_user_id")
 
-            _org = get_request_organization(request)
-            _org_id = str(_org.id) if _org else None
-            query_params = {
-                "org_id": _org_id,
-                "filters": filters,
-                "end_user_id": str(end_user.id),
-                "project_id": project_id,
-                "workspace_id": request.workspace.id,
-            }
+            if not self._get_project_in_scope(project_id):
+                return self._gm.bad_request("Project not found.")
 
-            query_params = {k: v for k, v in query_params.items() if v is not None}
+            _org = get_request_organization(request) or request.user.organization
+            _org_id = str(_org.id)
+            analytics = AnalyticsQueryService()
+            if not analytics.should_use_clickhouse(QueryType.SPAN_LIST):
+                return self._gm.bad_request("ClickHouse user metrics route disabled")
 
-            default_metrics = SQLQueryHandler.get_user_default_details(
-                org_id=_org_id,
-                end_user_id=end_user_id,
+            builder = UserListQueryBuilder(
+                organization_id=_org_id,
+                workspace_id=str(request.workspace.id),
                 project_id=project_id,
+                filters=filters,
+                end_user_id=end_user_id,
+                include_null_workspace=bool(
+                    getattr(request.workspace, "is_default", False)
+                ),
             )
-            results = SQLQueryHandler.get_spans_by_end_users(**query_params)
-
+            query, params = builder.build()
+            result = analytics.execute_ch_query(query, params, timeout_ms=30000)
             output = []
-            for i, result in enumerate(results):
+            for row in builder.format_rows(result.data)["table"]:
                 output.append(
                     {
-                        "user_id": result[0],
-                        "user_id_type": result[19],
-                        "user_id_hash": result[20],
-                        "active_days": default_metrics[i][1],
-                        "last_active": default_metrics[i][2],
-                        "total_cost": result[1],
-                        "total_tokens": result[2],
-                        "avg_session_duration": result[7],
-                        "avg_trace_latency": result[8],
-                        "num_llm_calls": result[9],
-                        "num_guardrails_triggered": result[10],
-                        "num_traces_with_errors": result[14],
-                        "num_sessions": result[6],
+                        "user_id": row.get("user_id"),
+                        "user_id_type": row.get("user_id_type"),
+                        "user_id_hash": row.get("user_id_hash"),
+                        "active_days": row.get("num_active_days", 0),
+                        "last_active": row.get("last_active"),
+                        "total_cost": row.get("total_cost", 0),
+                        "total_tokens": row.get("total_tokens", 0),
+                        "avg_session_duration": row.get("avg_session_duration", 0),
+                        "avg_trace_latency": row.get("avg_trace_latency", 0),
+                        "num_llm_calls": row.get("num_llm_calls", 0),
+                        "num_guardrails_triggered": row.get(
+                            "num_guardrails_triggered", 0
+                        ),
+                        "num_traces_with_errors": row.get(
+                            "num_traces_with_errors", 0
+                        ),
+                        "num_sessions": row.get("num_sessions", 0),
                     }
                 )
-            if len(output) == 0 and len(default_metrics) > 0:
-                for metric in default_metrics:
-                    output.append(
-                        {
-                            "user_id": metric[0],
-                            "user_id_type": None,
-                            "user_id_hash": None,
-                            "active_days": 0,
-                            "last_active": metric[2],
-                            "total_cost": 0,
-                            "total_tokens": 0,
-                            "avg_session_duration": 0,
-                            "avg_trace_latency": 0,
-                            "num_llm_calls": 0,
-                            "num_guardrails_triggered": 0,
-                            "num_traces_with_errors": 0,
-                            "num_sessions": 0,
-                        }
-                    )
 
             return self._gm.success_response(output)
         except Exception as e:
@@ -724,10 +735,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             metric_type = req_data_config.get("type", "SYSTEM_METRIC")
             metric_id = req_data_config.get("id", "active_users")
 
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
-                QueryType,
-            )
+            if not self._get_project_in_scope(project_id):
+                return self._gm.bad_request("Project not found.")
 
             analytics = AnalyticsQueryService()
 
@@ -776,8 +785,62 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         return self._gm.success_response(graph_data)
                     except Exception as e:
                         logger.warning("CH user time-series failed", error=str(e))
+                        return self._gm.bad_request("ClickHouse user graph failed")
 
             elif metric_type in ("EVAL", "ANNOTATION"):
+                user_filters = [
+                    *filters,
+                    {
+                        "column_id": "end_user_id",
+                        "filter_config": {
+                            "col_type": "SYSTEM_METRIC",
+                            "filter_type": "text",
+                            "filter_op": "is_not_null",
+                            "filter_value": None,
+                        },
+                    },
+                ]
+                if metric_type == "EVAL" and analytics.should_use_clickhouse(
+                    QueryType.EVAL_METRICS
+                ):
+                    try:
+                        return self._gm.success_response(
+                            fetch_eval_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=user_filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                            )
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "ClickHouse user eval graph failed",
+                            error=str(e),
+                        )
+                        return self._gm.bad_request("ClickHouse user graph failed")
+
+                if metric_type == "ANNOTATION" and analytics.should_use_clickhouse(
+                    QueryType.ANNOTATION_GRAPH
+                ):
+                    try:
+                        return self._gm.success_response(
+                            fetch_annotation_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=user_filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                                observe_type="trace",
+                            )
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "ClickHouse user annotation graph failed",
+                            error=str(e),
+                        )
+                        return self._gm.bad_request("ClickHouse user graph failed")
+
                 from tracer.models.trace import Trace
                 from tracer.utils.graphs_optimized import (
                     get_annotation_graph_data,
@@ -833,55 +896,106 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             body = request.validated_data
             project_id = str(query_params["project_id"])
             end_user_id = str(query_params["end_user_id"])
-            try:
-                end_user_id = str(
-                    EndUser.objects.get(
-                        id=end_user_id,
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                        project_id=project_id,
-                    ).id
-                )
-            except EndUser.DoesNotExist:
-                return self._gm.bad_request("User not found for the given end_user_id")
+            if not self._get_project_in_scope(project_id):
+                return self._gm.bad_request("Project not found.")
 
             try:
                 interval = body["interval"]
                 filters = body["filters"]
-                # Get spans with a single efficient query
-                spans = (
-                    ObservationSpan.objects.filter(
-                        project_id=project_id, end_user_id=end_user_id
-                    )
-                    .select_related("trace")
-                    .order_by("-created_at")
-                )
-                # Format spans for filter engine
-                formatted_spans = [
-                    {
-                        "id": span.id,
-                        "created_at": span.created_at.strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-                        # Add other necessary fields here
-                    }
-                    for span in spans
-                ]
+                analytics = AnalyticsQueryService()
+                if not analytics.should_use_clickhouse(QueryType.TIME_SERIES):
+                    return self._gm.bad_request("ClickHouse user graph route disabled")
 
-                # Apply filters
-                filter_engine = FilterEngine(formatted_spans)
-                filtered_spans = filter_engine.apply_filters(filters)
-                span_ids = [span["id"] for span in filtered_spans]
-                spans = ObservationSpan.objects.filter(id__in=span_ids)
-
-                # Create graph engine instance with model objects
-                graph_engine = GraphEngine(
-                    objects=spans,
-                    interval=interval,
+                builder = TimeSeriesQueryBuilder(
+                    project_id=project_id,
                     filters=filters,
+                    interval=interval,
                 )
+                start_date, end_date = builder.parse_time_range(filters)
+                bucket_fn = builder.time_bucket_expr(interval)
+                fb = ClickHouseFilterBuilder(
+                    table="spans",
+                    project_id=project_id,
+                    query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+                )
+                extra_where, extra_params = fb.translate(filters)
+                extra_clause = f"AND {extra_where}" if extra_where else ""
+                _org = get_request_organization(request) or request.user.organization
+                workspace_clause = ""
+                params = {
+                    "project_id": project_id,
+                    "end_user_id": end_user_id,
+                    "org_id": str(_org.id),
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    **extra_params,
+                }
+                if getattr(request, "workspace", None):
+                    params["workspace_id"] = str(request.workspace.id)
+                    if bool(getattr(request.workspace, "is_default", False)):
+                        workspace_clause = (
+                            "AND (workspace_id = toUUID(%(workspace_id)s) "
+                            "OR isNull(workspace_id))"
+                        )
+                    else:
+                        workspace_clause = "AND workspace_id = toUUID(%(workspace_id)s)"
 
-                # Generate graph data
-                graph_data = graph_engine.generate_graph(metric="users_graph")
-                return self._gm.success_response(graph_data)
+                query = f"""
+                SELECT
+                    {bucket_fn}(created_at) AS time_bucket,
+                    uniqExactIf(toString(trace_session_id), isNotNull(trace_session_id)) AS session_count,
+                    uniqExact(trace_id) AS trace_count,
+                    sum(ifNull(cost, 0)) AS cost,
+                    sum(ifNull(prompt_tokens, 0)) AS input_tokens,
+                    sum(ifNull(completion_tokens, 0)) AS output_tokens
+                FROM spans
+                WHERE project_id = %(project_id)s
+                  AND _peerdb_is_deleted = 0
+                  AND end_user_id IN (
+                    SELECT id
+                    FROM tracer_enduser FINAL
+                    WHERE id = toUUID(%(end_user_id)s)
+                      AND organization_id = toUUID(%(org_id)s)
+                      AND project_id = toUUID(%(project_id)s)
+                      AND _peerdb_is_deleted = 0
+                      AND deleted = 0
+                      {workspace_clause}
+                  )
+                  AND created_at >= %(start_date)s
+                  AND created_at < %(end_date)s
+                  {extra_clause}
+                GROUP BY time_bucket
+                ORDER BY time_bucket
+                """
+                result = analytics.execute_ch_query(query, params, timeout_ms=10000)
+                rows = result.data or []
+
+                def _series(source_key, output_key):
+                    series_rows = [
+                        (
+                            row.get("time_bucket"),
+                            row.get(source_key, 0),
+                        )
+                        for row in rows
+                    ]
+                    return builder.format_time_series(
+                        rows=series_rows,
+                        columns=["time_bucket", output_key],
+                        interval=interval,
+                        start_date=start_date,
+                        end_date=end_date,
+                        value_keys=[output_key],
+                    )
+
+                return self._gm.success_response(
+                    {
+                        "session": _series("session_count", "session"),
+                        "trace": _series("trace_count", "trace"),
+                        "cost": _series("cost", "cost"),
+                        "input_tokens": _series("input_tokens", "input_tokens"),
+                        "output_tokens": _series("output_tokens", "output_tokens"),
+                    }
+                )
             except Project.DoesNotExist:
                 return self._gm.bad_request("Project not found.")
             except Exception as e:
@@ -911,7 +1025,6 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     def project_sdk_code(self, request, *args, **kwargs):
         project_type = self.request.query_params.get("project_type", "experiment")
 
-        org = getattr(request, "organization", None) or request.user.organization
         if project_type == "experiment":
             sdk_code = PROTOTYPE_CODEBLOCK
         elif project_type == "observe":
@@ -919,23 +1032,11 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         else:
             return self._gm.bad_request("Invalid project type")
 
-        apiKeys = OrgApiKey.objects.filter(
-            organization=org, type="user", enabled=True, user=request.user
-        )
-        if len(apiKeys) == 0:
-            apiKeys = OrgApiKey.objects.create(
-                organization=org, type="user", enabled=True, user=request.user
-            )
-
-        else:
-            apiKeys = OrgApiKey.objects.filter(
-                organization=org, type="user", enabled=True, user=request.user
-            ).first()
         response = {
             "installation_guide": INSTALLATION_GUIDE,
             "project_add_code": sdk_code,
             "keys": {
-                lang: code.format(apiKeys.api_key, apiKeys.secret_key)
+                lang: code.format("YOUR_FI_API_KEY", "YOUR_FI_SECRET_KEY")
                 for lang, code in ORG_KEYS.items()
             },
             "instruments": INSTRUMENTORS,

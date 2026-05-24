@@ -2,10 +2,20 @@
 .env
 .env.*
 !.env.test
+*_Creds.json
+*_creds.json
+*-credentials.json
+credentials.json
+service-account*.json
+*.pem
+*.key
+!**/test*.key
 
-# Python cache
+# Python cache (at any depth)
 __pycache__/
+**/__pycache__/
 *.py[cod]
+**/*.py[cod]
 *$py.class
 *.so
 .Python
@@ -38,19 +48,26 @@ test-logs/
 *~
 .DS_Store
 
-# Git
+# Git / CI
 .git/
 .gitignore
+.github/
+.gitlab-ci.yml
+.codex-tmp/
+ee.local-leftover/
 
 # Documentation (not needed in image)
 *.md
 docs/
 changelog/
 
-# Media and logs (generated at runtime)
+# Media and logs (generated at runtime, at any depth)
 media/
+**/media/
 logs/
+**/logs/
 *.log
+**/*.log
 app.log
 
 # Database files
@@ -81,3 +98,4 @@ celerybeat-schedule
 
 # Large data directories
 minio_data/
+model_serving/

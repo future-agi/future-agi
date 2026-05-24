@@ -5,13 +5,13 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 978,
+  "endpointCount": 980,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
         "operationId": "accounts_2fa_recovery-codes_list",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -77,7 +77,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_2fa_status_list",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -1258,7 +1258,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_organization_2fa-policy_list",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -1633,7 +1633,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_organizations_list",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -2001,7 +2001,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_passkeys_list",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -2068,7 +2068,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "delete": {
         "operationId": "accounts_passkeys_delete",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -2302,7 +2302,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_team_users_list",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -2364,7 +2364,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "delete": {
         "operationId": "accounts_team_users_delete",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -2396,7 +2396,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_team_users_read",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -2458,7 +2458,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "delete": {
         "operationId": "accounts_team_users_delete",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -2757,7 +2757,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "required": false,
             "schema": {
               "type": "string",
-              "default": ""
+              "default": []
             }
           },
           "workspace_id": {
@@ -3209,7 +3209,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_workspaces_list",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -3303,7 +3303,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "delete": {
         "operationId": "accounts_workspaces_delete",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -3335,7 +3335,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_workspaces_read",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -3429,7 +3429,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "delete": {
         "operationId": "accounts_workspaces_delete",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -3461,7 +3461,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_workspaces_members_list",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -3523,7 +3523,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "delete": {
         "operationId": "accounts_workspaces_members_delete",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -3555,7 +3555,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "accounts_workspaces_members_read",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -3617,7 +3617,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "delete": {
         "operationId": "accounts_workspaces_members_delete",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -9531,8 +9531,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/integrations/connections/": {
       "get": {
         "operationId": "integrations_connections_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -9546,36 +9546,28 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "integer"
             }
+          },
+          "page_number": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
           }
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/IntegrationConnectionList"
-                }
-              }
-            }
+            "$ref": "#/definitions/IntegrationConnectionListResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -9593,15 +9585,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "integrations_connections_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/IntegrationConnectionList"
+          "$ref": "#/definitions/IntegrationConnectionCreate"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/IntegrationConnectionList"
+            "$ref": "#/definitions/IntegrationConnectionDetailResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -9621,15 +9613,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/integrations/connections/validate/": {
       "post": {
         "operationId": "integrations_connections_validate_credentials",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/IntegrationConnectionList"
+          "$ref": "#/definitions/ValidateCredentials"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/IntegrationConnectionList"
+          "200": {
+            "$ref": "#/definitions/IntegrationValidationResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -9699,15 +9691,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "integrations_connections_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/IntegrationConnectionList"
+          "$ref": "#/definitions/IntegrationConnectionUpdate"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/IntegrationConnectionList"
+            "$ref": "#/definitions/IntegrationConnectionDetailResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -9748,15 +9740,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/integrations/connections/{id}/pause/": {
       "post": {
         "operationId": "integrations_connections_pause",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/IntegrationConnectionList"
+          "$ref": "#/definitions/IntegrationEmptyRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/IntegrationConnectionList"
+          "200": {
+            "$ref": "#/definitions/IntegrationConnectionDetailResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -9776,15 +9768,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/integrations/connections/{id}/resume/": {
       "post": {
         "operationId": "integrations_connections_resume",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/IntegrationConnectionList"
+          "$ref": "#/definitions/IntegrationEmptyRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/IntegrationConnectionList"
+          "200": {
+            "$ref": "#/definitions/IntegrationConnectionDetailResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -9804,15 +9796,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/integrations/connections/{id}/sync_now/": {
       "post": {
         "operationId": "integrations_connections_sync_now",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/IntegrationConnectionList"
+          "$ref": "#/definitions/IntegrationEmptyRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/IntegrationConnectionList"
+          "200": {
+            "$ref": "#/definitions/IntegrationMessageResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -9835,8 +9827,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/integrations/sync-logs/": {
       "get": {
         "operationId": "integrations_sync-logs_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -9850,36 +9842,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "integer"
             }
+          },
+          "page_number": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20
+            }
+          },
+          "connection_id": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
           }
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/SyncLog"
-                }
-              }
-            }
+            "$ref": "#/definitions/SyncLogListResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -10403,6 +10394,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "required": false,
             "schema": {
               "type": "boolean"
+            }
+          },
+          "archived": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           }
         },
@@ -11421,6 +11419,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "/model-hub/annotation-queues/{queue_id}/items/bulk-review/": {
+      "post": {
+        "operationId": "model-hub_annotation-queues_items_bulk_review",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/BulkReviewItemsRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/QueueBulkReviewItemsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/model-hub/annotation-queues/{queue_id}/items/next-item/": {
       "get": {
         "operationId": "model-hub_annotation-queues_items_next_item",
@@ -11840,6 +11872,52 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "500": {
             "$ref": "#/definitions/ApiTextErrorResponse"
           },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/model-hub/annotation-queues/{queue_id}/items/{id}/discussion/comments/{comment_id}/": {
+      "patch": {
+        "operationId": "model-hub_annotation-queues_items_discussion_comments_partial_update",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/DiscussionCommentRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/QueueDiscussionResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "model-hub_annotation-queues_items_discussion_comments_delete",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": false,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -26649,12 +26727,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/AgentDefinitionResponse"
+          "$ref": "#/definitions/AgentDefinition"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/AgentDefinitionResponse"
+            "$ref": "#/definitions/AgentDefinition"
           },
           "400": {
             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -26723,12 +26801,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/AgentDefinitionResponse"
+          "$ref": "#/definitions/AgentDefinition"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AgentDefinitionResponse"
+            "$ref": "#/definitions/AgentDefinition"
           },
           "400": {
             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -26749,12 +26827,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/AgentDefinitionResponse"
+          "$ref": "#/definitions/AgentDefinition"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/AgentDefinitionResponse"
+            "$ref": "#/definitions/AgentDefinition"
           },
           "400": {
             "$ref": "#/definitions/ApiErrorWithDetailsResponse"
@@ -31554,6 +31632,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
               ]
             }
           },
+          "severity": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "critical",
+                "high",
+                "medium",
+                "low"
+              ]
+            }
+          },
           "fix_layer": {
             "required": false,
             "schema": {
@@ -31591,7 +31681,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
                 "last_seen",
                 "first_seen",
                 "error_count",
-                "unique_traces"
+                "unique_traces",
+                "severity"
               ],
               "default": "last_seen"
             }
@@ -41815,14 +41906,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "AccountsEmptyRequest": {
       "type": "object",
-      "properties": {}
+      "properties": {},
+      "additionalProperties": false
     },
     "AccountsErrorResponse": {
       "type": "object",
       "properties": {
         "status": {
           "title": "Status",
-          "type": "boolean"
+          "type": "boolean",
+          "default": false
         },
         "type": {
           "title": "Type",
@@ -42575,6 +42668,241 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/AdminPricingMutationResult"
+        }
+      }
+    },
+    "AgentDefinition": {
+      "required": [
+        "agent_name",
+        "inbound",
+        "description"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "agent_name": {
+          "title": "Agent name",
+          "description": "Name of the AI agent",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "agent_type": {
+          "title": "Agent type",
+          "type": "string",
+          "enum": [
+            "voice",
+            "text"
+          ]
+        },
+        "contact_number": {
+          "title": "Contact number",
+          "description": "Phone number associated with the AI agent",
+          "type": "string",
+          "maxLength": 50,
+          "x-nullable": true
+        },
+        "inbound": {
+          "title": "Inbound",
+          "description": "Whether the agent handles inbound calls",
+          "type": "boolean"
+        },
+        "description": {
+          "title": "Description",
+          "description": "Detailed description of the AI agent's purpose and capabilities",
+          "type": "string",
+          "minLength": 1
+        },
+        "assistant_id": {
+          "title": "Assistant id",
+          "description": "External identifier for the assistant",
+          "type": "string",
+          "maxLength": 255,
+          "x-nullable": true
+        },
+        "provider": {
+          "title": "Provider",
+          "description": "Provider of the AI agent",
+          "type": "string",
+          "maxLength": 255,
+          "x-nullable": true
+        },
+        "language": {
+          "title": "Language",
+          "description": "Language of the agent",
+          "type": "string",
+          "enum": [
+            "ar",
+            "bg",
+            "zh",
+            "cs",
+            "da",
+            "nl",
+            "en",
+            "fi",
+            "fr",
+            "de",
+            "el",
+            "hi",
+            "hu",
+            "id",
+            "it",
+            "ja",
+            "ko",
+            "ms",
+            "no",
+            "pl",
+            "pt",
+            "ro",
+            "ru",
+            "sk",
+            "es",
+            "sv",
+            "tr",
+            "uk",
+            "vi"
+          ],
+          "x-nullable": true
+        },
+        "languages": {
+          "type": "array",
+          "items": {
+            "title": "Languages",
+            "description": "Language of the agent",
+            "type": "string",
+            "enum": [
+              "ar",
+              "bg",
+              "zh",
+              "cs",
+              "da",
+              "nl",
+              "en",
+              "fi",
+              "fr",
+              "de",
+              "el",
+              "hi",
+              "hu",
+              "id",
+              "it",
+              "ja",
+              "ko",
+              "ms",
+              "no",
+              "pl",
+              "pt",
+              "ro",
+              "ru",
+              "sk",
+              "es",
+              "sv",
+              "tr",
+              "uk",
+              "vi"
+            ]
+          },
+          "x-nullable": true
+        },
+        "authentication_method": {
+          "title": "Authentication method",
+          "type": "string",
+          "enum": [
+            "api_key"
+          ],
+          "x-nullable": true
+        },
+        "websocket_url": {
+          "title": "Websocket url",
+          "description": "WebSocket URL for real-time communication with the agent",
+          "type": "string",
+          "format": "uri",
+          "maxLength": 500,
+          "x-nullable": true
+        },
+        "websocket_headers": {
+          "title": "Websocket headers",
+          "description": "Headers to be sent to the websocket server",
+          "type": "object",
+          "x-nullable": true
+        },
+        "workspace": {
+          "title": "Workspace",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "knowledge_base": {
+          "title": "Knowledge base",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "organization": {
+          "title": "Organization",
+          "description": "Organization this agent definition belongs to",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "api_key": {
+          "title": "Api key",
+          "description": "API key for the agent",
+          "type": "string",
+          "maxLength": 255,
+          "x-nullable": true
+        },
+        "observability_provider": {
+          "title": "Observability provider",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true,
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true
+        },
+        "updated_at": {
+          "title": "Updated at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true
+        },
+        "model": {
+          "title": "Model",
+          "description": "Model of the agent",
+          "type": "string",
+          "maxLength": 255,
+          "x-nullable": true
+        },
+        "model_details": {
+          "title": "Model details",
+          "description": "Details of the model",
+          "type": "object",
+          "x-nullable": true
+        },
+        "livekit_url": {
+          "title": "Livekit url",
+          "type": "string",
+          "maxLength": 500
+        },
+        "livekit_api_key": {
+          "title": "Livekit api key",
+          "type": "string",
+          "maxLength": 255
+        },
+        "livekit_api_secret": {
+          "title": "Livekit api secret",
+          "type": "string"
         }
       }
     },
@@ -44543,34 +44871,64 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "AgentccEmptyRequest": {
       "type": "object",
-      "properties": {}
+      "properties": {},
+      "additionalProperties": false
     },
     "AgentccErrorResponse": {
-      "required": [
-        "status"
-      ],
       "type": "object",
       "properties": {
         "status": {
           "title": "Status",
-          "type": "boolean"
+          "type": "boolean",
+          "default": false
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error"
+          ],
+          "x-nullable": true
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "x-nullable": true
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string",
+          "x-nullable": true
         },
         "result": {
           "title": "Result",
           "type": "string",
           "x-nullable": true
         },
-        "error": {
-          "title": "Error",
-          "type": "string"
-        },
         "message": {
           "title": "Message",
           "type": "string",
           "x-nullable": true
         },
-        "detail": {
-          "title": "Detail",
+        "error": {
+          "title": "Error",
+          "type": "string",
+          "x-nullable": true
+        },
+        "attr": {
+          "title": "Attr",
           "type": "string",
           "x-nullable": true
         },
@@ -46000,6 +46358,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "readOnly": true
         },
+        "deleted": {
+          "title": "Deleted",
+          "type": "boolean",
+          "readOnly": true
+        },
         "created_at": {
           "title": "Created at",
           "type": "string",
@@ -47053,6 +47416,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "format": "uuid"
           },
           "minItems": 1
+        }
+      }
+    },
+    "BulkReviewItemsRequest": {
+      "required": [
+        "item_ids",
+        "action"
+      ],
+      "type": "object",
+      "properties": {
+        "item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "minItems": 1
+        },
+        "action": {
+          "title": "Action",
+          "type": "string",
+          "enum": [
+            "approve",
+            "request_changes",
+            "reject"
+          ]
+        },
+        "notes": {
+          "title": "Notes",
+          "type": "string"
         }
       }
     },
@@ -49370,6 +49763,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "row": {
           "title": "Row",
           "type": "integer",
+          "maximum": 10,
           "minimum": 0
         }
       }
@@ -54721,6 +55115,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Failed only",
           "type": "boolean",
           "default": false
+        },
+        "max_concurrent_rows": {
+          "title": "Max concurrent rows",
+          "type": "integer",
+          "default": 10,
+          "minimum": 1
         }
       }
     },
@@ -55851,7 +56251,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "result": {
           "type": "array",
           "items": {
-            "type": "object"
+            "$ref": "#/definitions/GatewaySummaryResult"
           }
         }
       }
@@ -56939,6 +57339,117 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "IntegrationConnectionCreate": {
+      "required": [
+        "platform"
+      ],
+      "type": "object",
+      "properties": {
+        "platform": {
+          "title": "Platform",
+          "type": "string",
+          "enum": [
+            "langfuse",
+            "datadog",
+            "posthog",
+            "pagerduty",
+            "mixpanel",
+            "cloud_storage",
+            "message_queue",
+            "linear"
+          ]
+        },
+        "host_url": {
+          "title": "Host url",
+          "type": "string",
+          "format": "uri",
+          "default": "",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "public_key": {
+          "title": "Public key",
+          "type": "string",
+          "default": "",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "secret_key": {
+          "title": "Secret key",
+          "type": "string",
+          "default": "",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "ca_certificate": {
+          "title": "Ca certificate",
+          "type": "string",
+          "default": ""
+        },
+        "credentials": {
+          "title": "Credentials",
+          "type": "object",
+          "default": {}
+        },
+        "project_id": {
+          "title": "Project id",
+          "description": "Existing FutureAGI project ID. If null, a new project is created.",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "new_project_name": {
+          "title": "New project name",
+          "description": "Name for the new project (used when project_id is null).",
+          "type": "string",
+          "default": ""
+        },
+        "backfill_option": {
+          "title": "Backfill option",
+          "type": "string",
+          "enum": [
+            "all",
+            "from_date",
+            "new_only"
+          ],
+          "default": "new_only"
+        },
+        "backfill_from_date": {
+          "title": "Backfill from date",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "backfill_to_date": {
+          "title": "Backfill to date",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "sync_interval_seconds": {
+          "title": "Sync interval seconds",
+          "type": "integer",
+          "default": 300,
+          "maximum": 1800,
+          "minimum": 60
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string",
+          "default": ""
+        },
+        "external_project_name": {
+          "title": "External project name",
+          "type": "string",
+          "default": ""
+        },
+        "export_config": {
+          "title": "Export config",
+          "type": "object",
+          "default": {}
+        }
+      }
+    },
     "IntegrationConnectionDetail": {
       "required": [
         "platform",
@@ -57098,6 +57609,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "IntegrationConnectionDetailResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/IntegrationConnectionDetail"
+        }
+      }
+    },
     "IntegrationConnectionList": {
       "required": [
         "platform",
@@ -57208,6 +57735,67 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "IntegrationConnectionListResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/IntegrationConnectionListResult"
+        }
+      }
+    },
+    "IntegrationConnectionUpdate": {
+      "type": "object",
+      "properties": {
+        "display_name": {
+          "title": "Display name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "public_key": {
+          "title": "Public key",
+          "type": "string",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "secret_key": {
+          "title": "Secret key",
+          "type": "string",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "host_url": {
+          "title": "Host url",
+          "type": "string",
+          "format": "uri",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "ca_certificate": {
+          "title": "Ca certificate",
+          "type": "string"
+        },
+        "sync_interval_seconds": {
+          "title": "Sync interval seconds",
+          "type": "integer",
+          "maximum": 3600,
+          "minimum": 60
+        }
+      }
+    },
+    "IntegrationEmptyRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
     "IntegrationErrorResponse": {
       "type": "object",
       "properties": {
@@ -57215,6 +57803,36 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Status",
           "type": "boolean",
           "default": false
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error"
+          ],
+          "x-nullable": true
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "x-nullable": true
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string",
+          "x-nullable": true
         },
         "result": {
           "title": "Result",
@@ -57230,6 +57848,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Error",
           "type": "string",
           "x-nullable": true
+        },
+        "attr": {
+          "title": "Attr",
+          "type": "string",
+          "x-nullable": true
+        },
+        "details": {
+          "title": "Details",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "IntegrationMessageResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/IntegrationMessageResult"
+        }
+      }
+    },
+    "IntegrationValidationResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/IntegrationValidationResult"
         }
       }
     },
@@ -61122,8 +61788,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Result",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "$ref": "#/definitions/OrgConfigBulkItem"
           }
         }
       }
@@ -64330,6 +64995,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "QueueBulkReviewItemsResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/QueueBulkReviewItemsResult"
+        }
+      }
+    },
     "QueueDefaultRequest": {
       "type": "object",
       "properties": {
@@ -64668,6 +65349,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "readOnly": true
         },
+        "comment_count": {
+          "title": "Comment count",
+          "type": "string",
+          "readOnly": true
+        },
+        "open_feedback_count": {
+          "title": "Open feedback count",
+          "type": "string",
+          "readOnly": true
+        },
         "created_at": {
           "title": "Created at",
           "type": "string",
@@ -64701,8 +65392,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "exclude": {
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           },
           "default": []
         },
@@ -67431,6 +68121,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Value",
           "type": "object"
         },
+        "value_history": {
+          "title": "Value history",
+          "type": "object"
+        },
         "score_source": {
           "title": "Score source",
           "type": "string",
@@ -68506,12 +69200,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "boolean"
         },
         "result": {
-          "title": "Result",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          }
+          "$ref": "#/definitions/SpendSummaryResult"
         }
       }
     },
@@ -68830,6 +69519,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "format": "date-time",
           "readOnly": true,
           "x-nullable": true
+        }
+      }
+    },
+    "SyncLogListResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/SyncLogListResult"
         }
       }
     },
@@ -72693,6 +73398,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/ValidateCELResult"
+        }
+      }
+    },
+    "ValidateCredentials": {
+      "required": [
+        "platform"
+      ],
+      "type": "object",
+      "properties": {
+        "platform": {
+          "title": "Platform",
+          "type": "string",
+          "enum": [
+            "langfuse",
+            "datadog",
+            "posthog",
+            "pagerduty",
+            "mixpanel",
+            "cloud_storage",
+            "message_queue",
+            "linear"
+          ]
+        },
+        "host_url": {
+          "title": "Host url",
+          "type": "string",
+          "format": "uri",
+          "default": "",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "public_key": {
+          "title": "Public key",
+          "type": "string",
+          "default": "",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "secret_key": {
+          "title": "Secret key",
+          "type": "string",
+          "default": "",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "ca_certificate": {
+          "title": "Ca certificate",
+          "type": "string",
+          "default": ""
+        },
+        "credentials": {
+          "title": "Credentials",
+          "type": "object",
+          "default": {}
         }
       }
     },
@@ -77281,7 +78040,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Derived variables",
           "type": "object",
           "additionalProperties": {
-            "$ref": "#/definitions/DatasetDerivedVariableDetail"
+            "$ref": "#/definitions/DerivedVariableDetail"
           }
         }
       }
@@ -80268,6 +81027,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "integer"
         },
         "servers": {
+          "description": "Gateway MCP server statuses are adapter-specific objects; the Django fallback normalizes configured servers to objects with id and status.",
           "type": "array",
           "items": {
             "type": "object"
@@ -80558,13 +81318,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "readOnly": true
         },
         "metadata": {
-          "title": "Metadata",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
-          "readOnly": true
+          "$ref": "#/definitions/PaginationMetadata"
         }
       }
     },
@@ -80955,6 +81709,68 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "score_source": {
           "title": "Score source",
           "type": "string"
+        }
+      }
+    },
+    "IntegrationConnectionListResult": {
+      "required": [
+        "metadata",
+        "connections"
+      ],
+      "type": "object",
+      "properties": {
+        "metadata": {
+          "$ref": "#/definitions/PaginationMetadata"
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/IntegrationConnectionList"
+          }
+        }
+      }
+    },
+    "IntegrationMessageResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "IntegrationValidationResult": {
+      "required": [
+        "valid"
+      ],
+      "type": "object",
+      "properties": {
+        "valid": {
+          "title": "Valid",
+          "type": "boolean"
+        },
+        "projects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/IntegrationValidationProject"
+          }
+        },
+        "total_traces": {
+          "title": "Total traces",
+          "type": "integer",
+          "minimum": 0
+        },
+        "error": {
+          "title": "Error",
+          "type": "string",
+          "x-nullable": true
+        },
+        "viewer": {
+          "$ref": "#/definitions/IntegrationValidationViewer"
         }
       }
     },
@@ -83003,6 +83819,96 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "OrgConfigBulkItem": {
+      "required": [
+        "providers",
+        "guardrails",
+        "routing",
+        "cache",
+        "rate_limiting",
+        "budgets",
+        "cost_tracking",
+        "ip_acl",
+        "alerting",
+        "privacy",
+        "tool_policy",
+        "mcp",
+        "a2a",
+        "audit",
+        "model_database",
+        "model_map"
+      ],
+      "type": "object",
+      "properties": {
+        "providers": {
+          "title": "Providers",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object"
+          }
+        },
+        "guardrails": {
+          "title": "Guardrails",
+          "type": "object"
+        },
+        "routing": {
+          "title": "Routing",
+          "type": "object"
+        },
+        "cache": {
+          "title": "Cache",
+          "type": "object"
+        },
+        "rate_limiting": {
+          "title": "Rate limiting",
+          "type": "object"
+        },
+        "budgets": {
+          "title": "Budgets",
+          "type": "object"
+        },
+        "cost_tracking": {
+          "title": "Cost tracking",
+          "type": "object"
+        },
+        "ip_acl": {
+          "title": "Ip acl",
+          "type": "object"
+        },
+        "alerting": {
+          "title": "Alerting",
+          "type": "object"
+        },
+        "privacy": {
+          "title": "Privacy",
+          "type": "object"
+        },
+        "tool_policy": {
+          "title": "Tool policy",
+          "type": "object"
+        },
+        "mcp": {
+          "title": "Mcp",
+          "type": "object"
+        },
+        "a2a": {
+          "title": "A2a",
+          "type": "object"
+        },
+        "audit": {
+          "title": "Audit",
+          "type": "object"
+        },
+        "model_database": {
+          "title": "Model database",
+          "type": "object"
+        },
+        "model_map": {
+          "title": "Model map",
+          "type": "object"
+        }
+      }
+    },
     "BillingInfo": {
       "type": "object",
       "properties": {
@@ -84470,6 +85376,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "QueueBulkReviewItemsResult": {
+      "required": [
+        "reviewed",
+        "reviewed_item_ids",
+        "errors",
+        "action"
+      ],
+      "type": "object",
+      "properties": {
+        "reviewed": {
+          "title": "Reviewed",
+          "type": "integer"
+        },
+        "reviewed_item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/QueueBulkReviewItemsError"
+          }
+        },
+        "action": {
+          "title": "Action",
+          "type": "string",
+          "enum": [
+            "approve",
+            "request_changes",
+            "reject"
+          ]
+        }
+      }
+    },
     "QueueDefaultResult": {
       "required": [
         "queue",
@@ -84485,7 +85428,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "labels": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/QueueDefaultLabel"
+            "$ref": "#/definitions/QueueLabelResult"
           }
         },
         "created": {
@@ -84631,7 +85574,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "labels": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/QueueForSourceLabel"
+            "$ref": "#/definitions/QueueLabelResult"
           }
         },
         "existing_scores": {
@@ -86891,6 +87834,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SpendSummaryResult": {
+      "required": [
+        "period",
+        "period_start",
+        "orgs"
+      ],
+      "type": "object",
+      "properties": {
+        "period": {
+          "title": "Period",
+          "type": "string",
+          "enum": [
+            "daily",
+            "weekly",
+            "monthly",
+            "total"
+          ]
+        },
+        "period_start": {
+          "title": "Period start",
+          "type": "string",
+          "format": "date-time"
+        },
+        "orgs": {
+          "title": "Orgs",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/SpendSummaryOrg"
+          }
+        }
+      }
+    },
     "StreamStatusResult": {
       "required": [
         "stream_status"
@@ -87055,6 +88030,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Organization",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "SyncLogListResult": {
+      "required": [
+        "metadata",
+        "sync_logs"
+      ],
+      "type": "object",
+      "properties": {
+        "metadata": {
+          "$ref": "#/definitions/PaginationMetadata"
+        },
+        "sync_logs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SyncLog"
+          }
         }
       }
     },
@@ -90097,38 +91090,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "DatasetDerivedVariableDetail": {
-      "type": "object",
-      "properties": {
-        "paths": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "schema": {
-          "title": "Schema",
-          "type": "object"
-        },
-        "full_variables": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "raw_sample": {
-          "title": "Raw sample",
-          "type": "object",
-          "x-nullable": true
-        },
-        "is_json": {
-          "title": "Is json",
-          "type": "boolean"
-        }
-      }
-    },
     "DatasetEvalStatsMetric": {
       "required": [
         "name",
@@ -90348,7 +91309,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "status": {
           "title": "Status",
-          "type": "string",
+          "type": "object",
           "x-nullable": true
         }
       }
@@ -91973,7 +92934,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "id": {
           "title": "Id",
           "type": "string",
-          "minLength": 1
+          "format": "uuid"
         },
         "name": {
           "title": "Name",
@@ -91992,6 +92953,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "api_format": {
           "title": "Api format",
+          "description": "Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set.",
           "type": "string",
           "x-nullable": true
         },
@@ -92086,6 +93048,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "properties": {
         "id": {
           "title": "Id",
+          "description": "Provider key/name used by the gateway, not a database UUID.",
           "type": "string",
           "minLength": 1
         },
@@ -92118,6 +93081,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "api_format": {
           "title": "Api format",
+          "description": "Gateway protocol adapter name. This intentionally remains a string because self-hosted/custom providers may register adapters outside the built-in openai/anthropic/gemini/google set.",
           "type": "string"
         },
         "models": {
@@ -92293,6 +93257,38 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "date-time",
           "readOnly": true
+        }
+      }
+    },
+    "PaginationMetadata": {
+      "required": [
+        "total_count",
+        "current_page",
+        "page_size",
+        "total_pages"
+      ],
+      "type": "object",
+      "properties": {
+        "total_count": {
+          "title": "Total count",
+          "type": "integer"
+        },
+        "current_page": {
+          "title": "Current page",
+          "type": "integer"
+        },
+        "page_size": {
+          "title": "Page size",
+          "type": "integer"
+        },
+        "total_pages": {
+          "title": "Total pages",
+          "type": "integer"
+        },
+        "next_page": {
+          "title": "Next page",
+          "type": "integer",
+          "x-nullable": true
         }
       }
     },
@@ -92517,6 +93513,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "error": {
           "title": "Error",
           "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "IntegrationValidationProject": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "IntegrationValidationViewer": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "email": {
+          "title": "Email",
+          "type": "string",
+          "format": "email",
           "x-nullable": true
         }
       }
@@ -93917,52 +94949,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "QueueDefaultLabel": {
+    "QueueBulkReviewItemsError": {
       "required": [
-        "id",
-        "name",
-        "type",
-        "settings",
-        "allow_notes",
-        "required",
-        "order"
+        "item_id",
+        "error"
       ],
       "type": "object",
       "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "name": {
-          "title": "Name",
+        "item_id": {
+          "title": "Item id",
           "type": "string",
           "minLength": 1
         },
-        "type": {
-          "title": "Type",
+        "error": {
+          "title": "Error",
           "type": "string",
           "minLength": 1
-        },
-        "settings": {
-          "title": "Settings",
-          "type": "object"
-        },
-        "description": {
-          "title": "Description",
-          "type": "string"
-        },
-        "allow_notes": {
-          "title": "Allow notes",
-          "type": "boolean"
-        },
-        "required": {
-          "title": "Required",
-          "type": "boolean"
-        },
-        "order": {
-          "title": "Order",
-          "type": "integer"
         }
       }
     },
@@ -94134,55 +95136,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       },
       "x-nullable": true
-    },
-    "QueueForSourceLabel": {
-      "required": [
-        "id",
-        "name",
-        "type",
-        "settings",
-        "allow_notes",
-        "required",
-        "order"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "minLength": 1
-        },
-        "type": {
-          "title": "Type",
-          "type": "string",
-          "minLength": 1
-        },
-        "settings": {
-          "title": "Settings",
-          "type": "object"
-        },
-        "description": {
-          "title": "Description",
-          "type": "string"
-        },
-        "allow_notes": {
-          "title": "Allow notes",
-          "type": "boolean"
-        },
-        "required": {
-          "title": "Required",
-          "type": "boolean"
-        },
-        "order": {
-          "title": "Order",
-          "type": "integer"
-        }
-      }
     },
     "QueueForSourceQueue": {
       "required": [
@@ -94739,6 +95692,42 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "minLength": 1,
           "x-nullable": true
+        }
+      }
+    },
+    "SpendSummaryOrg": {
+      "required": [
+        "total_spend",
+        "per_key",
+        "per_user",
+        "per_model"
+      ],
+      "type": "object",
+      "properties": {
+        "total_spend": {
+          "title": "Total spend",
+          "type": "number"
+        },
+        "per_key": {
+          "title": "Per key",
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "per_user": {
+          "title": "Per user",
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "per_model": {
+          "title": "Per model",
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          }
         }
       }
     },

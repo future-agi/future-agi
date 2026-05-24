@@ -117,6 +117,15 @@ class TestAgentccGatewayAPI:
         assert data["result"]["provider_count"] == 0
         assert data["result"]["model_count"] == 0
 
+    def test_health_check_rejects_body_fields(self, auth_client, gateway_id):
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/health_check/",
+            {"unexpected": True},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["unexpected"] == ["Unknown field."]
+
     @patch("agentcc.views.gateway.get_gateway_client")
     def test_health_check_unreachable(self, mock_get_client, auth_client, gateway_id):
         from agentcc.services.gateway_client import GatewayClientError
@@ -603,6 +612,15 @@ class TestRequestLogAdvancedFilters:
         data = response.json()
         assert data["count"] == 1
 
+    def test_filter_by_status_code_range(self, auth_client, sample_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/?min_status_code=400&max_status_code=499"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 1
+        assert data["results"][0]["status_code"] == 429
+
     def test_ordering_by_latency(self, auth_client, sample_logs):
         response = auth_client.get("/agentcc/request-logs/?ordering=-latency_ms")
         assert response.status_code == status.HTTP_200_OK
@@ -704,6 +722,28 @@ class TestRequestLogSessions:
         sess_b = sessions["sess-B"]
         assert sess_b["request_count"] == 1
         assert sess_b["error_count"] == 0
+
+    def test_sessions_ordering_by_request_count(self, auth_client, sample_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/sessions/?ordering=-request_count"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["results"][0]["session_id"] == "sess-A"
+        assert data["results"][0]["request_count"] == 2
+
+    def test_sessions_apply_log_filters_before_aggregation(
+        self, auth_client, sample_logs
+    ):
+        response = auth_client.get(
+            "/agentcc/request-logs/sessions/?provider=anthropic"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 1
+        assert data["results"][0]["session_id"] == "sess-A"
+        assert data["results"][0]["request_count"] == 1
+        assert data["results"][0]["providers"] == ["anthropic"]
 
     def test_session_detail(self, auth_client, sample_logs):
         response = auth_client.get("/agentcc/request-logs/sessions/sess-A/")

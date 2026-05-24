@@ -30,7 +30,11 @@ from model_hub.models.choices import (
     StatusType,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.evals_metric import (
+    CompositeEvalChild,
+    EvalTemplate,
+    UserEvalMetric,
+)
 from tfc.middleware.workspace_context import set_workspace_context
 
 
@@ -140,6 +144,34 @@ def eval_template(db, organization, workspace):
         criteria="Evaluate the following: {{output}}",
         model="gpt-4",
     )
+
+
+@pytest.fixture
+def composite_eval_template(db, organization, workspace):
+    child_output = EvalTemplate.objects.create(
+        name="composite-child-output",
+        organization=organization,
+        workspace=workspace,
+        config={"required_keys": ["output"]},
+        eval_type="code",
+    )
+    child_expected = EvalTemplate.objects.create(
+        name="composite-child-expected",
+        organization=organization,
+        workspace=workspace,
+        config={"required_keys": ["expected"]},
+        eval_type="code",
+    )
+    parent = EvalTemplate.objects.create(
+        name="composite-parent",
+        organization=organization,
+        workspace=workspace,
+        template_type="composite",
+        config={},
+    )
+    CompositeEvalChild.objects.create(parent=parent, child=child_output, order=0)
+    CompositeEvalChild.objects.create(parent=parent, child=child_expected, order=1)
+    return parent
 
 
 @pytest.fixture
@@ -305,6 +337,34 @@ class TestAddUserEvalView:
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
+
+    def test_add_user_eval_rejects_composite_missing_child_required_mapping(
+        self, auth_client, dataset, composite_eval_template
+    ):
+        """Composite bindings must include required keys from every child eval."""
+        payload = {
+            "name": "composite-missing-mapping",
+            "template_id": str(composite_eval_template.id),
+            "config": {
+                "mapping": {"output": "Output Column"},
+            },
+            "run": False,
+        }
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/add_user_eval/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "expected" in str(response.data)
+        assert not UserEvalMetric.objects.filter(
+            name="composite-missing-mapping",
+            dataset=dataset,
+            template=composite_eval_template,
+            deleted=False,
+        ).exists()
 
 
 # ==================== StartEvalsProcess Tests ====================
@@ -566,6 +626,7 @@ class TestDeleteEvalsView:
         assert response.status_code == status.HTTP_200_OK
         user_eval_metric.refresh_from_db()
         assert user_eval_metric.deleted is True
+        assert user_eval_metric.deleted_at is not None
 
     def test_delete_user_eval_hide_from_sidebar(
         self, auth_client, dataset, user_eval_metric
@@ -696,11 +757,53 @@ class TestDeleteEvalsView:
         reason_col.refresh_from_db()
         assert eval_col.deleted is True
         assert reason_col.deleted is True
+        assert eval_col.deleted_at is not None
+        assert reason_col.deleted_at is not None
 
         # Both should be removed from column_order
         dataset.refresh_from_db()
         assert str(eval_col.id) not in dataset.column_order
         assert str(reason_col.id) not in dataset.column_order
+
+    def test_delete_eval_with_column_sets_deleted_at_on_cells(
+        self, auth_client, dataset, user_eval_metric
+    ):
+        """Deleting an eval column should stamp deleted_at on dependent cells."""
+        row = Row.objects.create(dataset=dataset, order=0)
+        eval_col = Column.objects.create(
+            name="Test Eval",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(user_eval_metric.id),
+        )
+        reason_col = Column.objects.create(
+            name="Test Eval-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{user_eval_metric.id}",
+        )
+        eval_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=eval_col, value="Passed"
+        )
+        reason_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=reason_col, value="Looks grounded"
+        )
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/delete_user_eval/{user_eval_metric.id}/",
+            {"delete_column": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        eval_cell.refresh_from_db()
+        reason_cell.refresh_from_db()
+        assert eval_cell.deleted is True
+        assert reason_cell.deleted is True
+        assert eval_cell.deleted_at is not None
+        assert reason_cell.deleted_at is not None
 
     def test_delete_column_of_running_eval_cancels_runner(
         self, auth_client, dataset, user_eval_metric
@@ -968,6 +1071,39 @@ class TestEditAndRunUserEvalView:
             status.HTTP_403_FORBIDDEN,
         ]
 
+    def test_edit_and_run_user_eval_rejects_composite_missing_child_required_mapping(
+        self, auth_client, dataset, organization, workspace, composite_eval_template
+    ):
+        """Editing a composite metric cannot drop a child-required mapping."""
+        metric = UserEvalMetric.objects.create(
+            name="composite-edit-mapping",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=composite_eval_template,
+            status=StatusType.INACTIVE.value,
+            config={
+                "mapping": {
+                    "output": "Output Column",
+                    "expected": "Expected Column",
+                }
+            },
+        )
+
+        response = auth_client.post(
+            f"/model-hub/develops/{dataset.id}/edit_and_run_user_eval/{metric.id}/",
+            {"config": {"mapping": {"output": "Output Column"}}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "expected" in str(response.data)
+        metric.refresh_from_db()
+        assert metric.config["mapping"] == {
+            "output": "Output Column",
+            "expected": "Expected Column",
+        }
+
 
 # ==================== PreviewRunEvalView Tests ====================
 
@@ -1029,6 +1165,78 @@ class TestPreviewRunEvalView:
 
         # The API returns 400 when mapping is missing
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.django_db(transaction=True)
+    def test_preview_code_eval_passes_function_params(
+        self,
+        auth_client,
+        dataset,
+        row,
+        input_column,
+        input_cell,
+        organization,
+        workspace,
+    ):
+        """Preview should pass function params to code eval kwargs."""
+        template = EvalTemplate.objects.create(
+            name="word_count_preview_test",
+            organization=organization,
+            workspace=workspace,
+            eval_type="code",
+            config={
+                "code": """
+def evaluate(input, output, expected, context, **kwargs):
+    text = str(kwargs.get("text", "")).strip()
+    min_words = kwargs.get("min_words")
+    count = len(text.split())
+    passed = min_words is not None and count >= int(min_words)
+    return {"score": 1.0 if passed else 0.0, "reason": f"count={count}, min={min_words}"}
+""",
+                "output": "Pass/Fail",
+                "eval_type_id": "CustomCodeEval",
+                "required_keys": ["text"],
+                "function_params_schema": {
+                    "min_words": {
+                        "type": "integer",
+                        "default": None,
+                        "minimum": 0,
+                        "nullable": True,
+                    },
+                },
+            },
+        )
+        payload = {
+            "template_id": str(template.id),
+            "config": {
+                "mapping": {"text": str(input_column.id)},
+                "params": {"min_words": 2},
+            },
+        }
+        fake_api_call = SimpleNamespace(config="{}", save=lambda: None)
+
+        with (
+            patch(
+                "model_hub.views.utils.evals.EvaluationRunner._handle_api_call",
+                return_value=fake_api_call,
+            ),
+            patch(
+                "model_hub.views.utils.evals.APICallStatusChoices",
+                SimpleNamespace(
+                    SUCCESS=SimpleNamespace(value="success"),
+                    ERROR=SimpleNamespace(value="error"),
+                ),
+            ),
+        ):
+            response = auth_client.post(
+                f"/model-hub/develops/{dataset.id}/preview_run_eval/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        preview = response.data["result"]["responses"][0]
+        assert preview["output"] == "Passed"
+        assert preview["reason"] == "count=3, min=2"
 
     def test_preview_run_eval_unauthenticated(self, dataset):
         """Test that unauthenticated users cannot preview evaluations."""

@@ -27,6 +27,7 @@ from django.test import TestCase
 from rest_framework import status
 
 from model_hub.models.annotation_queues import (
+    FULL_ACCESS_QUEUE_ROLES,
     AnnotationQueue,
     AnnotationQueueAnnotator,
     AnnotationQueueLabel,
@@ -42,7 +43,6 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
-
 
 # Reuse the fixtures from test_scores_api.py via pytest's collection. They
 # live in the same package so importing here would create a circular
@@ -153,10 +153,14 @@ def _make_queue(name, organization, workspace, user, project=None, **extra):
         status=AnnotationQueueStatusChoices.ACTIVE.value,
         **extra,
     )
-    AnnotationQueueAnnotator.objects.create(
+    AnnotationQueueAnnotator.objects.update_or_create(
         queue=queue,
         user=user,
-        role=AnnotatorRole.MANAGER.value,
+        deleted=False,
+        defaults={
+            "role": AnnotatorRole.MANAGER.value,
+            "roles": FULL_ACCESS_QUEUE_ROLES,
+        },
     )
     return queue
 
@@ -740,7 +744,7 @@ class TestTraceListAggregate:
                 )
             )
 
-        for item, rating in zip(items, [5, 2, 2]):
+        for item, rating in zip(items, [5, 2, 2], strict=False):
             Score.objects.create(
                 trace=trace,
                 label=star_label,
@@ -792,7 +796,7 @@ class TestTraceListAggregate:
                 )
             )
 
-        for item, val in zip(items, ["up", "up", "down"]):
+        for item, val in zip(items, ["up", "up", "down"], strict=False):
             Score.objects.create(
                 trace=trace,
                 label=thumbs_label,
@@ -869,6 +873,7 @@ class TestQueueScopedBackfillCommands:
         observation_span,
     ):
         from django.core.management import call_command
+
         from tracer.models.span_notes import SpanNotes
 
         SpanNotes.objects.create(

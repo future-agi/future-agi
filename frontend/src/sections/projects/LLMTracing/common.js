@@ -789,6 +789,34 @@ export const generateAnnotationColumnsForTracing = (
         },
       }));
 
+      if (outputType === "text" && metricAnnotators.length === 0) {
+        return [
+          {
+            headerName: displayName,
+            field: metricId,
+            flex: 1,
+            minWidth: 200,
+            wrapText: true,
+            autoHeight: true,
+            headerComponent: AnnotationHeaderCellRenderer,
+            headerComponentParams: {
+              displayName,
+              metricId,
+              isTextType: true,
+              showActions: false,
+            },
+            valueGetter: () => null,
+            cellRenderer: NewAnnotationCellRenderer,
+            cellRendererParams: {
+              annotationType: outputType,
+              isAverage: false,
+              settings,
+              originType: "Tracing",
+            },
+          },
+        ];
+      }
+
       return [
         ...(outputType !== "text" ? [avgColumn] : []),
         ...annotatorColumns,

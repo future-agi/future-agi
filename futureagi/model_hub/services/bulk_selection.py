@@ -58,7 +58,7 @@ from simulate.utils.persona_filtering import (
 )
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.utils.annotations import build_annotation_subqueries
@@ -847,6 +847,31 @@ def _build_span_base_queryset(project_id, organization, workspace=None):
     return qs
 
 
+_SPAN_FIELD_MAP = {
+    "latency_ms": "latency_ms",
+    "latency": "latency_ms",
+    "avg_latency": "latency_ms",
+    "cost": "cost",
+    "avg_cost": "cost",
+    "total_tokens": "total_tokens",
+    "tokens": "total_tokens",
+    "input_tokens": "prompt_tokens",
+    "prompt_tokens": "prompt_tokens",
+    "output_tokens": "completion_tokens",
+    "completion_tokens": "completion_tokens",
+    "node_type": "node_type",
+    "trace_id": "trace_id",
+    "span_id": "id",
+    "created_at": "created_at",
+    "name": "name",
+    "span_name": "span_name",
+    "trace_name": "trace_name",
+    "user_id": "user_id",
+    "status": "status",
+    "start_time": "start_time",
+}
+
+
 def _apply_span_filters(base_qs, filters: list[dict], *, user, organization):
     """Apply the same FilterEngine branches as ``list_spans_observe``.
 
@@ -865,7 +890,10 @@ def _apply_span_filters(base_qs, filters: list[dict], *, user, organization):
     qs = base_qs
 
     # 1. System metrics
-    system_conds = FilterEngine.get_filter_conditions_for_system_metrics(filters)
+    system_conds = FilterEngine.get_filter_conditions_for_system_metrics(
+        filters,
+        field_map=_SPAN_FIELD_MAP,
+    )
     if system_conds:
         combined &= system_conds
 
@@ -1040,6 +1068,8 @@ _SESSION_PRE_AGG_FIELDS = {"user_id": "end_user__user_id"}
 def _build_session_base_queryset(project_id, organization, workspace=None):
     """Return scoped base TraceSession queryset (pre filter application)."""
     project = Project.objects.get(id=project_id, organization=organization)
+    if project.source == ProjectSourceChoices.SIMULATOR.value:
+        return TraceSession.objects.none()
 
     qs = TraceSession.objects.filter(project_id=project.id)
     if workspace is not None:
@@ -1266,13 +1296,116 @@ _CALL_EXECUTION_FIELD_MAP = {
     "status": "status",
     "simulation_call_type": "simulation_call_type",
     "call_type": "simulation_call_type",
+    "duration": "duration_seconds",
     "duration_seconds": "duration_seconds",
+    "agent_latency": "avg_agent_latency_ms",
+    "avg_agent_latency_ms": "avg_agent_latency_ms",
+    "total_cost": "cost_cents",
+    "cost_cents": "cost_cents",
     "overall_score": "overall_score",
     "agent_definition": "test_execution__agent_definition__agent_name",
 }
 
 
-def _apply_call_execution_filters(qs, filters):
+def _is_call_execution_eval_filter(col, cfg, eval_config_ids):
+    return (
+        cfg.get("col_type") == "EVAL_METRIC"
+        and col
+        and str(col) in eval_config_ids
+    )
+
+
+def _coerce_eval_number(value):
+    numeric = float(value)
+    return numeric / 100.0
+
+
+def _call_execution_json_output_filter(qs, output_field, eval_id, cfg):
+    op = cfg.get("filter_op")
+    value = cfg.get("filter_value")
+    filter_type = cfg.get("filter_type")
+    output_path = f"{output_field}__{eval_id}__output"
+    has_key = {f"{output_field}__has_key": eval_id}
+
+    if op == "is_null":
+        return qs.filter(Q(**{f"{output_path}__isnull": True}) | ~Q(**has_key))
+    if op == "is_not_null":
+        return qs.filter(**has_key).filter(**{f"{output_path}__isnull": False})
+
+    if value is None:
+        return qs
+
+    if filter_type == "number":
+        if op in ("between", "not_between"):
+            if not isinstance(value, (list, tuple)) or len(value) < 2:
+                raise ValueError("invalid numeric range")
+            lo = _coerce_eval_number(value[0])
+            hi = _coerce_eval_number(value[1])
+            if op == "between":
+                return qs.filter(
+                    **has_key,
+                    **{f"{output_path}__gte": lo, f"{output_path}__lte": hi},
+                )
+            return qs.filter(**has_key).exclude(
+                **{f"{output_path}__gte": lo, f"{output_path}__lte": hi}
+            )
+
+        numeric_value = _coerce_eval_number(value)
+        if op == "greater_than":
+            return qs.filter(**has_key, **{f"{output_path}__gt": numeric_value})
+        if op == "less_than":
+            return qs.filter(**has_key, **{f"{output_path}__lt": numeric_value})
+        if op == "greater_than_or_equal":
+            return qs.filter(**has_key, **{f"{output_path}__gte": numeric_value})
+        if op == "less_than_or_equal":
+            return qs.filter(**has_key, **{f"{output_path}__lte": numeric_value})
+        if op == "not_equals":
+            return qs.filter(**has_key).exclude(**{output_path: numeric_value})
+        return qs.filter(**has_key, **{output_path: numeric_value})
+
+    if filter_type == "boolean":
+        if isinstance(value, bool):
+            bool_value = value
+        else:
+            bool_value = str(value).lower() in ("true", "1", "yes", "passed")
+        if op == "not_equals":
+            return qs.filter(**has_key).exclude(**{output_path: bool_value})
+        return qs.filter(**has_key, **{output_path: bool_value})
+
+    values = value if isinstance(value, list) else [value]
+    values = [str(v) for v in values if v not in (None, "")]
+    if not values:
+        return qs
+
+    if op in ("in", "equals"):
+        if len(values) == 1 and op == "equals":
+            return qs.filter(**has_key, **{f"{output_path}__iexact": values[0]})
+        return qs.filter(**has_key, **{f"{output_path}__in": values})
+    if op in ("not_in", "not_equals"):
+        if len(values) == 1 and op == "not_equals":
+            return qs.filter(**has_key).exclude(
+                **{f"{output_path}__iexact": values[0]}
+            )
+        return qs.filter(**has_key).exclude(**{f"{output_path}__in": values})
+    if op == "contains":
+        condition = Q()
+        for item in values:
+            condition |= Q(**{f"{output_path}__icontains": item})
+        return qs.filter(**has_key).filter(condition)
+    if op == "not_contains":
+        condition = Q()
+        for item in values:
+            condition |= Q(**{f"{output_path}__icontains": item})
+        return qs.filter(**has_key).exclude(condition)
+    if op == "starts_with":
+        return qs.filter(**has_key, **{f"{output_path}__istartswith": values[0]})
+    if op == "ends_with":
+        return qs.filter(**has_key, **{f"{output_path}__iendswith": values[0]})
+
+    raise ValueError("unsupported eval filter operator")
+
+
+def _apply_call_execution_filters(qs, filters, *, eval_config_ids=None):
     """Translate UI-shaped filters into CallExecution ORM lookups.
 
     Returns ``(qs, unsupported)`` where ``unsupported`` is the list of
@@ -1280,11 +1413,19 @@ def _apply_call_execution_filters(qs, filters):
     closed if any are returned.
     """
     unsupported: list[str] = []
+    eval_config_ids = {str(item) for item in (eval_config_ids or set())}
     for f in filters:
         col = _filter_column_id(f)
         cfg = _filter_config(f)
         op = cfg.get("filter_op")
         value = cfg.get("filter_value")
+        if _is_call_execution_eval_filter(col, cfg, eval_config_ids):
+            try:
+                qs = _call_execution_json_output_filter(qs, "eval_outputs", col, cfg)
+            except (TypeError, ValueError):
+                unsupported.append(col or "<unknown>")
+            continue
+
         if is_persona_filter_column(col):
             try:
                 qs = apply_persona_filter(
@@ -1399,7 +1540,21 @@ def resolve_filtered_call_execution_ids(
     if filters:
         qs, remaining = apply_created_at_filters(qs, filters)
         if remaining:
-            qs, unsupported = _apply_call_execution_filters(qs, remaining)
+            from simulate.models import SimulateEvalConfig
+
+            eval_config_ids = set(
+                SimulateEvalConfig.objects.filter(
+                    run_test__agent_definition_id=project_id,
+                    run_test__organization=organization,
+                    run_test__deleted=False,
+                    deleted=False,
+                ).values_list("id", flat=True)
+            )
+            qs, unsupported = _apply_call_execution_filters(
+                qs,
+                remaining,
+                eval_config_ids=eval_config_ids,
+            )
             if unsupported:
                 # Fail closed: a filter the resolver still can't apply
                 # must NOT silently broaden the result to the full

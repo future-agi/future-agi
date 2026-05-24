@@ -18,7 +18,7 @@ from accounts.serializers.contracts import (
     OrganizationSwitchResponseSerializer,
 )
 from tfc.constants.roles import RoleMapping
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import validated_api_request, validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = logging.getLogger(__name__)
@@ -83,7 +83,7 @@ class OrganizationSelectionView(APIView):
             logger.error(f"Failed to select organization: {str(e)}")
             return self._gm.bad_request("Failed to select organization")
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={
             200: OrganizationSelectionListResponseSerializer,
             **ACCOUNTS_ERROR_RESPONSES,
@@ -304,6 +304,10 @@ class SwitchOrganizationView(APIView):
 )
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    responses={200: CurrentOrganizationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    document=False,
+)
 def get_current_organization(request):
     """Get the currently selected organization for the user."""
     _gm = GeneralMethods()

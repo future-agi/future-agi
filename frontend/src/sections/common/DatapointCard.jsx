@@ -172,7 +172,10 @@ const DatapointCard = ({
   }, [value?.cellValue, dataType, isAnnotationColumn, annotationUnwrapped]);
 
   const annotationContent = useMemo(
-    () => (isAnnotationColumn ? renderAnnotationValue(value?.cellValue, theme) : null),
+    () =>
+      isAnnotationColumn
+        ? renderAnnotationValue(value?.cellValue, theme)
+        : null,
     [isAnnotationColumn, value?.cellValue, theme],
   );
   const parsedJson = useMemo(() => {

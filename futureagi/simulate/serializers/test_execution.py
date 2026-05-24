@@ -215,6 +215,7 @@ def _normalize_eval_value(value, output_type):
 class CallExecutionDetailSerializer(serializers.ModelSerializer):
     """Serializer for CallExecution model with new payload structure"""
 
+    test_execution_id = serializers.UUIDField(read_only=True)
     timestamp = serializers.DateTimeField(source="updated_at", read_only=True)
     call_type = serializers.SerializerMethodField()
     duration = serializers.SerializerMethodField()
@@ -255,6 +256,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     # Graph-related field
     scenario_id = serializers.SerializerMethodField()
+    scenario_graph = serializers.SerializerMethodField()
+    scenario_graph_id = serializers.SerializerMethodField()
 
     # Provider used for this call (e.g. "vapi", "retell", "livekit_bridge")
     provider = serializers.SerializerMethodField()
@@ -316,7 +319,10 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "agent_definition_used_id",
             "call_summary",
             "recordings",
+            "test_execution_id",
             "scenario_id",
+            "scenario_graph",
+            "scenario_graph_id",
             # Conversation metrics fields
             "avg_agent_latency",
             "avg_agent_latency_ms",
@@ -764,7 +770,28 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
     def get_scenario_id(self, obj):
         """Get scenario ID"""
-        return str(obj.scenario.id)
+        return str(obj.scenario.id) if obj.scenario_id else None
+
+    def _get_active_scenario_graph(self, obj):
+        if not obj.scenario_id:
+            return None
+        from simulate.models.scenario_graph import ScenarioGraph
+
+        return (
+            ScenarioGraph.objects.filter(scenario_id=obj.scenario_id, is_active=True)
+            .order_by("-created_at")
+            .first()
+        )
+
+    def get_scenario_graph(self, obj):
+        graph = self._get_active_scenario_graph(obj)
+        if not graph or not isinstance(graph.graph_config, dict):
+            return {}
+        return graph.graph_config.get("graph_data", {}) or {}
+
+    def get_scenario_graph_id(self, obj):
+        graph = self._get_active_scenario_graph(obj)
+        return str(graph.id) if graph else None
 
     # def get_error_localizer_tasks(self, obj):
     #     """Get error localizer tasks for this call execution"""

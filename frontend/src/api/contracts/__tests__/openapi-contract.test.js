@@ -48,18 +48,18 @@ describe("OpenAPI runtime contract", () => {
       template: "/model-hub/experiments/v2/list/",
       method: "get",
     });
-    expect(findOpenApiEndpoint("/simulate/run-tests/active/", "get")).toMatchObject(
-      {
-        template: "/simulate/run-tests/active/",
-        method: "get",
-      },
-    );
-    expect(findOpenApiEndpoint("/tracer/feed/issues/stats/", "get")).toMatchObject(
-      {
-        template: "/tracer/feed/issues/stats/",
-        method: "get",
-      },
-    );
+    expect(
+      findOpenApiEndpoint("/simulate/run-tests/active/", "get"),
+    ).toMatchObject({
+      template: "/simulate/run-tests/active/",
+      method: "get",
+    });
+    expect(
+      findOpenApiEndpoint("/tracer/feed/issues/stats/", "get"),
+    ).toMatchObject({
+      template: "/tracer/feed/issues/stats/",
+      method: "get",
+    });
   });
 
   it("validates request bodies from backend serializer schemas", () => {
@@ -153,7 +153,10 @@ describe("OpenAPI runtime contract", () => {
   });
 
   it("does not enforce inferred legacy contracts until the endpoint is runtime-backed", () => {
-    const endpoint = findOpenApiEndpoint("/tracer/project/list_projects/", "get");
+    const endpoint = findOpenApiEndpoint(
+      "/tracer/project/list_projects/",
+      "get",
+    );
     expect(endpoint.contract.runtimeRequestValidation).toBe(false);
 
     expect(
@@ -208,6 +211,22 @@ describe("OpenAPI runtime contract", () => {
         },
       }).ok,
     ).toBe(false);
+  });
+
+  it("accepts Error Feed severity filter and severity sorting", () => {
+    expect(
+      validateContractedRequestConfig({
+        url: "/tracer/feed/issues/",
+        method: "get",
+        params: {
+          severity: "medium",
+          sort_by: "severity",
+          sort_dir: "desc",
+          limit: 25,
+          offset: 0,
+        },
+      }),
+    ).toMatchObject({ ok: true });
   });
 
   it("validates query params after dropping nullish values that Axios omits", () => {

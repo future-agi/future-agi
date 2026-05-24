@@ -91,7 +91,7 @@ export const Accounts2faTotpConfirmCreateResponse = zod.object({
  */
 export const Accounts2faTotpSetupCreateBody = zod.object({
 
-}).passthrough()
+})
 
 
 
@@ -1205,7 +1205,7 @@ export const AccountsOrganizationsUpdatePartialUpdateResponse = zod.object({
  */
 export const AccountsPasskeyAuthenticateOptionsCreateBody = zod.object({
 
-}).passthrough()
+})
 
 
 
@@ -1316,7 +1316,7 @@ export const AccountsPasskeyAuthenticateVerifyCreateResponse = zod.object({
  */
 export const AccountsPasskeyRegisterOptionsCreateBody = zod.object({
 
-}).passthrough()
+})
 
 
 
@@ -1929,7 +1929,7 @@ export const accountsUserListListQueryLimitDefault = 10;
 export const accountsUserListListQueryLimitMax = 100;
 
 export const accountsUserListListQuerySearchDefault = ``;
-export const accountsUserListListQuerySortDefault = ``;
+export const accountsUserListListQuerySortDefault = [];
 export const accountsUserListListQueryFilterStatusDefault = [];
 export const accountsUserListListQueryFilterRoleDefault = [];
 
@@ -2744,7 +2744,13 @@ export const AgentPlaygroundGraphsExecutionsListResponse = zod.object({
   "graph_version": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })).optional(),
-  "metadata": zod.record(zod.string(), zod.string()).optional()
+  "metadata": zod.object({
+  "total_count": zod.number(),
+  "current_page": zod.number(),
+  "page_size": zod.number(),
+  "total_pages": zod.number(),
+  "next_page": zod.number().optional()
+}).optional()
 })
 })
 
@@ -5130,11 +5136,22 @@ export const AgentccEmailAlertsTestBody = zod.object({
  * Stateless proxy to the Go gateway (configured via env vars).
 No DB model — returns a virtual singleton gateway with live health.
  */
+
+
+
+
+
+
 export const AgentccGatewaysListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.array(zod.object({
-
-}).passthrough())
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "base_url": zod.string().url().min(1),
+  "status": zod.string().min(1),
+  "provider_count": zod.number().optional(),
+  "model_count": zod.number().optional()
+}))
 })
 
 
@@ -5216,7 +5233,6 @@ export const AgentccGatewaysConfigParams = zod.object({
 
 
 
-
 export const AgentccGatewaysConfigResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -5274,11 +5290,11 @@ export const AgentccGatewaysConfigResponse = zod.object({
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
   "providers": zod.record(zod.string(), zod.object({
-  "id": zod.string().min(1),
+  "id": zod.string().uuid(),
   "name": zod.string().min(1),
   "display_name": zod.string().min(1),
   "base_url": zod.string(),
-  "api_format": zod.string(),
+  "api_format": zod.string().describe('Gateway protocol adapter name. This intentionally remains a string because self-hosted\/custom providers may register adapters outside the built-in openai\/anthropic\/gemini\/google set.'),
   "models": zod.array(zod.object({
 
 }).passthrough()),
@@ -5340,7 +5356,7 @@ export const AgentccGatewaysHealthCheckParams = zod.object({
 
 export const AgentccGatewaysHealthCheckBody = zod.object({
 
-}).passthrough()
+})
 
 
 
@@ -5419,7 +5435,7 @@ export const AgentccGatewaysMcpStatusResponse = zod.object({
   "prompts": zod.number(),
   "servers": zod.array(zod.object({
 
-}).passthrough())
+}).passthrough()).describe('Gateway MCP server statuses are adapter-specific objects; the Django fallback normalizes configured servers to objects with id and status.')
 })
 })
 
@@ -5458,14 +5474,14 @@ export const AgentccGatewaysProvidersResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "providers": zod.array(zod.object({
-  "id": zod.string().min(1),
+  "id": zod.string().min(1).describe('Provider key\/name used by the gateway, not a database UUID.'),
   "name": zod.string().min(1),
   "status": zod.string().min(1),
   "healthy": zod.boolean(),
   "circuit_state": zod.string().min(1),
   "display_name": zod.string().optional(),
   "base_url": zod.string().optional(),
-  "api_format": zod.string().optional(),
+  "api_format": zod.string().optional().describe('Gateway protocol adapter name. This intentionally remains a string because self-hosted\/custom providers may register adapters outside the built-in openai\/anthropic\/gemini\/google set.'),
   "models": zod.array(zod.object({
 
 }).passthrough()).optional(),
@@ -5486,7 +5502,7 @@ export const AgentccGatewaysReloadParams = zod.object({
 
 export const AgentccGatewaysReloadBody = zod.object({
 
-}).passthrough()
+})
 
 export const AgentccGatewaysReloadResponse = zod.object({
   "status": zod.boolean(),
@@ -6690,7 +6706,56 @@ Authenticated by admin token (not user JWT).
  */
 export const AgentccOrgConfigsBulkListResponse = zod.object({
   "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
+  "result": zod.record(zod.string(), zod.object({
+  "providers": zod.record(zod.string(), zod.object({
+
+}).passthrough()),
+  "guardrails": zod.object({
+
+}).passthrough(),
+  "routing": zod.object({
+
+}).passthrough(),
+  "cache": zod.object({
+
+}).passthrough(),
+  "rate_limiting": zod.object({
+
+}).passthrough(),
+  "budgets": zod.object({
+
+}).passthrough(),
+  "cost_tracking": zod.object({
+
+}).passthrough(),
+  "ip_acl": zod.object({
+
+}).passthrough(),
+  "alerting": zod.object({
+
+}).passthrough(),
+  "privacy": zod.object({
+
+}).passthrough(),
+  "tool_policy": zod.object({
+
+}).passthrough(),
+  "mcp": zod.object({
+
+}).passthrough(),
+  "a2a": zod.object({
+
+}).passthrough(),
+  "audit": zod.object({
+
+}).passthrough(),
+  "model_database": zod.object({
+
+}).passthrough(),
+  "model_map": zod.object({
+
+}).passthrough()
+}))
 })
 
 
@@ -8818,7 +8883,16 @@ export const AgentccSpendSummaryListQueryParams = zod.object({
 
 export const AgentccSpendSummaryListResponse = zod.object({
   "status": zod.boolean(),
-  "result": zod.record(zod.string(), zod.string())
+  "result": zod.object({
+  "period": zod.enum(['daily', 'weekly', 'monthly', 'total']),
+  "period_start": zod.string().datetime({"offset":true}),
+  "orgs": zod.record(zod.string(), zod.object({
+  "total_spend": zod.number(),
+  "per_key": zod.record(zod.string(), zod.number()),
+  "per_user": zod.record(zod.string(), zod.number()),
+  "per_model": zod.record(zod.string(), zod.number())
+}))
+})
 })
 
 
@@ -10297,138 +10371,169 @@ export const HealthListResponse = zod.object({
 /**
  * API endpoints for managing integration connections.
  */
+export const integrationsConnectionsListQueryPageNumberDefault = 0;
+export const integrationsConnectionsListQueryPageNumberMin = 0;
+
+export const integrationsConnectionsListQueryPageSizeDefault = 20;
+export const integrationsConnectionsListQueryPageSizeMax = 100;
+
+
+
 export const IntegrationsConnectionsListQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
-  "limit": zod.number().optional().describe('Number of results to return per page.')
+  "limit": zod.number().optional().describe('Number of results to return per page.'),
+  "page_number": zod.number().min(integrationsConnectionsListQueryPageNumberMin).default(integrationsConnectionsListQueryPageNumberDefault),
+  "page_size": zod.number().min(1).max(integrationsConnectionsListQueryPageSizeMax).default(integrationsConnectionsListQueryPageSizeDefault)
 })
 
-export const integrationsConnectionsListResponseResultsItemDisplayNameMax = 255;
+export const integrationsConnectionsListResponseStatusDefault = true;
+export const integrationsConnectionsListResponseResultConnectionsItemDisplayNameMax = 255;
 
-export const integrationsConnectionsListResponseResultsItemHostUrlMax = 500;
+export const integrationsConnectionsListResponseResultConnectionsItemHostUrlMax = 500;
 
-export const integrationsConnectionsListResponseResultsItemExternalProjectNameMax = 255;
+export const integrationsConnectionsListResponseResultConnectionsItemExternalProjectNameMax = 255;
 
-export const integrationsConnectionsListResponseResultsItemTotalTracesSyncedMin = 0;
-export const integrationsConnectionsListResponseResultsItemTotalTracesSyncedMax = 2147483647;
+export const integrationsConnectionsListResponseResultConnectionsItemTotalTracesSyncedMin = 0;
+export const integrationsConnectionsListResponseResultConnectionsItemTotalTracesSyncedMax = 2147483647;
 
-export const integrationsConnectionsListResponseResultsItemTotalSpansSyncedMin = 0;
-export const integrationsConnectionsListResponseResultsItemTotalSpansSyncedMax = 2147483647;
+export const integrationsConnectionsListResponseResultConnectionsItemTotalSpansSyncedMin = 0;
+export const integrationsConnectionsListResponseResultConnectionsItemTotalSpansSyncedMax = 2147483647;
 
-export const integrationsConnectionsListResponseResultsItemTotalScoresSyncedMin = 0;
-export const integrationsConnectionsListResponseResultsItemTotalScoresSyncedMax = 2147483647;
+export const integrationsConnectionsListResponseResultConnectionsItemTotalScoresSyncedMin = 0;
+export const integrationsConnectionsListResponseResultConnectionsItemTotalScoresSyncedMax = 2147483647;
 
-export const integrationsConnectionsListResponseResultsItemSyncIntervalSecondsMin = 60;
-export const integrationsConnectionsListResponseResultsItemSyncIntervalSecondsMax = 1800;
+export const integrationsConnectionsListResponseResultConnectionsItemSyncIntervalSecondsMin = 60;
+export const integrationsConnectionsListResponseResultConnectionsItemSyncIntervalSecondsMax = 1800;
 
 
 
 export const IntegrationsConnectionsListResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
+  "status": zod.boolean().default(integrationsConnectionsListResponseStatusDefault),
+  "result": zod.object({
+  "metadata": zod.object({
+  "total_count": zod.number(),
+  "current_page": zod.number(),
+  "page_size": zod.number(),
+  "total_pages": zod.number(),
+  "next_page": zod.number().optional()
+}),
+  "connections": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
   "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsListResponseResultsItemDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsListResponseResultsItemHostUrlMax),
+  "display_name": zod.string().min(1).max(integrationsConnectionsListResponseResultConnectionsItemDisplayNameMax),
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsListResponseResultConnectionsItemHostUrlMax),
   "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
   "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsListResponseResultsItemExternalProjectNameMax),
+  "external_project_name": zod.string().min(1).max(integrationsConnectionsListResponseResultConnectionsItemExternalProjectNameMax),
   "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsListResponseResultsItemTotalTracesSyncedMin).max(integrationsConnectionsListResponseResultsItemTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsListResponseResultsItemTotalSpansSyncedMin).max(integrationsConnectionsListResponseResultsItemTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsListResponseResultsItemTotalScoresSyncedMin).max(integrationsConnectionsListResponseResultsItemTotalScoresSyncedMax).optional(),
+  "total_traces_synced": zod.number().min(integrationsConnectionsListResponseResultConnectionsItemTotalTracesSyncedMin).max(integrationsConnectionsListResponseResultConnectionsItemTotalTracesSyncedMax).optional(),
+  "total_spans_synced": zod.number().min(integrationsConnectionsListResponseResultConnectionsItemTotalSpansSyncedMin).max(integrationsConnectionsListResponseResultConnectionsItemTotalSpansSyncedMax).optional(),
+  "total_scores_synced": zod.number().min(integrationsConnectionsListResponseResultConnectionsItemTotalScoresSyncedMin).max(integrationsConnectionsListResponseResultConnectionsItemTotalScoresSyncedMax).optional(),
   "backfill_completed": zod.boolean().optional(),
   "backfill_progress": zod.object({
 
 }).passthrough().optional(),
-  "sync_interval_seconds": zod.number().min(integrationsConnectionsListResponseResultsItemSyncIntervalSecondsMin).max(integrationsConnectionsListResponseResultsItemSyncIntervalSecondsMax).optional(),
+  "sync_interval_seconds": zod.number().min(integrationsConnectionsListResponseResultConnectionsItemSyncIntervalSecondsMin).max(integrationsConnectionsListResponseResultConnectionsItemSyncIntervalSecondsMax).optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 }))
+})
 })
 
 
 /**
  * API endpoints for managing integration connections.
  */
-export const integrationsConnectionsCreateBodyDisplayNameMax = 255;
-
+export const integrationsConnectionsCreateBodyHostUrlDefault = ``;
 export const integrationsConnectionsCreateBodyHostUrlMax = 500;
 
-export const integrationsConnectionsCreateBodyExternalProjectNameMax = 255;
+export const integrationsConnectionsCreateBodyPublicKeyDefault = ``;
+export const integrationsConnectionsCreateBodyPublicKeyMax = 500;
 
-export const integrationsConnectionsCreateBodyTotalTracesSyncedMin = 0;
-export const integrationsConnectionsCreateBodyTotalTracesSyncedMax = 2147483647;
+export const integrationsConnectionsCreateBodySecretKeyDefault = ``;
+export const integrationsConnectionsCreateBodySecretKeyMax = 500;
 
-export const integrationsConnectionsCreateBodyTotalSpansSyncedMin = 0;
-export const integrationsConnectionsCreateBodyTotalSpansSyncedMax = 2147483647;
-
-export const integrationsConnectionsCreateBodyTotalScoresSyncedMin = 0;
-export const integrationsConnectionsCreateBodyTotalScoresSyncedMax = 2147483647;
-
+export const integrationsConnectionsCreateBodyCaCertificateDefault = ``;
+export const integrationsConnectionsCreateBodyCredentialsDefault = {  };
+export const integrationsConnectionsCreateBodyNewProjectNameDefault = ``;
+export const integrationsConnectionsCreateBodyBackfillOptionDefault = `new_only`;
+export const integrationsConnectionsCreateBodySyncIntervalSecondsDefault = 300;
 export const integrationsConnectionsCreateBodySyncIntervalSecondsMin = 60;
 export const integrationsConnectionsCreateBodySyncIntervalSecondsMax = 1800;
 
-
+export const integrationsConnectionsCreateBodyDisplayNameDefault = ``;
+export const integrationsConnectionsCreateBodyExternalProjectNameDefault = ``;
+export const integrationsConnectionsCreateBodyExportConfigDefault = {  };
 
 export const IntegrationsConnectionsCreateBody = zod.object({
   "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsCreateBodyDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsCreateBodyHostUrlMax),
-  "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
-  "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsCreateBodyExternalProjectNameMax),
-  "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsCreateBodyTotalTracesSyncedMin).max(integrationsConnectionsCreateBodyTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsCreateBodyTotalSpansSyncedMin).max(integrationsConnectionsCreateBodyTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsCreateBodyTotalScoresSyncedMin).max(integrationsConnectionsCreateBodyTotalScoresSyncedMax).optional(),
-  "backfill_completed": zod.boolean().optional(),
-  "backfill_progress": zod.object({
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsCreateBodyHostUrlMax).default(integrationsConnectionsCreateBodyHostUrlDefault),
+  "public_key": zod.string().min(1).max(integrationsConnectionsCreateBodyPublicKeyMax).default(integrationsConnectionsCreateBodyPublicKeyDefault),
+  "secret_key": zod.string().min(1).max(integrationsConnectionsCreateBodySecretKeyMax).default(integrationsConnectionsCreateBodySecretKeyDefault),
+  "ca_certificate": zod.string().default(integrationsConnectionsCreateBodyCaCertificateDefault),
+  "credentials": zod.object({
 
-}).passthrough().optional(),
-  "sync_interval_seconds": zod.number().min(integrationsConnectionsCreateBodySyncIntervalSecondsMin).max(integrationsConnectionsCreateBodySyncIntervalSecondsMax).optional()
+}).passthrough().default(integrationsConnectionsCreateBodyCredentialsDefault),
+  "project_id": zod.string().uuid().optional().describe('Existing FutureAGI project ID. If null, a new project is created.'),
+  "new_project_name": zod.string().default(integrationsConnectionsCreateBodyNewProjectNameDefault).describe('Name for the new project (used when project_id is null).'),
+  "backfill_option": zod.enum(['all', 'from_date', 'new_only']).default(integrationsConnectionsCreateBodyBackfillOptionDefault),
+  "backfill_from_date": zod.string().datetime({"offset":true}).optional(),
+  "backfill_to_date": zod.string().datetime({"offset":true}).optional(),
+  "sync_interval_seconds": zod.number().min(integrationsConnectionsCreateBodySyncIntervalSecondsMin).max(integrationsConnectionsCreateBodySyncIntervalSecondsMax).default(integrationsConnectionsCreateBodySyncIntervalSecondsDefault),
+  "display_name": zod.string().default(integrationsConnectionsCreateBodyDisplayNameDefault),
+  "external_project_name": zod.string().default(integrationsConnectionsCreateBodyExternalProjectNameDefault),
+  "export_config": zod.object({
+
+}).passthrough().default(integrationsConnectionsCreateBodyExportConfigDefault)
 })
 
 
 /**
  * Validate platform credentials without creating a connection.
  */
-export const integrationsConnectionsValidateCredentialsBodyDisplayNameMax = 255;
-
+export const integrationsConnectionsValidateCredentialsBodyHostUrlDefault = ``;
 export const integrationsConnectionsValidateCredentialsBodyHostUrlMax = 500;
 
-export const integrationsConnectionsValidateCredentialsBodyExternalProjectNameMax = 255;
+export const integrationsConnectionsValidateCredentialsBodyPublicKeyDefault = ``;
+export const integrationsConnectionsValidateCredentialsBodyPublicKeyMax = 500;
 
-export const integrationsConnectionsValidateCredentialsBodyTotalTracesSyncedMin = 0;
-export const integrationsConnectionsValidateCredentialsBodyTotalTracesSyncedMax = 2147483647;
+export const integrationsConnectionsValidateCredentialsBodySecretKeyDefault = ``;
+export const integrationsConnectionsValidateCredentialsBodySecretKeyMax = 500;
 
-export const integrationsConnectionsValidateCredentialsBodyTotalSpansSyncedMin = 0;
-export const integrationsConnectionsValidateCredentialsBodyTotalSpansSyncedMax = 2147483647;
-
-export const integrationsConnectionsValidateCredentialsBodyTotalScoresSyncedMin = 0;
-export const integrationsConnectionsValidateCredentialsBodyTotalScoresSyncedMax = 2147483647;
-
-export const integrationsConnectionsValidateCredentialsBodySyncIntervalSecondsMin = 60;
-export const integrationsConnectionsValidateCredentialsBodySyncIntervalSecondsMax = 1800;
-
-
+export const integrationsConnectionsValidateCredentialsBodyCaCertificateDefault = ``;
+export const integrationsConnectionsValidateCredentialsBodyCredentialsDefault = {  };
 
 export const IntegrationsConnectionsValidateCredentialsBody = zod.object({
   "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsValidateCredentialsBodyDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsValidateCredentialsBodyHostUrlMax),
-  "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
-  "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsValidateCredentialsBodyExternalProjectNameMax),
-  "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsValidateCredentialsBodyTotalTracesSyncedMin).max(integrationsConnectionsValidateCredentialsBodyTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsValidateCredentialsBodyTotalSpansSyncedMin).max(integrationsConnectionsValidateCredentialsBodyTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsValidateCredentialsBodyTotalScoresSyncedMin).max(integrationsConnectionsValidateCredentialsBodyTotalScoresSyncedMax).optional(),
-  "backfill_completed": zod.boolean().optional(),
-  "backfill_progress": zod.object({
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsValidateCredentialsBodyHostUrlMax).default(integrationsConnectionsValidateCredentialsBodyHostUrlDefault),
+  "public_key": zod.string().min(1).max(integrationsConnectionsValidateCredentialsBodyPublicKeyMax).default(integrationsConnectionsValidateCredentialsBodyPublicKeyDefault),
+  "secret_key": zod.string().min(1).max(integrationsConnectionsValidateCredentialsBodySecretKeyMax).default(integrationsConnectionsValidateCredentialsBodySecretKeyDefault),
+  "ca_certificate": zod.string().default(integrationsConnectionsValidateCredentialsBodyCaCertificateDefault),
+  "credentials": zod.object({
 
-}).passthrough().optional(),
-  "sync_interval_seconds": zod.number().min(integrationsConnectionsValidateCredentialsBodySyncIntervalSecondsMin).max(integrationsConnectionsValidateCredentialsBodySyncIntervalSecondsMax).optional()
+}).passthrough().default(integrationsConnectionsValidateCredentialsBodyCredentialsDefault)
+})
+
+export const integrationsConnectionsValidateCredentialsResponseStatusDefault = true;
+export const integrationsConnectionsValidateCredentialsResponseResultTotalTracesMin = 0;
+
+
+
+export const IntegrationsConnectionsValidateCredentialsResponse = zod.object({
+  "status": zod.boolean().default(integrationsConnectionsValidateCredentialsResponseStatusDefault),
+  "result": zod.object({
+  "valid": zod.boolean(),
+  "projects": zod.array(zod.object({
+  "id": zod.string().optional(),
+  "name": zod.string().optional()
+})).optional(),
+  "total_traces": zod.number().min(integrationsConnectionsValidateCredentialsResponseResultTotalTracesMin).optional(),
+  "error": zod.string().optional(),
+  "viewer": zod.object({
+  "id": zod.string().optional(),
+  "name": zod.string().optional(),
+  "email": zod.string().email().optional()
+}).optional()
+})
 })
 
 
@@ -10586,80 +10691,79 @@ export const IntegrationsConnectionsPartialUpdateParams = zod.object({
 
 export const integrationsConnectionsPartialUpdateBodyDisplayNameMax = 255;
 
+export const integrationsConnectionsPartialUpdateBodyPublicKeyMax = 500;
+
+export const integrationsConnectionsPartialUpdateBodySecretKeyMax = 500;
+
 export const integrationsConnectionsPartialUpdateBodyHostUrlMax = 500;
 
-export const integrationsConnectionsPartialUpdateBodyExternalProjectNameMax = 255;
-
-export const integrationsConnectionsPartialUpdateBodyTotalTracesSyncedMin = 0;
-export const integrationsConnectionsPartialUpdateBodyTotalTracesSyncedMax = 2147483647;
-
-export const integrationsConnectionsPartialUpdateBodyTotalSpansSyncedMin = 0;
-export const integrationsConnectionsPartialUpdateBodyTotalSpansSyncedMax = 2147483647;
-
-export const integrationsConnectionsPartialUpdateBodyTotalScoresSyncedMin = 0;
-export const integrationsConnectionsPartialUpdateBodyTotalScoresSyncedMax = 2147483647;
-
 export const integrationsConnectionsPartialUpdateBodySyncIntervalSecondsMin = 60;
-export const integrationsConnectionsPartialUpdateBodySyncIntervalSecondsMax = 1800;
+export const integrationsConnectionsPartialUpdateBodySyncIntervalSecondsMax = 3600;
 
 
 
 export const IntegrationsConnectionsPartialUpdateBody = zod.object({
-  "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsPartialUpdateBodyDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsPartialUpdateBodyHostUrlMax),
-  "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
-  "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsPartialUpdateBodyExternalProjectNameMax),
-  "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsPartialUpdateBodyTotalTracesSyncedMin).max(integrationsConnectionsPartialUpdateBodyTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsPartialUpdateBodyTotalSpansSyncedMin).max(integrationsConnectionsPartialUpdateBodyTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsPartialUpdateBodyTotalScoresSyncedMin).max(integrationsConnectionsPartialUpdateBodyTotalScoresSyncedMax).optional(),
-  "backfill_completed": zod.boolean().optional(),
-  "backfill_progress": zod.object({
-
-}).passthrough().optional(),
+  "display_name": zod.string().min(1).max(integrationsConnectionsPartialUpdateBodyDisplayNameMax).optional(),
+  "public_key": zod.string().min(1).max(integrationsConnectionsPartialUpdateBodyPublicKeyMax).optional(),
+  "secret_key": zod.string().min(1).max(integrationsConnectionsPartialUpdateBodySecretKeyMax).optional(),
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsPartialUpdateBodyHostUrlMax).optional(),
+  "ca_certificate": zod.string().optional(),
   "sync_interval_seconds": zod.number().min(integrationsConnectionsPartialUpdateBodySyncIntervalSecondsMin).max(integrationsConnectionsPartialUpdateBodySyncIntervalSecondsMax).optional()
 })
 
-export const integrationsConnectionsPartialUpdateResponseDisplayNameMax = 255;
+export const integrationsConnectionsPartialUpdateResponseStatusDefault = true;
+export const integrationsConnectionsPartialUpdateResponseResultDisplayNameMax = 255;
 
-export const integrationsConnectionsPartialUpdateResponseHostUrlMax = 500;
+export const integrationsConnectionsPartialUpdateResponseResultHostUrlMax = 500;
 
-export const integrationsConnectionsPartialUpdateResponseExternalProjectNameMax = 255;
+export const integrationsConnectionsPartialUpdateResponseResultExternalProjectNameMax = 255;
 
-export const integrationsConnectionsPartialUpdateResponseTotalTracesSyncedMin = 0;
-export const integrationsConnectionsPartialUpdateResponseTotalTracesSyncedMax = 2147483647;
+export const integrationsConnectionsPartialUpdateResponseResultSyncIntervalSecondsMin = 60;
+export const integrationsConnectionsPartialUpdateResponseResultSyncIntervalSecondsMax = 1800;
 
-export const integrationsConnectionsPartialUpdateResponseTotalSpansSyncedMin = 0;
-export const integrationsConnectionsPartialUpdateResponseTotalSpansSyncedMax = 2147483647;
+export const integrationsConnectionsPartialUpdateResponseResultTotalTracesSyncedMin = 0;
+export const integrationsConnectionsPartialUpdateResponseResultTotalTracesSyncedMax = 2147483647;
 
-export const integrationsConnectionsPartialUpdateResponseTotalScoresSyncedMin = 0;
-export const integrationsConnectionsPartialUpdateResponseTotalScoresSyncedMax = 2147483647;
+export const integrationsConnectionsPartialUpdateResponseResultTotalSpansSyncedMin = 0;
+export const integrationsConnectionsPartialUpdateResponseResultTotalSpansSyncedMax = 2147483647;
 
-export const integrationsConnectionsPartialUpdateResponseSyncIntervalSecondsMin = 60;
-export const integrationsConnectionsPartialUpdateResponseSyncIntervalSecondsMax = 1800;
+export const integrationsConnectionsPartialUpdateResponseResultTotalScoresSyncedMin = 0;
+export const integrationsConnectionsPartialUpdateResponseResultTotalScoresSyncedMax = 2147483647;
 
 
 
 export const IntegrationsConnectionsPartialUpdateResponse = zod.object({
+  "status": zod.boolean().default(integrationsConnectionsPartialUpdateResponseStatusDefault),
+  "result": zod.object({
   "id": zod.string().uuid().optional(),
   "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsPartialUpdateResponseDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsPartialUpdateResponseHostUrlMax),
+  "display_name": zod.string().min(1).max(integrationsConnectionsPartialUpdateResponseResultDisplayNameMax),
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsPartialUpdateResponseResultHostUrlMax),
   "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
   "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsPartialUpdateResponseExternalProjectNameMax),
+  "external_project_name": zod.string().min(1).max(integrationsConnectionsPartialUpdateResponseResultExternalProjectNameMax),
+  "project": zod.string().uuid().optional(),
+  "project_name": zod.string().optional(),
+  "public_key_display": zod.string().optional(),
+  "secret_key_display": zod.string().optional(),
   "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsPartialUpdateResponseTotalTracesSyncedMin).max(integrationsConnectionsPartialUpdateResponseTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsPartialUpdateResponseTotalSpansSyncedMin).max(integrationsConnectionsPartialUpdateResponseTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsPartialUpdateResponseTotalScoresSyncedMin).max(integrationsConnectionsPartialUpdateResponseTotalScoresSyncedMax).optional(),
+  "sync_cursor": zod.object({
+
+}).passthrough().optional(),
+  "sync_interval_seconds": zod.number().min(integrationsConnectionsPartialUpdateResponseResultSyncIntervalSecondsMin).max(integrationsConnectionsPartialUpdateResponseResultSyncIntervalSecondsMax).optional(),
+  "last_error_notified_at": zod.string().datetime({"offset":true}).optional(),
+  "backfill_from": zod.string().datetime({"offset":true}).optional(),
   "backfill_completed": zod.boolean().optional(),
   "backfill_progress": zod.object({
 
 }).passthrough().optional(),
-  "sync_interval_seconds": zod.number().min(integrationsConnectionsPartialUpdateResponseSyncIntervalSecondsMin).max(integrationsConnectionsPartialUpdateResponseSyncIntervalSecondsMax).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional()
+  "total_traces_synced": zod.number().min(integrationsConnectionsPartialUpdateResponseResultTotalTracesSyncedMin).max(integrationsConnectionsPartialUpdateResponseResultTotalTracesSyncedMax).optional(),
+  "total_spans_synced": zod.number().min(integrationsConnectionsPartialUpdateResponseResultTotalSpansSyncedMin).max(integrationsConnectionsPartialUpdateResponseResultTotalSpansSyncedMax).optional(),
+  "total_scores_synced": zod.number().min(integrationsConnectionsPartialUpdateResponseResultTotalScoresSyncedMin).max(integrationsConnectionsPartialUpdateResponseResultTotalScoresSyncedMax).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional(),
+  "created_by": zod.string().uuid().optional()
+})
 })
 
 
@@ -10678,42 +10782,63 @@ export const IntegrationsConnectionsPauseParams = zod.object({
   "id": zod.string()
 })
 
-export const integrationsConnectionsPauseBodyDisplayNameMax = 255;
-
-export const integrationsConnectionsPauseBodyHostUrlMax = 500;
-
-export const integrationsConnectionsPauseBodyExternalProjectNameMax = 255;
-
-export const integrationsConnectionsPauseBodyTotalTracesSyncedMin = 0;
-export const integrationsConnectionsPauseBodyTotalTracesSyncedMax = 2147483647;
-
-export const integrationsConnectionsPauseBodyTotalSpansSyncedMin = 0;
-export const integrationsConnectionsPauseBodyTotalSpansSyncedMax = 2147483647;
-
-export const integrationsConnectionsPauseBodyTotalScoresSyncedMin = 0;
-export const integrationsConnectionsPauseBodyTotalScoresSyncedMax = 2147483647;
-
-export const integrationsConnectionsPauseBodySyncIntervalSecondsMin = 60;
-export const integrationsConnectionsPauseBodySyncIntervalSecondsMax = 1800;
-
-
-
 export const IntegrationsConnectionsPauseBody = zod.object({
+
+})
+
+export const integrationsConnectionsPauseResponseStatusDefault = true;
+export const integrationsConnectionsPauseResponseResultDisplayNameMax = 255;
+
+export const integrationsConnectionsPauseResponseResultHostUrlMax = 500;
+
+export const integrationsConnectionsPauseResponseResultExternalProjectNameMax = 255;
+
+export const integrationsConnectionsPauseResponseResultSyncIntervalSecondsMin = 60;
+export const integrationsConnectionsPauseResponseResultSyncIntervalSecondsMax = 1800;
+
+export const integrationsConnectionsPauseResponseResultTotalTracesSyncedMin = 0;
+export const integrationsConnectionsPauseResponseResultTotalTracesSyncedMax = 2147483647;
+
+export const integrationsConnectionsPauseResponseResultTotalSpansSyncedMin = 0;
+export const integrationsConnectionsPauseResponseResultTotalSpansSyncedMax = 2147483647;
+
+export const integrationsConnectionsPauseResponseResultTotalScoresSyncedMin = 0;
+export const integrationsConnectionsPauseResponseResultTotalScoresSyncedMax = 2147483647;
+
+
+
+export const IntegrationsConnectionsPauseResponse = zod.object({
+  "status": zod.boolean().default(integrationsConnectionsPauseResponseStatusDefault),
+  "result": zod.object({
+  "id": zod.string().uuid().optional(),
   "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsPauseBodyDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsPauseBodyHostUrlMax),
+  "display_name": zod.string().min(1).max(integrationsConnectionsPauseResponseResultDisplayNameMax),
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsPauseResponseResultHostUrlMax),
   "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
   "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsPauseBodyExternalProjectNameMax),
+  "external_project_name": zod.string().min(1).max(integrationsConnectionsPauseResponseResultExternalProjectNameMax),
+  "project": zod.string().uuid().optional(),
+  "project_name": zod.string().optional(),
+  "public_key_display": zod.string().optional(),
+  "secret_key_display": zod.string().optional(),
   "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsPauseBodyTotalTracesSyncedMin).max(integrationsConnectionsPauseBodyTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsPauseBodyTotalSpansSyncedMin).max(integrationsConnectionsPauseBodyTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsPauseBodyTotalScoresSyncedMin).max(integrationsConnectionsPauseBodyTotalScoresSyncedMax).optional(),
+  "sync_cursor": zod.object({
+
+}).passthrough().optional(),
+  "sync_interval_seconds": zod.number().min(integrationsConnectionsPauseResponseResultSyncIntervalSecondsMin).max(integrationsConnectionsPauseResponseResultSyncIntervalSecondsMax).optional(),
+  "last_error_notified_at": zod.string().datetime({"offset":true}).optional(),
+  "backfill_from": zod.string().datetime({"offset":true}).optional(),
   "backfill_completed": zod.boolean().optional(),
   "backfill_progress": zod.object({
 
 }).passthrough().optional(),
-  "sync_interval_seconds": zod.number().min(integrationsConnectionsPauseBodySyncIntervalSecondsMin).max(integrationsConnectionsPauseBodySyncIntervalSecondsMax).optional()
+  "total_traces_synced": zod.number().min(integrationsConnectionsPauseResponseResultTotalTracesSyncedMin).max(integrationsConnectionsPauseResponseResultTotalTracesSyncedMax).optional(),
+  "total_spans_synced": zod.number().min(integrationsConnectionsPauseResponseResultTotalSpansSyncedMin).max(integrationsConnectionsPauseResponseResultTotalSpansSyncedMax).optional(),
+  "total_scores_synced": zod.number().min(integrationsConnectionsPauseResponseResultTotalScoresSyncedMin).max(integrationsConnectionsPauseResponseResultTotalScoresSyncedMax).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional(),
+  "created_by": zod.string().uuid().optional()
+})
 })
 
 
@@ -10724,42 +10849,63 @@ export const IntegrationsConnectionsResumeParams = zod.object({
   "id": zod.string()
 })
 
-export const integrationsConnectionsResumeBodyDisplayNameMax = 255;
-
-export const integrationsConnectionsResumeBodyHostUrlMax = 500;
-
-export const integrationsConnectionsResumeBodyExternalProjectNameMax = 255;
-
-export const integrationsConnectionsResumeBodyTotalTracesSyncedMin = 0;
-export const integrationsConnectionsResumeBodyTotalTracesSyncedMax = 2147483647;
-
-export const integrationsConnectionsResumeBodyTotalSpansSyncedMin = 0;
-export const integrationsConnectionsResumeBodyTotalSpansSyncedMax = 2147483647;
-
-export const integrationsConnectionsResumeBodyTotalScoresSyncedMin = 0;
-export const integrationsConnectionsResumeBodyTotalScoresSyncedMax = 2147483647;
-
-export const integrationsConnectionsResumeBodySyncIntervalSecondsMin = 60;
-export const integrationsConnectionsResumeBodySyncIntervalSecondsMax = 1800;
-
-
-
 export const IntegrationsConnectionsResumeBody = zod.object({
+
+})
+
+export const integrationsConnectionsResumeResponseStatusDefault = true;
+export const integrationsConnectionsResumeResponseResultDisplayNameMax = 255;
+
+export const integrationsConnectionsResumeResponseResultHostUrlMax = 500;
+
+export const integrationsConnectionsResumeResponseResultExternalProjectNameMax = 255;
+
+export const integrationsConnectionsResumeResponseResultSyncIntervalSecondsMin = 60;
+export const integrationsConnectionsResumeResponseResultSyncIntervalSecondsMax = 1800;
+
+export const integrationsConnectionsResumeResponseResultTotalTracesSyncedMin = 0;
+export const integrationsConnectionsResumeResponseResultTotalTracesSyncedMax = 2147483647;
+
+export const integrationsConnectionsResumeResponseResultTotalSpansSyncedMin = 0;
+export const integrationsConnectionsResumeResponseResultTotalSpansSyncedMax = 2147483647;
+
+export const integrationsConnectionsResumeResponseResultTotalScoresSyncedMin = 0;
+export const integrationsConnectionsResumeResponseResultTotalScoresSyncedMax = 2147483647;
+
+
+
+export const IntegrationsConnectionsResumeResponse = zod.object({
+  "status": zod.boolean().default(integrationsConnectionsResumeResponseStatusDefault),
+  "result": zod.object({
+  "id": zod.string().uuid().optional(),
   "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsResumeBodyDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsResumeBodyHostUrlMax),
+  "display_name": zod.string().min(1).max(integrationsConnectionsResumeResponseResultDisplayNameMax),
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsResumeResponseResultHostUrlMax),
   "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
   "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsResumeBodyExternalProjectNameMax),
+  "external_project_name": zod.string().min(1).max(integrationsConnectionsResumeResponseResultExternalProjectNameMax),
+  "project": zod.string().uuid().optional(),
+  "project_name": zod.string().optional(),
+  "public_key_display": zod.string().optional(),
+  "secret_key_display": zod.string().optional(),
   "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsResumeBodyTotalTracesSyncedMin).max(integrationsConnectionsResumeBodyTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsResumeBodyTotalSpansSyncedMin).max(integrationsConnectionsResumeBodyTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsResumeBodyTotalScoresSyncedMin).max(integrationsConnectionsResumeBodyTotalScoresSyncedMax).optional(),
+  "sync_cursor": zod.object({
+
+}).passthrough().optional(),
+  "sync_interval_seconds": zod.number().min(integrationsConnectionsResumeResponseResultSyncIntervalSecondsMin).max(integrationsConnectionsResumeResponseResultSyncIntervalSecondsMax).optional(),
+  "last_error_notified_at": zod.string().datetime({"offset":true}).optional(),
+  "backfill_from": zod.string().datetime({"offset":true}).optional(),
   "backfill_completed": zod.boolean().optional(),
   "backfill_progress": zod.object({
 
 }).passthrough().optional(),
-  "sync_interval_seconds": zod.number().min(integrationsConnectionsResumeBodySyncIntervalSecondsMin).max(integrationsConnectionsResumeBodySyncIntervalSecondsMax).optional()
+  "total_traces_synced": zod.number().min(integrationsConnectionsResumeResponseResultTotalTracesSyncedMin).max(integrationsConnectionsResumeResponseResultTotalTracesSyncedMax).optional(),
+  "total_spans_synced": zod.number().min(integrationsConnectionsResumeResponseResultTotalSpansSyncedMin).max(integrationsConnectionsResumeResponseResultTotalSpansSyncedMax).optional(),
+  "total_scores_synced": zod.number().min(integrationsConnectionsResumeResponseResultTotalScoresSyncedMin).max(integrationsConnectionsResumeResponseResultTotalScoresSyncedMax).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional(),
+  "created_by": zod.string().uuid().optional()
+})
 })
 
 
@@ -10770,61 +10916,54 @@ export const IntegrationsConnectionsSyncNowParams = zod.object({
   "id": zod.string()
 })
 
-export const integrationsConnectionsSyncNowBodyDisplayNameMax = 255;
-
-export const integrationsConnectionsSyncNowBodyHostUrlMax = 500;
-
-export const integrationsConnectionsSyncNowBodyExternalProjectNameMax = 255;
-
-export const integrationsConnectionsSyncNowBodyTotalTracesSyncedMin = 0;
-export const integrationsConnectionsSyncNowBodyTotalTracesSyncedMax = 2147483647;
-
-export const integrationsConnectionsSyncNowBodyTotalSpansSyncedMin = 0;
-export const integrationsConnectionsSyncNowBodyTotalSpansSyncedMax = 2147483647;
-
-export const integrationsConnectionsSyncNowBodyTotalScoresSyncedMin = 0;
-export const integrationsConnectionsSyncNowBodyTotalScoresSyncedMax = 2147483647;
-
-export const integrationsConnectionsSyncNowBodySyncIntervalSecondsMin = 60;
-export const integrationsConnectionsSyncNowBodySyncIntervalSecondsMax = 1800;
-
-
-
 export const IntegrationsConnectionsSyncNowBody = zod.object({
-  "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsSyncNowBodyDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsSyncNowBodyHostUrlMax),
-  "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
-  "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsSyncNowBodyExternalProjectNameMax),
-  "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsSyncNowBodyTotalTracesSyncedMin).max(integrationsConnectionsSyncNowBodyTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsSyncNowBodyTotalSpansSyncedMin).max(integrationsConnectionsSyncNowBodyTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsSyncNowBodyTotalScoresSyncedMin).max(integrationsConnectionsSyncNowBodyTotalScoresSyncedMax).optional(),
-  "backfill_completed": zod.boolean().optional(),
-  "backfill_progress": zod.object({
 
-}).passthrough().optional(),
-  "sync_interval_seconds": zod.number().min(integrationsConnectionsSyncNowBodySyncIntervalSecondsMin).max(integrationsConnectionsSyncNowBodySyncIntervalSecondsMax).optional()
+})
+
+export const integrationsConnectionsSyncNowResponseStatusDefault = true;
+
+
+export const IntegrationsConnectionsSyncNowResponse = zod.object({
+  "status": zod.boolean().default(integrationsConnectionsSyncNowResponseStatusDefault),
+  "result": zod.object({
+  "message": zod.string().min(1)
+})
 })
 
 
 /**
  * Read-only viewset for sync logs.
  */
+export const integrationsSyncLogsListQueryPageNumberDefault = 0;
+export const integrationsSyncLogsListQueryPageNumberMin = 0;
+
+export const integrationsSyncLogsListQueryPageSizeDefault = 20;
+export const integrationsSyncLogsListQueryPageSizeMax = 100;
+
+
+
 export const IntegrationsSyncLogsListQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
-  "limit": zod.number().optional().describe('Number of results to return per page.')
+  "limit": zod.number().optional().describe('Number of results to return per page.'),
+  "page_number": zod.number().min(integrationsSyncLogsListQueryPageNumberMin).default(integrationsSyncLogsListQueryPageNumberDefault),
+  "page_size": zod.number().min(1).max(integrationsSyncLogsListQueryPageSizeMax).default(integrationsSyncLogsListQueryPageSizeDefault),
+  "connection_id": zod.string().uuid().optional()
 })
 
-
+export const integrationsSyncLogsListResponseStatusDefault = true;
 
 
 export const IntegrationsSyncLogsListResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
+  "status": zod.boolean().default(integrationsSyncLogsListResponseStatusDefault),
+  "result": zod.object({
+  "metadata": zod.object({
+  "total_count": zod.number(),
+  "current_page": zod.number(),
+  "page_size": zod.number(),
+  "total_pages": zod.number(),
+  "next_page": zod.number().optional()
+}),
+  "sync_logs": zod.array(zod.object({
   "id": zod.string().uuid().optional(),
   "connection": zod.string().uuid().optional(),
   "status": zod.enum(['success', 'partial', 'failed', 'rate_limited', 'no_new_data']).optional(),
@@ -10842,6 +10981,7 @@ export const IntegrationsSyncLogsListResponse = zod.object({
   "sync_from": zod.string().datetime({"offset":true}).optional(),
   "sync_to": zod.string().datetime({"offset":true}).optional()
 }))
+})
 })
 
 
@@ -11408,12 +11548,15 @@ export const ModelHubAiFilterCreateResponse = zod.object({
 })
 
 
+export const modelHubAnnotationQueuesListQueryArchivedDefault = false;
+
 export const ModelHubAnnotationQueuesListQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
   "limit": zod.number().optional().describe('Number of results to return per page.'),
   "status": zod.string().optional(),
   "search": zod.string().optional(),
-  "include_counts": zod.boolean().optional()
+  "include_counts": zod.boolean().optional(),
+  "archived": zod.boolean().default(modelHubAnnotationQueuesListQueryArchivedDefault)
 })
 
 export const modelHubAnnotationQueuesListResponseResultsItemNameMax = 255;
@@ -11487,6 +11630,7 @@ export const ModelHubAnnotationQueuesListResponse = zod.object({
   "created_by_name": zod.string().min(1).optional(),
   "viewer_role": zod.string().optional(),
   "viewer_roles": zod.string().optional(),
+  "deleted": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 }))
 })
@@ -11710,6 +11854,7 @@ export const ModelHubAnnotationQueuesReadResponse = zod.object({
   "created_by_name": zod.string().min(1).optional(),
   "viewer_role": zod.string().optional(),
   "viewer_roles": zod.string().optional(),
+  "deleted": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 
@@ -11816,6 +11961,7 @@ export const ModelHubAnnotationQueuesUpdateResponse = zod.object({
   "created_by_name": zod.string().min(1).optional(),
   "viewer_role": zod.string().optional(),
   "viewer_roles": zod.string().optional(),
+  "deleted": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 
@@ -11919,6 +12065,7 @@ export const ModelHubAnnotationQueuesPartialUpdateResponse = zod.object({
   "created_by_name": zod.string().min(1).optional(),
   "viewer_role": zod.string().optional(),
   "viewer_roles": zod.string().optional(),
+  "deleted": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 
@@ -12331,6 +12478,7 @@ export const ModelHubAnnotationQueuesRestoreResponse = zod.object({
   "created_by_name": zod.string().min(1).optional(),
   "viewer_role": zod.string().optional(),
   "viewer_roles": zod.string().optional(),
+  "deleted": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 })
@@ -12414,6 +12562,7 @@ export const ModelHubAnnotationQueuesUpdateStatusResponse = zod.object({
   "created_by_name": zod.string().min(1).optional(),
   "viewer_role": zod.string().optional(),
   "viewer_roles": zod.string().optional(),
+  "deleted": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 })
@@ -12898,6 +13047,8 @@ export const ModelHubAnnotationQueuesItemsListResponse = zod.object({
   "reviewed_at": zod.string().datetime({"offset":true}).optional(),
   "review_notes": zod.string().optional(),
   "source_preview": zod.string().optional(),
+  "comment_count": zod.string().optional(),
+  "open_feedback_count": zod.string().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 }))
 })
@@ -13039,6 +13190,40 @@ export const ModelHubAnnotationQueuesItemsBulkRemoveResponse = zod.object({
 
 
 /**
+ * Approve or send back multiple pending-review items.
+ */
+export const ModelHubAnnotationQueuesItemsBulkReviewParams = zod.object({
+  "queue_id": zod.string()
+})
+
+
+
+
+export const ModelHubAnnotationQueuesItemsBulkReviewBody = zod.object({
+  "item_ids": zod.array(zod.string().uuid()).min(1),
+  "action": zod.enum(['approve', 'request_changes', 'reject']),
+  "notes": zod.string().optional()
+})
+
+export const modelHubAnnotationQueuesItemsBulkReviewResponseStatusDefault = true;
+
+
+
+export const ModelHubAnnotationQueuesItemsBulkReviewResponse = zod.object({
+  "status": zod.boolean().default(modelHubAnnotationQueuesItemsBulkReviewResponseStatusDefault),
+  "result": zod.object({
+  "reviewed": zod.number(),
+  "reviewed_item_ids": zod.array(zod.string().uuid()),
+  "errors": zod.array(zod.object({
+  "item_id": zod.string().min(1),
+  "error": zod.string().min(1)
+})),
+  "action": zod.enum(['approve', 'request_changes', 'reject'])
+})
+})
+
+
+/**
  * Query params:
   exclude: comma-separated item IDs to skip
   before:  item ID — returns the item immediately before this one in order
@@ -13119,6 +13304,8 @@ export const ModelHubAnnotationQueuesItemsReadResponse = zod.object({
   "reviewed_at": zod.string().datetime({"offset":true}).optional(),
   "review_notes": zod.string().optional(),
   "source_preview": zod.string().optional(),
+  "comment_count": zod.string().optional(),
+  "open_feedback_count": zod.string().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 
@@ -13196,6 +13383,8 @@ export const ModelHubAnnotationQueuesItemsUpdateResponse = zod.object({
   "reviewed_at": zod.string().datetime({"offset":true}).optional(),
   "review_notes": zod.string().optional(),
   "source_preview": zod.string().optional(),
+  "comment_count": zod.string().optional(),
+  "open_feedback_count": zod.string().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 
@@ -13273,6 +13462,8 @@ export const ModelHubAnnotationQueuesItemsPartialUpdateResponse = zod.object({
   "reviewed_at": zod.string().datetime({"offset":true}).optional(),
   "review_notes": zod.string().optional(),
   "source_preview": zod.string().optional(),
+  "comment_count": zod.string().optional(),
+  "open_feedback_count": zod.string().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 })
 
@@ -13371,6 +13562,9 @@ export const ModelHubAnnotationQueuesItemsAnnotationsListResponse = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
@@ -13454,12 +13648,11 @@ export const ModelHubAnnotationQueuesItemsCompleteItemParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this queue item.')
 })
 
-
 export const modelHubAnnotationQueuesItemsCompleteItemBodyExcludeDefault = [];
 export const modelHubAnnotationQueuesItemsCompleteItemBodyIncludeCompletedDefault = false;
 
 export const ModelHubAnnotationQueuesItemsCompleteItemBody = zod.object({
-  "exclude": zod.array(zod.string().min(1)).default(modelHubAnnotationQueuesItemsCompleteItemBodyExcludeDefault),
+  "exclude": zod.array(zod.string()).default(modelHubAnnotationQueuesItemsCompleteItemBodyExcludeDefault),
   "exclude_review_status": zod.string().optional(),
   "include_completed": zod.boolean().default(modelHubAnnotationQueuesItemsCompleteItemBodyIncludeCompletedDefault)
 })
@@ -13544,6 +13737,57 @@ export const ModelHubAnnotationQueuesItemsDiscussionCreateResponse = zod.object(
 
 }).passthrough().optional()
 })
+})
+
+
+/**
+ * Edit or delete a non-blocking discussion comment.
+ */
+export const ModelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateParams = zod.object({
+  "queue_id": zod.string(),
+  "id": zod.string().uuid().describe('A UUID string identifying this queue item.'),
+  "comment_id": zod.string()
+})
+
+
+export const modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateBodyMentionedUserIdsDefault = [];
+
+export const ModelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateBody = zod.object({
+  "comment": zod.string().optional(),
+  "label_id": zod.string().uuid().optional(),
+  "target_annotator_id": zod.string().uuid().optional(),
+  "thread_id": zod.string().uuid().optional(),
+  "mentioned_user_ids": zod.array(zod.string().min(1)).default(modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateBodyMentionedUserIdsDefault)
+})
+
+export const modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseStatusDefault = true;
+
+export const ModelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponse = zod.object({
+  "status": zod.boolean().default(modelHubAnnotationQueuesItemsDiscussionCommentsPartialUpdateResponseStatusDefault),
+  "result": zod.object({
+  "review_comments": zod.array(zod.object({
+
+}).passthrough()),
+  "review_threads": zod.array(zod.object({
+
+}).passthrough()),
+  "comment": zod.object({
+
+}).passthrough().optional(),
+  "thread": zod.object({
+
+}).passthrough().optional()
+})
+})
+
+
+/**
+ * Edit or delete a non-blocking discussion comment.
+ */
+export const ModelHubAnnotationQueuesItemsDiscussionCommentsDeleteParams = zod.object({
+  "queue_id": zod.string(),
+  "id": zod.string().uuid().describe('A UUID string identifying this queue item.'),
+  "comment_id": zod.string()
 })
 
 
@@ -13719,12 +13963,11 @@ export const ModelHubAnnotationQueuesItemsSkipItemParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this queue item.')
 })
 
-
 export const modelHubAnnotationQueuesItemsSkipItemBodyExcludeDefault = [];
 export const modelHubAnnotationQueuesItemsSkipItemBodyIncludeCompletedDefault = false;
 
 export const ModelHubAnnotationQueuesItemsSkipItemBody = zod.object({
-  "exclude": zod.array(zod.string().min(1)).default(modelHubAnnotationQueuesItemsSkipItemBodyExcludeDefault),
+  "exclude": zod.array(zod.string()).default(modelHubAnnotationQueuesItemsSkipItemBodyExcludeDefault),
   "exclude_review_status": zod.string().optional(),
   "include_completed": zod.boolean().default(modelHubAnnotationQueuesItemsSkipItemBodyIncludeCompletedDefault)
 })
@@ -16846,6 +17089,7 @@ export const ModelHubDevelopsCreateDatasetManuallyCreateResponse = zod.object({
 
 export const modelHubDevelopsCreateEmptyDatasetCreateBodyIsSdkDefault = false;
 export const modelHubDevelopsCreateEmptyDatasetCreateBodyRowMin = 0;
+export const modelHubDevelopsCreateEmptyDatasetCreateBodyRowMax = 10;
 
 
 
@@ -16853,7 +17097,7 @@ export const ModelHubDevelopsCreateEmptyDatasetCreateBody = zod.object({
   "new_dataset_name": zod.string().min(1),
   "model_type": zod.string().optional(),
   "is_sdk": zod.boolean().default(modelHubDevelopsCreateEmptyDatasetCreateBodyIsSdkDefault),
-  "row": zod.number().min(modelHubDevelopsCreateEmptyDatasetCreateBodyRowMin).optional()
+  "row": zod.number().min(modelHubDevelopsCreateEmptyDatasetCreateBodyRowMin).max(modelHubDevelopsCreateEmptyDatasetCreateBodyRowMax).optional()
 })
 
 
@@ -17725,7 +17969,9 @@ export const ModelHubDevelopsGetDatasetTableListResponse = zod.object({
   "total_rows": zod.number().optional(),
   "total_pages": zod.number().optional(),
   "error_messages": zod.array(zod.string().min(1)).optional(),
-  "status": zod.string().optional()
+  "status": zod.object({
+
+}).passthrough().optional()
 }).optional(),
   "column_config": zod.array(zod.object({
 
@@ -18120,7 +18366,9 @@ export const ModelHubDevelopsGetExperimentDatasetTableListResponse = zod.object(
   "total_rows": zod.number().optional(),
   "total_pages": zod.number().optional(),
   "error_messages": zod.array(zod.string().min(1)).optional(),
-  "status": zod.string().optional()
+  "status": zod.object({
+
+}).passthrough().optional()
 }).optional(),
   "column_config": zod.array(zod.object({
 
@@ -20479,6 +20727,9 @@ export const modelHubExperimentsV2RerunCellsCreateBodySourceIdsDefault = [];
 export const modelHubExperimentsV2RerunCellsCreateBodyCellsDefault = [];
 export const modelHubExperimentsV2RerunCellsCreateBodyUserEvalMetricIdsDefault = [];
 export const modelHubExperimentsV2RerunCellsCreateBodyFailedOnlyDefault = false;
+export const modelHubExperimentsV2RerunCellsCreateBodyMaxConcurrentRowsDefault = 10;
+
+
 
 export const ModelHubExperimentsV2RerunCellsCreateBody = zod.object({
   "source_ids": zod.array(zod.string().uuid()).default(modelHubExperimentsV2RerunCellsCreateBodySourceIdsDefault),
@@ -20487,7 +20738,8 @@ export const ModelHubExperimentsV2RerunCellsCreateBody = zod.object({
   "row_id": zod.string().uuid()
 })).default(modelHubExperimentsV2RerunCellsCreateBodyCellsDefault),
   "user_eval_metric_ids": zod.array(zod.string().uuid()).default(modelHubExperimentsV2RerunCellsCreateBodyUserEvalMetricIdsDefault),
-  "failed_only": zod.boolean().default(modelHubExperimentsV2RerunCellsCreateBodyFailedOnlyDefault)
+  "failed_only": zod.boolean().default(modelHubExperimentsV2RerunCellsCreateBodyFailedOnlyDefault),
+  "max_concurrent_rows": zod.number().min(1).default(modelHubExperimentsV2RerunCellsCreateBodyMaxConcurrentRowsDefault)
 })
 
 
@@ -25376,6 +25628,9 @@ export const ModelHubScoresListResponse = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
@@ -25430,6 +25685,9 @@ export const ModelHubScoresCreateResponse = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
@@ -25492,6 +25750,9 @@ export const ModelHubScoresBulkCreateResponse = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
@@ -25543,6 +25804,9 @@ export const ModelHubScoresForSourceResponse = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
@@ -25590,6 +25854,9 @@ export const ModelHubScoresReadResponse = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
@@ -25618,6 +25885,9 @@ export const ModelHubScoresUpdateBody = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional()
 })
@@ -25642,6 +25912,9 @@ export const ModelHubScoresUpdateResponse = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
@@ -25670,6 +25943,9 @@ export const ModelHubScoresPartialUpdateBody = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional()
 })
@@ -25694,6 +25970,9 @@ export const ModelHubScoresPartialUpdateResponse = zod.object({
   "value": zod.object({
 
 }).passthrough(),
+  "value_history": zod.object({
+
+}).passthrough().optional(),
   "score_source": zod.enum(['human', 'api', 'auto', 'imported']).optional(),
   "notes": zod.string().optional(),
   "annotator": zod.string().uuid().optional(),
@@ -27700,9 +27979,52 @@ export const SimulateApiAgentDefinitionOperationsListResponse = zod.object({
 })
 
 
-export const SimulateApiAgentDefinitionOperationsCreateBody = zod.object({
+export const simulateApiAgentDefinitionOperationsCreateBodyAgentNameMax = 255;
 
-}).passthrough()
+export const simulateApiAgentDefinitionOperationsCreateBodyContactNumberMax = 50;
+
+
+export const simulateApiAgentDefinitionOperationsCreateBodyAssistantIdMax = 255;
+
+export const simulateApiAgentDefinitionOperationsCreateBodyProviderMax = 255;
+
+export const simulateApiAgentDefinitionOperationsCreateBodyWebsocketUrlMax = 500;
+
+export const simulateApiAgentDefinitionOperationsCreateBodyApiKeyMax = 255;
+
+export const simulateApiAgentDefinitionOperationsCreateBodyModelMax = 255;
+
+export const simulateApiAgentDefinitionOperationsCreateBodyLivekitUrlMax = 500;
+
+export const simulateApiAgentDefinitionOperationsCreateBodyLivekitApiKeyMax = 255;
+
+
+
+export const SimulateApiAgentDefinitionOperationsCreateBody = zod.object({
+  "agent_name": zod.string().min(1).max(simulateApiAgentDefinitionOperationsCreateBodyAgentNameMax).describe('Name of the AI agent'),
+  "agent_type": zod.enum(['voice', 'text']).optional(),
+  "contact_number": zod.string().max(simulateApiAgentDefinitionOperationsCreateBodyContactNumberMax).optional().describe('Phone number associated with the AI agent'),
+  "inbound": zod.boolean().describe('Whether the agent handles inbound calls'),
+  "description": zod.string().min(1).describe('Detailed description of the AI agent\'s purpose and capabilities'),
+  "assistant_id": zod.string().max(simulateApiAgentDefinitionOperationsCreateBodyAssistantIdMax).optional().describe('External identifier for the assistant'),
+  "provider": zod.string().max(simulateApiAgentDefinitionOperationsCreateBodyProviderMax).optional().describe('Provider of the AI agent'),
+  "language": zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).optional().describe('Language of the agent'),
+  "languages": zod.array(zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).describe('Language of the agent')).optional(),
+  "authentication_method": zod.enum(['api_key']).optional(),
+  "websocket_url": zod.string().url().max(simulateApiAgentDefinitionOperationsCreateBodyWebsocketUrlMax).optional().describe('WebSocket URL for real-time communication with the agent'),
+  "websocket_headers": zod.object({
+
+}).passthrough().optional().describe('Headers to be sent to the websocket server'),
+  "knowledge_base": zod.string().uuid().optional(),
+  "api_key": zod.string().max(simulateApiAgentDefinitionOperationsCreateBodyApiKeyMax).optional().describe('API key for the agent'),
+  "model": zod.string().max(simulateApiAgentDefinitionOperationsCreateBodyModelMax).optional().describe('Model of the agent'),
+  "model_details": zod.object({
+
+}).passthrough().optional().describe('Details of the model'),
+  "livekit_url": zod.string().max(simulateApiAgentDefinitionOperationsCreateBodyLivekitUrlMax).optional(),
+  "livekit_api_key": zod.string().max(simulateApiAgentDefinitionOperationsCreateBodyLivekitApiKeyMax).optional(),
+  "livekit_api_secret": zod.string().optional()
+})
 
 
 /**
@@ -27790,52 +28112,104 @@ export const SimulateApiAgentDefinitionOperationsUpdateParams = zod.object({
   "id": zod.string()
 })
 
+export const simulateApiAgentDefinitionOperationsUpdateBodyAgentNameMax = 255;
+
+export const simulateApiAgentDefinitionOperationsUpdateBodyContactNumberMax = 50;
+
+
+export const simulateApiAgentDefinitionOperationsUpdateBodyAssistantIdMax = 255;
+
+export const simulateApiAgentDefinitionOperationsUpdateBodyProviderMax = 255;
+
+export const simulateApiAgentDefinitionOperationsUpdateBodyWebsocketUrlMax = 500;
+
+export const simulateApiAgentDefinitionOperationsUpdateBodyApiKeyMax = 255;
+
+export const simulateApiAgentDefinitionOperationsUpdateBodyModelMax = 255;
+
+export const simulateApiAgentDefinitionOperationsUpdateBodyLivekitUrlMax = 500;
+
+export const simulateApiAgentDefinitionOperationsUpdateBodyLivekitApiKeyMax = 255;
+
+
+
 export const SimulateApiAgentDefinitionOperationsUpdateBody = zod.object({
+  "agent_name": zod.string().min(1).max(simulateApiAgentDefinitionOperationsUpdateBodyAgentNameMax).describe('Name of the AI agent'),
+  "agent_type": zod.enum(['voice', 'text']).optional(),
+  "contact_number": zod.string().max(simulateApiAgentDefinitionOperationsUpdateBodyContactNumberMax).optional().describe('Phone number associated with the AI agent'),
+  "inbound": zod.boolean().describe('Whether the agent handles inbound calls'),
+  "description": zod.string().min(1).describe('Detailed description of the AI agent\'s purpose and capabilities'),
+  "assistant_id": zod.string().max(simulateApiAgentDefinitionOperationsUpdateBodyAssistantIdMax).optional().describe('External identifier for the assistant'),
+  "provider": zod.string().max(simulateApiAgentDefinitionOperationsUpdateBodyProviderMax).optional().describe('Provider of the AI agent'),
+  "language": zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).optional().describe('Language of the agent'),
+  "languages": zod.array(zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).describe('Language of the agent')).optional(),
+  "authentication_method": zod.enum(['api_key']).optional(),
+  "websocket_url": zod.string().url().max(simulateApiAgentDefinitionOperationsUpdateBodyWebsocketUrlMax).optional().describe('WebSocket URL for real-time communication with the agent'),
+  "websocket_headers": zod.object({
 
-}).passthrough()
+}).passthrough().optional().describe('Headers to be sent to the websocket server'),
+  "knowledge_base": zod.string().uuid().optional(),
+  "api_key": zod.string().max(simulateApiAgentDefinitionOperationsUpdateBodyApiKeyMax).optional().describe('API key for the agent'),
+  "model": zod.string().max(simulateApiAgentDefinitionOperationsUpdateBodyModelMax).optional().describe('Model of the agent'),
+  "model_details": zod.object({
+
+}).passthrough().optional().describe('Details of the model'),
+  "livekit_url": zod.string().max(simulateApiAgentDefinitionOperationsUpdateBodyLivekitUrlMax).optional(),
+  "livekit_api_key": zod.string().max(simulateApiAgentDefinitionOperationsUpdateBodyLivekitApiKeyMax).optional(),
+  "livekit_api_secret": zod.string().optional()
+})
+
+export const simulateApiAgentDefinitionOperationsUpdateResponseAgentNameMax = 255;
+
+export const simulateApiAgentDefinitionOperationsUpdateResponseContactNumberMax = 50;
 
 
+export const simulateApiAgentDefinitionOperationsUpdateResponseAssistantIdMax = 255;
 
+export const simulateApiAgentDefinitionOperationsUpdateResponseProviderMax = 255;
 
+export const simulateApiAgentDefinitionOperationsUpdateResponseWebsocketUrlMax = 500;
 
+export const simulateApiAgentDefinitionOperationsUpdateResponseApiKeyMax = 255;
 
+export const simulateApiAgentDefinitionOperationsUpdateResponseModelMax = 255;
 
+export const simulateApiAgentDefinitionOperationsUpdateResponseLivekitUrlMax = 500;
 
+export const simulateApiAgentDefinitionOperationsUpdateResponseLivekitApiKeyMax = 255;
 
 
 
 export const SimulateApiAgentDefinitionOperationsUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
-  "agent_name": zod.string().min(1).optional().describe('Name of the AI agent'),
+  "agent_name": zod.string().min(1).max(simulateApiAgentDefinitionOperationsUpdateResponseAgentNameMax).describe('Name of the AI agent'),
   "agent_type": zod.enum(['voice', 'text']).optional(),
-  "contact_number": zod.string().min(1).optional().describe('Phone number associated with the AI agent'),
-  "inbound": zod.boolean().optional().describe('Whether the agent handles inbound calls'),
-  "description": zod.string().min(1).optional().describe('Detailed description of the AI agent\'s purpose and capabilities'),
-  "assistant_id": zod.string().min(1).optional().describe('External identifier for the assistant'),
-  "provider": zod.string().min(1).optional().describe('Provider of the AI agent'),
+  "contact_number": zod.string().max(simulateApiAgentDefinitionOperationsUpdateResponseContactNumberMax).optional().describe('Phone number associated with the AI agent'),
+  "inbound": zod.boolean().describe('Whether the agent handles inbound calls'),
+  "description": zod.string().min(1).describe('Detailed description of the AI agent\'s purpose and capabilities'),
+  "assistant_id": zod.string().max(simulateApiAgentDefinitionOperationsUpdateResponseAssistantIdMax).optional().describe('External identifier for the assistant'),
+  "provider": zod.string().max(simulateApiAgentDefinitionOperationsUpdateResponseProviderMax).optional().describe('Provider of the AI agent'),
   "language": zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).optional().describe('Language of the agent'),
   "languages": zod.array(zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).describe('Language of the agent')).optional(),
   "authentication_method": zod.enum(['api_key']).optional(),
-  "websocket_url": zod.string().url().min(1).optional().describe('WebSocket URL for real-time communication with the agent'),
+  "websocket_url": zod.string().url().max(simulateApiAgentDefinitionOperationsUpdateResponseWebsocketUrlMax).optional().describe('WebSocket URL for real-time communication with the agent'),
   "websocket_headers": zod.object({
 
 }).passthrough().optional().describe('Headers to be sent to the websocket server'),
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().max(simulateApiAgentDefinitionOperationsUpdateResponseApiKeyMax).optional().describe('API key for the agent'),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "model": zod.string().min(1).optional().describe('Model of the agent'),
+  "model": zod.string().max(simulateApiAgentDefinitionOperationsUpdateResponseModelMax).optional().describe('Model of the agent'),
   "model_details": zod.object({
 
 }).passthrough().optional().describe('Details of the model'),
-  "livekit_url": zod.string().optional(),
-  "livekit_api_key": zod.string().optional(),
-  "livekit_agent_name": zod.string().optional(),
-  "livekit_config_json": zod.string().optional(),
-  "livekit_max_concurrency": zod.string().optional()
+  "livekit_url": zod.string().max(simulateApiAgentDefinitionOperationsUpdateResponseLivekitUrlMax).optional(),
+  "livekit_api_key": zod.string().max(simulateApiAgentDefinitionOperationsUpdateResponseLivekitApiKeyMax).optional(),
+  "livekit_api_secret": zod.string().optional()
 })
 
 
@@ -27843,52 +28217,104 @@ export const SimulateApiAgentDefinitionOperationsPartialUpdateParams = zod.objec
   "id": zod.string()
 })
 
+export const simulateApiAgentDefinitionOperationsPartialUpdateBodyAgentNameMax = 255;
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateBodyContactNumberMax = 50;
+
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateBodyAssistantIdMax = 255;
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateBodyProviderMax = 255;
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateBodyWebsocketUrlMax = 500;
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateBodyApiKeyMax = 255;
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateBodyModelMax = 255;
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateBodyLivekitUrlMax = 500;
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateBodyLivekitApiKeyMax = 255;
+
+
+
 export const SimulateApiAgentDefinitionOperationsPartialUpdateBody = zod.object({
+  "agent_name": zod.string().min(1).max(simulateApiAgentDefinitionOperationsPartialUpdateBodyAgentNameMax).describe('Name of the AI agent'),
+  "agent_type": zod.enum(['voice', 'text']).optional(),
+  "contact_number": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateBodyContactNumberMax).optional().describe('Phone number associated with the AI agent'),
+  "inbound": zod.boolean().describe('Whether the agent handles inbound calls'),
+  "description": zod.string().min(1).describe('Detailed description of the AI agent\'s purpose and capabilities'),
+  "assistant_id": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateBodyAssistantIdMax).optional().describe('External identifier for the assistant'),
+  "provider": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateBodyProviderMax).optional().describe('Provider of the AI agent'),
+  "language": zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).optional().describe('Language of the agent'),
+  "languages": zod.array(zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).describe('Language of the agent')).optional(),
+  "authentication_method": zod.enum(['api_key']).optional(),
+  "websocket_url": zod.string().url().max(simulateApiAgentDefinitionOperationsPartialUpdateBodyWebsocketUrlMax).optional().describe('WebSocket URL for real-time communication with the agent'),
+  "websocket_headers": zod.object({
 
-}).passthrough()
+}).passthrough().optional().describe('Headers to be sent to the websocket server'),
+  "knowledge_base": zod.string().uuid().optional(),
+  "api_key": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateBodyApiKeyMax).optional().describe('API key for the agent'),
+  "model": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateBodyModelMax).optional().describe('Model of the agent'),
+  "model_details": zod.object({
+
+}).passthrough().optional().describe('Details of the model'),
+  "livekit_url": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateBodyLivekitUrlMax).optional(),
+  "livekit_api_key": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateBodyLivekitApiKeyMax).optional(),
+  "livekit_api_secret": zod.string().optional()
+})
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateResponseAgentNameMax = 255;
+
+export const simulateApiAgentDefinitionOperationsPartialUpdateResponseContactNumberMax = 50;
 
 
+export const simulateApiAgentDefinitionOperationsPartialUpdateResponseAssistantIdMax = 255;
 
+export const simulateApiAgentDefinitionOperationsPartialUpdateResponseProviderMax = 255;
 
+export const simulateApiAgentDefinitionOperationsPartialUpdateResponseWebsocketUrlMax = 500;
 
+export const simulateApiAgentDefinitionOperationsPartialUpdateResponseApiKeyMax = 255;
 
+export const simulateApiAgentDefinitionOperationsPartialUpdateResponseModelMax = 255;
 
+export const simulateApiAgentDefinitionOperationsPartialUpdateResponseLivekitUrlMax = 500;
 
+export const simulateApiAgentDefinitionOperationsPartialUpdateResponseLivekitApiKeyMax = 255;
 
 
 
 export const SimulateApiAgentDefinitionOperationsPartialUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
-  "agent_name": zod.string().min(1).optional().describe('Name of the AI agent'),
+  "agent_name": zod.string().min(1).max(simulateApiAgentDefinitionOperationsPartialUpdateResponseAgentNameMax).describe('Name of the AI agent'),
   "agent_type": zod.enum(['voice', 'text']).optional(),
-  "contact_number": zod.string().min(1).optional().describe('Phone number associated with the AI agent'),
-  "inbound": zod.boolean().optional().describe('Whether the agent handles inbound calls'),
-  "description": zod.string().min(1).optional().describe('Detailed description of the AI agent\'s purpose and capabilities'),
-  "assistant_id": zod.string().min(1).optional().describe('External identifier for the assistant'),
-  "provider": zod.string().min(1).optional().describe('Provider of the AI agent'),
+  "contact_number": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateResponseContactNumberMax).optional().describe('Phone number associated with the AI agent'),
+  "inbound": zod.boolean().describe('Whether the agent handles inbound calls'),
+  "description": zod.string().min(1).describe('Detailed description of the AI agent\'s purpose and capabilities'),
+  "assistant_id": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateResponseAssistantIdMax).optional().describe('External identifier for the assistant'),
+  "provider": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateResponseProviderMax).optional().describe('Provider of the AI agent'),
   "language": zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).optional().describe('Language of the agent'),
   "languages": zod.array(zod.enum(['ar', 'bg', 'zh', 'cs', 'da', 'nl', 'en', 'fi', 'fr', 'de', 'el', 'hi', 'hu', 'id', 'it', 'ja', 'ko', 'ms', 'no', 'pl', 'pt', 'ro', 'ru', 'sk', 'es', 'sv', 'tr', 'uk', 'vi']).describe('Language of the agent')).optional(),
   "authentication_method": zod.enum(['api_key']).optional(),
-  "websocket_url": zod.string().url().min(1).optional().describe('WebSocket URL for real-time communication with the agent'),
+  "websocket_url": zod.string().url().max(simulateApiAgentDefinitionOperationsPartialUpdateResponseWebsocketUrlMax).optional().describe('WebSocket URL for real-time communication with the agent'),
   "websocket_headers": zod.object({
 
 }).passthrough().optional().describe('Headers to be sent to the websocket server'),
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateResponseApiKeyMax).optional().describe('API key for the agent'),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "model": zod.string().min(1).optional().describe('Model of the agent'),
+  "model": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateResponseModelMax).optional().describe('Model of the agent'),
   "model_details": zod.object({
 
 }).passthrough().optional().describe('Details of the model'),
-  "livekit_url": zod.string().optional(),
-  "livekit_api_key": zod.string().optional(),
-  "livekit_agent_name": zod.string().optional(),
-  "livekit_config_json": zod.string().optional(),
-  "livekit_max_concurrency": zod.string().optional()
+  "livekit_url": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateResponseLivekitUrlMax).optional(),
+  "livekit_api_key": zod.string().max(simulateApiAgentDefinitionOperationsPartialUpdateResponseLivekitApiKeyMax).optional(),
+  "livekit_api_secret": zod.string().optional()
 })
 
 
@@ -35776,11 +36202,12 @@ export const TracerFeedIssuesListQueryParams = zod.object({
   "project_id": zod.string().uuid().optional(),
   "search": zod.string().optional(),
   "status": zod.enum(['escalating', 'for_review', 'acknowledged', 'resolved']).optional(),
+  "severity": zod.enum(['critical', 'high', 'medium', 'low']).optional(),
   "fix_layer": zod.string().optional(),
   "source": zod.enum(['scanner', 'eval']).optional(),
   "issue_group": zod.string().optional(),
   "time_range_days": zod.number().min(1).optional(),
-  "sort_by": zod.enum(['last_seen', 'first_seen', 'error_count', 'unique_traces']).default(tracerFeedIssuesListQuerySortByDefault),
+  "sort_by": zod.enum(['last_seen', 'first_seen', 'error_count', 'unique_traces', 'severity']).default(tracerFeedIssuesListQuerySortByDefault),
   "sort_dir": zod.enum(['asc', 'desc']).default(tracerFeedIssuesListQuerySortDirDefault),
   "limit": zod.number().min(1).max(tracerFeedIssuesListQueryLimitMax).default(tracerFeedIssuesListQueryLimitDefault),
   "offset": zod.number().min(tracerFeedIssuesListQueryOffsetMin).default(tracerFeedIssuesListQueryOffsetDefault)
@@ -42457,6 +42884,13 @@ export const TracerUserAlertLogsListForAlertResponse = zod.object({
 })
 
 
+/**
+ * ``get_queryset`` returns ``(page_queryset, total_count)`` for list
+requests because ``list_monitors`` also needs the total count. DRF's
+default ``list`` expects only a queryset, so keep the root endpoint
+explicit instead of letting DRF serialize the tuple incorrectly.
+ * @summary Return the paginated root monitor list.
+ */
 export const TracerUserAlertsListQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
   "limit": zod.number().optional().describe('Number of results to return per page.')

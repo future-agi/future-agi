@@ -91,7 +91,11 @@ def _response_validator(serializer, data):
 def _unknown_fields(data, serializer):
     if not hasattr(data, "keys") or not hasattr(serializer, "fields"):
         return []
-    return sorted(set(data.keys()) - set(serializer.fields.keys()))
+    unknown = set(data.keys()) - set(serializer.fields.keys())
+    allows_unknown_field = getattr(serializer, "allows_unknown_field", None)
+    if callable(allows_unknown_field):
+        unknown = {field for field in unknown if not allows_unknown_field(field)}
+    return sorted(unknown)
 
 
 def _as_error_dict(errors):
@@ -260,6 +264,11 @@ def validated_request(
     The serializer declared for Swagger is also the runtime validator. New
     endpoints should prefer this over a doc-only ``swagger_auto_schema`` plus
     ad-hoc ``request.data`` parsing.
+
+    Response serializers are checked in DEBUG to catch contract drift during
+    development. Set ``strict_response_validation=True`` only for compact,
+    deterministic endpoints where a response mismatch should fail the request in
+    production too.
     """
     request_method_set = (
         {method.upper() for method in request_methods} if request_methods else None
@@ -276,6 +285,9 @@ def validated_request(
         if request_serializer is not None or query_serializer is not None:
             swagger_options["runtime_request_validation"] = True
         if responses is not None:
+            # This extension means the endpoint has a concrete response contract
+            # that is runtime-checked in DEBUG, and strictly enforced when
+            # strict_response_validation=True.
             swagger_options["runtime_response_validation"] = True
 
         @swagger_auto_schema(**swagger_options)
@@ -392,7 +404,12 @@ def validated_api_request(
     framework_query_params=(),
     **swagger_kwargs,
 ):
-    """Document and validate a function-based DRF view from one serializer set."""
+    """Document and validate a function-based DRF view from one serializer set.
+
+    Response validation follows ``validated_request``: DEBUG logs drift by
+    default, and ``strict_response_validation=True`` turns drift into request
+    failure for endpoints where that cost is intentional.
+    """
     request_method_set = (
         {request_method.upper() for request_method in request_methods}
         if request_methods
@@ -412,6 +429,9 @@ def validated_api_request(
         if request_serializer is not None or query_serializer is not None:
             swagger_options["runtime_request_validation"] = True
         if responses is not None:
+            # This extension means the endpoint has a concrete response contract
+            # that is runtime-checked in DEBUG, and strictly enforced when
+            # strict_response_validation=True.
             swagger_options["runtime_response_validation"] = True
 
         @wraps(view_func)

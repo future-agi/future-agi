@@ -204,7 +204,7 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             # First try to get model name from optimizer_model FK
             if instance.optimizer_model:
-                model_name = instance.optimizer_model.model_name
+                model_name = instance.optimizer_model.user_model_id
             # Fallback to model_name stored in optimizer_config
             elif instance.optimizer_config and instance.optimizer_config.get(
                 "model_name"

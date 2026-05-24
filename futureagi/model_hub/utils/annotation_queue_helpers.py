@@ -1,7 +1,7 @@
 import structlog
 from datetime import datetime, timedelta
 
-from django.db.models import DateTimeField, F, FloatField, Q
+from django.db.models import DateTimeField, Exists, F, FloatField, OuterRef, Q
 from django.db.models.functions import Cast
 
 from model_hub.models.choices import (
@@ -41,6 +41,23 @@ FILTER_MODE_SOURCE_TYPES = {
     QueueItemSourceType.TRACE_SESSION.value,
     QueueItemSourceType.CALL_EXECUTION.value,
 }
+
+AUTOMATION_RULE_FILTER_ERROR_MESSAGE = (
+    "Rule evaluation failed while applying filters. Check the selected fields "
+    "and values, then try again."
+)
+TERMINAL_TRACE_SPAN_STATUSES = {"OK", "ERROR"}
+TRACE_IN_PROGRESS_ADD_ERROR = (
+    "Trace is still in progress and can't be added to an annotation queue yet."
+)
+
+
+def _automation_rule_filter_error_message(exc):
+    """Return a short public error while full exception details stay in logs."""
+    message = str(exc).strip()
+    if isinstance(exc, ValueError) and message and "\n" not in message:
+        return message[:240]
+    return AUTOMATION_RULE_FILTER_ERROR_MESSAGE
 
 
 def _trace_primary_span(trace):
@@ -113,6 +130,83 @@ def get_fk_field_name(source_type):
     """Return the FK field name on QueueItem for a given source_type."""
     _, fk_field = SOURCE_MODEL_MAP.get(source_type, (None, None))
     return fk_field
+
+
+def _root_span_filter():
+    return Q(parent_span_id__isnull=True) | Q(parent_span_id="")
+
+
+def is_source_available_for_annotation(source_type, source_obj):
+    """Return ``(is_available, reason)`` for queue add-items.
+
+    A visible in-progress trace has a root span whose status is still UNSET
+    or null. Bare legacy Trace fixtures with no root span are left untouched;
+    they are not the voice-call "in progress" state surfaced in Observe.
+    """
+    if source_type != QueueItemSourceType.TRACE.value:
+        return True, None
+
+    root_spans = source_obj.observation_spans.filter(_root_span_filter())
+    if not root_spans.exists():
+        return True, None
+    if root_spans.filter(status__in=TERMINAL_TRACE_SPAN_STATUSES).exists():
+        return True, None
+    return False, TRACE_IN_PROGRESS_ADD_ERROR
+
+
+def filter_available_source_ids_for_annotation(
+    source_type, source_ids, *, organization=None, workspace=None
+):
+    """Split resolved filter-mode IDs into available/unavailable IDs.
+
+    Returns ``(available_ids, unavailable_count, unavailable_message)`` while
+    preserving the input ordering of available IDs.
+    """
+    ordered_ids = [str(source_id) for source_id in source_ids]
+    if source_type != QueueItemSourceType.TRACE.value or not ordered_ids:
+        return ordered_ids, 0, None
+
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.models.trace import Trace
+
+    root_spans = ObservationSpan.objects.filter(
+        trace_id=OuterRef("id"),
+    ).filter(_root_span_filter())
+    available_qs = Trace.objects.filter(id__in=ordered_ids).annotate(
+        _has_root_span=Exists(root_spans),
+        _has_terminal_root_span=Exists(
+            root_spans.filter(status__in=TERMINAL_TRACE_SPAN_STATUSES)
+        ),
+    )
+    if organization is not None:
+        available_qs = available_qs.filter(project__organization=organization)
+    if workspace is not None:
+        available_qs = available_qs.filter(project__workspace=workspace)
+
+    available_set = {
+        str(trace_id)
+        for trace_id in available_qs.filter(
+            Q(_has_root_span=False) | Q(_has_terminal_root_span=True)
+        ).values_list("id", flat=True)
+    }
+    available_ids = [
+        source_id for source_id in ordered_ids if source_id in available_set
+    ]
+    unavailable_count = len(ordered_ids) - len(available_ids)
+    if unavailable_count <= 0:
+        return available_ids, 0, None
+
+    noun = "trace" if unavailable_count == 1 else "traces"
+    verb = "is" if unavailable_count == 1 else "are"
+    message = (
+        f"{unavailable_count} {noun} {verb} still in progress and "
+        "were not added to the annotation queue."
+    )
+    if unavailable_count == 1:
+        message = (
+            "1 trace is still in progress and was not added to the annotation queue."
+        )
+    return available_ids, unavailable_count, message
 
 
 def _resolve_default_queue_scope(source_type, source_obj):
@@ -627,9 +721,7 @@ def resolve_source_content(item):
                 "status": (
                     trace_status
                     if trace_status is not None
-                    else getattr(primary_span, "status", None)
-                    if primary_span
-                    else None
+                    else getattr(primary_span, "status", None) if primary_span else None
                 ),
                 "span_attributes": (
                     getattr(primary_span, "span_attributes", {}) if primary_span else {}
@@ -761,6 +853,35 @@ def resolve_source_content(item):
     return {"type": item.source_type, "error": "Could not resolve content"}
 
 
+def assign_items_to_all_annotators(queue, items):
+    """Assign every item to every queue member with the annotator role."""
+    from model_hub.models.annotation_queues import (
+        QueueItemAssignment,
+        annotation_queue_role_q,
+    )
+
+    item_list = list(items or [])
+    if not item_list:
+        return 0
+
+    annotator_ids = list(
+        queue.queue_annotators.filter(deleted=False)
+        .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
+        .values_list("user_id", flat=True)
+        .distinct()
+    )
+    if not annotator_ids:
+        return 0
+
+    assignments = [
+        QueueItemAssignment(queue_item=item, user_id=user_id)
+        for item in item_list
+        for user_id in annotator_ids
+    ]
+    QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
+    return len(assignments)
+
+
 def auto_assign_items(queue, items):
     """Assign items to annotators based on queue strategy. Mutates items in-place."""
     from model_hub.models.annotation_queues import QueueItem, annotation_queue_role_q
@@ -854,9 +975,15 @@ def calculate_agreement(queue):
                 disagreement_items.append(str(qi_id))
 
         agreement_pct = agree_count / total_count if total_count > 0 else None
+        comparable_for_kappa = info["type"] in {
+            "categorical",
+            "numeric",
+            "star",
+            "thumbs_up_down",
+        }
         kappa = (
             _cohens_kappa(item_label_map, label_id)
-            if info["type"] == "categorical"
+            if comparable_for_kappa and total_count > 0
             else None
         )
 
@@ -1610,6 +1737,7 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
                 queue=rule.queue,
                 source_type=rule.source_type,
                 organization=rule.organization,
+                workspace=rule.queue.workspace,
                 order=max_order,
                 **{f"{fk_field}_id": source_id},
             )
@@ -1703,12 +1831,13 @@ def _evaluate_filter_mode_rule(
                 rule_id=str(rule.pk),
                 dataset_id=str(dataset_id),
                 error=str(exc),
+                error_type=exc.__class__.__name__,
             )
             return {
                 "matched": 0,
                 "added": 0,
                 "duplicates": 0,
-                "error": str(exc),
+                "error": _automation_rule_filter_error_message(exc),
             }
         return _add_source_ids_to_queue(rule, ids, total_matching, dry_run=dry_run)
 
@@ -1807,12 +1936,13 @@ def _evaluate_filter_mode_rule(
             rule_id=str(rule.pk),
             source_type=source_type,
             error=str(exc),
+            error_type=exc.__class__.__name__,
         )
         return {
             "matched": 0,
             "added": 0,
             "duplicates": 0,
-            "error": str(exc),
+            "error": _automation_rule_filter_error_message(exc),
         }
 
     return _add_source_ids_to_queue(
@@ -2088,6 +2218,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                     queue=rule.queue,
                     source_type=rule.source_type,
                     organization=rule.organization,
+                    workspace=rule.queue.workspace,
                     order=max_order,
                     **{fk_field: obj},
                 )

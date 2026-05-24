@@ -535,14 +535,12 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
 
           {(() => {
             const currentPreset = PROVIDER_PRESETS[name];
-            const visibleFormats =
-              currentPreset?.supportedFormats?.length
-                ? API_FORMATS.filter((f) =>
-                    currentPreset.supportedFormats.includes(f),
-                  )
-                : API_FORMATS;
-            const isFiltered =
-              visibleFormats.length < API_FORMATS.length;
+            const visibleFormats = currentPreset?.supportedFormats?.length
+              ? API_FORMATS.filter((f) =>
+                  currentPreset.supportedFormats.includes(f),
+                )
+              : API_FORMATS;
+            const isFiltered = visibleFormats.length < API_FORMATS.length;
             const isSingleOption = visibleFormats.length === 1;
             return (
               <TextField

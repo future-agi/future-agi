@@ -1,45 +1,45 @@
-import { countries } from 'src/assets/data';
+import { countries } from "src/assets/data";
 
-import { _mock } from './_mock';
-import { _tags } from './assets';
+import { _mock } from "./_mock";
+import { _tags } from "./assets";
 
 // ----------------------------------------------------------------------
 
 export const TOUR_DETAILS_TABS = [
-  { value: 'content', label: 'Tour Content' },
-  { value: 'bookers', label: 'Booker' },
+  { value: "content", label: "Tour Content" },
+  { value: "bookers", label: "Booker" },
 ];
 
 export const TOUR_SORT_OPTIONS = [
-  { value: 'latest', label: 'Latest' },
-  { value: 'popular', label: 'Popular' },
-  { value: 'oldest', label: 'Oldest' },
+  { value: "latest", label: "Latest" },
+  { value: "popular", label: "Popular" },
+  { value: "oldest", label: "Oldest" },
 ];
 
 export const TOUR_PUBLISH_OPTIONS = [
   {
-    value: 'published',
-    label: 'Published',
+    value: "published",
+    label: "Published",
   },
   {
-    value: 'draft',
-    label: 'Draft',
+    value: "draft",
+    label: "Draft",
   },
 ];
 
 export const TOUR_SERVICE_OPTIONS = [
-  { value: 'Audio guide', label: 'Audio guide' },
-  { value: 'Food and drinks', label: 'Food and drinks' },
-  { value: 'Lunch', label: 'Lunch' },
-  { value: 'Private tour', label: 'Private tour' },
-  { value: 'Special activities', label: 'Special activities' },
-  { value: 'Entrance fees', label: 'Entrance fees' },
-  { value: 'Gratuities', label: 'Gratuities' },
-  { value: 'Pick-up and drop off', label: 'Pick-up and drop off' },
-  { value: 'Professional guide', label: 'Professional guide' },
+  { value: "Audio guide", label: "Audio guide" },
+  { value: "Food and drinks", label: "Food and drinks" },
+  { value: "Lunch", label: "Lunch" },
+  { value: "Private tour", label: "Private tour" },
+  { value: "Special activities", label: "Special activities" },
+  { value: "Entrance fees", label: "Entrance fees" },
+  { value: "Gratuities", label: "Gratuities" },
+  { value: "Pick-up and drop off", label: "Pick-up and drop off" },
+  { value: "Professional guide", label: "Professional guide" },
   {
-    value: 'Transport by air-conditioned',
-    label: 'Transport by air-conditioned',
+    value: "Transport by air-conditioned",
+    label: "Transport by air-conditioned",
   },
 ];
 
@@ -98,7 +98,9 @@ export const _tourGuides = [...Array(12)].map((_, index) => ({
   phoneNumber: _mock.phoneNumber(index),
 }));
 
-export const TRAVEL_IMAGES = [...Array(16)].map((_, index) => _mock.image.travel(index));
+export const TRAVEL_IMAGES = [...Array(16)].map((_, index) =>
+  _mock.image.travel(index),
+);
 
 export const _tours = [...Array(12)].map((_, index) => {
   const available = {
@@ -106,17 +108,17 @@ export const _tours = [...Array(12)].map((_, index) => {
     endDate: _mock.time(index),
   };
 
-  const publish = index % 3 ? 'published' : 'draft';
+  const publish = index % 3 ? "published" : "draft";
 
   const destination = countries.map((option) => option.label)[index];
 
-  const services = (index % 2 && ['Audio guide', 'Food and drinks']) ||
-    (index % 3 && ['Lunch', 'Private tour']) ||
-    (index % 4 && ['Special activities', 'Entrance fees']) || [
-      'Gratuities',
-      'Pick-up and drop off',
-      'Professional guide',
-      'Transport by air-conditioned',
+  const services = (index % 2 && ["Audio guide", "Food and drinks"]) ||
+    (index % 3 && ["Lunch", "Private tour"]) ||
+    (index % 4 && ["Special activities", "Entrance fees"]) || [
+      "Gratuities",
+      "Pick-up and drop off",
+      "Professional guide",
+      "Transport by air-conditioned",
     ];
 
   const tourGuides =
@@ -141,7 +143,7 @@ export const _tours = [...Array(12)].map((_, index) => {
     tags: _tags.slice(0, 5),
     name: _mock.tourName(index),
     createdAt: _mock.time(index),
-    durations: '4 days 3 nights',
+    durations: "4 days 3 nights",
     price: _mock.number.price(index),
     priceSale: _mock.number.price(index),
     totalViews: _mock.number.nativeL(index),

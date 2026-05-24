@@ -167,7 +167,6 @@ describe("saved view payload contract", () => {
       config: { display: { viewMode: "grid" } },
     });
   });
-
 });
 
 describe("saved view API actions", () => {
@@ -323,10 +322,9 @@ describe("saved view API actions", () => {
 
     await result.current.mutateAsync("view-1");
 
-    expect(axios.delete).toHaveBeenCalledWith(
-      "/tracer/saved-views/view-1/",
-      { params: { project_id: "project-1" } },
-    );
+    expect(axios.delete).toHaveBeenCalledWith("/tracer/saved-views/view-1/", {
+      params: { project_id: "project-1" },
+    });
   });
 
   it("reorders saved views and updates the selected query cache optimistically", async () => {

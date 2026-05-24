@@ -1,4 +1,6 @@
+import json
 import uuid
+from pathlib import Path
 
 import pytest
 from django.db.models import Q
@@ -7,6 +9,32 @@ from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBu
 from tracer.utils.constants import LIST_OPS, NO_VALUE_OPS, RANGE_OPS
 from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
 from tracer.utils.filters import ColType, FilterEngine
+
+
+def test_packaged_filter_contract_matches_repo_contract():
+    repo_contract = next(
+        (
+            parent / "api_contracts" / "filter_contract.json"
+            for parent in Path(__file__).resolve().parents
+            if (parent / "api_contracts" / "filter_contract.json").exists()
+        ),
+        None,
+    )
+    packaged_contract = (
+        Path(__file__).resolve().parents[1]
+        / "contracts"
+        / "filter_contract.json"
+    )
+
+    if repo_contract is None:
+        pytest.skip("repo-level filter contract is not packaged in this test image")
+
+    with repo_contract.open("r", encoding="utf-8") as fh:
+        repo_payload = json.load(fh)
+    with packaged_contract.open("r", encoding="utf-8") as fh:
+        packaged_payload = json.load(fh)
+
+    assert packaged_payload == repo_payload
 
 
 def _value_for(filter_type, filter_op):
@@ -183,6 +211,21 @@ class TestClickHouseFilterOperatorMatrix:
         )
 
         _assert_sql_shape(where)
+
+    def test_voice_interruption_rate_uses_float_metric_expression(self):
+        where, _ = _translate(
+            _api_filter(
+                "user_interruption_rate",
+                ClickHouseFilterBuilder.SYSTEM_METRIC,
+                "number",
+                "greater_than",
+                2,
+            )
+        )
+
+        _assert_sql_shape(where)
+        assert "user_interruption_rate" in where
+        assert "round(span_attr_num['user_interruption_rate'])" not in where
 
     @pytest.mark.parametrize("filter_op", sorted(FILTER_TYPE_ALLOWED_OPS["text"]))
     def test_voice_text_expression_metrics_accept_every_text_operator(self, filter_op):
@@ -369,6 +412,23 @@ class TestDjangoFilterOperatorMatrix:
         assert isinstance(q, Q)
         assert q.children
         assert "_voice_agent_talk_pct" in annotations
+
+    def test_pg_voice_interruption_rate_filters_are_applied(self):
+        q, annotations = FilterEngine.get_filter_conditions_for_voice_system_metrics(
+            [
+                _api_filter(
+                    "user_interruption_rate",
+                    ColType.SYSTEM_METRIC.value,
+                    "number",
+                    "greater_than",
+                    2,
+                )
+            ]
+        )
+
+        assert isinstance(q, Q)
+        assert q.children
+        assert "_voice_user_interruption_rate" in annotations
 
     @pytest.mark.parametrize(
         "filter_type,filter_op",

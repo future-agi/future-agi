@@ -39,7 +39,9 @@ import {
   storeFilterToPanel as datasetStoreFilterToPanel,
 } from "src/sections/develop-detail/DataTab/DevelopFilters/DevelopFilterBox";
 import FilterChips from "src/sections/projects/LLMTracing/FilterChips";
-import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
+import TraceFilterPanel, {
+  buildTraceFilterProperties,
+} from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { apiPath } from "src/api/contracts/api-surface";
 import { PROJECT_SOURCE } from "src/utils/constants";
@@ -731,6 +733,7 @@ function TraceRuleFilters({
   );
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
   const panelSource = sourceType === "trace_session" ? "sessions" : "traces";
+  const isSpanSource = sourceType === "observation_span";
   const filterFields =
     sourceType === "trace_session" ? SESSION_RULE_FILTER_FIELDS : undefined;
 
@@ -801,6 +804,8 @@ function TraceRuleFilters({
         onClose={() => setFilterOpen(false)}
         projectId={projectId}
         source={panelSource}
+        tab={isSpanSource ? "spans" : undefined}
+        isSpansView={isSpanSource}
         filterFields={filterFields}
         isSimulator={isVoiceProject}
         key={`${projectId}-${panelSource}-${isVoiceProject ? "voice" : "trace"}`}
@@ -857,10 +862,22 @@ function TraceRuleFilters({
   );
 }
 
-function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
+function SimulationRuleFilters({
+  filters,
+  setFilters,
+  scope,
+  queue,
+  onInteraction,
+}) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const buttonRef = useRef(null);
+  const queueAgentId = getQueueScopeId(queue, "agent_definition");
+  const agentDefinitionId = resolveRuleScopeId(
+    queue,
+    queueAgentId,
+    scope.project_id,
+  );
 
   const panelCurrentFilters = useMemo(
     () => getSubmittableFilters(filters).map(apiFilterToPanel),
@@ -868,6 +885,27 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
   );
 
   const snakeFilters = useMemo(() => getSubmittableFilters(filters), [filters]);
+  const { data: simulationEvalFields = [] } = useQuery({
+    queryKey: ["automation-rule-simulation-eval-fields", agentDefinitionId],
+    queryFn: () =>
+      axios.get(endpoints.dashboard.metrics, {
+        params: { agent_definition_id: agentDefinitionId },
+      }),
+    enabled: Boolean(agentDefinitionId),
+    select: (response) =>
+      buildTraceFilterProperties(response.data?.result?.metrics || [], {
+        isSimulator: true,
+        sourceScope: "simulation",
+      }).filter((property) => property.category === "eval"),
+    staleTime: 5 * 60_000,
+  });
+  const properties = useMemo(() => {
+    const fieldsById = new Map(
+      SIMULATION_RULE_FILTER_FIELDS.map((field) => [field.id, field]),
+    );
+    simulationEvalFields.forEach((field) => fieldsById.set(field.id, field));
+    return Array.from(fieldsById.values());
+  }, [simulationEvalFields]);
 
   return (
     <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
@@ -917,7 +955,7 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
               : [{ ...DEFAULT_FILTER, id: getRandomId() }],
           );
         }}
-        properties={SIMULATION_RULE_FILTER_FIELDS}
+        properties={properties}
         source="simulation"
         showAi={false}
         showQueryTab={false}
@@ -1000,6 +1038,8 @@ export function RuleFilterSection({
     <SimulationRuleFilters
       filters={filters}
       setFilters={setFilters}
+      scope={scope}
+      queue={queue}
       onInteraction={onInteraction}
     />
   );

@@ -575,32 +575,6 @@ export const getCallLogsColumnDefs = (
   config = null,
   expandedMetrics = [],
 ) => {
-  if (isLoading) {
-    return [
-      {
-        headerName:
-          agentType === AGENT_TYPES.CHAT ? "Chat Details" : "Call Details",
-        field: "call_summary",
-        cellRenderer: LoadingSkeleton,
-      },
-      {
-        headerName: "Participant",
-        field: "customer_name",
-        cellRenderer: LoadingSkeleton,
-      },
-      {
-        headerName: "Duration",
-        field: "duration_seconds",
-        cellRenderer: LoadingSkeleton,
-      },
-      {
-        headerName: "Status",
-        field: "status",
-        cellRenderer: LoadingSkeleton,
-      },
-    ];
-  }
-
   const evalItems = [];
   const annotationItems = [];
   (config || []).forEach((item) => {
@@ -616,7 +590,8 @@ export const getCallLogsColumnDefs = (
   const baseColumns = [
     // ── Identity ──────────────────────────────────────────────────────
     {
-      headerName: "Call Details",
+      headerName:
+        agentType === AGENT_TYPES.CHAT ? "Chat Details" : "Call Details",
       field: "call_summary",
       flex: 2,
       minWidth: 200,
@@ -770,6 +745,14 @@ export const getCallLogsColumnDefs = (
       cellRenderer: CallLogsCellRenderer,
     },
   ];
+
+  if (isLoading) {
+    return baseColumns.map((column) => ({
+      ...column,
+      cellRenderer: LoadingSkeleton,
+      valueGetter: undefined,
+    }));
+  }
 
   return [...baseColumns, ...evalColumns, ...annotationColumns];
 };

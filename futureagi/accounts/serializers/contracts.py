@@ -1,31 +1,14 @@
 from rest_framework import serializers
 
-from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
+from tfc.utils.api_serializers import ApiErrorResponseSerializer, EmptyRequestSerializer
 
 
-class AccountsErrorResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField(required=False)
-    type = serializers.ChoiceField(
-        choices=API_ERROR_TYPE_CHOICES,
-        required=False,
-        allow_blank=True,
-        allow_null=True,
-    )
-    code = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    detail = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    result = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    message = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    error = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    attr = serializers.CharField(required=False, allow_blank=True, allow_null=True)
-    details = serializers.DictField(
-        child=serializers.ListField(child=serializers.CharField()),
-        required=False,
-        allow_empty=True,
-    )
+class AccountsErrorResponseSerializer(ApiErrorResponseSerializer):
+    """Accounts error envelope; kept named for generated API docs."""
 
 
-class AccountsEmptyRequestSerializer(serializers.Serializer):
-    pass
+class AccountsEmptyRequestSerializer(EmptyRequestSerializer):
+    """No-body accounts action request; rejects any submitted body fields."""
 
 
 class AccountsJSONRequestSerializer(serializers.Serializer):

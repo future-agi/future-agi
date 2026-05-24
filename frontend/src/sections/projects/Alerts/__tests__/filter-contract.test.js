@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { convertFiltersToPayload, isSpanAttrFilterValid } from "../common";
+import {
+  convertFiltersToPayload,
+  getAlertFilterValue,
+  isAlertMuted,
+  isSpanAttrFilterValid,
+  normalizeAlertListRow,
+} from "../common";
 import { transformFilterResponse } from "../components/validation";
 
 describe("alert filter contract", () => {
@@ -100,5 +106,37 @@ describe("alert filter contract", () => {
         }),
       ]),
     );
+  });
+
+  it("normalizes alert list rows from API snake_case into UI fields", () => {
+    const row = normalizeAlertListRow({
+      id: "alert-1",
+      metric_type: "Count of errors",
+      last_triggered: "2026-05-24T00:00:00Z",
+      no_of_alerts: 3,
+      is_mute: true,
+      filters: {
+        observation_type: ["llm"],
+        span_attributes_filters: [
+          {
+            column_id: "customer_tier",
+            filter_config: {
+              filter_type: "text",
+              filter_op: "equals",
+              filter_value: "enterprise",
+            },
+          },
+        ],
+      },
+    });
+
+    expect(row.metricType).toBe("Count of errors");
+    expect(row.lastTriggered).toBe("2026-05-24T00:00:00Z");
+    expect(row.noOfAlerts).toBe(3);
+    expect(isAlertMuted(row)).toBe(true);
+    expect(getAlertFilterValue(row)).toEqual([
+      "Span Type is LLM",
+      "Custom attribute is (customer_tier)",
+    ]);
   });
 });

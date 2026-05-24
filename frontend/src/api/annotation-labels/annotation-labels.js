@@ -105,7 +105,7 @@ export const useDeleteAnnotationLabel = () => {
 export const useRestoreAnnotationLabel = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (id) => modelHubAnnotationsLabelsRestore(id),
+    mutationFn: (id) => modelHubAnnotationsLabelsRestore(id, {}),
     onSuccess: () => {
       enqueueSnackbar("Label restored", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationLabelKeys.all });

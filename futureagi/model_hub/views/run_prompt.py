@@ -880,7 +880,14 @@ class LitellmAPIView(CreateAPIView):
         validated_data = request.validated_data
         # `validated_request` owns request-shape validation; from here the view
         # handles only domain execution errors.
-        dataset = Dataset.objects.filter(id=validated_data.get("dataset_id")).get()
+        organization = (
+            getattr(request, "organization", None) or request.user.organization
+        )
+        dataset = Dataset.objects.filter(
+            id=validated_data.get("dataset_id"), deleted=False
+        ).first()
+        if not dataset or dataset.organization_id != organization.id:
+            return self._gm.not_found("Dataset not found")
         # Retrieve tools based on the IDs from the validated data
         tool_ids = validated_data.get("tools", [])
         tools = Tools.objects.filter(id__in=tool_ids)
@@ -890,8 +897,7 @@ class LitellmAPIView(CreateAPIView):
             run_prompter = RunPrompter.objects.create(
                 name=validated_data.get("name"),
                 model=validated_data.get("model"),
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=organization,
                 messages=validated_data.get("messages"),
                 temperature=validated_data.get("temperature"),
                 frequency_penalty=validated_data.get("frequency_penalty"),
@@ -2529,12 +2535,29 @@ class RunPromptForRowsView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             user_org_id = user_org.id if hasattr(user_org, "id") else user_org
-            run_prompters = list(RunPrompter.objects.filter(id__in=run_prompt_ids))
+            run_prompters = list(
+                RunPrompter.objects.filter(id__in=run_prompt_ids, deleted=False)
+            )
             if len(run_prompters) != len(set(map(str, run_prompt_ids))):
                 return self._gm.not_found("Run prompt not found")
             for rp in run_prompters:
                 if rp.organization_id != user_org_id:
                     return self._gm.not_found("Run prompt not found")
+
+            dataset_ids = {rp.dataset_id for rp in run_prompters}
+            if len(dataset_ids) != 1:
+                return self._gm.bad_request(
+                    "Run prompts must belong to the same dataset"
+                )
+            dataset_id = next(iter(dataset_ids))
+
+            if row_ids and not selected_all_rows:
+                requested_row_ids = set(map(str, row_ids))
+                scoped_rows = Row.objects.filter(
+                    id__in=row_ids, dataset_id=dataset_id, deleted=False
+                ).values_list("id", flat=True)
+                if set(map(str, scoped_rows)) != requested_row_ids:
+                    return self._gm.not_found("Row not found")
 
             # Run all evaluations in a single async task
             run_prompt = None

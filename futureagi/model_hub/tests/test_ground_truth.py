@@ -4,11 +4,15 @@ Tests for Phase 9: Ground Truth.
 
 import io
 import json
+import uuid
 
 import pytest
 
+from accounts.models import Organization, User
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
+from tfc.constants.roles import OrganizationRoles
 
 
 @pytest.fixture
@@ -39,6 +43,45 @@ def ground_truth(eval_template, organization):
         row_count=3,
         organization=organization,
     )
+
+
+def create_other_org_ground_truth():
+    suffix = uuid.uuid4().hex[:8]
+    other_org = Organization.objects.create(name=f"Other GT Org {suffix}")
+    other_user = User.objects.create_user(
+        email=f"other-gt-{suffix}@futureagi.com",
+        password="testpassword123",
+        name="Other GT User",
+        organization=other_org,
+        organization_role=OrganizationRoles.OWNER,
+    )
+    other_workspace = Workspace.objects.create(
+        name=f"Other GT Workspace {suffix}",
+        organization=other_org,
+        is_default=True,
+        is_active=True,
+        created_by=other_user,
+    )
+    other_template = EvalTemplate.no_workspace_objects.create(
+        name=f"other-gt-eval-{suffix}",
+        organization=other_org,
+        workspace=other_workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "Pass/Fail", "required_keys": ["input"]},
+        criteria="Compare {{input}}",
+        visible_ui=True,
+    )
+    other_gt = EvalGroundTruth.objects.create(
+        eval_template=other_template,
+        name=f"other-gt-{suffix}",
+        file_name="other.csv",
+        columns=["input"],
+        data=[{"input": "secret"}],
+        row_count=1,
+        organization=other_org,
+        workspace=other_workspace,
+    )
+    return other_template, other_gt
 
 
 # =========================================================================
@@ -209,6 +252,11 @@ class TestGroundTruthListAPI:
         assert item["row_count"] == 3
         assert item["embedding_status"] == "pending"
 
+    def test_list_rejects_other_org_template(self, auth_client):
+        other_template, _ = create_other_org_ground_truth()
+        response = auth_client.get(self._url(other_template.id))
+        assert response.status_code == 404
+
 
 # =========================================================================
 # Mapping API
@@ -332,6 +380,11 @@ class TestGroundTruthDataAPI:
         )
         assert response.status_code == 404
 
+    def test_data_rejects_other_org_ground_truth(self, auth_client):
+        _, other_gt = create_other_org_ground_truth()
+        response = auth_client.get(self._url(other_gt.id))
+        assert response.status_code == 404
+
 
 # =========================================================================
 # Status API
@@ -379,6 +432,7 @@ class TestGroundTruthDeleteAPI:
         # Verify soft-deleted
         ground_truth.refresh_from_db()
         assert ground_truth.deleted is True
+        assert ground_truth.deleted_at is not None
 
     def test_delete_nonexistent(self, auth_client):
         response = auth_client.delete(

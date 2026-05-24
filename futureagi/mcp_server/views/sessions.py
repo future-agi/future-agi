@@ -39,10 +39,12 @@ class MCPSessionListView(APIView):
         status_filter = request.query_params.get("status")
         qs = MCPSession.objects.filter(
             organization=organization,
-        ).order_by("-started_at")[:50]
+        )
 
         if status_filter:
             qs = qs.filter(status=status_filter)
+
+        qs = qs.order_by("-started_at")[:50]
 
         serializer = MCPSessionSerializer(qs, many=True)
         return Response({"status": True, "result": serializer.data})
