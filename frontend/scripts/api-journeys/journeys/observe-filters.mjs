@@ -694,9 +694,10 @@ export const observeFilterJourneys = [
         "input_tokens",
         "output_tokens",
       ]) {
+        const series = userDetailGraph?.[key];
         assert(
-          Array.isArray(userDetailGraph?.[key]?.data),
-          `User detail graph response omitted ${key}.data.`,
+          Array.isArray(series) || Array.isArray(series?.data),
+          `User detail graph response omitted ${key} series.`,
         );
       }
 

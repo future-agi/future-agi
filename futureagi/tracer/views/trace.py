@@ -57,6 +57,7 @@ from tracer.models.observation_span import EndUser, EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
+from tracer.queries.end_users import build_user_list_pg
 from tracer.serializers.filters import (
     ObserveGraphDataRequestSerializer,
     ObserveGraphDataResponseSerializer,
@@ -6092,25 +6093,44 @@ class UsersView(APIView):
                 current_page = 0
 
             analytics = AnalyticsQueryService()
-            if not analytics.should_use_clickhouse(QueryType.SPAN_LIST):
-                return self._gm.bad_request("ClickHouse user list route disabled")
+            formatted = None
+            used_clickhouse = False
+            if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
+                try:
+                    builder = UserListQueryBuilder(
+                        organization_id=str(organization_id),
+                        workspace_id=str(request.workspace.id),
+                        project_id=project_id,
+                        search=search_name,
+                        limit=limit,
+                        offset=offset,
+                        filters=filters,
+                        sort_params=sort_params,
+                        include_null_workspace=bool(
+                            getattr(request.workspace, "is_default", False)
+                        ),
+                    )
+                    query, params = builder.build()
+                    result = analytics.execute_ch_query(query, params, timeout_ms=30000)
+                    formatted = builder.format_rows(result.data)
+                    used_clickhouse = True
+                except Exception as e:
+                    logger.warning(
+                        "ClickHouse user list failed; using PG fallback",
+                        error=str(e),
+                    )
 
-            builder = UserListQueryBuilder(
-                organization_id=str(organization_id),
-                workspace_id=str(request.workspace.id),
-                project_id=project_id,
-                search=search_name,
-                limit=limit,
-                offset=offset,
-                filters=filters,
-                sort_params=sort_params,
-                include_null_workspace=bool(
-                    getattr(request.workspace, "is_default", False)
-                ),
-            )
-            query, params = builder.build()
-            result = analytics.execute_ch_query(query, params, timeout_ms=30000)
-            formatted = builder.format_rows(result.data)
+            if formatted is None:
+                formatted = build_user_list_pg(
+                    organization_id=str(organization_id),
+                    workspace=getattr(request, "workspace", None),
+                    project_id=project_id,
+                    search=search_name,
+                    limit=limit,
+                    offset=offset,
+                    filters=filters,
+                    sort_params=sort_params,
+                )
             output = formatted["table"]
             count = formatted["total_count"]
 
@@ -6118,7 +6138,7 @@ class UsersView(APIView):
             end_user_ids = [
                 r.get("end_user_id") for r in output if r.get("end_user_id")
             ]
-            if end_user_ids:
+            if used_clickhouse and end_user_ids:
                 try:
                     analytics = AnalyticsQueryService()
                     _SKIP_ATTR_PREFIXES = (

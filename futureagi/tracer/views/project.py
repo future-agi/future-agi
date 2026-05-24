@@ -28,6 +28,11 @@ from tracer.models.trace import Trace
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.models.trace_session import TraceSession
 from tracer.queries.error_analysis import TraceErrorAnalysisDB
+from tracer.queries.end_users import (
+    build_user_graph_pg,
+    build_user_metrics_pg,
+    build_users_aggregate_graph_pg,
+)
 from tracer.serializers.project import (
     ProjectDetailResponseSerializer,
     ProjectGraphDataQuerySerializer,
@@ -671,43 +676,59 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             _org = get_request_organization(request) or request.user.organization
             _org_id = str(_org.id)
             analytics = AnalyticsQueryService()
-            if not analytics.should_use_clickhouse(QueryType.SPAN_LIST):
-                return self._gm.bad_request("ClickHouse user metrics route disabled")
+            output = None
+            if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
+                try:
+                    builder = UserListQueryBuilder(
+                        organization_id=_org_id,
+                        workspace_id=str(request.workspace.id),
+                        project_id=project_id,
+                        filters=filters,
+                        end_user_id=end_user_id,
+                        include_null_workspace=bool(
+                            getattr(request.workspace, "is_default", False)
+                        ),
+                    )
+                    query, params = builder.build()
+                    result = analytics.execute_ch_query(query, params, timeout_ms=30000)
+                    output = []
+                    for row in builder.format_rows(result.data)["table"]:
+                        output.append(
+                            {
+                                "user_id": row.get("user_id"),
+                                "user_id_type": row.get("user_id_type"),
+                                "user_id_hash": row.get("user_id_hash"),
+                                "active_days": row.get("num_active_days", 0),
+                                "last_active": row.get("last_active"),
+                                "total_cost": row.get("total_cost", 0),
+                                "total_tokens": row.get("total_tokens", 0),
+                                "avg_session_duration": row.get(
+                                    "avg_session_duration", 0
+                                ),
+                                "avg_trace_latency": row.get("avg_trace_latency", 0),
+                                "num_llm_calls": row.get("num_llm_calls", 0),
+                                "num_guardrails_triggered": row.get(
+                                    "num_guardrails_triggered", 0
+                                ),
+                                "num_traces_with_errors": row.get(
+                                    "num_traces_with_errors", 0
+                                ),
+                                "num_sessions": row.get("num_sessions", 0),
+                            }
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "ClickHouse user metrics failed; using PG fallback",
+                        error=str(e),
+                    )
 
-            builder = UserListQueryBuilder(
-                organization_id=_org_id,
-                workspace_id=str(request.workspace.id),
-                project_id=project_id,
-                filters=filters,
-                end_user_id=end_user_id,
-                include_null_workspace=bool(
-                    getattr(request.workspace, "is_default", False)
-                ),
-            )
-            query, params = builder.build()
-            result = analytics.execute_ch_query(query, params, timeout_ms=30000)
-            output = []
-            for row in builder.format_rows(result.data)["table"]:
-                output.append(
-                    {
-                        "user_id": row.get("user_id"),
-                        "user_id_type": row.get("user_id_type"),
-                        "user_id_hash": row.get("user_id_hash"),
-                        "active_days": row.get("num_active_days", 0),
-                        "last_active": row.get("last_active"),
-                        "total_cost": row.get("total_cost", 0),
-                        "total_tokens": row.get("total_tokens", 0),
-                        "avg_session_duration": row.get("avg_session_duration", 0),
-                        "avg_trace_latency": row.get("avg_trace_latency", 0),
-                        "num_llm_calls": row.get("num_llm_calls", 0),
-                        "num_guardrails_triggered": row.get(
-                            "num_guardrails_triggered", 0
-                        ),
-                        "num_traces_with_errors": row.get(
-                            "num_traces_with_errors", 0
-                        ),
-                        "num_sessions": row.get("num_sessions", 0),
-                    }
+            if output is None:
+                output = build_user_metrics_pg(
+                    organization_id=_org_id,
+                    workspace=getattr(request, "workspace", None),
+                    project_id=project_id,
+                    end_user_id=end_user_id,
+                    filters=filters,
                 )
 
             return self._gm.success_response(output)
@@ -785,7 +806,17 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         return self._gm.success_response(graph_data)
                     except Exception as e:
                         logger.warning("CH user time-series failed", error=str(e))
-                        return self._gm.bad_request("ClickHouse user graph failed")
+                _org = get_request_organization(request) or request.user.organization
+                return self._gm.success_response(
+                    build_users_aggregate_graph_pg(
+                        organization_id=str(_org.id),
+                        workspace=getattr(request, "workspace", None),
+                        project_id=project_id,
+                        filters=filters,
+                        interval=interval,
+                        metric_id=metric_id,
+                    )
+                )
 
             elif metric_type in ("EVAL", "ANNOTATION"):
                 user_filters = [
@@ -903,98 +934,121 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 interval = body["interval"]
                 filters = body["filters"]
                 analytics = AnalyticsQueryService()
-                if not analytics.should_use_clickhouse(QueryType.TIME_SERIES):
-                    return self._gm.bad_request("ClickHouse user graph route disabled")
-
-                builder = TimeSeriesQueryBuilder(
-                    project_id=project_id,
-                    filters=filters,
-                    interval=interval,
-                )
-                start_date, end_date = builder.parse_time_range(filters)
-                bucket_fn = builder.time_bucket_expr(interval)
-                fb = ClickHouseFilterBuilder(
-                    table="spans",
-                    project_id=project_id,
-                    query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
-                )
-                extra_where, extra_params = fb.translate(filters)
-                extra_clause = f"AND {extra_where}" if extra_where else ""
                 _org = get_request_organization(request) or request.user.organization
-                workspace_clause = ""
-                params = {
-                    "project_id": project_id,
-                    "end_user_id": end_user_id,
-                    "org_id": str(_org.id),
-                    "start_date": start_date,
-                    "end_date": end_date,
-                    **extra_params,
-                }
-                if getattr(request, "workspace", None):
-                    params["workspace_id"] = str(request.workspace.id)
-                    if bool(getattr(request.workspace, "is_default", False)):
-                        workspace_clause = (
-                            "AND (workspace_id = toUUID(%(workspace_id)s) "
-                            "OR isNull(workspace_id))"
+                if analytics.should_use_clickhouse(QueryType.TIME_SERIES):
+                    try:
+                        builder = TimeSeriesQueryBuilder(
+                            project_id=project_id,
+                            filters=filters,
+                            interval=interval,
                         )
-                    else:
-                        workspace_clause = "AND workspace_id = toUUID(%(workspace_id)s)"
-
-                query = f"""
-                SELECT
-                    {bucket_fn}(created_at) AS time_bucket,
-                    uniqExactIf(toString(trace_session_id), isNotNull(trace_session_id)) AS session_count,
-                    uniqExact(trace_id) AS trace_count,
-                    sum(ifNull(cost, 0)) AS cost,
-                    sum(ifNull(prompt_tokens, 0)) AS input_tokens,
-                    sum(ifNull(completion_tokens, 0)) AS output_tokens
-                FROM spans
-                WHERE project_id = %(project_id)s
-                  AND _peerdb_is_deleted = 0
-                  AND end_user_id IN (
-                    SELECT id
-                    FROM tracer_enduser FINAL
-                    WHERE id = toUUID(%(end_user_id)s)
-                      AND organization_id = toUUID(%(org_id)s)
-                      AND project_id = toUUID(%(project_id)s)
-                      AND _peerdb_is_deleted = 0
-                      AND deleted = 0
-                      {workspace_clause}
-                  )
-                  AND created_at >= %(start_date)s
-                  AND created_at < %(end_date)s
-                  {extra_clause}
-                GROUP BY time_bucket
-                ORDER BY time_bucket
-                """
-                result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-                rows = result.data or []
-
-                def _series(source_key, output_key):
-                    series_rows = [
-                        (
-                            row.get("time_bucket"),
-                            row.get(source_key, 0),
+                        start_date, end_date = builder.parse_time_range(filters)
+                        bucket_fn = builder.time_bucket_expr(interval)
+                        fb = ClickHouseFilterBuilder(
+                            table="spans",
+                            project_id=project_id,
+                            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
                         )
-                        for row in rows
-                    ]
-                    return builder.format_time_series(
-                        rows=series_rows,
-                        columns=["time_bucket", output_key],
-                        interval=interval,
-                        start_date=start_date,
-                        end_date=end_date,
-                        value_keys=[output_key],
-                    )
+                        extra_where, extra_params = fb.translate(filters)
+                        extra_clause = f"AND {extra_where}" if extra_where else ""
+                        workspace_clause = ""
+                        params = {
+                            "project_id": project_id,
+                            "end_user_id": end_user_id,
+                            "org_id": str(_org.id),
+                            "start_date": start_date,
+                            "end_date": end_date,
+                            **extra_params,
+                        }
+                        if getattr(request, "workspace", None):
+                            params["workspace_id"] = str(request.workspace.id)
+                            if bool(getattr(request.workspace, "is_default", False)):
+                                workspace_clause = (
+                                    "AND (workspace_id = toUUID(%(workspace_id)s) "
+                                    "OR isNull(workspace_id))"
+                                )
+                            else:
+                                workspace_clause = (
+                                    "AND workspace_id = toUUID(%(workspace_id)s)"
+                                )
+
+                        query = f"""
+                        SELECT
+                            {bucket_fn}(created_at) AS time_bucket,
+                            uniqExactIf(toString(trace_session_id), isNotNull(trace_session_id)) AS session_count,
+                            uniqExact(trace_id) AS trace_count,
+                            sum(ifNull(cost, 0)) AS cost,
+                            sum(ifNull(prompt_tokens, 0)) AS input_tokens,
+                            sum(ifNull(completion_tokens, 0)) AS output_tokens
+                        FROM spans
+                        WHERE project_id = %(project_id)s
+                          AND _peerdb_is_deleted = 0
+                          AND end_user_id IN (
+                            SELECT id
+                            FROM tracer_enduser FINAL
+                            WHERE id = toUUID(%(end_user_id)s)
+                              AND organization_id = toUUID(%(org_id)s)
+                              AND project_id = toUUID(%(project_id)s)
+                              AND _peerdb_is_deleted = 0
+                              AND deleted = 0
+                              {workspace_clause}
+                          )
+                          AND created_at >= %(start_date)s
+                          AND created_at < %(end_date)s
+                          {extra_clause}
+                        GROUP BY time_bucket
+                        ORDER BY time_bucket
+                        """
+                        result = analytics.execute_ch_query(
+                            query, params, timeout_ms=10000
+                        )
+                        rows = result.data or []
+
+                        def _series(source_key, output_key):
+                            series_rows = [
+                                (
+                                    row.get("time_bucket"),
+                                    row.get(source_key, 0),
+                                )
+                                for row in rows
+                            ]
+                            return builder.format_time_series(
+                                rows=series_rows,
+                                columns=["time_bucket", output_key],
+                                interval=interval,
+                                start_date=start_date,
+                                end_date=end_date,
+                                value_keys=[output_key],
+                            )
+
+                        return self._gm.success_response(
+                            {
+                                "session": _series("session_count", "session"),
+                                "trace": _series("trace_count", "trace"),
+                                "cost": _series("cost", "cost"),
+                                "input_tokens": _series(
+                                    "input_tokens", "input_tokens"
+                                ),
+                                "output_tokens": _series(
+                                    "output_tokens", "output_tokens"
+                                ),
+                            }
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "ClickHouse user detail graph failed; using PG fallback",
+                            error=str(e),
+                        )
 
                 return self._gm.success_response(
-                    {
-                        "session": _series("session_count", "session"),
-                        "trace": _series("trace_count", "trace"),
-                        "cost": _series("cost", "cost"),
-                        "input_tokens": _series("input_tokens", "input_tokens"),
-                        "output_tokens": _series("output_tokens", "output_tokens"),
-                    }
+                    build_user_graph_pg(
+                        organization_id=str(_org.id),
+                        workspace=getattr(request, "workspace", None),
+                        project_id=project_id,
+                        end_user_id=end_user_id,
+                        filters=filters,
+                        interval=interval,
+                    )
                 )
             except Project.DoesNotExist:
                 return self._gm.bad_request("Project not found.")
