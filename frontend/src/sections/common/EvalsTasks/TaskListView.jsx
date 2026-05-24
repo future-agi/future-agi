@@ -249,6 +249,24 @@ FilterSummary.propTypes = {
   filtersApplied: PropTypes.object,
 };
 
+const INFLIGHT_STATUSES = ["pending", "running"];
+
+function getEvalTaskListItems(data) {
+  return (
+    data?.table ||
+    data?.tasks ||
+    data?.results ||
+    data?.data ||
+    (Array.isArray(data) ? data : [])
+  );
+}
+
+function hasInflightEvalTasks(data) {
+  return getEvalTaskListItems(data).some((row) =>
+    INFLIGHT_STATUSES.includes(row?.status),
+  );
+}
+
 // ── Main Component ──
 
 const TaskListView = ({
@@ -312,17 +330,12 @@ const TaskListView = ({
       return resp?.result;
     },
     keepPreviousData: true,
+    refetchInterval: (query) =>
+      hasInflightEvalTasks(query.state.data) ? 5000 : false,
+    refetchIntervalInBackground: false,
   });
 
-  const items = useMemo(
-    () =>
-      data?.table ||
-      data?.tasks ||
-      data?.results ||
-      data?.data ||
-      (Array.isArray(data) ? data : []),
-    [data],
-  );
+  const items = useMemo(() => getEvalTaskListItems(data), [data]);
   const total =
     data?.metadata?.total_count ||
     data?.total ||
