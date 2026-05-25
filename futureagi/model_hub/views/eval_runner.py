@@ -1947,6 +1947,7 @@ class EvaluationRunner:
                     )
                 # Map back from key to row value via the ordered lists.
                 value = mapping[required_field.index(key)]
+                from model_hub.utils.eval_input_validation import is_empty_value as _is_empty_value
                 if _is_empty_value(value):
                     raise ValueError(
                         f"No input received for '{key}'. Please check your input."
