@@ -1,3 +1,5 @@
+import process from "node:process";
+
 import {
   apiPath,
   asArray,
@@ -25,9 +27,12 @@ export async function resolveQueue(client, evidence) {
     return queue;
   }
 
-  const queuesPayload = await client.get(apiPath("/model-hub/annotation-queues/"), {
-    query: { limit: 25 },
-  });
+  const queuesPayload = await client.get(
+    apiPath("/model-hub/annotation-queues/"),
+    {
+      query: { limit: 25 },
+    },
+  );
   const queues = asArray(queuesPayload);
   const queue =
     queues.find((item) => item.status === "active" && item.item_count > 0) ||
@@ -68,7 +73,8 @@ export async function resolveObserveProject(client, evidence) {
   });
   const projects = asArray(payload);
   const project =
-    projects.find((row) => Number(row.last_30_days_vol || 0) > 0) || projects[0];
+    projects.find((row) => Number(row.last_30_days_vol || 0) > 0) ||
+    projects[0];
   if (!project?.id) {
     skip("No observe project exists for this account/workspace.");
   }
@@ -104,10 +110,17 @@ export function annotationValueForLabel(label) {
   );
   if (type.includes("numeric") || type.includes("number")) return 3;
   if (type.includes("star")) return 4;
-  if (type.includes("thumb")) return true;
+  if (type.includes("thumb")) return { value: "up" };
   if (type.includes("categorical") || type.includes("select")) {
     const option = options[0];
-    return option?.value ?? option?.id ?? option?.label ?? option?.name ?? option ?? "";
+    return (
+      option?.value ??
+      option?.id ??
+      option?.label ??
+      option?.name ??
+      option ??
+      ""
+    );
   }
   return `api journey ${Date.now().toString(36)}`;
 }
@@ -152,7 +165,10 @@ export function queryWithFilters(pathName, filters, extra = {}) {
 
 export function assertCurrentUserResolved(user) {
   const id = currentUserId(user);
-  assert(id, "Current user id could not be resolved from /accounts/user-info/.");
+  assert(
+    id,
+    "Current user id could not be resolved from /accounts/user-info/.",
+  );
   return id;
 }
 

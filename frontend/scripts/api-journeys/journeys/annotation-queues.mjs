@@ -2155,6 +2155,428 @@ export const annotationQueueJourneys = [
     },
   },
   {
+    id: "MUR-API-002",
+    title: "Bulk assignment refreshes annotator and reviewer queues",
+    tags: ["annotation", "mutating", "multi-user", "assignment", "review"],
+    async run({
+      apiBase,
+      client,
+      cleanup,
+      evidence,
+      organizationId,
+      runId,
+      user,
+      workspaceId,
+    }) {
+      requireMutations();
+      const managerId = assertCurrentUserResolved(user);
+      const altToken = process.env.API_JOURNEY_ALT_ACCESS_TOKEN || "";
+      if (!altToken) {
+        skip(
+          "Set API_JOURNEY_ALT_ACCESS_TOKEN for a second workspace annotator to run multi-user assignment refresh coverage.",
+        );
+      }
+      const altClient = createApiClient({
+        apiBase,
+        accessToken: altToken,
+        organizationId,
+        workspaceId,
+      });
+      const altUser = await altClient.get(apiPath("/accounts/user-info/"));
+      const altUserId = currentUserId(altUser);
+      assert(altUserId, "Alternate annotator user id could not be resolved.");
+      if (String(altUserId) === String(managerId)) {
+        skip("Alternate token resolved to the manager user.");
+      }
+
+      const sample = await resolveTraceAndSpanSample(client);
+      const queue = await resolveReviewQueueWithAnnotator(
+        client,
+        altUserId,
+        evidence,
+      );
+      const queueId = queue.id;
+
+      const altQueueDetail = await altClient.get(
+        apiPath("/model-hub/annotation-queues/{id}/", { id: queueId }),
+      );
+      assert(
+        asArray(altQueueDetail.viewer_roles).includes("annotator"),
+        `Alternate user must have annotator visibility before assignment: ${JSON.stringify(
+          altQueueDetail.viewer_roles,
+        )}.`,
+      );
+
+      const itemPayload = {
+        source_type: "observation_span",
+        source_id: sample.spanId,
+        status: "pending",
+        priority: 5,
+        order: 8201,
+        metadata: { api_journey: runId, stage: "multi-user-bulk-assign" },
+      };
+      const item = await client.post(
+        queuePath("/model-hub/annotation-queues/{queue_id}/items/", queueId),
+        itemPayload,
+      );
+      assert(item?.id, "Multi-user assignment item create returned no id.");
+      cleanup.defer("delete multi-user assignment queue item", () =>
+        deleteQueueItemIfPresent(client, queueId, item.id),
+      );
+
+      const assigned = await client.post(
+        queuePath(
+          "/model-hub/annotation-queues/{queue_id}/items/assign/",
+          queueId,
+        ),
+        {
+          item_ids: [item.id],
+          user_ids: [altUserId],
+          action: "set",
+        },
+      );
+      assert(
+        Number(assigned.assigned) === 1,
+        `Multi-user assign returned wrong count: ${JSON.stringify(assigned)}.`,
+      );
+      cleanup.defer("clear multi-user assignment item assignment", () =>
+        client.post(
+          queuePath(
+            "/model-hub/annotation-queues/{queue_id}/items/assign/",
+            queueId,
+          ),
+          {
+            item_ids: [item.id],
+            user_ids: [],
+            action: "set",
+          },
+        ),
+      );
+
+      const altAssignedItems = asArray(
+        await altClient.get(
+          queuePath("/model-hub/annotation-queues/{queue_id}/items/", queueId),
+          {
+            query: {
+              assigned_to: "me",
+              status: ["pending", "in_progress", "completed", "skipped"],
+              limit: 500,
+              ordering: "-created_at",
+            },
+          },
+        ),
+      );
+      assert(
+        altAssignedItems.some((row) => String(row.id) === String(item.id)),
+        "Alternate assigned-to-me list did not include the manager-assigned item immediately.",
+      );
+
+      const managerItems = asArray(
+        await client.get(
+          queuePath("/model-hub/annotation-queues/{queue_id}/items/", queueId),
+          {
+            query: {
+              status: ["pending", "in_progress", "completed", "skipped"],
+              source_type: ["observation_span"],
+              limit: 500,
+              ordering: "-created_at",
+            },
+          },
+        ),
+      );
+      const managerListItem = managerItems.find(
+        (row) => String(row.id) === String(item.id),
+      );
+      assert(
+        managerListItem &&
+          String(managerListItem.assigned_to || "") === String(altUserId),
+        `Manager item list did not refresh with alternate assignment: ${JSON.stringify(
+          managerListItem,
+        )}.`,
+      );
+
+      const itemDetail = await client.get(
+        queuePath(
+          "/model-hub/annotation-queues/{queue_id}/items/{id}/",
+          queueId,
+          { id: item.id },
+        ),
+      );
+      assert(
+        String(itemDetail.assigned_to || "") === String(altUserId) &&
+          asArray(itemDetail.assigned_users).some(
+            (assignedUser) => String(assignedUser.id) === String(altUserId),
+          ),
+        `Assigned item detail did not include alternate annotator: ${JSON.stringify(
+          itemDetail,
+        )}.`,
+      );
+
+      const progressAfterAssign = await client.get(
+        apiPath("/model-hub/annotation-queues/{id}/progress/", {
+          id: queueId,
+        }),
+      );
+      const altStatsAfterAssign = asArray(
+        progressAfterAssign.annotator_stats,
+      ).find((stats) => String(stats.user_id) === String(altUserId));
+      assert(
+        Number(altStatsAfterAssign?.pending || 0) >= 1,
+        `Manager progress did not count alternate pending assignment: ${JSON.stringify(
+          progressAfterAssign,
+        )}.`,
+      );
+
+      const altProgressAfterAssign = await altClient.get(
+        apiPath("/model-hub/annotation-queues/{id}/progress/", {
+          id: queueId,
+        }),
+      );
+      assert(
+        Number(altProgressAfterAssign.user_progress?.pending || 0) >= 1,
+        `Alternate progress did not count its assigned pending item: ${JSON.stringify(
+          altProgressAfterAssign,
+        )}.`,
+      );
+
+      const assignedDbAudit = await loadQueueItemDbAudit(item.id);
+      assertQueueItemDbState(assignedDbAudit, {
+        queueId,
+        organizationId,
+        workspaceId,
+        sourceType: itemPayload.source_type,
+        sourceId: itemPayload.source_id,
+        status: "pending",
+        priority: itemPayload.priority,
+        order: itemPayload.order,
+        metadataStage: itemPayload.metadata.stage,
+        deleted: false,
+      });
+      assert(
+        String(assignedDbAudit.assigned_to_id || "") === String(altUserId) &&
+          Number(assignedDbAudit.active_assignments) === 1 &&
+          asArray(assignedDbAudit.assignment_user_ids).some(
+            (assignedUserId) => String(assignedUserId) === String(altUserId),
+          ),
+        `Assigned DB state did not include alternate annotator: ${JSON.stringify(
+          assignedDbAudit,
+        )}.`,
+      );
+
+      const annotatePath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/",
+        queueId,
+        { id: item.id },
+      );
+      const submitPath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/",
+        queueId,
+        { id: item.id },
+      );
+      const completePath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/complete/",
+        queueId,
+        { id: item.id },
+      );
+
+      const altDetail = await altClient.get(annotatePath, {
+        query: { include_completed: true, include_all_annotations: true },
+      });
+      assert(
+        altDetail?.item?.id === item.id,
+        "Alternate annotator could not open the manager-assigned item.",
+      );
+      const labels = asArray(altDetail.labels).filter((label) =>
+        labelId(label),
+      );
+      const requiredLabels = labels.filter((label) => label.required);
+      const labelsToSubmit = requiredLabels.length ? requiredLabels : labels;
+      assert(
+        labelsToSubmit.length > 0,
+        "Assigned review item did not expose labels to submit.",
+      );
+
+      const submittedValues = new Map();
+      const annotations = labelsToSubmit.map((label, index) => {
+        const value = reviewAnnotationValue(label, runId, `assigned-${index}`);
+        submittedValues.set(String(labelId(label)), value);
+        return {
+          label_id: labelId(label),
+          value,
+          notes: label.allow_notes ? `assigned label note ${runId}` : "",
+        };
+      });
+      const submitted = await altClient.post(submitPath, {
+        annotations,
+        item_notes: `assigned item note ${runId}`,
+      });
+      assert(
+        Number(submitted.submitted || 0) === annotations.length,
+        `Alternate assignment submission count mismatch: ${JSON.stringify(
+          submitted,
+        )}.`,
+      );
+      const completed = await altClient.post(completePath, {
+        exclude: [item.id],
+      });
+      assert(
+        completed.completed_item_id === item.id,
+        "Alternate complete did not echo the manager-assigned item id.",
+      );
+
+      const altAssignedAfterSubmit = asArray(
+        await altClient.get(
+          queuePath("/model-hub/annotation-queues/{queue_id}/items/", queueId),
+          {
+            query: {
+              assigned_to: "me",
+              status: ["pending", "in_progress", "completed", "skipped"],
+              limit: 500,
+              ordering: "-created_at",
+            },
+          },
+        ),
+      );
+      const altAfterSubmitItem = altAssignedAfterSubmit.find(
+        (row) => String(row.id) === String(item.id),
+      );
+      assert(
+        altAfterSubmitItem &&
+          altAfterSubmitItem.review_status === "pending_review",
+        `Alternate assigned-to-me list did not refresh to pending_review after submit: ${JSON.stringify(
+          altAfterSubmitItem,
+        )}.`,
+      );
+
+      const reviewItems = asArray(
+        await client.get(
+          queuePath("/model-hub/annotation-queues/{queue_id}/items/", queueId),
+          {
+            query: {
+              review_status: "pending_review",
+              limit: 500,
+              ordering: "-created_at",
+            },
+          },
+        ),
+      );
+      assert(
+        reviewItems.some((row) => String(row.id) === String(item.id)),
+        "Manager/reviewer pending-review list did not include the submitted assignment.",
+      );
+
+      const reviewerDetail = await client.get(annotatePath, {
+        query: {
+          view_mode: "review",
+          review_status: "pending_review",
+          include_all_annotations: true,
+        },
+      });
+      assert(
+        reviewerDetail.item?.review_status === "pending_review" &&
+          asArray(reviewerDetail.annotations).some(
+            (score) =>
+              String(score.annotator) === String(altUserId) &&
+              submittedValues.has(String(score.label_id)) &&
+              sameJsonValue(
+                score.value,
+                submittedValues.get(String(score.label_id)),
+              ),
+          ),
+        "Manager/reviewer detail did not reload alternate submitted score.",
+      );
+
+      const progressAfterSubmit = await client.get(
+        apiPath("/model-hub/annotation-queues/{id}/progress/", {
+          id: queueId,
+        }),
+      );
+      const altStatsAfterSubmit = asArray(
+        progressAfterSubmit.annotator_stats,
+      ).find((stats) => String(stats.user_id) === String(altUserId));
+      assert(
+        Number(altStatsAfterSubmit?.in_review || 0) >= 1 &&
+          Number(altStatsAfterSubmit?.annotations_count || 0) >=
+            annotations.length,
+        `Manager progress did not move alternate assignment into review: ${JSON.stringify(
+          progressAfterSubmit,
+        )}.`,
+      );
+
+      const altProgressAfterSubmit = await altClient.get(
+        apiPath("/model-hub/annotation-queues/{id}/progress/", {
+          id: queueId,
+        }),
+      );
+      assert(
+        Number(altProgressAfterSubmit.user_progress?.in_review || 0) >= 1 &&
+          Number(altProgressAfterSubmit.user_progress?.completed || 0) >= 1,
+        `Alternate progress did not reflect submitted pending-review work: ${JSON.stringify(
+          altProgressAfterSubmit,
+        )}.`,
+      );
+
+      const metricsAudit = await loadQueueMetricsDbAudit(queueId, altUserId);
+      const dbItem = asArray(metricsAudit.items).find(
+        (row) => String(row.id) === String(item.id),
+      );
+      const dbAssignments = asArray(metricsAudit.assignments).filter(
+        (row) => String(row.queue_item_id) === String(item.id),
+      );
+      const dbScores = asArray(metricsAudit.scores).filter(
+        (score) => String(score.queue_item_id) === String(item.id),
+      );
+      assert(
+        dbItem?.status === "in_progress" &&
+          dbItem.review_status === "pending_review" &&
+          String(dbItem.assigned_to || "") === String(altUserId) &&
+          dbAssignments.length === 1 &&
+          String(dbAssignments[0].user_id) === String(altUserId) &&
+          dbScores.length === annotations.length &&
+          dbScores.every(
+            (score) =>
+              String(score.annotator_id) === String(altUserId) &&
+              submittedValues.has(String(score.label_id)) &&
+              sameJsonValue(
+                score.value,
+                submittedValues.get(String(score.label_id)),
+              ),
+          ),
+        `Multi-user assignment DB metrics mismatch: ${JSON.stringify({
+          dbItem,
+          dbAssignments,
+          dbScores,
+        })}.`,
+      );
+
+      evidence.push({
+        queue_id: queueId,
+        queue_name: queue.name,
+        item_id: item.id,
+        manager_id: managerId,
+        annotator_id: altUserId,
+        assigned_response_count: assigned.assigned,
+        assigned_to_me_before_submit: altAssignedItems.filter(
+          (row) => String(row.id) === String(item.id),
+        ).length,
+        manager_list_refreshed: Boolean(managerListItem),
+        labels_submitted: annotations.length,
+        review_list_item_count: reviewItems.filter(
+          (row) => String(row.id) === String(item.id),
+        ).length,
+        final_item_status: dbItem.status,
+        final_review_status: dbItem.review_status,
+        db_assignment_count: dbAssignments.length,
+        db_score_count: dbScores.length,
+        alt_pending_after_assign: altProgressAfterAssign.user_progress?.pending,
+        alt_completed_after_submit:
+          altProgressAfterSubmit.user_progress?.completed,
+        alt_in_review_after_submit:
+          altProgressAfterSubmit.user_progress?.in_review,
+      });
+    },
+  },
+  {
     id: "AQ-API-031",
     title:
       "Annotation history, raw scores, value history, and item notes reload",
@@ -10411,6 +10833,7 @@ function labelId(label) {
 function reviewAnnotationValue(label, runId, suffix) {
   const type = String(label?.type || "").toLowerCase();
   if (type.includes("text")) return `review ${suffix} ${runId}`;
+  if (type.includes("thumb")) return { value: "up" };
   return annotationValueForLabel(label);
 }
 
@@ -10418,7 +10841,9 @@ function revisedReviewAnnotationValue(label, originalValue, runId) {
   const type = String(label?.type || "").toLowerCase();
   const settings = label?.settings || {};
   if (type.includes("text")) return `review revised ${runId}`;
-  if (type.includes("thumb")) return !originalValue;
+  if (type.includes("thumb")) {
+    return { value: originalValue?.value === "up" ? "down" : "up" };
+  }
   if (type.includes("numeric") || type.includes("number")) {
     const max = Number.isFinite(Number(settings.max))
       ? Number(settings.max)
