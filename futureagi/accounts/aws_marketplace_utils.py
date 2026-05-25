@@ -77,7 +77,8 @@ def create_organization_for_aws_customer(aws_customer, customer_aws_account_id):
     aws_customer.organization = organization
     aws_customer.save()
 
-    create_organization_subscription_if_not_exists(organization)
+    if create_organization_subscription_if_not_exists is not None:
+        create_organization_subscription_if_not_exists(organization)
 
 
 def create_onboarding_token(aws_customer, customer_identifier, product_code):
@@ -223,6 +224,9 @@ def _get_tier_mapping():
     Get the mapping between AWS dimensions and subscription tiers
     """
 
+    if SubscriptionTierChoices is None:
+        return {}
+
     tier_map = {
         "enterprise_plan": SubscriptionTierChoices.CUSTOM.value,
         "pro_plan": SubscriptionTierChoices.BUSINESS.value,
@@ -287,6 +291,10 @@ def _update_organization_subscription(aws_customer, tier_name, expiration_date):
     Update or create organization subscription with the specified tier
     """
     try:
+        if SubscriptionTier is None or OrganizationSubscription is None:
+            logger.warning("EE billing models not available, skipping subscription update.")
+            return
+
         subscription_tier = SubscriptionTier.objects.get(name=tier_name)
 
         OrganizationSubscription.objects.update_or_create(
