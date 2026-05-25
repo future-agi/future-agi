@@ -327,9 +327,10 @@ const SimulationTestMode = React.forwardRef(
         setSelectedExecutionId("");
         setRunTestContext(null);
         setExecutionsFetched(false);
-        return;
+        return undefined;
       }
       setExecutionsFetched(false);
+      let cancelled = false;
       const fetchAll = async () => {
         try {
           // Fetch detail (agent def, scenarios, persona, evals) and executions in parallel
@@ -342,6 +343,7 @@ const SimulationTestMode = React.forwardRef(
               params: { page: 1, limit: 100 },
             }),
           ]);
+          if (cancelled) return;
           // Detail: flat serializer data
           setRunTestContext(detailRes.data || null);
           // Executions: paginated {results: [...]}
@@ -352,12 +354,16 @@ const SimulationTestMode = React.forwardRef(
             setSelectedExecutionId(items[0].id || "");
           }
         } catch {
+          if (cancelled) return;
           setExecutions([]);
           setRunTestContext(null);
           setExecutionsFetched(true);
         }
       };
       fetchAll();
+      return () => {
+        cancelled = true;
+      };
     }, [selectedRunTestId]);
 
     // 3. Fetch call executions for the selected execution
@@ -368,32 +374,40 @@ const SimulationTestMode = React.forwardRef(
         setCurrentCallIndex(0);
         setCallDetail(null);
         setLastFetchedCallsKey(null);
-        return;
+        return undefined;
       }
       // Flip loading synchronously so the spinner shows as soon as the
       // user picks a run. Empty-state visibility comes from the
       // render-time `isPendingCallsFetch` comparison.
       setLoadingCalls(true);
+      let cancelled = false;
       const fetchCalls = async () => {
         try {
           const { data } = await axios.get(
             endpoints.testExecutions.list(selectedExecutionId),
             { params: { page: 1, limit: 50 } },
           );
+          if (cancelled) return;
           const items = data?.results || [];
           const total = data?.count || items.length;
           setCalls(items);
           setTotalCalls(total);
           setCurrentCallIndex(0);
         } catch {
+          if (cancelled) return;
           setCalls([]);
           setTotalCalls(0);
         } finally {
-          setLoadingCalls(false);
-          setLastFetchedCallsKey(selectedExecutionId);
+          if (!cancelled) {
+            setLoadingCalls(false);
+            setLastFetchedCallsKey(selectedExecutionId);
+          }
         }
       };
       fetchCalls();
+      return () => {
+        cancelled = true;
+      };
     }, [selectedExecutionId]);
 
     // Current call
@@ -403,7 +417,7 @@ const SimulationTestMode = React.forwardRef(
     useEffect(() => {
       if (!currentCall) {
         setCallDetail(null);
-        return;
+        return undefined;
       }
 
       const cacheKey = currentCall.id || "";
@@ -411,9 +425,10 @@ const SimulationTestMode = React.forwardRef(
       if (cached) {
         setCallDetail(cached.detail);
         setLoadingDetail(false);
-        return;
+        return undefined;
       }
 
+      let cancelled = false;
       const fetchDetail = async () => {
         setLoadingDetail(true);
         try {
@@ -423,6 +438,7 @@ const SimulationTestMode = React.forwardRef(
             const { data } = await axios.get(
               endpoints.runTests.callExecutionDetail(callId),
             );
+            if (cancelled) return;
             callData = data || currentCall;
           }
 
@@ -675,17 +691,22 @@ const SimulationTestMode = React.forwardRef(
             flat[k] = v;
           }
 
+          if (cancelled) return;
           if (cacheKey) {
             detailCacheRef.current.set(cacheKey, { detail: flat });
           }
           setCallDetail(flat);
         } catch {
+          if (cancelled) return;
           setCallDetail(currentCall);
         } finally {
-          setLoadingDetail(false);
+          if (!cancelled) setLoadingDetail(false);
         }
       };
       fetchDetail();
+      return () => {
+        cancelled = true;
+      };
     }, [currentCall, runTestContext]);
 
     // Field names for variable mapping. Expand nested object keys into
@@ -1008,7 +1029,20 @@ const SimulationTestMode = React.forwardRef(
             options={runTests}
             getOptionLabel={getRunTestLabel}
             value={runTests.find((rt) => rt.id === selectedRunTestId) || null}
-            onChange={(_, val) => setSelectedRunTestId(val?.id || "")}
+            onChange={(_, val) => {
+              setSelectedRunTestId(val?.id || "");
+              setMapping({});
+              setRunTestContext(null);
+              setExecutions([]);
+              setExecutionsFetched(false);
+              setSelectedExecutionId("");
+              setCalls([]);
+              setTotalCalls(0);
+              setCurrentCallIndex(0);
+              setCallDetail(null);
+              setLastFetchedCallsKey(null);
+              detailCacheRef.current.clear();
+            }}
             loading={loadingRunTests || loadingMoreRunTests}
             disabled={!!initialRunTestId}
             openOnFocus
@@ -1109,7 +1143,13 @@ const SimulationTestMode = React.forwardRef(
               size="small"
               fullWidth
               value={selectedExecutionId}
-              onChange={(e) => setSelectedExecutionId(e.target.value)}
+              onChange={(e) => {
+                setSelectedExecutionId(e.target.value);
+                setCalls([]);
+                setTotalCalls(0);
+                setCurrentCallIndex(0);
+                setCallDetail(null);
+              }}
               sx={{ fontSize: "13px" }}
             >
               {executions.map((ex, i) => (
