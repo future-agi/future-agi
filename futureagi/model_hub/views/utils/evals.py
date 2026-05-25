@@ -422,6 +422,7 @@ def run_eval_func(
             except ImportError:
                 emit = None
 
+            billing_config = None
             if BillingConfig is not None:
                 billing_config = BillingConfig.get()
             eval_cost = getattr(eval_instance, "cost", {})
@@ -453,7 +454,7 @@ def run_eval_func(
                 token_usage=getattr(eval_instance, "token_usage", {}),
             )
 
-            credits = billing_config.calculate_ai_credits(actual_cost)
+            credits = billing_config.calculate_ai_credits(actual_cost) if billing_config else 0
 
             if emit is not None and UsageEvent is not None and BillingEventType is not None:
 

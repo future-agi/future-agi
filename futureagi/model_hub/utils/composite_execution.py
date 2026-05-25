@@ -271,8 +271,7 @@ def _log_composite_usage(
         # Pass dict directly — config is a JSONField, so Django handles
         # serialization. Using json.dumps() here would double-encode.
         if APICallLog is None:
-
-            return self._gm.success_response([])
+            return None
 
         log_row = APICallLog.objects.create(
             api_call_type=api_call_type_obj,

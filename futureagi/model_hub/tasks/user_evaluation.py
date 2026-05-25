@@ -1102,26 +1102,26 @@ def process_single_error_localization(task_id):
         # Log and deduct cost for error localization
         if log_and_deduct_cost_for_api_request is not None:
             api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=task.organization,
-            api_call_type=APICallTypeChoices.ERROR_LOCALIZER.value,
-            workspace=task.workspace,
-            source="error_localizer",
-            source_id=str(task.id),
-            config={
-                "reference_id": str(task.source_id),
-                "error_localizer_task_id": str(task.id),
-            },
-        )
+                organization=task.organization,
+                api_call_type=APICallTypeChoices.ERROR_LOCALIZER.value,
+                workspace=task.workspace,
+                source="error_localizer",
+                source_id=str(task.id),
+                config={
+                    "reference_id": str(task.source_id),
+                    "error_localizer_task_id": str(task.id),
+                },
+            )
 
-        if not api_call_log_row:
-            logger.error("API call not allowed : Error validating the api call.")
-            task.mark_as_failed("API call not allowed : Error validating the api call.")
-            raise ValueError("API call not allowed : Error validating the api call.")
+            if not api_call_log_row:
+                logger.error("API call not allowed : Error validating the api call.")
+                task.mark_as_failed("API call not allowed : Error validating the api call.")
+                raise ValueError("API call not allowed : Error validating the api call.")
 
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            error_message = get_error_for_api_status(api_call_log_row.status)
-            task.mark_as_failed(error_message)
-            return
+            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                error_message = get_error_for_api_status(api_call_log_row.status)
+                task.mark_as_failed(error_message)
+                return
 
         try:
             localizer = ErrorLocalizer(

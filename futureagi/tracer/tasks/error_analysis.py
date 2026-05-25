@@ -89,13 +89,13 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
 
         if check_usage is not None:
             usage_check = check_usage(
-            str(organization.id), APICallTypeChoices.TRACE_ERROR_ANALYSIS.value
-        )
-        if not usage_check.allowed:
-            Trace.objects.filter(id=trace_id).update(
-                error_analysis_status=TraceErrorAnalysisStatus.FAILED
+                str(organization.id), APICallTypeChoices.TRACE_ERROR_ANALYSIS.value
             )
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+            if not usage_check.allowed:
+                Trace.objects.filter(id=trace_id).update(
+                    error_analysis_status=TraceErrorAnalysisStatus.FAILED
+                )
+                raise ValueError(usage_check.reason or "Usage limit exceeded")
 
         # Log and deduct cost for the analysis upfront.
         if log_and_deduct_cost_for_api_request is not None:
