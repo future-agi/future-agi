@@ -25,7 +25,7 @@ from django.utils import timezone
 logger = structlog.get_logger(__name__)
 
 # Bump this when system evals change. Seeder skips if DB is already at this version.
-SYSTEM_EVALS_VERSION = 10
+SYSTEM_EVALS_VERSION = 11
 
 SYSTEM_EVALS_DIR = Path(__file__).resolve().parent.parent.parent / "system_evals"
 CATALOG_YAML = (
@@ -209,7 +209,6 @@ def seed_evals(dry_run=False, force=False, verbose=False):
 def _yaml_to_template_fields(eval_def):
     """Convert a YAML eval definition dict into EvalTemplate field values."""
     from model_hub.models.choices import OwnerChoices
-
     from tfc.ee_gating import is_oss
 
     track = eval_def.get("_track", "agent")
