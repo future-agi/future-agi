@@ -12,10 +12,7 @@ from tracer.models.external_eval_config import (
     PlatformChoices,
     StatusChoices,
 )
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:

@@ -51,11 +51,7 @@ from tfc.temporal import temporal_activity
 from tfc.utils.storage import (
     delete_compare_folder,
 )
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
@@ -364,10 +360,7 @@ def create_synthetic_dataset(
         if not request_uuid:
             request_uuid = task_manager.start_task(str(dataset_id))
 
-        try:
-            from ee.usage.models.usage import APICallTypeChoices
-        except ImportError:
-            APICallTypeChoices = None
+        from tfc.constants.api_calls import APICallTypeChoices
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -377,11 +370,12 @@ def create_synthetic_dataset(
         except ImportError:
             check_usage = None
 
-        _usage_check = check_usage(
-            str(organization.id), BillingEventType.SYNTHETIC_DATA_GENERATION
-        )
-        if not _usage_check.allowed:
-            raise ValueError(_usage_check.reason or "Usage limit exceeded")
+        if check_usage is not None and BillingEventType is not None:
+            _usage_check = check_usage(
+                str(organization.id), BillingEventType.SYNTHETIC_DATA_GENERATION
+            )
+            if not _usage_check.allowed:
+                raise ValueError(_usage_check.reason or "Usage limit exceeded")
 
         agent = SyntheticDataAgent(dataset_id=dataset_id, request_uuid=request_uuid)
 
@@ -446,7 +440,7 @@ def create_synthetic_dataset(
         tik_total_tokens = 0
         for col in synthetic_df.columns:
             for value in synthetic_df[col]:
-                tik_total_tokens += count_text_tokens(str(value))
+                tik_total_tokens += (count_text_tokens(str(value)) if count_text_tokens else 0)
 
         rows = list(Row.objects.filter(dataset=dataset))
 
@@ -513,21 +507,22 @@ def create_synthetic_dataset(
                 "input_tokens": int(tik_total_tokens),
             }
 
-            api_call_log_row = log_and_deduct_cost_for_api_request(
-                organization,
-                api_call_type,
-                config=api_call_config,
-                source="synthetic_dataset",
-                workspace=dataset.workspace,
-            )
-
-            if not api_call_log_row:
-                raise ValueError(
-                    "API call not allowed : Error validating the api call."
+            if log_and_deduct_cost_for_api_request is not None:
+                api_call_log_row = log_and_deduct_cost_for_api_request(
+                    organization,
+                    api_call_type,
+                    config=api_call_config,
+                    source="synthetic_dataset",
+                    workspace=dataset.workspace,
                 )
 
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                raise ValueError("API call not allowed : ", api_call_log_row.status)
+                if not api_call_log_row:
+                    raise ValueError(
+                        "API call not allowed : Error validating the api call."
+                    )
+
+                if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                    raise ValueError("API call not allowed : ", api_call_log_row.status)
 
             # Dual-write: emit usage event for new billing system (cost-based)
             try:
@@ -547,9 +542,12 @@ def create_synthetic_dataset(
                 actual_cost = getattr(agent, "cost", {}).get("total_cost", 0)
                 if not actual_cost and hasattr(agent, "llm"):
                     actual_cost = getattr(agent.llm, "cost", {}).get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+                credits = 0
+                if BillingConfig is not None:
+                    credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-                emit(
+                if emit is not None and UsageEvent is not None:
+                    emit(
                     UsageEvent(
                         org_id=str(organization.id),
                         event_type=api_call_type,

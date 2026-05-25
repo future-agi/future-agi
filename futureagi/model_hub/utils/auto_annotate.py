@@ -31,10 +31,7 @@ from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
-try:
-    from ee.usage.models.usage import APICallTypeChoices
-except ImportError:
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
 except ImportError:

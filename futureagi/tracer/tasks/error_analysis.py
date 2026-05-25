@@ -46,11 +46,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
     from tracer.models.trace_error_analysis import TraceErrorAnalysis
     from tracer.queries.error_analysis import TraceErrorAnalysisDB
     from tracer.queries.helpers import get_default_workspace_for_project
-    try:
-        from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-    except ImportError:
-        APICallStatusChoices = None
-        APICallTypeChoices = None
+    from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
     except ImportError:

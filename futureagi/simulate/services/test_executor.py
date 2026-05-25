@@ -111,10 +111,11 @@ from tfc.temporal.drop_in import temporal_activity
 
 # Note: run_eval_summary_task imported lazily to avoid circular imports
 from tfc.utils.error_codes import get_specific_error_message
+from tfc.constants.api_calls import APICallStatusChoices
+
 try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallType
+    from ee.usage.models.usage import APICallType
 except ImportError:
-    APICallStatusChoices = None
     APICallType = None
 try:
     from ee.usage.services.metering import check_usage

@@ -24,10 +24,7 @@ from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.utils.helper import FieldConfig, get_default_trace_config
 from tracer.views.project import get_default_project_version_config
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:

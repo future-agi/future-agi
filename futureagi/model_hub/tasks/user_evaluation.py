@@ -42,12 +42,12 @@ from tfc.utils.distributed_locks import distributed_lock_manager
 from tfc.utils.distributed_state import evaluation_tracker
 from tfc.utils.error_codes import get_error_for_api_status
 from tracer.models.observation_span import EvalLogger
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.models.usage import APICallLog, APICallStatusChoices, APICallTypeChoices
+    from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
-    APICallStatusChoices = None
-    APICallTypeChoices = None
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
 except ImportError:

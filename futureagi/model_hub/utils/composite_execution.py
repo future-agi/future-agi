@@ -210,11 +210,11 @@ def _log_composite_usage(
     """
     try:
         from sdk.utils.helpers import _get_api_call_type
+        from tfc.constants.api_calls import APICallStatusChoices
         try:
-            from ee.usage.models.usage import APICallLog, APICallStatusChoices, APICallType
+            from ee.usage.models.usage import APICallLog, APICallType
         except ImportError:
             APICallLog = None
-            APICallStatusChoices = None
             APICallType = None
 
         api_call_type_name = _get_api_call_type(model)

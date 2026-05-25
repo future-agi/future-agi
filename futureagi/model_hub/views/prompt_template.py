@@ -159,14 +159,11 @@ def _safe_background_task(func, *args, **kwargs):
     return wrapped
 
 
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.models.usage import APICallStatusChoices
+    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    APICallStatusChoices = None
-try:
-    from ee.usage.utils.usage_entries import APICallTypeChoices, count_text_tokens, log_and_deduct_cost_for_api_request
-except ImportError:
-    APICallTypeChoices = None
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
 

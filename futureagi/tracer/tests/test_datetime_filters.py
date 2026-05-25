@@ -11,11 +11,12 @@ import pytest
 from django.utils import timezone
 
 from tracer.utils.filters import apply_created_at_filters
+from tfc.constants.api_calls import APICallStatusChoices
+
 try:
-    from ee.usage.models.usage import APICallLog, APICallStatusChoices
+    from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
-    APICallStatusChoices = None
 
 
 def _make_datetime_filter(filter_op, filter_value, column_id="created_at"):

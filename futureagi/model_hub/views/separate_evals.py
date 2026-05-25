@@ -72,11 +72,12 @@ from tracer.models.observation_span import EvalLogger
 from tracer.utils.filters import apply_created_at_filters
 from tracer.utils.graphs import GraphEngine
 
+from tfc.constants.api_calls import APICallStatusChoices
+
 try:
-    from ee.usage.models.usage import APICallLog, APICallStatusChoices
+    from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
-    APICallStatusChoices = None
 
 
 def apply_filters(row_data, filters):
@@ -956,15 +957,18 @@ class GetEvalTemplateNameView(APIView):
 
     def post(self, request):
         try:
-            logs = APICallLog.objects.filter(
-                organization=getattr(request, "organization", None)
-                or request.user.organization
-            )
-            log_ids = [
-                log.source_id
-                for log in logs
-                if log.source_id is not None and log.source_id != ""
-            ]
+            if APICallLog is None:
+                log_ids = []
+            else:
+                logs = APICallLog.objects.filter(
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization
+                )
+                log_ids = [
+                    log.source_id
+                    for log in logs
+                    if log.source_id is not None and log.source_id != ""
+                ]
             eval_ids = EvalTemplate.objects.filter(
                 organization=getattr(request, "organization", None)
                 or request.user.organization,

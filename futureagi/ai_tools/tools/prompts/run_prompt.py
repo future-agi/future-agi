@@ -60,10 +60,10 @@ class RunPromptTool(BaseTool):
         from model_hub.utils.column_utils import is_json_response_format
         from model_hub.utils.utils import remove_empty_text_from_messages
         from model_hub.views.prompt_template import replace_variables
+        from tfc.constants.api_calls import APICallTypeChoices
         try:
-            from ee.usage.utils.usage_entries import APICallTypeChoices, log_and_deduct_cost_for_api_request
+            from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
         except ImportError:
-            APICallTypeChoices = None
             log_and_deduct_cost_for_api_request = None
 
         template_obj, err = resolve_prompt_template(

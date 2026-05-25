@@ -27,15 +27,14 @@ class ServiceError:
 def _check_resource_limit(organization, workspace, api_call_type, config=None):
     """Check resource limits. Returns True if allowed, False if limit reached."""
     try:
-        try:
-            from ee.usage.models import APICallStatusChoices, APICallTypeChoices
-        except ImportError:
-            APICallStatusChoices = None
-            APICallTypeChoices = None
+        from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
         try:
             from ee.usage.utils import log_and_deduct_cost_for_resource_request
         except ImportError:
             log_and_deduct_cost_for_resource_request = None
+
+        if log_and_deduct_cost_for_resource_request is None:
+            return True
 
         call_log = log_and_deduct_cost_for_resource_request(
             organization,
