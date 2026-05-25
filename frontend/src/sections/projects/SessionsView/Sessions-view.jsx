@@ -944,6 +944,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       {/* ObserveToolbar — portals into tab bar */}
       <ObserveToolbar
         mode="sessions"
+        isUserMode={isUserMode}
         // Date
         dateLabel={getDateLabel(dateFilter)}
         dateFilter={dateFilter}
@@ -1004,6 +1005,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
             }
             case "users":
               navigate(`/dashboard/observe/${observeId}/users`);
+              break;
+            case "sessions":
               break;
             default:
               break;
@@ -1066,21 +1069,18 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         onClearAll={() => setExtraFilters([])}
       />
 
-      {/* Graph — hidden in user mode (no project context) */}
-      {!isUserMode && (
-        <Box sx={{ px: 2 }}>
-          <Suspense fallback={null}>
-            <PrimaryGraph
-              filters={finalFilters}
-              dateFilter={dateFilter}
-              graphEndpoint={endpoints.project.getSessionGraphData()}
-              defaultMetric="latency"
-              graphLabel="Session Metrics"
-              trafficLabel="sessions"
-            />
-          </Suspense>
-        </Box>
-      )}
+      <Box sx={{ px: 2 }}>
+        <Suspense fallback={null}>
+          <PrimaryGraph
+            filters={finalFilters}
+            dateFilter={dateFilter}
+            graphEndpoint={endpoints.project.getSessionGraphData()}
+            defaultMetric="latency"
+            graphLabel="Session Metrics"
+            trafficLabel="sessions"
+          />
+        </Suspense>
+      </Box>
 
       <SelectAllBanner
         visible={selectAll && !sessionFilterSelectionMode}

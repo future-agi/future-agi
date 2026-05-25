@@ -336,7 +336,8 @@ const PrimaryGraph = ({
     ];
   }, [filters, dateFilter, hasEvalFilter]);
 
-  // Fetch graph data
+  // observeId is null in cross-project user mode — backend resolves
+  // org-scope from organization + user_id filter when project_id is absent.
   const apiEndpoint = graphEndpoint || endpoints.project.getTraceGraphData();
   const { data: graphData, isLoading } = useQuery({
     queryKey: [
@@ -362,7 +363,7 @@ const PrimaryGraph = ({
         project_id: observeId,
       }),
     select: (d) => d.data?.result,
-    enabled: !!observeId && !!metricDef.id,
+    enabled: !!metricDef.id,
     staleTime: 30_000,
   });
 

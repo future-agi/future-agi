@@ -118,6 +118,7 @@ const ObserveToolbar = ({
   onAddEvals,
   // Spans view — swaps "Trace Name" filter label to "Span Name"
   isSpansView = false,
+  isUserMode = false,
 }) => {
   const isTraces = mode === "traces";
   const showAddEvals =
@@ -576,6 +577,7 @@ const ObserveToolbar = ({
             open={Boolean(displayAnchor)}
             onClose={() => setDisplayAnchor(null)}
             mode={mode}
+            isUserMode={isUserMode}
             viewMode={viewMode}
             onViewModeChange={onViewModeChange}
             columns={columns}
@@ -673,6 +675,7 @@ ObserveToolbar.propTypes = {
   onBulkAction: PropTypes.func,
   bulkActions: PropTypes.array,
   onAddEvals: PropTypes.func,
+  isUserMode: PropTypes.bool,
   isSimulator: PropTypes.bool,
   excludeSimulationCalls: PropTypes.bool,
   onToggleSimulationCalls: PropTypes.func,

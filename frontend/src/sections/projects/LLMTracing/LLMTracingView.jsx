@@ -1401,8 +1401,6 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     metricName: "annotator",
     metricType: "annotation_metric",
     projectIds: observeId ? [observeId] : [],
-    // Keep this in sync with the TraceFilterPanel ValuePicker source so
-    // applying a freshly-picked annotator can reuse the same cached options.
     source: "traces",
     enabled: hasAnnotatorFilter,
   });
@@ -3122,9 +3120,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             </Box>
           }
         >
-          {/* Primary Graph — dual-axis bars + line. Hidden in user mode
-              (PrimaryGraph requires observeId for its query). */}
-          {viewMode === "graph" && !isUserMode && (
+          {viewMode === "graph" && (
             <>
               <PrimaryGraph
                 filters={
@@ -3418,6 +3414,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           <>
             {/* Toolbar */}
             <ObserveToolbar
+              isUserMode={isUserMode}
               dateLabel={dateLabel}
               dateFilter={
                 selectedTab === "trace"

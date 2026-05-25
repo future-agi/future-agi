@@ -120,9 +120,16 @@ const VIEW_MODES = [
   },
 ];
 
-const ViewTabButton = ({ icon, label, isActive, onClick }) => (
+const ViewTabButton = ({
+  icon,
+  label,
+  isActive,
+  onClick,
+  disabled = false,
+}) => (
   <ButtonBase
     onClick={onClick}
+    disabled={disabled}
     sx={{
       display: "flex",
       flexDirection: "column",
@@ -134,8 +141,14 @@ const ViewTabButton = ({ icon, label, isActive, onClick }) => (
       borderRadius: 0.5,
       bgcolor: isActive ? "background.paper" : "transparent",
       boxShadow: isActive ? "2px 2px 6px 0px rgba(0,0,0,0.08)" : "none",
+      opacity: disabled ? 0.4 : 1,
+      cursor: disabled ? "not-allowed" : "pointer",
       "&:hover": {
-        bgcolor: isActive ? "background.paper" : "action.hover",
+        bgcolor: disabled
+          ? "transparent"
+          : isActive
+            ? "background.paper"
+            : "action.hover",
       },
     }}
   >
@@ -164,6 +177,7 @@ ViewTabButton.propTypes = {
   label: PropTypes.string.isRequired,
   isActive: PropTypes.bool,
   onClick: PropTypes.func,
+  disabled: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------
@@ -175,6 +189,8 @@ const DisplayPanel = ({
   onClose,
   // Mode: "traces" (default) | "sessions" | "users"
   mode = "traces",
+  // Cross-project user detail page: disables Agent Graph / Agent Path tabs.
+  isUserMode = false,
   // View mode
   viewMode,
   onViewModeChange,
@@ -259,15 +275,21 @@ const DisplayPanel = ({
                   theme.palette.mode === "dark" ? "action.hover" : "grey.200",
               }}
             >
-              {VIEW_MODES.map((vm) => (
-                <ViewTabButton
-                  key={vm.key}
-                  icon={vm.icon}
-                  label={vm.label}
-                  isActive={viewMode === vm.key}
-                  onClick={() => onViewModeChange?.(vm.key)}
-                />
-              ))}
+              {VIEW_MODES.map((vm) => {
+                const isAgentMode =
+                  vm.key === "agentGraph" || vm.key === "agentPath";
+                const disabled = isUserMode && isAgentMode;
+                return (
+                  <ViewTabButton
+                    key={vm.key}
+                    icon={vm.icon}
+                    label={vm.label}
+                    isActive={viewMode === vm.key}
+                    disabled={disabled}
+                    onClick={() => !disabled && onViewModeChange?.(vm.key)}
+                  />
+                );
+              })}
             </Box>
           </Box>
           <Divider sx={{ my: 0.5 }} />
@@ -504,6 +526,7 @@ DisplayPanel.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   mode: PropTypes.oneOf(["traces", "sessions", "users"]),
+  isUserMode: PropTypes.bool,
   viewMode: PropTypes.string,
   onViewModeChange: PropTypes.func,
   cellHeight: PropTypes.string,
