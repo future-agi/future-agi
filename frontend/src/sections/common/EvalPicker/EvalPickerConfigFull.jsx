@@ -1139,12 +1139,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             setEvalName(raw);
             setIsDirty(true);
           }}
-          inputProps={{ maxLength: 50 }}
           error={!isEditMode && evalName.length > 50}
           helperText={
             isEditMode
               ? undefined
-              : evalName.length >= 50
+              : evalName.length > 50
                 ? "Name can't be longer than 50 characters"
                 : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
@@ -1476,7 +1475,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     Code evaluator returns a score between 0 and 1. Set a pass
                     threshold below.
                   </Typography>
-                  <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+                  <Typography typography="s1"  sx={{ mb: 0.5,color:"text.primary" }}>
                     Pass Threshold
                   </Typography>
                   <Typography
