@@ -26,6 +26,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, canonicalKeys } from "src/utils/utils";
 import CustomAudioPlayer from "src/components/custom-audio/CustomAudioPlayer";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import DraggableColResizer from "src/components/draggable-col-resizer";
 import { JsonValueTree } from "./DatasetTestMode";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
@@ -1655,44 +1656,11 @@ const SimulationTestMode = React.forwardRef(
               Variable Mapping
             </Typography>
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-              {variables.map((variable) => (
-                <Box
-                  key={variable}
-                  sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                >
-                  <Box
-                    sx={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 0.5,
-                      px: 1,
-                      py: 0.25,
-                      borderRadius: "4px",
-                      border: "1px solid",
-                      borderColor: "divider",
-                      minWidth: 120,
-                    }}
-                  >
-                    <Iconify
-                      icon="mdi:code-braces"
-                      width={14}
-                      sx={{ color: "text.secondary" }}
-                    />
-                    <Typography
-                      variant="caption"
-                      fontWeight={600}
-                      sx={{ fontSize: "12px" }}
-                    >
-                      {variable}
-                    </Typography>
-                  </Box>
-                  <Iconify
-                    icon="mdi:arrow-right"
-                    width={14}
-                    sx={{ color: "text.disabled" }}
-                  />
+              {variables.map((variable) => {
+                const autocomplete = (
                   <Autocomplete
                     size="small"
+                    disabled={isMappingPending}
                     options={
                       mapping[variable] &&
                       !fieldNames.includes(mapping[variable])
@@ -1716,7 +1684,11 @@ const SimulationTestMode = React.forwardRef(
                     renderInput={(params) => (
                       <TextField
                         {...params}
-                        placeholder="Search field..."
+                        placeholder={
+                          isMappingPending
+                            ? "Loading columns..."
+                            : "Search field..."
+                        }
                         InputProps={{
                           ...params.InputProps,
                           sx: {
@@ -1726,6 +1698,13 @@ const SimulationTestMode = React.forwardRef(
                             height: 28,
                             py: 0,
                           },
+                          endAdornment: isMappingPending ? (
+                            <InputAdornment position="end">
+                              <CircularProgress size={14} />
+                            </InputAdornment>
+                          ) : (
+                            params.InputProps.endAdornment
+                          ),
                         }}
                       />
                     )}
@@ -1757,8 +1736,60 @@ const SimulationTestMode = React.forwardRef(
                       );
                     }}
                   />
-                </Box>
-              ))}
+                );
+                return (
+                  <Box
+                    key={variable}
+                    sx={{ display: "flex", alignItems: "center", gap: 1 }}
+                  >
+                    <Box
+                      sx={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 0.5,
+                        px: 1,
+                        py: 0.25,
+                        borderRadius: "4px",
+                        border: "1px solid",
+                        borderColor: "divider",
+                        minWidth: 120,
+                      }}
+                    >
+                      <Iconify
+                        icon="mdi:code-braces"
+                        width={14}
+                        sx={{ color: "text.secondary" }}
+                      />
+                      <Typography
+                        variant="caption"
+                        fontWeight={600}
+                        sx={{ fontSize: "12px" }}
+                      >
+                        {variable}
+                      </Typography>
+                    </Box>
+                    <Iconify
+                      icon="mdi:arrow-right"
+                      width={14}
+                      sx={{ color: "text.disabled" }}
+                    />
+                    {isMappingPending ? (
+                      <CustomTooltip
+                        show
+                        type="black"
+                        size="small"
+                        title="Columns are being fetched"
+                        placement="top"
+                        arrow
+                      >
+                        <Box sx={{ flex: 1 }}>{autocomplete}</Box>
+                      </CustomTooltip>
+                    ) : (
+                      autocomplete
+                    )}
+                  </Box>
+                );
+              })}
             </Box>
           </Box>
         )}

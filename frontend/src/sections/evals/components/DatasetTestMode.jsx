@@ -12,9 +12,9 @@ import {
   Tab,
   Tabs,
   TextField,
-  Tooltip,
   Typography,
 } from "@mui/material";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { TreeView, TreeItem } from "@mui/lab";
 import PropTypes from "prop-types";
 import React, {
@@ -453,9 +453,16 @@ function ColumnTreeSelect({
   return (
     <Box sx={{ flex: 1 }}>
       {disabled && disabledTooltip ? (
-        <Tooltip title={disabledTooltip} placement="top" arrow>
+        <CustomTooltip
+          show
+          type="black"
+          size="small"
+          title={disabledTooltip}
+          placement="top"
+          arrow
+        >
           <Box>{textField}</Box>
-        </Tooltip>
+        </CustomTooltip>
       ) : (
         textField
       )}

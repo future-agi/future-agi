@@ -47,6 +47,7 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { useForm, useWatch } from "react-hook-form";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import { JsonValueTree } from "./DatasetTestMode";
@@ -1875,13 +1876,16 @@ const TracingTestMode = React.forwardRef(
                         sx={{ color: "text.disabled" }}
                       />
                       {isFetchingColumns ? (
-                        <Tooltip
+                        <CustomTooltip
+                          show
+                          type="black"
+                          size="small"
                           title={mappingDisabledTooltip}
                           placement="top"
                           arrow
                         >
                           <Box sx={{ flex: 1 }}>{autocomplete}</Box>
-                        </Tooltip>
+                        </CustomTooltip>
                       ) : (
                         autocomplete
                       )}
