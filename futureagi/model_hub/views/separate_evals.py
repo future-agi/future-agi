@@ -290,6 +290,8 @@ class GetAPICallLogDetailsView(APIView):
 
     def get(self, request, *args, **kwargs):
         try:
+            if APICallLog is None:
+                return self._gm.success_response([])
             eval_template_id = request.query_params.get(
                 "eval_template_id", None
             ) or request.query_params.get("evalTemplateId", None)
@@ -439,6 +441,8 @@ class GetAPICallLogView(APIView):
         try:
             log_id = request.query_params.get("log_id", None)
             try:
+                if APICallLog is None:
+                    return self._gm.success_response([])
                 log_row = APICallLog.objects.get(log_id=log_id)
             except APICallLog.DoesNotExist:
                 return self._gm.bad_request(
@@ -585,6 +589,8 @@ class GetAPICallLogView(APIView):
 
     def delete(self, request, *args, **kwargs):
         try:
+            if APICallLog is None:
+                return self._gm.success_response([])
             log_ids = request.data.get("log_ids", [])
             if not log_ids:
                 return self._gm.bad_request(get_error_message("LOG_ID_REQUIRED"))
@@ -899,6 +905,8 @@ class EvalMetricView(APIView):
 
     def get(self, request, *args, **kwargs):
         try:
+            if APICallLog is None:
+                return self._gm.success_response([])
             eval_template_id = request.query_params.get("eval_template_id", None)
             filters_param = request.query_params.get("filters", "[]")
 
@@ -928,6 +936,8 @@ class EvalMetricView(APIView):
 
     def post(self, request, *args, **kwargs):
         try:
+            if APICallLog is None:
+                return self._gm.success_response([])
             eval_template_id = request.data.get("eval_template_id", None)
             filters = request.data.get("filters", [])
 
@@ -1129,6 +1139,8 @@ class GetEvalTemplates(APIView):
 
     def post(self, request, *args, **kwargs):
         try:
+            if APICallLog is None:
+                return self._gm.success_response([])
             page_size = request.data.get("page_size", 10)
             current_page = request.data.get("current_page_index", 0)
             search_text = request.data.get("search_text", "")
@@ -1202,7 +1214,10 @@ class GetEvalTemplates(APIView):
                 total_rows = row[4]
 
             # Fetch logs ONLY for paginated templates (not all templates)
-            logs = APICallLog.objects.filter(
+            if APICallLog is None:
+                logs = []
+            else:
+                logs = APICallLog.objects.filter(
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
                 deleted=False,
@@ -4385,6 +4400,8 @@ class EvalUsageStatsView(APIView):
 
     def get(self, request, template_id, *args, **kwargs):
         try:
+            if APICallLog is None:
+                return self._gm.success_response([])
             try:
                 template = EvalTemplate.no_workspace_objects.get(
                     id=template_id, deleted=False
@@ -4788,6 +4805,8 @@ class EvalFeedbackListView(APIView):
             )
 
             try:
+                if APICallLog is None:
+                    return self._gm.success_response([])
                 EvalTemplate.no_workspace_objects.get(id=template_id, deleted=False)
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found.")
@@ -5697,6 +5716,8 @@ class EvalPlayGroundFeedbackAPIView(APIView):
             explanation = validated_data.get("explanation", None)
 
             try:
+                if APICallLog is None:
+                    return self._gm.success_response([])
                 log = APICallLog.objects.get(log_id=log_id)
                 config = json.loads(log.config)
                 required_keys = config.get("required_keys", [])
@@ -5975,9 +5996,10 @@ class DeleteEvalTemplateView(APIView):
                 ExternalEvalConfig.objects.filter(eval_template=eval_template).update(
                     deleted=True, deleted_at=timezone.now()
                 )
-                APICallLog.objects.filter(source_id=eval_template_id).update(
-                    deleted=True, deleted_at=timezone.now()
-                )
+                if APICallLog is not None:
+                    APICallLog.objects.filter(source_id=eval_template_id).update(
+                        deleted=True, deleted_at=timezone.now()
+                    )
                 EvalLogger.objects.filter(
                     custom_eval_config__eval_template=eval_template
                 ).update(deleted=True, deleted_at=timezone.now())

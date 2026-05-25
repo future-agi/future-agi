@@ -24,7 +24,7 @@ from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.utils.helper import FieldConfig, get_default_trace_config
 from tracer.views.project import get_default_project_version_config
-
+from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -650,23 +650,26 @@ def _run_evaluation(
             check_usage = None
 
         org = observation_span.project.organization
-        usage_check = check_usage(str(org.id), api_call_type)
-        if not usage_check.allowed:
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+        if check_usage is not None:
+            usage_check = check_usage(str(org.id), api_call_type)
+            if not usage_check.allowed:
+                raise ValueError(usage_check.reason or "Usage limit exceeded")
 
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=org,
-            api_call_type=api_call_type,
-            source="tracer" if not feedback_id else "feedback",
-            source_id=eval_model.id,
-            config=source_config,
-            workspace=workspace,
-        )
-        if not api_call_log_row:
-            raise ValueError("API call not allowed : Error validating the api call.")
+        api_call_log_row = None
+        if log_and_deduct_cost_for_api_request is not None:
+            api_call_log_row = log_and_deduct_cost_for_api_request(
+                organization=org,
+                api_call_type=api_call_type,
+                source="tracer" if not feedback_id else "feedback",
+                source_id=eval_model.id,
+                config=source_config,
+                workspace=workspace,
+            )
+            if not api_call_log_row:
+                raise ValueError("API call not allowed : Error validating the api call.")
 
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError("API call not allowed : ", api_call_log_row.status)
+            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                raise ValueError("API call not allowed : ", api_call_log_row.status)
 
         # Apply the same empty-input rules the dataset and playground
         # paths use, so eval tasks behave consistently with everywhere
@@ -700,19 +703,20 @@ def _run_evaluation(
             response["warnings"] = [partial_input_warning]
         value = runner.format_output(result_data=response, eval_template=eval_model)
 
-        config_dict = json.loads(api_call_log_row.config)
-        output_payload = {"output": value, "reason": response["reason"]}
-        if response.get("warnings"):
-            output_payload["warnings"] = response["warnings"]
-        config_dict.update(
-            {
-                "input": response["data"],
-                "output": output_payload,
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
+            output_payload = {"output": value, "reason": response["reason"]}
+            if response.get("warnings"):
+                output_payload["warnings"] = response["warnings"]
+            config_dict.update(
+                {
+                    "input": response["data"],
+                    "output": output_payload,
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:
@@ -730,23 +734,26 @@ def _run_evaluation(
                 emit = None
 
             actual_cost = getattr(eval_instance, "cost", {}).get("total_cost", 0)
-            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+            credits = 0
+            if BillingConfig is not None:
+                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            emit(
-                UsageEvent(
-                    org_id=str(observation_span.project.organization_id),
-                    event_type=api_call_type,
-                    amount=credits,
-                    properties={
-                        "source": "tracer" if not feedback_id else "feedback",
-                        "source_id": str(eval_model.id),
-                        "model": custom_eval_config.model if custom_eval_config else "",
-                        "workspace_id": str(workspace.id) if workspace else "",
-                        "log_id": str(api_call_log_row.log_id),
-                        "raw_cost_usd": str(actual_cost),
-                    },
+            if emit is not None and UsageEvent is not None:
+                emit(
+                    UsageEvent(
+                        org_id=str(observation_span.project.organization_id),
+                        event_type=api_call_type,
+                        amount=credits,
+                        properties={
+                            "source": "tracer" if not feedback_id else "feedback",
+                            "source_id": str(eval_model.id),
+                            "model": custom_eval_config.model if custom_eval_config else "",
+                            "workspace_id": str(workspace.id) if workspace else "",
+                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
+                            "raw_cost_usd": str(actual_cost),
+                        },
+                    )
                 )
-            )
         except Exception:
             pass  # Metering failure must not break eval
 
@@ -776,18 +783,19 @@ def _run_evaluation(
             "eval_task_id": eval_task_id,
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
-            "log_id": api_call_log_row.log_id,
+            "log_id": api_call_log_row.log_id if api_call_log_row else None,
         }
 
     except Exception as e:
         traceback.print_exc()
         error_message = str(e)
         try:
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
-            current_config.update({"output": {"output": None, "reason": str(e)}})
-            api_call_log_row.config = json.dumps(current_config)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                current_config = json.loads(api_call_log_row.config)
+                current_config.update({"output": {"output": None, "reason": str(e)}})
+                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.save()
         except Exception:
             pass
         logger_kwargs = {
@@ -1280,18 +1288,20 @@ def _execute_evaluation(
             is_active=True,
         )
 
-    api_call_log_row = log_and_deduct_cost_for_api_request(
-        organization=observation_span.project.organization,
-        api_call_type=api_call_type,
-        source="tracer" if not feedback_id else "feedback",
-        source_id=eval_model.id,
-        config=source_config,
-        workspace=workspace,
-    )
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-        raise ValueError("API call not allowed : ", api_call_log_row.status)
+    api_call_log_row = None
+    if log_and_deduct_cost_for_api_request is not None:
+        api_call_log_row = log_and_deduct_cost_for_api_request(
+            organization=observation_span.project.organization,
+            api_call_type=api_call_type,
+            source="tracer" if not feedback_id else "feedback",
+            source_id=eval_model.id,
+            config=source_config,
+            workspace=workspace,
+        )
+        if not api_call_log_row:
+            raise ValueError("API call not allowed : Error validating the api call.")
+        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Build context for data_injection support ---
     _eval_inputs = dict(run_params or {})
@@ -1340,16 +1350,17 @@ def _execute_evaluation(
         # Build the output payload up front so the partial-input warning
         # rides on the single save below — avoids losing the warning if a
         # follow-up save were to fail (see _build_apicall_output).
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "input": result.data,
-                "output": _build_apicall_output(result, partial_input_warning),
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "input": result.data,
+                    "output": _build_apicall_output(result, partial_input_warning),
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
 
         # Parse metadata
         metadata = result.metadata
@@ -1388,18 +1399,19 @@ def _execute_evaluation(
             "eval_task_id": eval_task_id,
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
-            "log_id": api_call_log_row.log_id,
+            "log_id": api_call_log_row.log_id if api_call_log_row else None,
         }
 
     except Exception as e:
         traceback.print_exc()
         error_message = str(e)
         try:
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
-            current_config.update({"output": {"output": None, "reason": str(e)}})
-            api_call_log_row.config = json.dumps(current_config)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                current_config = json.loads(api_call_log_row.config)
+                current_config.update({"output": {"output": None, "reason": str(e)}})
+                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.save()
         except Exception:
             pass
         logger_kwargs = {
@@ -2513,18 +2525,20 @@ def _execute_evaluation_for_trace(
         source_config["feedback_id"] = str(feedback_id)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
-    api_call_log_row = log_and_deduct_cost_for_api_request(
-        organization=trace.project.organization,
-        api_call_type=api_call_type,
-        source="tracer" if not feedback_id else "feedback",
-        source_id=eval_template.id,
-        config=source_config,
-        workspace=workspace,
-    )
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-        raise ValueError("API call not allowed : ", api_call_log_row.status)
+    api_call_log_row = None
+    if log_and_deduct_cost_for_api_request is not None:
+        api_call_log_row = log_and_deduct_cost_for_api_request(
+            organization=trace.project.organization,
+            api_call_type=api_call_type,
+            source="tracer" if not feedback_id else "feedback",
+            source_id=eval_template.id,
+            config=source_config,
+            workspace=workspace,
+        )
+        if not api_call_log_row:
+            raise ValueError("API call not allowed : Error validating the api call.")
+        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Set workspace context for tools that need org-scoping ---
     # See _execute_evaluation_for_session for rationale; same applies here.
@@ -2581,16 +2595,17 @@ def _execute_evaluation_for_trace(
             )
         )
 
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "input": result.data,
-                "output": _build_apicall_output(result, partial_input_warning),
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "input": result.data,
+                    "output": _build_apicall_output(result, partial_input_warning),
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
 
         metadata = result.metadata
         if isinstance(metadata, str):
@@ -2633,11 +2648,14 @@ def _execute_evaluation_for_trace(
         traceback.print_exc()
         error_message = str(e)
         try:
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
-            current_config.update({"output": {"output": None, "reason": str(e)}})
-            api_call_log_row.config = json.dumps(current_config)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                current_config = json.loads(api_call_log_row.config)
+                current_config.update(
+                    {"output": {"output": None, "reason": str(e)}}
+                )
+                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.save()
         except Exception:
             pass
         logger_kwargs = {
@@ -2730,18 +2748,20 @@ def _execute_evaluation_for_session(
         source_config["feedback_id"] = str(feedback_id)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
-    api_call_log_row = log_and_deduct_cost_for_api_request(
-        organization=trace_session.project.organization,
-        api_call_type=api_call_type,
-        source="tracer" if not feedback_id else "feedback",
-        source_id=eval_template.id,
-        config=source_config,
-        workspace=workspace,
-    )
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-        raise ValueError("API call not allowed : ", api_call_log_row.status)
+    api_call_log_row = None
+    if log_and_deduct_cost_for_api_request is not None:
+        api_call_log_row = log_and_deduct_cost_for_api_request(
+            organization=trace_session.project.organization,
+            api_call_type=api_call_type,
+            source="tracer" if not feedback_id else "feedback",
+            source_id=eval_template.id,
+            config=source_config,
+            workspace=workspace,
+        )
+        if not api_call_log_row:
+            raise ValueError("API call not allowed : Error validating the api call.")
+        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Set workspace context for tools that need org-scoping ---
     # The explore_trace tool's live DB actions (list_trace_spans, span_detail)
@@ -2798,16 +2818,17 @@ def _execute_evaluation_for_session(
             )
         )
 
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "input": result.data,
-                "output": _build_apicall_output(result, partial_input_warning),
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "input": result.data,
+                    "output": _build_apicall_output(result, partial_input_warning),
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
 
         metadata = result.metadata
         if isinstance(metadata, str):
@@ -2850,11 +2871,14 @@ def _execute_evaluation_for_session(
         traceback.print_exc()
         error_message = str(e)
         try:
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
-            current_config.update({"output": {"output": None, "reason": str(e)}})
-            api_call_log_row.config = json.dumps(current_config)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                current_config = json.loads(api_call_log_row.config)
+                current_config.update(
+                    {"output": {"output": None, "reason": str(e)}}
+                )
+                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.save()
         except Exception:
             pass
         logger_kwargs = {

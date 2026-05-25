@@ -218,7 +218,8 @@ def _log_composite_usage(
             APICallType = None
 
         api_call_type_name = _get_api_call_type(model)
-        api_call_type_obj = APICallType.objects.get(name=api_call_type_name)
+        if APICallType is not None:
+            api_call_type_obj = APICallType.objects.get(name=api_call_type_name)
 
         completed = sum(1 for cr in child_results if cr.status == "completed")
         failed = sum(1 for cr in child_results if cr.status == "failed")
@@ -269,6 +270,9 @@ def _log_composite_usage(
 
         # Pass dict directly — config is a JSONField, so Django handles
         # serialization. Using json.dumps() here would double-encode.
+        if APICallLog is None:
+            return None
+
         log_row = APICallLog.objects.create(
             api_call_type=api_call_type_obj,
             organization=org,

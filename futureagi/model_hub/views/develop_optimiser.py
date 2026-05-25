@@ -98,9 +98,9 @@ class DevelopOptimizer:
                     cell_values_strings.append("")
 
             input_words_string = " ".join(cell_values_strings)
-            opt_column_token_count = count_tiktoken_tokens(
+            opt_column_token_count = (count_tiktoken_tokens(
                 input_words_string, input_image_urls=cell_values_image_urls
-            )
+            ) if count_tiktoken_tokens else 0)
 
             # print("optimisation token_count : ", opt_column_token_count)
             reference_id = str(self.optimize_dataset.id)
@@ -112,7 +112,8 @@ class DevelopOptimizer:
             }
             organization = column.dataset.organization
             api_call_type = APICallTypeChoices.DATASET_OPTIMIZATION.value
-            log_and_deduct_cost_for_api_request(
+            if log_and_deduct_cost_for_api_request is not None:
+                log_and_deduct_cost_for_api_request(
                 organization,
                 api_call_type,
                 config,
@@ -133,7 +134,8 @@ class DevelopOptimizer:
                 except ImportError:
                     emit = None
 
-                emit(
+                if emit is not None and UsageEvent is not None:
+                    emit(
                     UsageEvent(
                         org_id=str(organization.id),
                         event_type=api_call_type,
@@ -167,7 +169,8 @@ class DevelopOptimizer:
             optimizer_row = OptimizationDataset.objects.get(id=self.optimize_dataset.id)
             optimisation_id = str(optimizer_row.id)
             # get the api call log row by reference id
-            api_call_log_row = APICallLog.objects.filter(
+            if APICallLog is not None:
+                api_call_log_row = APICallLog.objects.filter(
                 reference_id=optimisation_id, deleted=False
             ).first()
             if optimizer_row.status == StatusType.FAILED.value:
@@ -176,7 +179,8 @@ class DevelopOptimizer:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 api_call_log_row.save()
                 refund_config = {"reference_id": str(optimizer_row.id)}
-                refund_cost_for_api_call(api_call_log_row, config=refund_config)
+                if refund_cost_for_api_call is not None:
+                    refund_cost_for_api_call(api_call_log_row, config=refund_config)
             else:
                 # update the api call log row
                 api_call_log_row.status = APICallStatusChoices.SUCCESS.value

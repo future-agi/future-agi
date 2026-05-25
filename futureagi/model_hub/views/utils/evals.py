@@ -221,7 +221,7 @@ def run_eval_func(
         _is_code_eval = getattr(template, "eval_type", "") == "code"
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
-            if _is_code_eval
+            if _is_code_eval and BillingEventType is not None
             else _get_api_call_type(model)
         )
 
@@ -238,7 +238,10 @@ def run_eval_func(
         if check_usage is not None:
             usage_check = check_usage(str(org.id), api_call_type)
             if not usage_check.allowed:
-                raise UsageLimitExceeded(usage_check)
+                if UsageLimitExceeded is not None:
+                    raise UsageLimitExceeded(usage_check)
+                else:
+                    raise ValueError(str(usage_check))
 
         if log_and_deduct_cost_for_api_request is not None:
             api_call_log_row = log_and_deduct_cost_for_api_request(
@@ -419,10 +422,12 @@ def run_eval_func(
             except ImportError:
                 emit = None
 
-            billing_config = BillingConfig.get()
+            billing_config = None
+            if BillingConfig is not None:
+                billing_config = BillingConfig.get()
             eval_cost = getattr(eval_instance, "cost", {})
             llm_cost = eval_cost.get("total_cost", 0)
-            per_run_fee = billing_config.get_eval_per_run_fee()
+            per_run_fee = billing_config.get_eval_per_run_fee() if billing_config else 0
             actual_cost = llm_cost + per_run_fee
 
             # Fallback cost for comparison logging
@@ -449,9 +454,12 @@ def run_eval_func(
                 token_usage=getattr(eval_instance, "token_usage", {}),
             )
 
-            credits = billing_config.calculate_ai_credits(actual_cost)
+            credits = billing_config.calculate_ai_credits(actual_cost) if billing_config else 0
 
-            emit(
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+
+                emit(
                 UsageEvent(
                     org_id=str(org.id),
                     event_type=api_call_type,
