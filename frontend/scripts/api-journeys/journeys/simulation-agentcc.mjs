@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import process from "node:process";
 import { promisify } from "node:util";
 import {
@@ -2603,16 +2604,56 @@ export const simulationAgentccJourneys = [
     id: "AGENTCC-API-007",
     title:
       "Gateway request logs, sessions aggregate, analytics, filters, and detail read consistency",
-    tags: ["gateway", "agentcc", "request-logs", "analytics", "safe"],
-    async run({ client, evidence }) {
-      const logs = asArray(
+    tags: [
+      "gateway",
+      "agentcc",
+      "request-logs",
+      "analytics",
+      "mutating",
+      "db-audit",
+    ],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+    }) {
+      requireMutations();
+      assert(
+        organizationId,
+        "Gateway request-log journey requires organization id.",
+      );
+      assert(workspaceId, "Gateway request-log journey requires workspace id.");
+
+      const marker = `api_journey_log_${runId.replace(/[^a-z0-9]/gi, "_")}`;
+      const apiKeyId = `${marker}_key`;
+      const sharedSessionId = `${marker}_session_shared`;
+      const soloSessionId = `${marker}_session_solo`;
+      const logIds = [randomUUID(), randomUUID(), randomUUID()];
+
+      await seedAgentccRequestLogsDb({
+        organizationId,
+        workspaceId,
+        logIds,
+        apiKeyId,
+        marker,
+        sharedSessionId,
+        soloSessionId,
+      });
+      cleanup.defer("hard-delete disposable gateway request logs", () =>
+        deleteAgentccRequestLogsDb({ logIds, organizationId }),
+      );
+
+      const seededLogs = collectionRows(
         await client.get(apiPath("/agentcc/request-logs/"), {
-          query: { limit: 5 },
+          query: { api_key_id: apiKeyId, limit: 10, ordering: "started_at" },
         }),
       );
       assert(
-        Array.isArray(logs),
-        "Gateway request log list did not return an array.",
+        seededLogs.length === 3,
+        `Gateway request log list expected 3 seeded rows, saw ${seededLogs.length}.`,
       );
 
       const analyticsOverview = await client.get(
@@ -2676,112 +2717,224 @@ export const simulationAgentccJourneys = [
 
       const sessionAggregates = asArray(
         await client.get(apiPath("/agentcc/request-logs/sessions/"), {
-          query: { limit: 5 },
+          query: { api_key_id: apiKeyId, limit: 5 },
         }),
       );
       assert(
-        Array.isArray(sessionAggregates),
-        "Gateway request-log session aggregate did not return an array.",
+        sessionAggregates.some(
+          (session) =>
+            session.session_id === sharedSessionId &&
+            Number(session.request_count) === 2,
+        ),
+        "Gateway request-log session aggregate did not include the seeded shared session.",
       );
 
-      if (logs.length === 0) {
-        evidence.push({
-          request_log_count: 0,
-          note: "Read surfaces returned valid empty states; no request-log detail/filter row was available.",
-        });
-        return;
-      }
-
-      const sample = logs[0];
-      const detail = await client.get(
-        apiPath("/agentcc/request-logs/{id}/", { id: sample.id }),
+      const success = seededLogs.find((row) =>
+        row.request_id.endsWith("_success"),
+      );
+      const error = seededLogs.find((row) => row.request_id.endsWith("_error"));
+      const stream = seededLogs.find((row) =>
+        row.request_id.endsWith("_stream"),
       );
       assert(
-        detail?.id === sample.id && detail?.request_id === sample.request_id,
-        "Gateway request-log detail did not match list row.",
+        success && error && stream,
+        "Seeded request-log rows were incomplete.",
+      );
+
+      const fixtureIds = new Set(logIds);
+      const detail = await client.get(
+        apiPath("/agentcc/request-logs/{id}/", { id: error.id }),
+      );
+      assert(
+        detail?.id === error.id &&
+          detail?.request_body?.messages?.[0]?.content?.includes(marker) &&
+          detail?.response_body?.error?.code === "provider_unavailable" &&
+          detail?.request_headers?.["x-api-journey"] === marker &&
+          detail?.response_headers?.["x-request-outcome"] === "error" &&
+          detail?.guardrail_results?.checks?.[0]?.name === "toxicity",
+        "Gateway request-log detail did not expose seeded request/response/guardrail bodies.",
       );
 
       const byRequestId = asArray(
         await client.get(apiPath("/agentcc/request-logs/"), {
-          query: { request_id: sample.request_id, limit: 10 },
+          query: { request_id: success.request_id, limit: 10 },
         }),
       );
       assert(
-        byRequestId.some((row) => row.id === sample.id),
+        byRequestId.length === 1 && byRequestId[0].id === success.id,
         "Gateway request-log request_id filter did not return the sample row.",
       );
 
-      if (sample.provider) {
-        const byProvider = asArray(
+      const byProvider = asArray(
+        await client.get(apiPath("/agentcc/request-logs/"), {
+          query: { api_key_id: apiKeyId, provider: "openai", limit: 10 },
+        }),
+      );
+      assert(
+        byProvider.length === 2 &&
+          byProvider.every((row) => row.provider === "openai"),
+        "Gateway request-log provider filter did not isolate seeded OpenAI rows.",
+      );
+
+      const byModelCsv = asArray(
+        await client.get(apiPath("/agentcc/request-logs/"), {
+          query: {
+            api_key_id: apiKeyId,
+            model: "gpt-4o-mini,claude-3-haiku",
+            limit: 10,
+          },
+        }),
+      );
+      assert(
+        byModelCsv.length === 2 &&
+          byModelCsv.some((row) => row.id === success.id) &&
+          byModelCsv.some((row) => row.id === stream.id),
+        "Gateway request-log model CSV filter did not return the expected seeded rows.",
+      );
+
+      const byStatusCode = asArray(
+        await client.get(apiPath("/agentcc/request-logs/"), {
+          query: { api_key_id: apiKeyId, status_code: "200,503", limit: 10 },
+        }),
+      );
+      assert(
+        byStatusCode.length === 2 &&
+          byStatusCode.some((row) => row.id === success.id) &&
+          byStatusCode.some((row) => row.id === error.id),
+        "Gateway request-log status_code CSV filter did not return expected rows.",
+      );
+
+      const byStatusRange = asArray(
+        await client.get(apiPath("/agentcc/request-logs/"), {
+          query: {
+            api_key_id: apiKeyId,
+            min_status_code: 500,
+            max_status_code: 599,
+            limit: 10,
+          },
+        }),
+      );
+      assert(
+        byStatusRange.length === 1 && byStatusRange[0].id === error.id,
+        "Gateway request-log status-code range filter did not isolate the error row.",
+      );
+
+      const booleanFilters = [
+        ["is_error", true, error.id],
+        ["cache_hit", true, success.id],
+        ["fallback_used", true, stream.id],
+        ["guardrail_triggered", true, error.id],
+        ["is_stream", true, stream.id],
+      ];
+      for (const [filterName, value, expectedId] of booleanFilters) {
+        const rows = asArray(
           await client.get(apiPath("/agentcc/request-logs/"), {
-            query: { provider: sample.provider, limit: 10 },
+            query: { api_key_id: apiKeyId, [filterName]: value, limit: 10 },
           }),
         );
         assert(
-          byProvider.some((row) => row.id === sample.id),
-          "Gateway request-log provider filter did not return the sample row.",
+          rows.length === 1 && rows[0].id === expectedId,
+          `Gateway request-log ${filterName} filter did not isolate expected row.`,
         );
       }
 
-      if (typeof sample.status_code === "number") {
-        const byStatusCode = asArray(
-          await client.get(apiPath("/agentcc/request-logs/"), {
-            query: { status_code: sample.status_code, limit: 10 },
+      const byUser = asArray(
+        await client.get(apiPath("/agentcc/request-logs/"), {
+          query: { api_key_id: apiKeyId, user_id: `${marker}_user_beta` },
+        }),
+      );
+      assert(
+        byUser.length === 1 && byUser[0].id === error.id,
+        "Gateway request-log user_id filter did not isolate seeded user.",
+      );
+
+      const byLatencyCostTokens = asArray(
+        await client.get(apiPath("/agentcc/request-logs/"), {
+          query: {
+            api_key_id: apiKeyId,
+            min_latency: 300,
+            max_latency: 500,
+            min_cost: "0.005",
+            max_cost: "0.006",
+            min_tokens: 600,
+            max_tokens: 800,
+            limit: 10,
+          },
+        }),
+      );
+      assert(
+        byLatencyCostTokens.length === 1 &&
+          byLatencyCostTokens[0].id === stream.id,
+        "Gateway request-log numeric range filters did not isolate the streamed fallback row.",
+      );
+
+      const afterAll = new Date(
+        Math.min(...seededLogs.map((row) => Date.parse(row.started_at))) - 1000,
+      ).toISOString();
+      const beforeAll = new Date(
+        Math.max(...seededLogs.map((row) => Date.parse(row.started_at))) + 1000,
+      ).toISOString();
+      const byDateRange = asArray(
+        await client.get(apiPath("/agentcc/request-logs/"), {
+          query: {
+            api_key_id: apiKeyId,
+            started_after: afterAll,
+            started_before: beforeAll,
+            limit: 10,
+          },
+        }),
+      );
+      assert(
+        byDateRange.length === 3,
+        "Gateway request-log started_at range filters did not include all seeded rows.",
+      );
+
+      const searched = asArray(
+        await client.get(apiPath("/agentcc/request-logs/search/"), {
+          query: { api_key_id: apiKeyId, q: marker, limit: 10 },
+        }),
+      );
+      assert(
+        searched.length === 3 &&
+          searched.every((row) => fixtureIds.has(row.id)),
+        "Gateway request-log search did not return the seeded rows.",
+      );
+
+      const shortSearchError = await expectApiError(
+        () =>
+          client.get(apiPath("/agentcc/request-logs/search/"), {
+            query: { api_key_id: apiKeyId, q: "a" },
           }),
-        );
-        assert(
-          byStatusCode.some((row) => row.id === sample.id),
-          "Gateway request-log status_code filter did not return the sample row.",
-        );
+        [400],
+        "Gateway request-log short search query unexpectedly succeeded.",
+      );
+      assert(
+        errorText(shortSearchError).includes("at least 2 characters"),
+        "Gateway request-log short search guard returned an unexpected error.",
+      );
 
-        const byStatusRange = asArray(
-          await client.get(apiPath("/agentcc/request-logs/"), {
-            query: {
-              min_status_code: sample.status_code,
-              max_status_code: sample.status_code,
-              limit: 10,
-            },
+      const sessionDetail = asArray(
+        await client.get(
+          apiPath("/agentcc/request-logs/sessions/{session_id}/", {
+            session_id: sharedSessionId,
           }),
-        );
-        assert(
-          byStatusRange.some((row) => row.id === sample.id),
-          "Gateway request-log status-code range filter did not return the sample row.",
-        );
-      }
-
-      const searchTerm = String(
-        sample.model || sample.provider || sample.request_id || "",
-      ).slice(0, 8);
-      if (searchTerm.length >= 2) {
-        const searched = asArray(
-          await client.get(apiPath("/agentcc/request-logs/search/"), {
-            query: { q: searchTerm, limit: 10 },
-          }),
-        );
-        assert(
-          searched.some((row) => row.id === sample.id),
-          "Gateway request-log search did not return the sample row.",
-        );
-      }
-
-      if (sample.session_id) {
-        const sessionDetail = asArray(
-          await client.get(
-            apiPath("/agentcc/request-logs/sessions/{session_id}/", {
-              session_id: sample.session_id,
-            }),
-            { query: { limit: 10 } },
-          ),
-        );
-        assert(
-          sessionDetail.some((row) => row.id === sample.id),
-          "Gateway request-log session detail did not return the sample row.",
-        );
-      }
+          { query: { api_key_id: apiKeyId, limit: 10 } },
+        ),
+      );
+      assert(
+        sessionDetail.length === 2 &&
+          sessionDetail.some((row) => row.id === success.id) &&
+          sessionDetail.some((row) => row.id === error.id),
+        "Gateway request-log session detail did not return the shared session rows.",
+      );
 
       const sessionsByRequests = asArray(
         await client.get(apiPath("/agentcc/request-logs/sessions/"), {
-          query: { ordering: "-request_count", limit: 10 },
+          query: {
+            api_key_id: apiKeyId,
+            ordering: "-request_count",
+            limit: 10,
+          },
         }),
       );
       for (let i = 1; i < sessionsByRequests.length; i += 1) {
@@ -2792,10 +2945,86 @@ export const simulationAgentccJourneys = [
         );
       }
 
+      const orderedByTokens = asArray(
+        await client.get(apiPath("/agentcc/request-logs/"), {
+          query: { api_key_id: apiKeyId, ordering: "-total_tokens", limit: 10 },
+        }),
+      );
+      assert(
+        orderedByTokens[0]?.id === stream.id,
+        "Gateway request-log ordering=-total_tokens did not place the largest row first.",
+      );
+
+      const csvExport = await client.get(
+        apiPath("/agentcc/request-logs/export/"),
+        {
+          query: { api_key_id: apiKeyId, export_format: "csv" },
+        },
+      );
+      assert(
+        typeof csvExport === "string" &&
+          csvExport.includes("request_id,model,provider") &&
+          csvExport.includes(success.request_id) &&
+          csvExport.includes(error.request_id) &&
+          csvExport.includes(stream.request_id),
+        "Gateway request-log CSV export did not include all seeded rows.",
+      );
+
+      const jsonExport = await client.get(
+        apiPath("/agentcc/request-logs/export/"),
+        {
+          query: { api_key_id: apiKeyId, export_format: "json" },
+        },
+      );
+      const jsonRows = String(jsonExport)
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      assert(
+        jsonRows.length === 3 &&
+          jsonRows.some((row) => row.request_id === success.request_id) &&
+          jsonRows.some((row) => row.request_id === error.request_id) &&
+          jsonRows.some((row) => row.request_id === stream.request_id),
+        "Gateway request-log NDJSON export did not include all seeded rows.",
+      );
+
+      const emptyExportError = await expectApiError(
+        () =>
+          client.get(apiPath("/agentcc/request-logs/export/"), {
+            query: {
+              api_key_id: `${apiKeyId}_missing`,
+              export_format: "csv",
+            },
+          }),
+        [400],
+        "Gateway request-log empty export unexpectedly succeeded.",
+      );
+      assert(
+        errorText(emptyExportError).includes("No data to export"),
+        "Gateway request-log empty export guard returned an unexpected error.",
+      );
+
+      const cleanupAudit = await deleteAgentccRequestLogsDb({
+        logIds,
+        organizationId,
+      });
+      assert(
+        Number(cleanupAudit.remaining_count) === 0,
+        "Disposable gateway request logs remained after cleanup.",
+      );
+
       evidence.push({
-        request_log_count: logs.length,
-        sample_request_log_id: sample.id,
-        sample_request_id: sample.request_id,
+        seeded_request_log_count: seededLogs.length,
+        shared_session_id: sharedSessionId,
+        shared_session_request_count: Number(
+          sessionsByRequests.find(
+            (session) => session.session_id === sharedSessionId,
+          )?.request_count || 0,
+        ),
+        csv_export_bytes: csvExport.length,
+        ndjson_export_rows: jsonRows.length,
+        cleanup_remaining_count: cleanupAudit.remaining_count,
       });
     },
   },
@@ -4492,6 +4721,235 @@ SELECT COALESCE((
   return runPostgresJson(sql);
 }
 
+async function seedAgentccRequestLogsDb({
+  organizationId,
+  workspaceId,
+  logIds,
+  apiKeyId,
+  marker,
+  sharedSessionId,
+  soloSessionId,
+}) {
+  const rows = [
+    {
+      id: logIds[0],
+      requestId: `${marker}_success`,
+      model: "gpt-4o-mini",
+      provider: "openai",
+      resolvedModel: "openai/gpt-4o-mini",
+      latencyMs: 120,
+      startedOffset: "30 minutes",
+      inputTokens: 50,
+      outputTokens: 70,
+      totalTokens: 120,
+      cost: "0.001200",
+      statusCode: 200,
+      isStream: false,
+      isError: false,
+      errorMessage: "",
+      cacheHit: true,
+      fallbackUsed: false,
+      guardrailTriggered: false,
+      userId: `${marker}_user_alpha`,
+      sessionId: sharedSessionId,
+      routingStrategy: "primary",
+      metadata: { marker, lane: "success", tier: "gold" },
+      requestBody: {
+        messages: [{ role: "user", content: `${marker} success` }],
+      },
+      responseBody: { choices: [{ message: { content: "ok" } }] },
+      requestHeaders: { "x-api-journey": marker },
+      responseHeaders: { "x-request-outcome": "success" },
+      guardrailResults: { checks: [] },
+    },
+    {
+      id: logIds[1],
+      requestId: `${marker}_error`,
+      model: "gpt-4o",
+      provider: "openai",
+      resolvedModel: "openai/gpt-4o",
+      latencyMs: 250,
+      startedOffset: "20 minutes",
+      inputTokens: 40,
+      outputTokens: 20,
+      totalTokens: 60,
+      cost: "0.002500",
+      statusCode: 503,
+      isStream: false,
+      isError: true,
+      errorMessage: `${marker} provider unavailable`,
+      cacheHit: false,
+      fallbackUsed: false,
+      guardrailTriggered: true,
+      userId: `${marker}_user_beta`,
+      sessionId: sharedSessionId,
+      routingStrategy: "primary",
+      metadata: { marker, lane: "error", retryable: true },
+      requestBody: { messages: [{ role: "user", content: `${marker} error` }] },
+      responseBody: { error: { code: "provider_unavailable" } },
+      requestHeaders: { "x-api-journey": marker },
+      responseHeaders: { "x-request-outcome": "error" },
+      guardrailResults: {
+        checks: [{ name: "toxicity", action: "monitor", triggered: true }],
+      },
+    },
+    {
+      id: logIds[2],
+      requestId: `${marker}_stream`,
+      model: "claude-3-haiku",
+      provider: "anthropic",
+      resolvedModel: "anthropic/claude-3-haiku",
+      latencyMs: 420,
+      startedOffset: "10 minutes",
+      inputTokens: 300,
+      outputTokens: 400,
+      totalTokens: 700,
+      cost: "0.005500",
+      statusCode: 201,
+      isStream: true,
+      isError: false,
+      errorMessage: "",
+      cacheHit: false,
+      fallbackUsed: true,
+      guardrailTriggered: false,
+      userId: `${marker}_user_gamma`,
+      sessionId: soloSessionId,
+      routingStrategy: "fallback",
+      metadata: { marker, lane: "stream", fallback: true },
+      requestBody: {
+        messages: [{ role: "user", content: `${marker} stream` }],
+      },
+      responseBody: { stream: true, chunks: 3 },
+      requestHeaders: { "x-api-journey": marker },
+      responseHeaders: { "x-request-outcome": "stream" },
+      guardrailResults: { checks: [] },
+    },
+  ];
+
+  const values = rows
+    .map(
+      (row) => `(
+        ${sqlUuid(row.id)},
+        ${sqlUuid(organizationId)},
+        ${sqlUuid(workspaceId)},
+        ${sqlString(row.requestId)},
+        ${sqlString(row.model)},
+        ${sqlString(row.provider)},
+        ${sqlString(row.resolvedModel)},
+        ${row.latencyMs},
+        now() - ${sqlString(row.startedOffset)}::interval,
+        ${row.inputTokens},
+        ${row.outputTokens},
+        ${row.totalTokens},
+        ${sqlString(row.cost)}::numeric,
+        ${row.statusCode},
+        ${row.isStream},
+        ${row.isError},
+        ${sqlString(row.errorMessage)},
+        ${row.cacheHit},
+        ${row.fallbackUsed},
+        ${row.guardrailTriggered},
+        ${sqlString(apiKeyId)},
+        ${sqlString(row.userId)},
+        ${sqlString(row.sessionId)},
+        ${sqlString(row.routingStrategy)},
+        ${sqlJson(row.metadata)},
+        ${sqlJson(row.requestBody)},
+        ${sqlJson(row.responseBody)},
+        ${sqlJson(row.requestHeaders)},
+        ${sqlJson(row.responseHeaders)},
+        ${sqlJson(row.guardrailResults)},
+        now(),
+        now(),
+        false,
+        NULL
+      )`,
+    )
+    .join(",\n");
+
+  const sql = `
+WITH stale AS (
+  DELETE FROM agentcc_request_log
+  WHERE request_id LIKE ${sqlString(`${marker}%`)}
+    AND organization_id = ${sqlUuid(organizationId)}
+  RETURNING id
+),
+inserted AS (
+  INSERT INTO agentcc_request_log (
+    id,
+    organization_id,
+    workspace_id,
+    request_id,
+    model,
+    provider,
+    resolved_model,
+    latency_ms,
+    started_at,
+    input_tokens,
+    output_tokens,
+    total_tokens,
+    cost,
+    status_code,
+    is_stream,
+    is_error,
+    error_message,
+    cache_hit,
+    fallback_used,
+    guardrail_triggered,
+    api_key_id,
+    user_id,
+    session_id,
+    routing_strategy,
+    metadata,
+    request_body,
+    response_body,
+    request_headers,
+    response_headers,
+    guardrail_results,
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at
+  )
+  VALUES ${values}
+  RETURNING id
+)
+SELECT json_build_object(
+  'inserted_count', (SELECT count(*) FROM inserted),
+  'marker_count', (SELECT count(*) FROM inserted)
+);
+`;
+  const result = await runPostgresJson(sql);
+  assert(
+    Number(result.inserted_count) === rows.length &&
+      Number(result.marker_count) === rows.length,
+    `Failed to seed disposable gateway request-log rows: ${JSON.stringify(result)}`,
+  );
+  return result;
+}
+
+async function deleteAgentccRequestLogsDb({ logIds, organizationId }) {
+  const sql = `
+WITH target AS (
+  SELECT unnest(${sqlUuidArray(logIds)}) AS id
+),
+deleted_rows AS (
+  DELETE FROM agentcc_request_log l
+  USING target
+  WHERE l.id = target.id
+    AND l.organization_id = ${sqlUuid(organizationId)}
+  RETURNING l.id
+)
+SELECT json_build_object(
+  'deleted_count', (SELECT count(*) FROM deleted_rows),
+  'remaining_count', (
+    (SELECT count(*) FROM target) - (SELECT count(*) FROM deleted_rows)
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
 async function runPostgresJson(sql) {
   const container = process.env.API_JOURNEY_DB_CONTAINER || "ws2-postgres";
   const user = process.env.API_JOURNEY_DB_USER || "user";
@@ -4524,4 +4982,8 @@ function sqlUuidArray(values) {
 
 function sqlString(value) {
   return `'${String(value).replaceAll("'", "''")}'`;
+}
+
+function sqlJson(value) {
+  return `${sqlString(JSON.stringify(value ?? null))}::jsonb`;
 }
