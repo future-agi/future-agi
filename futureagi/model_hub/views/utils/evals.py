@@ -221,7 +221,7 @@ def run_eval_func(
         _is_code_eval = getattr(template, "eval_type", "") == "code"
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
-            if _is_code_eval
+            if _is_code_eval and BillingEventType is not None
             else _get_api_call_type(model)
         )
 

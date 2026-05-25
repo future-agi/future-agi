@@ -292,6 +292,8 @@ class GetAPICallLogDetailsView(APIView):
         try:
             if APICallLog is None:
                 return self._gm.success_response([])
+            if APICallLog is None:
+                return self._gm.success_response([])
             eval_template_id = request.query_params.get(
                 "eval_template_id", None
             ) or request.query_params.get("evalTemplateId", None)
@@ -1214,7 +1216,10 @@ class GetEvalTemplates(APIView):
                 total_rows = row[4]
 
             # Fetch logs ONLY for paginated templates (not all templates)
-            logs = APICallLog.objects.filter(
+            if APICallLog is None:
+                logs = []
+            else:
+                logs = APICallLog.objects.filter(
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
                 deleted=False,
@@ -4399,6 +4404,8 @@ class EvalUsageStatsView(APIView):
         try:
             if APICallLog is None:
                 return self._gm.success_response([])
+            if APICallLog is None:
+                return self._gm.success_response([])
             try:
                 template = EvalTemplate.no_workspace_objects.get(
                     id=template_id, deleted=False
@@ -5993,9 +6000,10 @@ class DeleteEvalTemplateView(APIView):
                 ExternalEvalConfig.objects.filter(eval_template=eval_template).update(
                     deleted=True, deleted_at=timezone.now()
                 )
-                APICallLog.objects.filter(source_id=eval_template_id).update(
-                    deleted=True, deleted_at=timezone.now()
-                )
+                if APICallLog is not None:
+                    APICallLog.objects.filter(source_id=eval_template_id).update(
+                        deleted=True, deleted_at=timezone.now()
+                    )
                 EvalLogger.objects.filter(
                     custom_eval_config__eval_template=eval_template
                 ).update(deleted=True, deleted_at=timezone.now())

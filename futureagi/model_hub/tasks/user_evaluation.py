@@ -1189,7 +1189,7 @@ def process_single_error_localization(task_id):
             if BillingConfig is not None:
                 credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            if emit is not None:
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
                 emit(
                 UsageEvent(
                     org_id=str(task.organization.id),
