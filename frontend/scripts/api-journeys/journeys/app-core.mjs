@@ -88,6 +88,83 @@ export const appCoreJourneys = [
     },
   },
   {
+    id: "GST-API-001",
+    title: "Get Started first-checks workspace parity and provider setup safety",
+    tags: ["get-started", "core", "safe", "db-audit", "credential-safety"],
+    async run({ client, user, organizationId, workspaceId, evidence }) {
+      const userId = currentUserId(user);
+      assert(userId, "Authenticated user info did not include a user id.");
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const userInfo = await client.get(apiPath("/accounts/user-info/"));
+      assert(
+        currentUserId(userInfo) === userId,
+        "Get Started user-info readback returned a different user.",
+      );
+
+      const workspaces = asArray(
+        await client.get(apiPath("/accounts/workspace/list/")),
+      );
+      const activeWorkspace = workspaces.find(
+        (workspace) => (workspace?.id || workspace?.workspace_id) === workspaceId,
+      );
+      assert(activeWorkspace, "Workspace list did not include the active workspace.");
+
+      const checks = await client.get(apiPath("/accounts/first-checks/"));
+      assertGetStartedChecks(checks);
+
+      const audit = await loadGetStartedFirstChecksDbAudit({
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      const expectedChecks = {
+        keys: Number(audit.key_count) > 0,
+        dataset: Number(audit.dataset_count) > 0,
+        evaluation: Number(audit.evaluation_count) > 0,
+        experiment: Number(audit.experiment_count) > 0,
+        observe: Number(audit.observe_count) > 0,
+        invite: Number(audit.invite_count) > 0,
+      };
+      for (const key of Object.keys(expectedChecks)) {
+        assert(
+          checks[key] === expectedChecks[key],
+          `Get Started first-checks ${key}=${checks[key]} did not match DB expected ${expectedChecks[key]}.`,
+        );
+      }
+
+      const providerStatus = await client.get(
+        apiPath("/model-hub/develops/provider-status/"),
+      );
+      const providers = Array.isArray(providerStatus?.providers)
+        ? providerStatus.providers
+        : [];
+      assert(providers.length > 0, "Provider status returned no providers.");
+      for (const provider of providers) {
+        assertProviderStatusRow(provider);
+      }
+      assertNoRawProviderSecretLeak(providerStatus, "Get Started provider status");
+
+      evidence.push({
+        user_id: userId,
+        workspace_id: workspaceId,
+        active_workspace_name: activeWorkspace.name || activeWorkspace.display_name,
+        checks,
+        db_counts: audit,
+        provider_count: providers.length,
+        configured_provider_count: providers.filter((provider) => provider.has_key)
+          .length,
+      });
+    },
+  },
+  {
     id: "PRT-API-001",
     title:
       "Prototype project list, search, create, detail, run list, update, and delete lifecycle",
@@ -4475,6 +4552,23 @@ function assertProviderStatusRow(provider) {
   }
 }
 
+function assertGetStartedChecks(checks) {
+  const required = [
+    "keys",
+    "dataset",
+    "evaluation",
+    "experiment",
+    "observe",
+    "invite",
+  ];
+  for (const key of required) {
+    assert(
+      typeof checks?.[key] === "boolean",
+      `Get Started first-checks omitted boolean ${key}.`,
+    );
+  }
+}
+
 function assertNoRawProviderSecretLeak(payload, label) {
   const text = JSON.stringify(payload ?? {});
   const secretPatterns = [
@@ -6302,6 +6396,144 @@ SELECT json_build_object(
   'encrypted_token_count', (SELECT count(*) FROM connection_rows WHERE oauth_token_encrypted IS NOT NULL),
   'encrypted_refresh_token_count', (SELECT count(*) FROM connection_rows WHERE oauth_refresh_token_encrypted IS NOT NULL),
   'api_key_connection_count', (SELECT count(*) FROM connection_rows WHERE api_key_id IS NOT NULL)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadGetStartedFirstChecksDbAudit({
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  assert(isUuid(userId), "userId must be a UUID for DB audit.");
+  assert(isUuid(organizationId), "organizationId must be a UUID for DB audit.");
+  assert(isUuid(workspaceId), "workspaceId must be a UUID for DB audit.");
+  const sql = `
+WITH ctx AS (
+  SELECT
+    ${sqlUuid(userId)} AS user_id,
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    COALESCE((SELECT is_default FROM accounts_workspace WHERE id = ${sqlUuid(workspaceId)}), false) AS is_default
+),
+default_workspaces AS (
+  SELECT id
+  FROM accounts_workspace, ctx
+  WHERE accounts_workspace.organization_id = ctx.organization_id
+    AND accounts_workspace.is_default = true
+),
+key_rows AS (
+  SELECT a.id
+  FROM model_hub_apikey a, ctx
+  WHERE a.user_id = ctx.user_id
+    AND a.organization_id = ctx.organization_id
+    AND a.deleted = false
+    AND (
+      (ctx.is_default = false AND a.workspace_id = ctx.workspace_id)
+      OR (
+        ctx.is_default = true
+        AND (
+          a.workspace_id = ctx.workspace_id
+          OR a.workspace_id IS NULL
+          OR a.workspace_id IN (SELECT id FROM default_workspaces)
+        )
+      )
+    )
+),
+dataset_rows AS (
+  SELECT d.id
+  FROM model_hub_dataset d, ctx
+  WHERE d.user_id = ctx.user_id
+    AND d.organization_id = ctx.organization_id
+    AND d.deleted = false
+    AND (
+      (ctx.is_default = false AND d.workspace_id = ctx.workspace_id)
+      OR (
+        ctx.is_default = true
+        AND (
+          d.workspace_id = ctx.workspace_id
+          OR d.workspace_id IS NULL
+          OR d.workspace_id IN (SELECT id FROM default_workspaces)
+        )
+      )
+    )
+),
+evaluation_rows AS (
+  SELECT m.id
+  FROM model_hub_userevalmetric m, ctx
+  WHERE m.user_id = ctx.user_id
+    AND m.organization_id = ctx.organization_id
+    AND m.deleted = false
+    AND (
+      (ctx.is_default = false AND m.workspace_id = ctx.workspace_id)
+      OR (
+        ctx.is_default = true
+        AND (
+          m.workspace_id = ctx.workspace_id
+          OR m.workspace_id IS NULL
+          OR m.workspace_id IN (SELECT id FROM default_workspaces)
+        )
+      )
+    )
+),
+experiment_rows AS (
+  SELECT e.id
+  FROM model_hub_experimentstable e
+  JOIN model_hub_dataset d ON d.id = e.dataset_id
+  CROSS JOIN ctx
+  WHERE e.user_id = ctx.user_id
+    AND e.deleted = false
+    AND d.organization_id = ctx.organization_id
+    AND d.deleted = false
+    AND (
+      (ctx.is_default = false AND d.workspace_id = ctx.workspace_id)
+      OR (
+        ctx.is_default = true
+        AND (
+          d.workspace_id = ctx.workspace_id
+          OR d.workspace_id IS NULL
+          OR d.workspace_id IN (SELECT id FROM default_workspaces)
+        )
+      )
+    )
+),
+observe_rows AS (
+  SELECT p.id
+  FROM tracer_project p, ctx
+  WHERE p.user_id = ctx.user_id
+    AND p.organization_id = ctx.organization_id
+    AND p.deleted = false
+    AND p.trace_type = 'observe'
+    AND (
+      (ctx.is_default = false AND p.workspace_id = ctx.workspace_id)
+      OR (
+        ctx.is_default = true
+        AND (
+          p.workspace_id = ctx.workspace_id
+          OR p.workspace_id IS NULL
+          OR p.workspace_id IN (SELECT id FROM default_workspaces)
+        )
+      )
+    )
+),
+invite_rows AS (
+  SELECT wm.id
+  FROM accounts_workspacemembership wm
+  JOIN accounts_user invited_user ON invited_user.id = wm.user_id
+  CROSS JOIN ctx
+  WHERE wm.workspace_id = ctx.workspace_id
+    AND wm.deleted = false
+    AND wm.is_active = true
+    AND (wm.invited_by_id = ctx.user_id OR invited_user.invited_by_id = ctx.user_id)
+)
+SELECT json_build_object(
+  'key_count', (SELECT count(*) FROM key_rows)::int,
+  'dataset_count', (SELECT count(*) FROM dataset_rows)::int,
+  'evaluation_count', (SELECT count(*) FROM evaluation_rows)::int,
+  'experiment_count', (SELECT count(*) FROM experiment_rows)::int,
+  'observe_count', (SELECT count(*) FROM observe_rows)::int,
+  'invite_count', (SELECT count(*) FROM invite_rows)::int
 );
 `;
   return runPostgresJson(sql);

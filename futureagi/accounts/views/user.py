@@ -5,6 +5,7 @@ import requests
 import structlog
 from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
+from django.db.models import Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
@@ -841,15 +842,104 @@ def get_user_info(request):
     return Response(data)
 
 
-def get_user_checks(user):
+def _workspace_scope_q(workspace, *, relation_prefix="", organization_id=None):
+    if not workspace:
+        return Q()
+
+    workspace_field = f"{relation_prefix}workspace"
+    if not getattr(workspace, "is_default", False):
+        return Q(**{workspace_field: workspace})
+
+    q = Q(**{workspace_field: workspace}) | Q(
+        **{
+            f"{workspace_field}__is_default": True,
+            f"{workspace_field}__organization_id": workspace.organization_id,
+        }
+    )
+    if organization_id:
+        organization_field = f"{relation_prefix}organization_id"
+        q |= Q(
+            **{
+                f"{workspace_field}__isnull": True,
+                organization_field: organization_id,
+            }
+        )
+    return q
+
+
+def _workspace_scope_queryset(
+    queryset, workspace, *, relation_prefix="", organization_id=None
+):
+    if not workspace:
+        return queryset
+    return queryset.filter(
+        _workspace_scope_q(
+            workspace,
+            relation_prefix=relation_prefix,
+            organization_id=organization_id,
+        )
+    )
+
+
+def get_user_checks(user, *, organization=None, workspace=None):
     # Use exists() instead of count() > 0 for better performance
+    organization = organization or user.organization
+    organization_id = getattr(organization, "id", None)
+
+    keys_qs = ApiKey.no_workspace_objects.filter(user=user)
+    datasets_qs = Dataset.no_workspace_objects.filter(user=user)
+    evaluations_qs = UserEvalMetric.no_workspace_objects.filter(user=user)
+    experiments_qs = ExperimentsTable.no_workspace_objects.filter(user=user)
+    observe_qs = Project.no_workspace_objects.filter(trace_type="observe", user=user)
+
+    if organization_id:
+        keys_qs = keys_qs.filter(organization_id=organization_id)
+        datasets_qs = datasets_qs.filter(organization_id=organization_id)
+        evaluations_qs = evaluations_qs.filter(organization_id=organization_id)
+        experiments_qs = experiments_qs.filter(dataset__organization_id=organization_id)
+        observe_qs = observe_qs.filter(organization_id=organization_id)
+
+    keys_qs = _workspace_scope_queryset(
+        keys_qs, workspace, organization_id=organization_id
+    )
+    datasets_qs = _workspace_scope_queryset(
+        datasets_qs, workspace, organization_id=organization_id
+    )
+    evaluations_qs = _workspace_scope_queryset(
+        evaluations_qs, workspace, organization_id=organization_id
+    )
+    experiments_qs = _workspace_scope_queryset(
+        experiments_qs,
+        workspace,
+        relation_prefix="dataset__",
+        organization_id=organization_id,
+    )
+    observe_qs = _workspace_scope_queryset(
+        observe_qs, workspace, organization_id=organization_id
+    )
+
+    if workspace:
+        invite_exists = (
+            WorkspaceMembership.no_workspace_objects.filter(
+                workspace=workspace,
+                is_active=True,
+            )
+            .filter(Q(invited_by=user) | Q(user__invited_by=user))
+            .exists()
+        )
+    else:
+        invite_qs = User.objects.filter(invited_by=user)
+        if organization_id:
+            invite_qs = invite_qs.filter(organization_id=organization_id)
+        invite_exists = invite_qs.exists()
+
     return {
-        "keys": ApiKey.objects.filter(user=user).exists(),
-        "dataset": Dataset.objects.filter(user=user).exists(),
-        "evaluation": UserEvalMetric.objects.filter(user=user).exists(),
-        "experiment": ExperimentsTable.objects.filter(user=user).exists(),
-        "observe": Project.objects.filter(trace_type="observe", user=user).exists(),
-        "invite": User.objects.filter(invited_by=user).exists(),
+        "keys": keys_qs.exists(),
+        "dataset": datasets_qs.exists(),
+        "evaluation": evaluations_qs.exists(),
+        "experiment": experiments_qs.exists(),
+        "observe": observe_qs.exists(),
+        "invite": invite_exists,
     }
 
 
@@ -875,7 +965,12 @@ class FirstChecksView(APIView):
                     "invite": True,
                 }
             else:
-                result = get_user_checks(user)
+                result = get_user_checks(
+                    user,
+                    organization=getattr(request, "organization", None)
+                    or user.organization,
+                    workspace=getattr(request, "workspace", None),
+                )
             return self._gm.success_response(result)
         except Exception as e:
             logger.exception(f"Error in get started api: {e}")
