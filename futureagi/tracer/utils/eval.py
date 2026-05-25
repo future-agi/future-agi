@@ -14,7 +14,6 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
-from model_hub.tasks.user_evaluation import trigger_error_localization_for_span
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
@@ -734,9 +733,12 @@ def _run_evaluation(
             except ImportError:
                 token_usage_properties = lambda token_usage: {}
 
-            actual_cost = getattr(eval_instance, "cost", {}).get("total_cost", 0)
+            billing_config = BillingConfig.get()
+            llm_cost = getattr(eval_instance, "cost", {}).get("total_cost", 0)
+            per_run_fee = billing_config.get_eval_per_run_fee()
+            actual_cost = llm_cost + per_run_fee
             _token_usage = getattr(eval_instance, "token_usage", {})
-            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+            credits = billing_config.calculate_ai_credits(actual_cost)
 
             emit(
                 UsageEvent(
@@ -1377,9 +1379,12 @@ def _execute_evaluation(
             except ImportError:
                 token_usage_properties = lambda token_usage: {}
 
-            _actual_cost = (result.cost or {}).get("total_cost", 0)
+            billing_config = BillingConfig.get()
+            _llm_cost = (result.cost or {}).get("total_cost", 0)
+            _per_run_fee = billing_config.get_eval_per_run_fee()
+            _actual_cost = _llm_cost + _per_run_fee
             _token_usage = result.token_usage or {}
-            credits = BillingConfig.get().calculate_ai_credits(_actual_cost)
+            credits = billing_config.calculate_ai_credits(_actual_cost)
 
             emit(
                 UsageEvent(
@@ -1509,7 +1514,10 @@ def _execute_evaluation(
             ).get(pk=eval_log.pk)
 
         if custom_eval_config.error_localizer:
-            from model_hub.tasks.user_evaluation import _eval_passed
+            from model_hub.tasks.user_evaluation import (
+                _eval_passed,
+                trigger_error_localization_for_span,
+            )
 
             if not _eval_passed(value):
                 trigger_error_localization_for_span(
@@ -2658,9 +2666,12 @@ def _execute_evaluation_for_trace(
             except ImportError:
                 token_usage_properties = lambda token_usage: {}
 
-            _actual_cost = (result.cost or {}).get("total_cost", 0)
+            billing_config = BillingConfig.get()
+            _llm_cost = (result.cost or {}).get("total_cost", 0)
+            _per_run_fee = billing_config.get_eval_per_run_fee()
+            _actual_cost = _llm_cost + _per_run_fee
             _token_usage = result.token_usage or {}
-            credits = BillingConfig.get().calculate_ai_credits(_actual_cost)
+            credits = billing_config.calculate_ai_credits(_actual_cost)
 
             emit(
                 UsageEvent(
@@ -2918,9 +2929,12 @@ def _execute_evaluation_for_session(
             except ImportError:
                 token_usage_properties = lambda token_usage: {}
 
-            _actual_cost = (result.cost or {}).get("total_cost", 0)
+            billing_config = BillingConfig.get()
+            _llm_cost = (result.cost or {}).get("total_cost", 0)
+            _per_run_fee = billing_config.get_eval_per_run_fee()
+            _actual_cost = _llm_cost + _per_run_fee
             _token_usage = result.token_usage or {}
-            credits = BillingConfig.get().calculate_ai_credits(_actual_cost)
+            credits = billing_config.calculate_ai_credits(_actual_cost)
 
             emit(
                 UsageEvent(
