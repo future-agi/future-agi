@@ -176,6 +176,17 @@ const EvalCreatePage = () => {
     setDatasetJsonSchemas(jsonSchemas || {});
   }, []);
 
+  // Active test-tab variable→column mapping. Threaded into the
+  // InstructionEditor so mapped variables render green; otherwise the
+  // {{var}} tokens stay red even after the user binds them in the test
+  // panel.
+  const [playgroundMapping, setPlaygroundMapping] = useState({});
+  const handlePlaygroundReadyChange = useCallback((_ready, mapping) => {
+    if (mapping && typeof mapping === "object") {
+      setPlaygroundMapping(mapping);
+    }
+  }, []);
+
   // --- Composite eval state ---
   const [compositeName, setCompositeName] = useState("");
   const [compositeDescription, setCompositeDescription] = useState("");
@@ -869,6 +880,8 @@ const EvalCreatePage = () => {
                       onTemplateFormatChange={setTemplateFormat}
                       datasetColumns={datasetColumns}
                       datasetJsonSchemas={datasetJsonSchemas}
+                      mappedVariables={playgroundMapping}
+                      modelSelectorDisabled={false}
                       mode={agentMode}
                       onModeChange={setAgentMode}
                       useInternet={checkInternet}
@@ -1221,6 +1234,7 @@ const EvalCreatePage = () => {
                   showVersions={false}
                   onTestResult={handleTestResult}
                   onColumnsLoaded={handleColumnsLoaded}
+                  onReadyChange={handlePlaygroundReadyChange}
                   errorLocalizerEnabled={
                     mode === "composite" ? false : errorLocalizerEnabled
                   }
