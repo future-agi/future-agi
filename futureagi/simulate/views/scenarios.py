@@ -3,6 +3,7 @@ import re
 import traceback
 import uuid
 
+from django.utils import timezone
 from django.db import close_old_connections, models, transaction
 from django.db.models import Count, Max, OuterRef, Q, Subquery
 from django.http import Http404
@@ -173,6 +174,16 @@ def _scenario_add_columns_serializer_context(request, scenario_id=None):
             .first()
         )
     return {"request": request, "scenario": scenario}
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace(request):
+    return getattr(request, "workspace", None) or getattr(
+        request.user, "workspace", None
+    )
 
 
 class ScenariosListView(APIView):
@@ -370,7 +381,7 @@ class CreateScenarioView(APIView):
         """
         from tfc.ee_gating import EEFeature, check_ee_feature
 
-        org = getattr(request, "organization", None) or request.user.organization
+        org = _request_organization(request)
         check_ee_feature(EEFeature.SYNTHETIC_DATA, org_id=str(org.id))
 
         try:
@@ -440,16 +451,17 @@ class CreateScenarioView(APIView):
                 pt_filters = {
                     "id": validated_data.get("prompt_template_id"),
                     "deleted": False,
-                    "organization": getattr(request, "organization", None)
-                    or request.user.organization,
+                    "organization": _request_organization(request),
                 }
-                if hasattr(request.user, "workspace") and request.user.workspace:
-                    pt_filters["workspace"] = request.user.workspace
+                request_workspace = _request_workspace(request)
+                if request_workspace:
+                    pt_filters["workspace"] = request_workspace
                 prompt_template = PromptTemplate.objects.get(**pt_filters)
 
                 pv_filters = {
                     "id": validated_data.get("prompt_version_id"),
                     "deleted": False,
+                    "original_template": prompt_template,
                 }
                 prompt_version = PromptVersion.objects.get(**pv_filters)
                 # Create simulator agent with generic prompt for prompt-based scenarios
@@ -457,18 +469,15 @@ class CreateScenarioView(APIView):
                 simulator_agent = SimulatorAgent.objects.create(
                     name=validated_data.get("name", "Default Agent"),
                     prompt=agent_prompt,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    workspace=(
-                        request.user.workspace
-                        if hasattr(request.user, "workspace")
-                        else None
-                    ),
+                    organization=_request_organization(request),
+                    workspace=request_workspace,
                 )
             else:
                 simulator_agent = self._create_simulator_agent(request, validated_data)
                 agent_definition = AgentDefinition.objects.get(
-                    id=validated_data.get("agent_definition_id")
+                    id=validated_data.get("agent_definition_id"),
+                    organization=_request_organization(request),
+                    deleted=False,
                 )
 
             # Create temporary scenario with PROCESSING status
@@ -506,13 +515,8 @@ class CreateScenarioView(APIView):
                     scenario_kind, Scenarios.ScenarioTypes.DATASET
                 ),
                 source_type=source_type,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                workspace=(
-                    request.user.workspace
-                    if hasattr(request.user, "workspace")
-                    else None
-                ),
+                organization=_request_organization(request),
+                workspace=_request_workspace(request),
                 dataset=None,
                 simulator_agent=simulator_agent,
                 status=StatusType.PROCESSING.value,
@@ -529,7 +533,9 @@ class CreateScenarioView(APIView):
         """Create a simulator agent from validated data"""
         try:
             agent_definition = AgentDefinition.objects.get(
-                id=validated_data.get("agent_definition_id")
+                id=validated_data.get("agent_definition_id"),
+                organization=_request_organization(request),
+                deleted=False,
             )
             agent_version = None
             agent_definition_version_id = validated_data.get(
@@ -540,8 +546,7 @@ class CreateScenarioView(APIView):
                     agent_version = AgentVersion.objects.get(
                         id=agent_definition_version_id,
                         agent_definition=agent_definition,
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
+                        organization=_request_organization(request),
                         deleted=False,
                     )
                 except AgentVersion.DoesNotExist:
@@ -567,13 +572,8 @@ class CreateScenarioView(APIView):
                     "finished_speaking_sensitivity", 0.5
                 ),
                 initial_message_delay=validated_data.get("initial_message_delay", 0),
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                workspace=(
-                    request.user.workspace
-                    if hasattr(request.user, "workspace")
-                    else None
-                ),
+                organization=_request_organization(request),
+                workspace=_request_workspace(request),
             )
             return simulator_agent
         except Exception as e:
@@ -607,8 +607,7 @@ class ScenarioDetailView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
@@ -732,14 +731,16 @@ class DeleteScenarioView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
-            # Soft delete the scenario
-            scenario.deleted = True
-            scenario.save()
+            with transaction.atomic():
+                scenario.delete()
+                ScenarioGraph.objects.filter(
+                    scenario=scenario,
+                    deleted=False,
+                ).update(deleted=True, deleted_at=timezone.now())
 
             return Response(
                 ScenarioDeleteResponseSerializer(
@@ -789,19 +790,18 @@ class EditScenarioView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
             validated_data = request.validated_data
 
             # Update the scenario
-            if validated_data.get("name"):
+            if "name" in validated_data:
                 scenario.name = validated_data.get("name")
-            if validated_data.get("description"):
+            if "description" in validated_data:
                 scenario.description = validated_data.get("description")
-            if validated_data.get("graph"):
+            if "graph" in validated_data and validated_data.get("graph") is not None:
                 # Handle graph update through ScenarioGraph model
                 # Get the most recent active graph for this scenario
                 scenario_graph = (
@@ -823,13 +823,16 @@ class EditScenarioView(APIView):
                         name=f"{scenario.name} - Graph",
                         description=f"Graph for {scenario.name}",
                         organization=scenario.organization,
-                        workspace=scenario.workspace,
                         graph_config={
                             "graph_data": validated_data.get("graph"),
                             "source": "user_provided",
                         },
                     )
-            if validated_data.get("prompt"):
+            if "prompt" in validated_data:
+                if not scenario.simulator_agent:
+                    return self.gm.bad_request(
+                        "Scenario does not have an associated simulator agent."
+                    )
                 scenario.simulator_agent.prompt = validated_data.get("prompt")
                 scenario.simulator_agent.save()
             scenario.save()
@@ -885,8 +888,7 @@ class EditScenarioPromptsView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
@@ -901,6 +903,11 @@ class EditScenarioPromptsView(APIView):
             #         if prompt.get('role') == 'system':
             #             system_prompt = prompt.get('content', '')
             #             break
+
+            if not scenario.simulator_agent:
+                return self.gm.bad_request(
+                    "Scenario does not have an associated simulator agent."
+                )
 
             # Update the simulator agent prompt
             scenario.simulator_agent.prompt = prompts
@@ -959,7 +966,7 @@ class AddScenarioRowsView(APIView):
         """
         from tfc.ee_gating import EEFeature, check_ee_feature
 
-        org = getattr(request, "organization", None) or request.user.organization
+        org = _request_organization(request)
         check_ee_feature(EEFeature.AGENTIC_EVAL, org_id=str(org.id))
 
         try:
@@ -967,8 +974,7 @@ class AddScenarioRowsView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 
@@ -1117,12 +1123,13 @@ class AddScenarioColumnsView(APIView):
                 except ImportError:
                     Entitlements = None
 
-                org = (
-                    getattr(request, "organization", None) or request.user.organization
-                )
-                feat_check = Entitlements.check_feature(str(org.id), "has_agentic_eval")
-                if not feat_check.allowed:
-                    return self.gm.forbidden_response(feat_check.reason)
+                if Entitlements is not None:
+                    org = _request_organization(request)
+                    feat_check = Entitlements.check_feature(
+                        str(org.id), "has_agentic_eval"
+                    )
+                    if not feat_check.allowed:
+                        return self.gm.forbidden_response(feat_check.reason)
             except ImportError:
                 pass
 
@@ -1130,8 +1137,7 @@ class AddScenarioColumnsView(APIView):
             scenario = get_object_or_404(
                 Scenarios,
                 id=scenario_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_request_organization(request),
                 deleted=False,
             )
 

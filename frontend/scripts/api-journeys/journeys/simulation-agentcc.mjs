@@ -1459,6 +1459,486 @@ export const simulationAgentccJourneys = [
     },
   },
   {
+    id: "SIM-API-008",
+    title:
+      "Simulation scenario create, list, detail, edit, add data, and delete lifecycle",
+    tags: ["simulation", "scenarios", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      evidence,
+      organizationId,
+      workspaceId,
+      user,
+    }) {
+      requireMutations();
+      const userId = currentUserId(user);
+      assert(userId, "Scenario journey requires current user id for DB fixture.");
+      const name = `api journey scenario ${runId}`;
+      let hardCleaned = false;
+      await deleteSimulationScenarioFixturesDb({ namePrefix: name, organizationId });
+      cleanup.defer("hard-delete API journey scenario rows", () =>
+        hardCleaned
+          ? null
+          : deleteSimulationScenarioFixturesDb({ namePrefix: name, organizationId }),
+      );
+
+      const fixture = await seedSimulationScenarioFixturesDb({
+        namePrefix: name,
+        organizationId,
+        workspaceId,
+        userId,
+      });
+      const {
+        agent_definition_id: agentDefinitionId,
+        dataset_id: datasetId,
+        scenario_id: scenarioId,
+        no_dataset_scenario_id: noDatasetScenarioId,
+        no_simulator_scenario_id: noSimulatorScenarioId,
+      } = fixture;
+      assert(
+        isUuid(agentDefinitionId) &&
+          isUuid(datasetId) &&
+          isUuid(scenarioId) &&
+          isUuid(noDatasetScenarioId) &&
+          isUuid(noSimulatorScenarioId),
+        "Scenario DB fixture did not return expected UUIDs.",
+      );
+
+      const invalidListParam = await expectApiError(
+        () =>
+          client.get(apiPath("/simulate/scenarios/"), {
+            query: { legacyFilter: "reject" },
+          }),
+        [400],
+        "Scenario list accepted an unknown query parameter.",
+      );
+      const invalidListAgentId = await expectApiError(
+        () =>
+          client.get(apiPath("/simulate/scenarios/"), {
+            query: { agent_definition_id: "not-a-uuid" },
+          }),
+        [400],
+        "Scenario list accepted an invalid agent_definition_id.",
+      );
+      const invalidColumnsJson = await expectApiError(
+        () =>
+          client.get(apiPath("/simulate/scenarios/get-columns/"), {
+            query: { scenarios: "not-json" },
+          }),
+        [400],
+        "Scenario get-columns accepted a non-JSON scenarios value.",
+      );
+      const invalidCreateUnknown = await expectApiError(
+        () =>
+          client.post(apiPath("/simulate/scenarios/create/"), {
+            name: `${name} invalid create`,
+            dataset_id: datasetId,
+            kind: "dataset",
+            agent_definition_id: agentDefinitionId,
+            legacy_extra: true,
+          }),
+        [400],
+        "Scenario create accepted an unknown body field.",
+      );
+      const invalidCreateMissingAgent = await expectApiError(
+        () =>
+          client.post(apiPath("/simulate/scenarios/create/"), {
+            name: `${name} missing agent`,
+            dataset_id: datasetId,
+            kind: "dataset",
+          }),
+        [400],
+        "Scenario create accepted dataset source without agent_definition_id.",
+      );
+      const invalidCreateDuplicateColumns = await expectApiError(
+        () =>
+          client.post(apiPath("/simulate/scenarios/create/"), {
+            name: `${name} duplicate columns`,
+            kind: "script",
+            script_url: "https://example.com/scenario-script.txt",
+            agent_definition_id: agentDefinitionId,
+            custom_columns: [
+              { name: "same", data_type: "text", description: "First" },
+              { name: "same", data_type: "text", description: "Second" },
+            ],
+          }),
+        [400],
+        "Scenario create accepted duplicate custom column names.",
+      );
+
+      const listPayload = await client.get(apiPath("/simulate/scenarios/"), {
+        query: { search: name, agent_type: "text", limit: 20 },
+      });
+      const listedScenarios = collectionRows(listPayload);
+      assert(
+        listedScenarios.some((scenario) => scenario.id === scenarioId),
+        "Seeded scenario was not visible through list/search.",
+      );
+
+      const columnsPayload = await client.get(
+        apiPath("/simulate/scenarios/get-columns/"),
+        { query: { scenarios: JSON.stringify([scenarioId]) } },
+      );
+      assert(
+        asArray(columnsPayload.column_configs).some(
+          (config) => config.id === scenarioId,
+        ),
+        "Scenario get-columns did not include the selected scenario.",
+      );
+
+      let dbAudit = await loadSimulationScenarioDbAudit({
+        scenarioIds: [scenarioId, noDatasetScenarioId, noSimulatorScenarioId],
+        datasetId,
+        organizationId,
+      });
+      const scenarioAudit = collectionRows(dbAudit.scenarios).find(
+        (scenario) => scenario.id === scenarioId,
+      );
+      assert(
+        scenarioAudit?.organization_id === organizationId &&
+          scenarioAudit?.workspace_id === workspaceId &&
+          scenarioAudit?.deleted === false &&
+          Number(dbAudit.dataset_row_count) === 2 &&
+          Number(dbAudit.dataset_column_count) === 2 &&
+          Number(dbAudit.active_graph_count) === 1,
+        "Scenario DB audit did not show active workspace-owned scenario data.",
+      );
+
+      const detail = await client.get(
+        apiPath("/simulate/scenarios/{scenario_id}/", {
+          scenario_id: scenarioId,
+        }),
+      );
+      assert(
+        detail?.id === scenarioId &&
+          detail.dataset_id === datasetId &&
+          Number(detail.dataset_rows) === 2 &&
+          detail.agent_type === "text",
+        "Scenario detail did not return the expected dataset-backed scenario.",
+      );
+      assert(
+        Array.isArray(detail.prompts) && detail.prompts.length === 1,
+        "Scenario detail did not include simulator prompts.",
+      );
+
+      const blankEdit = await client.put(
+        apiPath("/simulate/scenarios/{scenario_id}/edit/", {
+          scenario_id: scenarioId,
+        }),
+        { description: "", prompt: "" },
+      );
+      assert(
+        blankEdit?.scenario?.description === "",
+        "Scenario edit did not persist a blank description.",
+      );
+
+      const graphEdit = await client.put(
+        apiPath("/simulate/scenarios/{scenario_id}/edit/", {
+          scenario_id: scenarioId,
+        }),
+        { graph: { nodes: [], edges: [] } },
+      );
+      assert(
+        graphEdit?.scenario?.id === scenarioId,
+        "Scenario graph edit did not return the selected scenario.",
+      );
+
+      const promptEdit = await client.put(
+        apiPath("/simulate/scenarios/{scenario_id}/prompts/", {
+          scenario_id: scenarioId,
+        }),
+        { prompts: `${name} updated simulator prompt` },
+      );
+      assert(
+        promptEdit?.prompts === `${name} updated simulator prompt`,
+        "Scenario prompts route did not persist the updated prompt.",
+      );
+
+      const noSimulatorEdit = await expectApiError(
+        () =>
+          client.put(
+            apiPath("/simulate/scenarios/{scenario_id}/edit/", {
+              scenario_id: noSimulatorScenarioId,
+            }),
+            { prompt: "should fail closed" },
+          ),
+        [400],
+        "Scenario edit prompt accepted a scenario without simulator agent.",
+      );
+      const noSimulatorPrompts = await expectApiError(
+        () =>
+          client.put(
+            apiPath("/simulate/scenarios/{scenario_id}/prompts/", {
+              scenario_id: noSimulatorScenarioId,
+            }),
+            { prompts: "should fail closed" },
+          ),
+        [400],
+        "Scenario prompts route accepted a scenario without simulator agent.",
+      );
+
+      const addRowsNoDataset = await expectApiError(
+        () =>
+          client.post(
+            apiPath("/simulate/scenarios/{scenario_id}/add-rows/", {
+              scenario_id: noDatasetScenarioId,
+            }),
+            { num_rows: 10 },
+          ),
+        [400, 402, 403],
+        "Scenario add-rows accepted a scenario without dataset.",
+      );
+      let addRowsEntitlementDenied = isFeatureDeniedError(addRowsNoDataset);
+      let addRowsInvalidCount = null;
+      let addRowsSucceeded = false;
+      if (!addRowsEntitlementDenied) {
+        addRowsInvalidCount = await expectApiError(
+          () =>
+            client.post(
+              apiPath("/simulate/scenarios/{scenario_id}/add-rows/", {
+                scenario_id: scenarioId,
+              }),
+              { num_rows: 9 },
+            ),
+          [400, 402, 403],
+          "Scenario add-rows accepted num_rows below the documented minimum.",
+        );
+        if (isFeatureDeniedError(addRowsInvalidCount)) {
+          addRowsEntitlementDenied = true;
+        }
+      }
+
+      const addColumnsNoDataset = await expectApiError(
+        () =>
+          client.post(
+            apiPath("/simulate/scenarios/{scenario_id}/add-columns/", {
+              scenario_id: noDatasetScenarioId,
+            }),
+            {
+              columns: [
+                {
+                  name: "not_created",
+                  data_type: "text",
+                  description: "Should fail",
+                },
+              ],
+            },
+          ),
+        [400, 402, 403],
+        "Scenario add-columns accepted a scenario without dataset.",
+      );
+      let addColumnsEntitlementDenied = isFeatureDeniedError(addColumnsNoDataset);
+      let addColumnsDuplicate = null;
+      let addColumnsExisting = null;
+      let addColumnsSucceeded = false;
+      if (!addColumnsEntitlementDenied) {
+        addColumnsDuplicate = await expectApiError(
+          () =>
+            client.post(
+              apiPath("/simulate/scenarios/{scenario_id}/add-columns/", {
+                scenario_id: scenarioId,
+              }),
+              {
+                columns: [
+                  { name: "dupe", data_type: "text", description: "First" },
+                  { name: "dupe", data_type: "text", description: "Second" },
+                ],
+              },
+            ),
+          [400, 402, 403],
+          "Scenario add-columns accepted duplicate request column names.",
+        );
+        if (isFeatureDeniedError(addColumnsDuplicate)) {
+          addColumnsEntitlementDenied = true;
+        }
+      }
+
+      if (!addColumnsEntitlementDenied) {
+        addColumnsExisting = await expectApiError(
+          () =>
+            client.post(
+              apiPath("/simulate/scenarios/{scenario_id}/add-columns/", {
+                scenario_id: scenarioId,
+              }),
+              {
+                columns: [
+                  {
+                    name: "input",
+                    data_type: "text",
+                    description: "Existing column",
+                  },
+                ],
+              },
+            ),
+          [400, 402, 403],
+          "Scenario add-columns accepted a column name already present in the dataset.",
+        );
+        if (isFeatureDeniedError(addColumnsExisting)) {
+          addColumnsEntitlementDenied = true;
+        }
+      }
+
+      if (!addColumnsEntitlementDenied) {
+        const addColumns = await client.post(
+          apiPath("/simulate/scenarios/{scenario_id}/add-columns/", {
+            scenario_id: scenarioId,
+          }),
+          {
+            columns: [
+              {
+                name: "api_journey_extra",
+                data_type: "text",
+                description: "Generated by scenario API journey.",
+              },
+            ],
+          },
+        );
+        assert(
+          asArray(addColumns.columns).includes("api_journey_extra"),
+          "Scenario add-columns success response did not include the requested column.",
+        );
+        addColumnsSucceeded = true;
+      }
+
+      if (!addRowsEntitlementDenied) {
+        const addRows = await client.post(
+          apiPath("/simulate/scenarios/{scenario_id}/add-rows/", {
+            scenario_id: scenarioId,
+          }),
+          { num_rows: 10, description: "Generated by scenario API journey." },
+        );
+        assert(
+          Number(addRows.num_rows) === 10 && addRows.dataset_id === datasetId,
+          "Scenario add-rows success response did not report the generated rows.",
+        );
+        addRowsSucceeded = true;
+      }
+
+      dbAudit = await loadSimulationScenarioDbAudit({
+        scenarioIds: [scenarioId, noDatasetScenarioId, noSimulatorScenarioId],
+        datasetId,
+        organizationId,
+      });
+      const expectedRows = addRowsSucceeded ? 12 : 2;
+      const expectedColumns = addColumnsSucceeded ? 3 : 2;
+      const minimumCells =
+        4 +
+        (addColumnsSucceeded ? 2 : 0) +
+        (addRowsSucceeded ? 10 * expectedColumns : 0);
+      assert(
+        Number(dbAudit.dataset_row_count) === expectedRows &&
+          Number(dbAudit.dataset_column_count) === expectedColumns &&
+          Number(dbAudit.dataset_cell_count) >= minimumCells,
+        "Scenario add-rows/add-columns DB audit did not show generated rows/cells.",
+      );
+
+      let createdScenarioId = null;
+      let createEntitlementDenied = false;
+      try {
+        const createdViaApi = await client.post(
+          apiPath("/simulate/scenarios/create/"),
+          {
+            name: `${name} created via API`,
+            description: "Temporary workflow-start scenario for API journey.",
+            dataset_id: datasetId,
+            kind: "dataset",
+            agent_definition_id: agentDefinitionId,
+            no_of_rows: 10,
+          },
+        );
+        createdScenarioId = createdViaApi?.scenario?.id;
+        assert(
+          isUuid(createdScenarioId) && createdViaApi.status === "processing",
+          "Scenario create did not return a processing scenario envelope.",
+        );
+      } catch (error) {
+        if (!isFeatureDeniedError(error)) throw error;
+        createEntitlementDenied = true;
+      }
+
+      await client.delete(
+        apiPath("/simulate/scenarios/{scenario_id}/delete/", {
+          scenario_id: scenarioId,
+        }),
+      );
+      const afterDelete = collectionRows(
+        await client.get(apiPath("/simulate/scenarios/"), {
+          query: { search: name, limit: 20 },
+        }),
+      );
+      assert(
+        !afterDelete.some((scenario) => scenario.id === scenarioId),
+        "Deleted scenario was still visible through list/search.",
+      );
+
+      dbAudit = await loadSimulationScenarioDbAudit({
+        scenarioIds: [scenarioId, createdScenarioId].filter(Boolean),
+        datasetId,
+        organizationId,
+      });
+      assert(
+        Number(dbAudit.deleted_scenario_count) >= 1 &&
+          Number(dbAudit.deleted_graph_count) >= 1,
+        "Scenario delete DB audit did not show deleted_at on scenario and graph rows.",
+      );
+
+      const hardCleanup = await deleteSimulationScenarioFixturesDb({
+        namePrefix: name,
+        organizationId,
+      });
+      hardCleaned = true;
+      const cleanupSucceeded =
+        Number(hardCleanup.remaining_scenario_count) === 0 &&
+        Number(hardCleanup.remaining_dataset_count) === 0 &&
+        Number(hardCleanup.remaining_agent_count) === 0 &&
+        Number(hardCleanup.remaining_simulator_agent_count) === 0;
+      assert(
+        cleanupSucceeded,
+        `Scenario hard cleanup left disposable DB rows behind: ${JSON.stringify(
+          hardCleanup,
+        )}`,
+      );
+
+      evidence.push({
+        scenario_id: scenarioId,
+        created_via_api_scenario_id: createdScenarioId,
+        dataset_id: datasetId,
+        agent_definition_id: agentDefinitionId,
+        invalid_list_param_status: invalidListParam.status,
+        invalid_list_agent_id_status: invalidListAgentId.status,
+        invalid_columns_json_status: invalidColumnsJson.status,
+        invalid_create_unknown_status: invalidCreateUnknown.status,
+        invalid_create_missing_agent_status: invalidCreateMissingAgent.status,
+        invalid_create_duplicate_columns_status:
+          invalidCreateDuplicateColumns.status,
+        no_simulator_edit_status: noSimulatorEdit.status,
+        no_simulator_prompts_status: noSimulatorPrompts.status,
+        add_rows_no_dataset_status: addRowsNoDataset.status,
+        add_rows_invalid_count_status: addRowsInvalidCount?.status || null,
+        add_rows_entitlement_denied: addRowsEntitlementDenied,
+        add_columns_no_dataset_status: addColumnsNoDataset.status,
+        add_columns_duplicate_status: addColumnsDuplicate?.status || null,
+        add_columns_existing_status: addColumnsExisting?.status || null,
+        add_columns_entitlement_denied: addColumnsEntitlementDenied,
+        add_rows_succeeded: addRowsSucceeded,
+        add_columns_succeeded: addColumnsSucceeded,
+        create_entitlement_denied: createEntitlementDenied,
+        dataset_row_count: Number(dbAudit.dataset_row_count),
+        dataset_column_count: Number(dbAudit.dataset_column_count),
+        deleted_scenario_count: Number(dbAudit.deleted_scenario_count),
+        deleted_graph_count: Number(dbAudit.deleted_graph_count),
+        hard_cleanup_deleted_scenario_count: Number(
+          hardCleanup.deleted_scenario_count,
+        ),
+        hard_cleanup_remaining_scenario_count: Number(
+          hardCleanup.remaining_scenario_count,
+        ),
+      });
+    },
+  },
+  {
     id: "SIM-API-004",
     title:
       "Simulation run-test create, chat execution setup, status guards, and cleanup",
@@ -5705,6 +6185,19 @@ function isEntitlementDeniedError(error) {
   );
 }
 
+function isFeatureDeniedError(error) {
+  const text = errorText(error).toLowerCase();
+  return (
+    [402, 403].includes(error?.status) &&
+    (text.includes("entitlement") ||
+      text.includes("upgrade") ||
+      text.includes("not available") ||
+      text.includes("agentic_eval") ||
+      text.includes("has_agentic_eval") ||
+      text.includes("synthetic_data"))
+  );
+}
+
 function assertApprox(actual, expected, message, tolerance = 0.0001) {
   const actualNumber = Number(actual);
   assert(
@@ -5948,6 +6441,710 @@ function findSdkCredentialLiterals(sdkCode) {
     }
   }
   return findings;
+}
+
+async function seedSimulationScenarioFixturesDb({
+  namePrefix,
+  organizationId,
+  workspaceId,
+  userId,
+}) {
+  const agentDefinitionId = randomUUID();
+  const simulatorAgentId = randomUUID();
+  const datasetId = randomUUID();
+  const inputColumnId = randomUUID();
+  const expectedColumnId = randomUUID();
+  const rowOneId = randomUUID();
+  const rowTwoId = randomUUID();
+  const scenarioId = randomUUID();
+  const noDatasetScenarioId = randomUUID();
+  const noSimulatorScenarioId = randomUUID();
+  const graphId = randomUUID();
+  const cellIds = [randomUUID(), randomUUID(), randomUUID(), randomUUID()];
+  const columnConfig = {
+    [inputColumnId]: {
+      name: "input",
+      type: "text",
+      description: "User input",
+    },
+    [expectedColumnId]: {
+      name: "expected",
+      type: "text",
+      description: "Expected output",
+    },
+  };
+  const sql = `
+WITH inserted_agent AS (
+  INSERT INTO simulate_agent_definition (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    agent_name,
+    contact_number,
+    inbound,
+    description,
+    assistant_id,
+    language,
+    websocket_url,
+    websocket_headers,
+    organization_id,
+    provider,
+    workspace_id,
+    agent_type,
+    api_key,
+    authentication_method,
+    languages,
+    model,
+    model_details
+  )
+  VALUES (
+    now(),
+    now(),
+    false,
+    NULL,
+    ${sqlUuid(agentDefinitionId)},
+    ${sqlString(`${namePrefix} agent`)},
+    NULL,
+    true,
+    ${sqlString("Temporary text agent definition for scenario API journey.")},
+    NULL,
+    'en',
+    NULL,
+    '{}'::jsonb,
+    ${sqlUuid(organizationId)},
+    NULL,
+    ${sqlUuid(workspaceId)},
+    'text',
+    NULL,
+    'api_key',
+    ARRAY['en']::varchar[],
+    'gpt-4o-mini',
+    ${sqlJson({ source: "api-journey", fixture: "scenario" })}
+  )
+  RETURNING id
+),
+inserted_simulator_agent AS (
+  INSERT INTO simulator_agents (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    prompt,
+    voice_provider,
+    voice_name,
+    interrupt_sensitivity,
+    conversation_speed,
+    finished_speaking_sensitivity,
+    model,
+    llm_temperature,
+    max_call_duration_in_minutes,
+    initial_message_delay,
+    initial_message,
+    organization_id,
+    workspace_id
+  )
+  VALUES (
+    now(),
+    now(),
+    false,
+    NULL,
+    ${sqlUuid(simulatorAgentId)},
+    ${sqlString(`${namePrefix} simulator`)},
+    ${sqlString("You are a temporary simulator agent for API journey coverage.")},
+    'elevenlabs',
+    'marissa',
+    0.5,
+    1.0,
+    0.5,
+    'gpt-4o-mini',
+    0.7,
+    30,
+    0,
+    '',
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)}
+  )
+  RETURNING id
+),
+inserted_dataset AS (
+  INSERT INTO model_hub_dataset (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    column_order,
+    model_type,
+    organization_id,
+    column_config,
+    source,
+    dataset_config,
+    user_id,
+    synthetic_dataset_config,
+    workspace_id,
+    eval_reasons,
+    eval_reason_status
+  )
+  VALUES (
+    now(),
+    now(),
+    false,
+    NULL,
+    ${sqlUuid(datasetId)},
+    ${sqlString(`${namePrefix} source dataset`)},
+    ARRAY[${sqlString(inputColumnId)}, ${sqlString(expectedColumnId)}]::varchar[],
+    'GenerativeLLM',
+    ${sqlUuid(organizationId)},
+    ${sqlJson(columnConfig)},
+    'scenario',
+    '{}'::jsonb,
+    ${sqlUuid(userId)},
+    '{}'::jsonb,
+    ${sqlUuid(workspaceId)},
+    '[]'::jsonb,
+    'pending'
+  )
+  RETURNING id
+),
+inserted_columns AS (
+  INSERT INTO model_hub_column (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    data_type,
+    source,
+    source_id,
+    dataset_id,
+    metadata,
+    status
+  )
+  VALUES
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(inputColumnId)},
+      'input',
+      'text',
+      'OTHERS',
+      NULL,
+      ${sqlUuid(datasetId)},
+      ${sqlJson({ description: "User input" })},
+      'Completed'
+    ),
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(expectedColumnId)},
+      'expected',
+      'text',
+      'OTHERS',
+      NULL,
+      ${sqlUuid(datasetId)},
+      ${sqlJson({ description: "Expected output" })},
+      'Completed'
+    )
+  RETURNING id
+),
+inserted_rows AS (
+  INSERT INTO model_hub_row (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    "order",
+    dataset_id,
+    metadata
+  )
+  VALUES
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(rowOneId)},
+      0,
+      ${sqlUuid(datasetId)},
+      ${sqlJson({ source: "api-journey", row: 1 })}
+    ),
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(rowTwoId)},
+      1,
+      ${sqlUuid(datasetId)},
+      ${sqlJson({ source: "api-journey", row: 2 })}
+    )
+  RETURNING id
+),
+inserted_cells AS (
+  INSERT INTO model_hub_cell (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    value,
+    column_id,
+    dataset_id,
+    row_id,
+    status,
+    value_infos,
+    feedback_info,
+    column_metadata
+  )
+  VALUES
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(cellIds[0])},
+      ${sqlString(`${namePrefix} input one`)},
+      ${sqlUuid(inputColumnId)},
+      ${sqlUuid(datasetId)},
+      ${sqlUuid(rowOneId)},
+      'pass',
+      '[]'::jsonb,
+      '{}'::jsonb,
+      '{}'::jsonb
+    ),
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(cellIds[1])},
+      ${sqlString(`${namePrefix} expected one`)},
+      ${sqlUuid(expectedColumnId)},
+      ${sqlUuid(datasetId)},
+      ${sqlUuid(rowOneId)},
+      'pass',
+      '[]'::jsonb,
+      '{}'::jsonb,
+      '{}'::jsonb
+    ),
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(cellIds[2])},
+      ${sqlString(`${namePrefix} input two`)},
+      ${sqlUuid(inputColumnId)},
+      ${sqlUuid(datasetId)},
+      ${sqlUuid(rowTwoId)},
+      'pass',
+      '[]'::jsonb,
+      '{}'::jsonb,
+      '{}'::jsonb
+    ),
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(cellIds[3])},
+      ${sqlString(`${namePrefix} expected two`)},
+      ${sqlUuid(expectedColumnId)},
+      ${sqlUuid(datasetId)},
+      ${sqlUuid(rowTwoId)},
+      'pass',
+      '[]'::jsonb,
+      '{}'::jsonb,
+      '{}'::jsonb
+    )
+  RETURNING id
+),
+inserted_scenarios AS (
+  INSERT INTO simulate_scenarios (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    source,
+    scenario_type,
+    organization_id,
+    dataset_id,
+    description,
+    workspace_id,
+    metadata,
+    simulator_agent_id,
+    status,
+    agent_definition_id,
+    source_type,
+    prompt_template_id,
+    prompt_version_id
+  )
+  VALUES
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(scenarioId)},
+      ${sqlString(`${namePrefix} completed`)},
+      ${sqlString(`${namePrefix} source`)},
+      'dataset',
+      ${sqlUuid(organizationId)},
+      ${sqlUuid(datasetId)},
+      ${sqlString("Temporary completed scenario for API journey coverage.")},
+      ${sqlUuid(workspaceId)},
+      ${sqlJson({ source: "api-journey", fixture: "scenario" })},
+      ${sqlUuid(simulatorAgentId)},
+      'Completed',
+      ${sqlUuid(agentDefinitionId)},
+      'agent_definition',
+      NULL,
+      NULL
+    ),
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(noDatasetScenarioId)},
+      ${sqlString(`${namePrefix} no dataset`)},
+      ${sqlString(`${namePrefix} no dataset source`)},
+      'graph',
+      ${sqlUuid(organizationId)},
+      NULL,
+      ${sqlString("Temporary no-dataset scenario for validation coverage.")},
+      ${sqlUuid(workspaceId)},
+      ${sqlJson({ source: "api-journey", fixture: "no-dataset" })},
+      ${sqlUuid(simulatorAgentId)},
+      'Completed',
+      ${sqlUuid(agentDefinitionId)},
+      'agent_definition',
+      NULL,
+      NULL
+    ),
+    (
+      now(),
+      now(),
+      false,
+      NULL,
+      ${sqlUuid(noSimulatorScenarioId)},
+      ${sqlString(`${namePrefix} no simulator`)},
+      ${sqlString(`${namePrefix} no simulator source`)},
+      'dataset',
+      ${sqlUuid(organizationId)},
+      ${sqlUuid(datasetId)},
+      ${sqlString("Temporary no-simulator scenario for validation coverage.")},
+      ${sqlUuid(workspaceId)},
+      ${sqlJson({ source: "api-journey", fixture: "no-simulator" })},
+      NULL,
+      'Completed',
+      ${sqlUuid(agentDefinitionId)},
+      'agent_definition',
+      NULL,
+      NULL
+    )
+  RETURNING id
+),
+inserted_graph AS (
+  INSERT INTO simulate_scenario_graph (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    description,
+    version,
+    is_active,
+    graph_config,
+    organization_id,
+    scenario_id
+  )
+  VALUES (
+    now(),
+    now(),
+    false,
+    NULL,
+    ${sqlUuid(graphId)},
+    ${sqlString(`${namePrefix} graph`)},
+    ${sqlString("Temporary scenario graph for API journey coverage.")},
+    1,
+    true,
+    ${sqlJson({
+      graph_data: {
+        nodes: [{ id: "start", type: "start" }],
+        edges: [],
+      },
+      source: "api-journey",
+    })},
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(scenarioId)}
+  )
+  RETURNING id
+)
+SELECT json_build_object(
+  'agent_definition_id', ${sqlString(agentDefinitionId)},
+  'simulator_agent_id', ${sqlString(simulatorAgentId)},
+  'dataset_id', ${sqlString(datasetId)},
+  'scenario_id', ${sqlString(scenarioId)},
+  'no_dataset_scenario_id', ${sqlString(noDatasetScenarioId)},
+  'no_simulator_scenario_id', ${sqlString(noSimulatorScenarioId)},
+  'graph_id', ${sqlString(graphId)},
+  'inserted_agent_count', (SELECT count(*) FROM inserted_agent),
+  'inserted_dataset_count', (SELECT count(*) FROM inserted_dataset),
+  'inserted_column_count', (SELECT count(*) FROM inserted_columns),
+  'inserted_row_count', (SELECT count(*) FROM inserted_rows),
+  'inserted_cell_count', (SELECT count(*) FROM inserted_cells),
+  'inserted_scenario_count', (SELECT count(*) FROM inserted_scenarios),
+  'inserted_graph_count', (SELECT count(*) FROM inserted_graph)
+);
+`;
+  const result = await runPostgresJson(sql);
+  assert(
+    Number(result.inserted_scenario_count) === 3 &&
+      Number(result.inserted_row_count) === 2 &&
+      Number(result.inserted_cell_count) === 4,
+    `Failed to seed disposable scenario fixture rows: ${JSON.stringify(result)}`,
+  );
+  return result;
+}
+
+async function loadSimulationScenarioDbAudit({
+  scenarioIds,
+  datasetId,
+  organizationId,
+}) {
+  const sql = `
+WITH selected_ids AS (
+  SELECT unnest(${sqlUuidArray(scenarioIds)}) AS id
+),
+selected_scenarios AS (
+  SELECT s.*
+  FROM simulate_scenarios s
+  JOIN selected_ids ids ON ids.id = s.id
+  WHERE s.organization_id = ${sqlUuid(organizationId)}
+),
+selected_graphs AS (
+  SELECT g.*
+  FROM simulate_scenario_graph g
+  JOIN selected_scenarios s ON s.id = g.scenario_id
+),
+selected_dataset AS (
+  SELECT d.*
+  FROM model_hub_dataset d
+  WHERE d.id = ${sqlUuid(datasetId)}
+    AND d.organization_id = ${sqlUuid(organizationId)}
+),
+selected_columns AS (
+  SELECT c.*
+  FROM model_hub_column c
+  JOIN selected_dataset d ON d.id = c.dataset_id
+  WHERE c.deleted = false
+),
+selected_rows AS (
+  SELECT r.*
+  FROM model_hub_row r
+  JOIN selected_dataset d ON d.id = r.dataset_id
+  WHERE r.deleted = false
+),
+selected_cells AS (
+  SELECT c.*
+  FROM model_hub_cell c
+  JOIN selected_dataset d ON d.id = c.dataset_id
+  WHERE c.deleted = false
+)
+SELECT json_build_object(
+  'scenarios', (
+    SELECT COALESCE(json_agg(json_build_object(
+      'id', id::text,
+      'name', name,
+      'scenario_type', scenario_type,
+      'source_type', source_type,
+      'organization_id', organization_id::text,
+      'workspace_id', workspace_id::text,
+      'dataset_id', dataset_id::text,
+      'agent_definition_id', agent_definition_id::text,
+      'simulator_agent_id', simulator_agent_id::text,
+      'status', status,
+      'deleted', deleted,
+      'deleted_at_set', deleted_at IS NOT NULL,
+      'metadata', metadata
+    ) ORDER BY created_at), '[]'::json)
+    FROM selected_scenarios
+  ),
+  'scenario_count', (SELECT count(*) FROM selected_scenarios),
+  'active_scenario_count', (
+    SELECT count(*) FROM selected_scenarios WHERE deleted = false
+  ),
+  'deleted_scenario_count', (
+    SELECT count(*) FROM selected_scenarios WHERE deleted = true AND deleted_at IS NOT NULL
+  ),
+  'graph_count', (SELECT count(*) FROM selected_graphs),
+  'active_graph_count', (
+    SELECT count(*) FROM selected_graphs WHERE deleted = false
+  ),
+  'deleted_graph_count', (
+    SELECT count(*) FROM selected_graphs WHERE deleted = true AND deleted_at IS NOT NULL
+  ),
+  'dataset_row_count', (SELECT count(*) FROM selected_rows),
+  'dataset_column_count', (SELECT count(*) FROM selected_columns),
+  'dataset_cell_count', (SELECT count(*) FROM selected_cells)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function deleteSimulationScenarioFixturesDb({
+  namePrefix,
+  organizationId,
+}) {
+  const sql = `
+WITH target_scenarios AS (
+  SELECT id, dataset_id, simulator_agent_id, agent_definition_id
+  FROM simulate_scenarios
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND name LIKE ${sqlString(`${namePrefix}%`)}
+),
+target_datasets AS (
+  SELECT id
+  FROM model_hub_dataset
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND (
+      name LIKE ${sqlString(`${namePrefix}%`)}
+      OR id IN (
+        SELECT dataset_id FROM target_scenarios WHERE dataset_id IS NOT NULL
+      )
+    )
+),
+target_simulator_agents AS (
+  SELECT id
+  FROM simulator_agents
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND (
+      name LIKE ${sqlString(`${namePrefix}%`)}
+      OR id IN (
+        SELECT simulator_agent_id
+        FROM target_scenarios
+        WHERE simulator_agent_id IS NOT NULL
+      )
+    )
+),
+target_agents AS (
+  SELECT id
+  FROM simulate_agent_definition
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND (
+      agent_name LIKE ${sqlString(`${namePrefix}%`)}
+      OR id IN (
+        SELECT agent_definition_id
+        FROM target_scenarios
+        WHERE agent_definition_id IS NOT NULL
+      )
+    )
+),
+target_graphs AS (
+  SELECT id
+  FROM simulate_scenario_graph
+  WHERE scenario_id IN (SELECT id FROM target_scenarios)
+),
+target_cells AS (
+  SELECT id
+  FROM model_hub_cell
+  WHERE dataset_id IN (SELECT id FROM target_datasets)
+),
+target_rows AS (
+  SELECT id
+  FROM model_hub_row
+  WHERE dataset_id IN (SELECT id FROM target_datasets)
+),
+target_columns AS (
+  SELECT id
+  FROM model_hub_column
+  WHERE dataset_id IN (SELECT id FROM target_datasets)
+),
+deleted_cells AS (
+  DELETE FROM model_hub_cell c
+  USING target_cells target
+  WHERE c.id = target.id
+  RETURNING c.id
+),
+deleted_rows AS (
+  DELETE FROM model_hub_row r
+  USING target_rows target
+  WHERE r.id = target.id
+  RETURNING r.id
+),
+deleted_columns AS (
+  DELETE FROM model_hub_column c
+  USING target_columns target
+  WHERE c.id = target.id
+  RETURNING c.id
+),
+deleted_graphs AS (
+  DELETE FROM simulate_scenario_graph g
+  USING target_graphs target
+  WHERE g.id = target.id
+  RETURNING g.id
+),
+deleted_scenarios AS (
+  DELETE FROM simulate_scenarios s
+  USING target_scenarios target
+  WHERE s.id = target.id
+  RETURNING s.id
+),
+deleted_simulator_agents AS (
+  DELETE FROM simulator_agents a
+  USING target_simulator_agents target
+  WHERE a.id = target.id
+  RETURNING a.id
+),
+deleted_agents AS (
+  DELETE FROM simulate_agent_definition a
+  USING target_agents target
+  WHERE a.id = target.id
+  RETURNING a.id
+),
+deleted_datasets AS (
+  DELETE FROM model_hub_dataset d
+  USING target_datasets target
+  WHERE d.id = target.id
+  RETURNING d.id
+)
+SELECT json_build_object(
+  'deleted_scenario_count', (SELECT count(*) FROM deleted_scenarios),
+  'deleted_graph_count', (SELECT count(*) FROM deleted_graphs),
+  'deleted_dataset_count', (SELECT count(*) FROM deleted_datasets),
+  'deleted_column_count', (SELECT count(*) FROM deleted_columns),
+  'deleted_row_count', (SELECT count(*) FROM deleted_rows),
+  'deleted_cell_count', (SELECT count(*) FROM deleted_cells),
+  'deleted_agent_count', (SELECT count(*) FROM deleted_agents),
+  'deleted_simulator_agent_count', (SELECT count(*) FROM deleted_simulator_agents),
+  'remaining_scenario_count',
+    (SELECT count(*) FROM target_scenarios) - (SELECT count(*) FROM deleted_scenarios),
+  'remaining_graph_count',
+    (SELECT count(*) FROM target_graphs) - (SELECT count(*) FROM deleted_graphs),
+  'remaining_dataset_count',
+    (SELECT count(*) FROM target_datasets) - (SELECT count(*) FROM deleted_datasets),
+  'remaining_agent_count',
+    (SELECT count(*) FROM target_agents) - (SELECT count(*) FROM deleted_agents),
+  'remaining_simulator_agent_count',
+    (SELECT count(*) FROM target_simulator_agents) - (SELECT count(*) FROM deleted_simulator_agents)
+);
+`;
+  return runPostgresJson(sql);
 }
 
 async function loadSimulationPersonaDbAudit({ personaIds, organizationId }) {

@@ -18,10 +18,12 @@ from unittest.mock import patch
 import pytest
 from rest_framework import status
 
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import AgentDefinition, Scenarios
+from simulate.models.scenario_graph import ScenarioGraph
 from simulate.models.simulator_agent import SimulatorAgent
 
 # ============================================================================
@@ -694,6 +696,54 @@ class TestCreateScenarioView:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_create_scenario_missing_agent_definition_id(self, auth_client, dataset):
+        """Agent-definition source scenarios must fail validation before temp row creation."""
+        payload = {
+            "name": "New Scenario",
+            "dataset_id": str(dataset.id),
+            "kind": "dataset",
+        }
+
+        response = auth_client.post(
+            "/simulate/scenarios/create/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "agent_definition_id" in response.json()["details"]
+
+    def test_create_scenario_other_workspace_agent_definition_returns_400(
+        self, auth_client, organization, dataset, user
+    ):
+        """Scenario creation must not resolve agent definitions outside the active workspace."""
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_agent = AgentDefinition.no_workspace_objects.create(
+            agent_name="Other Workspace Agent",
+            agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+            inbound=True,
+            description="Not visible from the active workspace",
+            organization=organization,
+            workspace=other_workspace,
+            languages=["en"],
+        )
+        payload = {
+            "name": "Cross Workspace Scenario",
+            "dataset_id": str(dataset.id),
+            "kind": "dataset",
+            "agent_definition_id": str(other_agent.id),
+        }
+
+        response = auth_client.post(
+            "/simulate/scenarios/create/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "agent_definition_id" in response.json()["details"]
+
     def test_create_scenario_script_missing_script_url(
         self, auth_client, agent_definition
     ):
@@ -898,6 +948,59 @@ class TestEditScenarioView:
         scenario.refresh_from_db()
         assert scenario.description == "Updated description"
 
+    def test_edit_scenario_description_to_blank(self, auth_client, scenario):
+        """Blank descriptions are valid updates and should not be ignored."""
+        scenario.description = "Description to clear"
+        scenario.save()
+        payload = {"description": ""}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario.id}/edit/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        scenario.refresh_from_db()
+        assert scenario.description == ""
+
+    def test_edit_scenario_prompt_to_blank(self, auth_client, scenario):
+        """Blank prompts are valid edit payloads when the scenario has a simulator agent."""
+        scenario.simulator_agent.prompt = "Prompt to clear"
+        scenario.simulator_agent.save()
+        payload = {"prompt": ""}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario.id}/edit/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        scenario.simulator_agent.refresh_from_db()
+        assert scenario.simulator_agent.prompt == ""
+
+    def test_edit_scenario_graph_success(self, auth_client, scenario):
+        """Graph edits should create/update ScenarioGraph without invalid model fields."""
+        payload = {"graph": {"nodes": [], "edges": []}}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario.id}/edit/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        graph = ScenarioGraph.objects.get(scenario=scenario, deleted=False)
+        assert graph.graph_config["graph_data"] == {"nodes": [], "edges": []}
+
+    def test_edit_scenario_prompt_without_simulator_agent_returns_400(
+        self, auth_client, scenario_prompt
+    ):
+        """Prompt edits should fail closed for scenarios without a simulator agent."""
+        payload = {"prompt": "Updated prompt"}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario_prompt.id}/edit/", payload, format="json"
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "associated simulator agent" in response.json()["result"]
+
     def test_edit_scenario_name_and_description(self, auth_client, scenario):
         """Test editing both name and description."""
         payload = {
@@ -1008,6 +1111,24 @@ class TestDeleteScenarioView:
         # Verify soft delete in database
         scenario.refresh_from_db()
         assert scenario.deleted is True
+        assert scenario.deleted_at is not None
+
+    def test_delete_scenario_soft_deletes_graphs(self, auth_client, scenario):
+        """Deleting a scenario should also hide its active graph rows."""
+        graph = ScenarioGraph.objects.create(
+            scenario=scenario,
+            name="Scenario Graph",
+            description="Graph to delete with scenario",
+            organization=scenario.organization,
+            graph_config={"graph_data": {"nodes": []}},
+        )
+
+        response = auth_client.delete(f"/simulate/scenarios/{scenario.id}/delete/")
+
+        assert response.status_code == status.HTTP_200_OK
+        graph.refresh_from_db()
+        assert graph.deleted is True
+        assert graph.deleted_at is not None
 
     def test_delete_scenario_unauthenticated(self, api_client, scenario):
         """Test deleting scenario without authentication returns 401/403."""
@@ -1103,6 +1224,21 @@ class TestEditScenarioPromptsView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_edit_prompts_without_simulator_agent_returns_400(
+        self, auth_client, scenario_prompt
+    ):
+        """Prompt route should not 500 when a scenario has no simulator agent."""
+        payload = {"prompts": "Updated prompt"}
+
+        response = auth_client.put(
+            f"/simulate/scenarios/{scenario_prompt.id}/prompts/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "associated simulator agent" in response.json()["result"]
 
     def test_edit_prompts_rejects_unknown_body_field(self, auth_client, scenario):
         """Runtime body validation should reject undeclared prompt fields."""

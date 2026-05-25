@@ -155,6 +155,27 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 "Dataset not found or not accessible."
             ) from e
 
+    def validate_agent_definition_id(self, value):
+        if not value:
+            return value
+        request = self.context.get("request")
+        if not request:
+            raise serializers.ValidationError("Request context is required.")
+        from simulate.models import AgentDefinition
+
+        try:
+            AgentDefinition.objects.get(
+                id=value,
+                deleted=False,
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+            )
+            return value
+        except AgentDefinition.DoesNotExist as e:
+            raise serializers.ValidationError(
+                "Agent definition not found or not accessible."
+            ) from e
+
     def validate_prompt_template_id(self, value):
         if not value:
             return value
@@ -170,8 +191,11 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 "organization": getattr(request, "organization", None)
                 or request.user.organization,
             }
-            if hasattr(request.user, "workspace") and request.user.workspace:
-                filters["workspace"] = request.user.workspace
+            request_workspace = getattr(request, "workspace", None) or getattr(
+                request.user, "workspace", None
+            )
+            if request_workspace:
+                filters["workspace"] = request_workspace
             PromptTemplate.objects.get(**filters)
             return value
         except PromptTemplate.DoesNotExist as e:
@@ -196,8 +220,11 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 )
                 or request.user.organization,
             }
-            if hasattr(request.user, "workspace") and request.user.workspace:
-                filters["original_template__workspace"] = request.user.workspace
+            request_workspace = getattr(request, "workspace", None) or getattr(
+                request.user, "workspace", None
+            )
+            if request_workspace:
+                filters["original_template__workspace"] = request_workspace
             PromptVersion.objects.get(**filters)
             return value
         except PromptVersion.DoesNotExist as e:
@@ -219,6 +246,18 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
         if kind == Scenarios.ScenarioTypes.SCRIPT and not data.get("script_url"):
             raise serializers.ValidationError(
                 {"script_url": "script_url is required for script kind."}
+            )
+
+        if (
+            source_type == Scenarios.SourceTypes.AGENT_DEFINITION
+            and not data.get("agent_definition_id")
+        ):
+            raise serializers.ValidationError(
+                {
+                    "agent_definition_id": (
+                        "agent_definition_id is required for agent_definition source type."
+                    )
+                }
             )
 
         if kind == Scenarios.ScenarioTypes.GRAPH:
