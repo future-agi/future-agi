@@ -12,6 +12,7 @@ import {
   Tab,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { TreeView, TreeItem } from "@mui/lab";
@@ -359,7 +360,14 @@ function renderTreeNode(node, onSelect) {
   );
 }
 
-function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
+function ColumnTreeSelect({
+  columnNames,
+  value,
+  onChange,
+  isUnmapped,
+  disabled = false,
+  disabledTooltip = "",
+}) {
   const [open, setOpen] = useState(false);
   const [typing, setTyping] = useState(false);
   const anchorRef = useRef(null);
@@ -393,46 +401,65 @@ function ColumnTreeSelect({ columnNames, value, onChange, isUnmapped }) {
     setTyping(false);
   };
 
-  return (
-    <Box sx={{ flex: 1 }}>
-      <TextField
-        ref={anchorRef}
-        size="small"
-        fullWidth
-        value={value}
-        placeholder="Select column"
-        onFocus={() => setOpen(true)}
-        onChange={(e) => {
-          setTyping(true);
-          onChange(e.target.value);
-          if (!open) setOpen(true);
-        }}
-        autoComplete="off"
-        inputProps={{
-          autoComplete: "off",
-          autoCorrect: "off",
-          spellCheck: false,
-        }}
-        InputProps={{
-          sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
-          endAdornment: (
-            <InputAdornment position="end">
+  const textField = (
+    <TextField
+      ref={anchorRef}
+      size="small"
+      fullWidth
+      value={value}
+      placeholder={disabled ? "Loading columns..." : "Select column"}
+      disabled={disabled}
+      onFocus={() => {
+        if (disabled) return;
+        setOpen(true);
+      }}
+      onChange={(e) => {
+        if (disabled) return;
+        setTyping(true);
+        onChange(e.target.value);
+        if (!open) setOpen(true);
+      }}
+      autoComplete="off"
+      inputProps={{
+        autoComplete: "off",
+        autoCorrect: "off",
+        spellCheck: false,
+      }}
+      InputProps={{
+        sx: { fontSize: "12px", fontFamily: "monospace", height: 30, py: 0 },
+        endAdornment: (
+          <InputAdornment position="end">
+            {disabled ? (
+              <CircularProgress size={14} />
+            ) : (
               <Iconify
                 icon={open ? "mdi:chevron-up" : "mdi:chevron-down"}
                 width={16}
                 sx={{ color: "text.disabled", cursor: "pointer" }}
                 onClick={() => { setOpen((p) => !p); setTyping(false); }}
               />
-            </InputAdornment>
-          ),
-        }}
-        sx={{
-          ...(isUnmapped && {
-            "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
-          }),
-        }}
-      />
-      {open && filtered.length > 0 && (
+            )}
+          </InputAdornment>
+        ),
+      }}
+      sx={{
+        ...(isUnmapped && {
+          "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
+        }),
+      }}
+    />
+  );
+
+  return (
+    <Box sx={{ flex: 1 }}>
+      {disabled && disabledTooltip ? (
+        <Tooltip title={disabledTooltip} placement="top" arrow>
+          <Box>{textField}</Box>
+        </Tooltip>
+      ) : (
+        textField
+      )}
+      {!disabled && open && filtered.length > 0 && (
         <Popper
           open
           anchorEl={anchorRef.current}
@@ -1222,6 +1249,8 @@ const DatasetTestMode = React.forwardRef(
               onChange={(_, newValue) => {
                 setSelectedDataset(newValue);
                 setSelectedDatasetId(newValue?.id || "");
+                setMapping({});
+                setColumns([]);
               }}
               onInputChange={(_, newInput, reason) => {
                 if (reason === "input") setDatasetSearch(newInput);
@@ -1629,6 +1658,8 @@ const DatasetTestMode = React.forwardRef(
                       }))
                     }
                     isUnmapped={isUnmapped}
+                    disabled={!isWorkbenchMode && loadingData}
+                    disabledTooltip="Columns are being fetched"
                   />
                 </Box>
               );
