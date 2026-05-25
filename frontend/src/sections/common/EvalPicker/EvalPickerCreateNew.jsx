@@ -53,6 +53,7 @@ import {
   contextOptionsForRowType,
   extractCodeEvaluateParams,
 } from "./evalPickerConfigUtils";
+import { useParams } from "react-router";
 
 const TRACING_ROW_TYPE_TO_KEY = {
   Span: "spans",
@@ -125,7 +126,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const sourceRef = useRef(null);
-
+  const {testId,executionId} = useParams();
   // Form state (same as EvalCreatePage)
   const [name, setName] = useState("");
   const [mode, setMode] = useState("single");
@@ -1181,6 +1182,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
                     isComposite={isComposite}
+                    initialRunTestId={testId}
+                    initialExecutionId={executionId}
                     compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}
