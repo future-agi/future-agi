@@ -1645,6 +1645,516 @@ export const annotationQueueJourneys = [
     },
   },
   {
+    id: "MUR-API-001",
+    title: "Creator all-role annotate/review mode separation",
+    tags: ["annotation", "mutating", "multi-user", "review", "db-audit"],
+    async run({
+      apiBase,
+      client,
+      cleanup,
+      evidence,
+      organizationId,
+      runId,
+      user,
+      workspaceId,
+    }) {
+      requireMutations();
+      const creatorId = assertCurrentUserResolved(user);
+      const altToken = process.env.API_JOURNEY_ALT_ACCESS_TOKEN || "";
+      if (!altToken) {
+        skip(
+          "Set API_JOURNEY_ALT_ACCESS_TOKEN for a second workspace annotator to run multi-role mode coverage.",
+        );
+      }
+      const altClient = createApiClient({
+        apiBase,
+        accessToken: altToken,
+        organizationId,
+        workspaceId,
+      });
+      const altUser = await altClient.get(apiPath("/accounts/user-info/"));
+      const altUserId = currentUserId(altUser);
+      assert(altUserId, "Alternate annotator user id could not be resolved.");
+      if (String(altUserId) === String(creatorId)) {
+        skip("Alternate token resolved to the creator user.");
+      }
+
+      const sample = await resolveTraceAndSpanSample(client);
+      const namePrefix = `api journey multi role ${runId}`;
+      const queueName = `${namePrefix} queue`;
+      const labelName = `${namePrefix} text label`;
+      cleanup.defer("hard-delete multi-role DB fixtures", () =>
+        deleteQueueCreateFixturesDb(namePrefix),
+      );
+
+      const labelResponse = await client.post(
+        apiPath("/model-hub/annotations-labels/"),
+        {
+          name: labelName,
+          type: "text",
+          description: "Disposable label for multi-role mode coverage.",
+          settings: {
+            placeholder: "Multi-role coverage",
+            min_length: 0,
+            max_length: 500,
+          },
+          allow_notes: true,
+        },
+      );
+      const label = labelResponse?.id
+        ? labelResponse
+        : await findAnnotationLabelByName(client, labelName);
+      assert(label?.id, "Could not resolve created multi-role label.");
+      cleanup.defer("delete multi-role label", () =>
+        deleteAnnotationLabelIfPresent(client, label.id),
+      );
+
+      let queue;
+      let reviewWorkflowMode = "enabled";
+      try {
+        queue = await client.post(apiPath("/model-hub/annotation-queues/"), {
+          name: queueName,
+          description: "Disposable queue for multi-role coverage.",
+          instructions: "Verify creator annotate and review modes.",
+          annotations_required: 1,
+          reservation_timeout_minutes: 30,
+          requires_review: true,
+          auto_assign: false,
+          label_ids: [label.id],
+          annotator_ids: [creatorId, altUserId],
+          annotator_roles: {
+            [String(creatorId)]: ["manager", "reviewer", "annotator"],
+            [String(altUserId)]: ["annotator"],
+          },
+        });
+      } catch (error) {
+        if (error.status === 402 || error.status === 403) {
+          reviewWorkflowMode = "entitlement_blocked";
+          evidence.push({
+            review_workflow_entitlement_status: error.status,
+            review_workflow_entitlement_body: error.body,
+          });
+          queue = await client.post(apiPath("/model-hub/annotation-queues/"), {
+            name: queueName,
+            description: "Disposable queue for multi-role coverage.",
+            instructions: "Verify creator annotate and review-mode reads.",
+            annotations_required: 1,
+            reservation_timeout_minutes: 30,
+            requires_review: false,
+            auto_assign: false,
+            label_ids: [label.id],
+            annotator_ids: [creatorId, altUserId],
+            annotator_roles: {
+              [String(creatorId)]: ["manager", "reviewer", "annotator"],
+              [String(altUserId)]: ["annotator"],
+            },
+          });
+        } else {
+          throw error;
+        }
+      }
+      assert(queue?.id, "Multi-role queue create returned no id.");
+      cleanup.defer("hard-delete multi-role queue", () =>
+        hardDeleteQueueIfPresent(client, queue.id, queueName),
+      );
+
+      await restoreQueueStatusIfNeeded(client, queue.id, "active");
+      const reviewWorkflowEnabled = reviewWorkflowMode === "enabled";
+
+      const creatorQueueDetail = await client.get(
+        apiPath("/model-hub/annotation-queues/{id}/", { id: queue.id }),
+      );
+      const creatorMember = asArray(creatorQueueDetail.annotators).find(
+        (annotator) => String(annotator.user_id) === String(creatorId),
+      );
+      const altMember = asArray(creatorQueueDetail.annotators).find(
+        (annotator) => String(annotator.user_id) === String(altUserId),
+      );
+      assert(
+        asArray(creatorQueueDetail.viewer_roles).includes("manager") &&
+          asArray(creatorQueueDetail.viewer_roles).includes("reviewer") &&
+          asArray(creatorQueueDetail.viewer_roles).includes("annotator") &&
+          sameJsonValue(asArray(creatorMember?.roles), [
+            "manager",
+            "reviewer",
+            "annotator",
+          ]) &&
+          sameJsonValue(asArray(altMember?.roles), ["annotator"]),
+        `Multi-role queue detail exposed wrong memberships: ${JSON.stringify(
+          creatorQueueDetail,
+        )}.`,
+      );
+
+      const altQueueDetail = await altClient.get(
+        apiPath("/model-hub/annotation-queues/{id}/", { id: queue.id }),
+      );
+      assert(
+        sameJsonValue(asArray(altQueueDetail.viewer_roles), ["annotator"]),
+        `Alternate user should only see annotator role: ${JSON.stringify(
+          altQueueDetail.viewer_roles,
+        )}.`,
+      );
+
+      const creatorItem = await client.post(
+        queuePath("/model-hub/annotation-queues/{queue_id}/items/", queue.id),
+        {
+          source_type: "trace",
+          source_id: sample.traceId,
+          status: "pending",
+          priority: 4,
+          order: 8101,
+          metadata: { api_journey: runId, stage: "multi-role-creator" },
+        },
+      );
+      const altItem = await client.post(
+        queuePath("/model-hub/annotation-queues/{queue_id}/items/", queue.id),
+        {
+          source_type: "observation_span",
+          source_id: sample.spanId,
+          status: "pending",
+          priority: 4,
+          order: 8102,
+          metadata: { api_journey: runId, stage: "multi-role-alt" },
+        },
+      );
+      assert(
+        creatorItem?.id && altItem?.id,
+        "Multi-role item create returned no ids.",
+      );
+      cleanup.defer("delete multi-role creator item", () =>
+        deleteQueueItemIfPresent(client, queue.id, creatorItem.id),
+      );
+      cleanup.defer("delete multi-role alternate item", () =>
+        deleteQueueItemIfPresent(client, queue.id, altItem.id),
+      );
+
+      await client.post(
+        queuePath(
+          "/model-hub/annotation-queues/{queue_id}/items/assign/",
+          queue.id,
+        ),
+        {
+          item_ids: [creatorItem.id],
+          user_ids: [creatorId],
+          action: "set",
+        },
+      );
+      await client.post(
+        queuePath(
+          "/model-hub/annotation-queues/{queue_id}/items/assign/",
+          queue.id,
+        ),
+        {
+          item_ids: [altItem.id],
+          user_ids: [altUserId],
+          action: "set",
+        },
+      );
+
+      const creatorAnnotatePath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/",
+        queue.id,
+        { id: creatorItem.id },
+      );
+      const creatorSubmitPath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/",
+        queue.id,
+        { id: creatorItem.id },
+      );
+      const creatorCompletePath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/complete/",
+        queue.id,
+        { id: creatorItem.id },
+      );
+      const creatorReviewPath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/review/",
+        queue.id,
+        { id: creatorItem.id },
+      );
+      const creatorValue = { text: `creator all-role value ${runId}` };
+      await client.post(creatorSubmitPath, {
+        annotations: [
+          {
+            label_id: label.id,
+            value: creatorValue,
+            notes: `creator all-role note ${runId}`,
+          },
+        ],
+      });
+      await client.post(creatorCompletePath, {
+        exclude: [creatorItem.id, altItem.id],
+      });
+
+      const creatorOwnDetail = await client.get(creatorAnnotatePath, {
+        query: { include_completed: true },
+      });
+      assert(
+        creatorOwnDetail.item?.status ===
+          (reviewWorkflowEnabled ? "in_progress" : "completed") &&
+          (reviewWorkflowEnabled
+            ? creatorOwnDetail.item?.review_status === "pending_review"
+            : !creatorOwnDetail.item?.review_status) &&
+          asArray(creatorOwnDetail.annotations).some(
+            (score) =>
+              String(score.annotator) === String(creatorId) &&
+              sameJsonValue(score.value, creatorValue),
+          ),
+        `Creator annotate mode did not keep own pending-review draft: ${JSON.stringify(
+          creatorOwnDetail,
+        )}.`,
+      );
+      const creatorReviewDetail = await client.get(creatorAnnotatePath, {
+        query: reviewWorkflowEnabled
+          ? { review_status: "pending_review", include_completed: true }
+          : {
+              view_mode: "review",
+              include_completed: true,
+              include_all_annotations: true,
+            },
+      });
+      assert(
+        asArray(creatorReviewDetail.annotations).some(
+          (score) => String(score.annotator) === String(creatorId),
+        ),
+        "Creator review mode could not open the mode-test item.",
+      );
+      let selfReviewStatus = null;
+      if (reviewWorkflowEnabled) {
+        const selfReview = await expectHttpError(
+          () => client.post(creatorReviewPath, { action: "approve" }),
+          403,
+          "cannot review your own annotation",
+        );
+        selfReviewStatus = selfReview.status;
+      }
+
+      const altAnnotatePath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/annotate-detail/",
+        queue.id,
+        { id: altItem.id },
+      );
+      const altSubmitPath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/annotations/submit/",
+        queue.id,
+        { id: altItem.id },
+      );
+      const altCompletePath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/complete/",
+        queue.id,
+        { id: altItem.id },
+      );
+      const altReviewPath = queuePath(
+        "/model-hub/annotation-queues/{queue_id}/items/{id}/review/",
+        queue.id,
+        { id: altItem.id },
+      );
+      const altValue = { text: `alternate annotator value ${runId}` };
+      await altClient.get(altAnnotatePath, {
+        query: { include_completed: true },
+      });
+      await altClient.post(altSubmitPath, {
+        annotations: [
+          {
+            label_id: label.id,
+            value: altValue,
+            notes: `alternate annotator note ${runId}`,
+          },
+        ],
+      });
+      await altClient.post(altCompletePath, {
+        exclude: [creatorItem.id, altItem.id],
+      });
+
+      let reviewNextItemId = null;
+      let reviewCommentResult = null;
+      let finalAltDetail;
+      if (reviewWorkflowEnabled) {
+        const reviewNext = await client.get(
+          queuePath(
+            "/model-hub/annotation-queues/{queue_id}/items/next-item/",
+            queue.id,
+          ),
+          { query: { view_mode: "review", review_status: "pending_review" } },
+        );
+        assert(
+          String(reviewNext.item?.id) === String(altItem.id),
+          `Review navigation did not choose the non-self pending-review item: ${JSON.stringify(
+            reviewNext,
+          )}.`,
+        );
+        reviewNextItemId = reviewNext.item?.id || null;
+
+        const pendingReviewItems = asArray(
+          await client.get(
+            queuePath(
+              "/model-hub/annotation-queues/{queue_id}/items/",
+              queue.id,
+            ),
+            { query: { review_status: "pending_review", limit: 100 } },
+          ),
+        );
+        assert(
+          pendingReviewItems.some(
+            (item) => String(item.id) === String(creatorItem.id),
+          ) &&
+            pendingReviewItems.some(
+              (item) => String(item.id) === String(altItem.id),
+            ),
+          `Pending-review list did not expose both mode-test items: ${JSON.stringify(
+            pendingReviewItems,
+          )}.`,
+        );
+      }
+
+      const altReviewDetail = await client.get(altAnnotatePath, {
+        query: reviewWorkflowEnabled
+          ? { view_mode: "review", review_status: "pending_review" }
+          : {
+              view_mode: "review",
+              include_completed: true,
+              include_all_annotations: true,
+            },
+      });
+      assert(
+        (reviewWorkflowEnabled
+          ? altReviewDetail.item?.review_status === "pending_review"
+          : altReviewDetail.item?.status === "completed") &&
+          asArray(altReviewDetail.annotations).some(
+            (score) =>
+              String(score.annotator) === String(altUserId) &&
+              sameJsonValue(score.value, altValue),
+          ),
+        "Creator review mode did not load alternate annotator submission.",
+      );
+
+      if (reviewWorkflowEnabled) {
+        const approveNote = `all-role reviewer approved ${runId}`;
+        const approved = await client.post(altReviewPath, {
+          action: "approve",
+          notes: approveNote,
+        });
+        assert(
+          approved.action === "approve" &&
+            asArray(approved.review_comments).some(
+              (comment) =>
+                comment.action === "approve" && comment.comment === approveNote,
+            ),
+          `Approve response did not include reviewer approval comment: ${JSON.stringify(
+            approved,
+          )}.`,
+        );
+        finalAltDetail = await client.get(altAnnotatePath, {
+          query: { include_completed: true, include_all_annotations: true },
+        });
+        assert(
+          finalAltDetail.item?.status === "completed" &&
+            finalAltDetail.item?.review_status === "approved",
+          `Approved alternate item did not reload as completed/approved: ${JSON.stringify(
+            finalAltDetail.item,
+          )}.`,
+        );
+      } else {
+        const commentText = `all-role review-mode comment ${runId}`;
+        const reviewComment = await client.post(altReviewPath, {
+          action: "comment",
+          notes: commentText,
+        });
+        assert(
+          reviewComment.action === "comment" &&
+            asArray(reviewComment.review_comments).some(
+              (comment) =>
+                comment.action === "comment" && comment.comment === commentText,
+            ),
+          `Review-mode comment did not persist on non-review queue: ${JSON.stringify(
+            reviewComment,
+          )}.`,
+        );
+        reviewCommentResult = "comment_saved";
+        finalAltDetail = await client.get(altAnnotatePath, {
+          query: { include_completed: true, include_all_annotations: true },
+        });
+        assert(
+          finalAltDetail.item?.status === "completed" &&
+            !finalAltDetail.item?.review_status,
+          `Non-review alternate item did not stay completed without review status: ${JSON.stringify(
+            finalAltDetail.item,
+          )}.`,
+        );
+      }
+
+      const queueAudit = await loadQueueStatusDbAudit(queue.id);
+      const creatorMemberAudit = await loadQueueMemberDbAudit(
+        queue.id,
+        creatorId,
+      );
+      const altMemberAudit = await loadQueueMemberDbAudit(queue.id, altUserId);
+      const metricsAudit = await loadQueueMetricsDbAudit(queue.id, creatorId);
+      const creatorItemAudit = await loadQueueItemDbAudit(creatorItem.id);
+      const altItemAudit = await loadQueueItemDbAudit(altItem.id);
+      assert(
+        queueAudit.requires_review === reviewWorkflowEnabled &&
+          String(queueAudit.organization_id) === String(organizationId) &&
+          String(queueAudit.workspace_id) === String(workspaceId) &&
+          sameJsonValue(asArray(creatorMemberAudit.member?.roles), [
+            "manager",
+            "reviewer",
+            "annotator",
+          ]) &&
+          sameJsonValue(asArray(altMemberAudit.member?.roles), ["annotator"]),
+        `Multi-role DB membership audit mismatch: ${JSON.stringify({
+          queueAudit,
+          creatorMemberAudit,
+          altMemberAudit,
+        })}.`,
+      );
+      const scoreRows = asArray(metricsAudit.scores);
+      assert(
+        scoreRows.some(
+          (score) =>
+            String(score.queue_item_id) === String(creatorItem.id) &&
+            String(score.annotator_id) === String(creatorId) &&
+            sameJsonValue(score.value, creatorValue),
+        ) &&
+          scoreRows.some(
+            (score) =>
+              String(score.queue_item_id) === String(altItem.id) &&
+              String(score.annotator_id) === String(altUserId) &&
+              sameJsonValue(score.value, altValue),
+          ) &&
+          creatorItemAudit.status ===
+            (reviewWorkflowEnabled ? "in_progress" : "completed") &&
+          altItemAudit.status === "completed" &&
+          Number(creatorItemAudit.active_scores) === 1 &&
+          Number(altItemAudit.active_scores) === 1 &&
+          Number(altItemAudit.active_review_comments) >= 1,
+        `Multi-role DB item/score audit mismatch: ${JSON.stringify({
+          metricsAudit,
+          creatorItemAudit,
+          altItemAudit,
+        })}.`,
+      );
+
+      evidence.push({
+        queue_id: queue.id,
+        label_id: label.id,
+        creator_id: creatorId,
+        alt_annotator_id: altUserId,
+        creator_roles: creatorMemberAudit.member?.roles,
+        alt_roles: altMemberAudit.member?.roles,
+        review_workflow_mode: reviewWorkflowMode,
+        creator_item_id: creatorItem.id,
+        alt_item_id: altItem.id,
+        creator_self_review_status: selfReviewStatus,
+        review_comment_result: reviewCommentResult,
+        review_next_item_id: reviewNextItemId,
+        final_alt_status: finalAltDetail.item?.status,
+        final_alt_review_status: finalAltDetail.item?.review_status,
+        db_score_count: scoreRows.length,
+        alt_review_comment_count: altItemAudit.active_review_comments,
+      });
+    },
+  },
+  {
     id: "AQ-API-031",
     title:
       "Annotation history, raw scores, value history, and item notes reload",
