@@ -1090,8 +1090,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # 'choice': 'never'}") when output_float/output_str_list are empty.
         # Keyed by (trace_id, config_id); only the most recent row per pair.
         _str_lookup_configs = [
-            c for c in eval_configs
-            if ((getattr(getattr(c, "eval_template", None), "config", None) or {}).get("output"))
+            c
+            for c in eval_configs
+            if (
+                (getattr(getattr(c, "eval_template", None), "config", None) or {}).get(
+                    "output"
+                )
+            )
             in (EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value)
         ]
         output_str_map: dict[tuple, "EvalLogger"] = {}
@@ -1218,11 +1223,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         else None
                     )
                     log = output_str_map.get((trace.id, config.id))
-                    if log and log.output_str and tpl_output in (
-                        EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value,
+                    if (
+                        log
+                        and log.output_str
+                        and tpl_output
+                        in (
+                            EvalOutputType.CHOICES.value,
+                            EvalOutputType.SCORE.value,
+                        )
                     ):
                         try:
                             import ast as _ast_mod
+
                             parsed = _ast_mod.literal_eval(log.output_str)
                         except (ValueError, SyntaxError):
                             parsed = None
@@ -1231,7 +1243,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                                 choice = parsed.get("choice")
                                 if choice:
                                     metric_entry["output"] = [choice]
-                                    metric_entry["output_type"] = EvalOutputType.CHOICES.value
+                                    metric_entry["output_type"] = (
+                                        EvalOutputType.CHOICES.value
+                                    )
                                     # Mirror as top-level `score` so the
                                     # drawer's `e?.score ?? e?.output ?? e?.value`
                                     # lookup hits a string and renders verbatim
@@ -1246,7 +1260,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                                     metric_entry["output"] = round(
                                         float(score_val) * 100, 2
                                     )
-                                    metric_entry["output_type"] = EvalOutputType.SCORE.value
+                                    metric_entry["output_type"] = (
+                                        EvalOutputType.SCORE.value
+                                    )
 
                 metrics[str(config.id)] = metric_entry
             if metrics:
@@ -3799,14 +3815,22 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 if log.output_str_list:
                     # Legacy categorical eval — pre-agent-evaluator path
                     metric_entry["output"] = log.output_str_list
-                elif output_type == EvalOutputType.PASS_FAIL.value and log.output_bool is not None:
+                elif (
+                    output_type == EvalOutputType.PASS_FAIL.value
+                    and log.output_bool is not None
+                ):
                     metric_entry["output"] = "Pass" if log.output_bool else "Fail"
                 elif log.output_float is not None:
                     # Score evals on the legacy storage path.
                     metric_entry["output"] = round(log.output_float * 100, 2)
-                elif output_type in (
-                    EvalOutputType.CHOICES.value, EvalOutputType.SCORE.value,
-                ) and log.output_str:
+                elif (
+                    output_type
+                    in (
+                        EvalOutputType.CHOICES.value,
+                        EvalOutputType.SCORE.value,
+                    )
+                    and log.output_str
+                ):
                     # New agent-evaluator path: output_str holds a Python dict
                     # literal like "{'score': 0.0, 'choice': 'never'}". For
                     # choices evals, use `choice`; for score evals, use `score`.
@@ -3815,6 +3839,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     # verbatim without a frontend change.
                     try:
                         import ast as _ast_mod
+
                         parsed = _ast_mod.literal_eval(log.output_str)
                     except (ValueError, SyntaxError):
                         parsed = None
@@ -5955,6 +5980,157 @@ class UsersView(APIView):
         except Exception as e:
             logger.exception(f"ERROR {e}")
             return self._gm.bad_request(f"error fetching users: {str(e)}")
+
+
+class UsersExportView(APIView):
+    """Export the Users tab as a CSV.
+
+    Mirrors the parsing and filtering of `UsersView` but ignores pagination so
+    every matching row is written to the response. Columns match the static
+    set the frontend shows in its column-visibility menu (visible + hidden).
+    """
+
+    permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
+
+    EXPORT_COLUMNS = [
+        ("User ID", "user_id"),
+        ("User ID Type", "user_id_type"),
+        ("User ID Hash", "user_id_hash"),
+        ("First Active", "activated_at"),
+        ("Last Active", "last_active"),
+        ("No. of Traces", "num_traces"),
+        ("No. of Sessions", "num_sessions"),
+        ("Avg Session Duration (s)", "avg_session_duration"),
+        ("Total Tokens", "total_tokens"),
+        ("Total Cost ($)", "total_cost"),
+        ("Avg Latency / Trace (ms)", "avg_trace_latency"),
+        ("No. of LLM Calls", "num_llm_calls"),
+        ("Guardrails Triggered", "num_guardrails_triggered"),
+        ("Evals Pass Rate (%)", "bool_eval_pass_rate"),
+        ("Input Tokens", "input_tokens"),
+        ("Output Tokens", "output_tokens"),
+    ]
+
+    COLUMN_MAPPING = {
+        "user_id": "user_id",
+        "activated_at": "created_at",
+        "avg_trace_latency": "avg_latency_trace",
+        "total_cost": "total_cost",
+        "total_tokens": "total_tokens",
+        "input_tokens": "input_tokens",
+        "output_tokens": "output_tokens",
+        "num_traces": "num_traces",
+        "num_sessions": "COALESCE(fo.num_sessions, 0)",
+        "avg_session_duration": "avg_session_duration_seconds",
+        "num_llm_calls": "num_llm_calls",
+        "num_guardrails_triggered": "num_guardrails_triggered",
+        "last_active": "la.last_active",
+        "num_active_days": "num_active_days",
+        "num_traces_with_errors": "num_traces_with_errors",
+        "bool_eval_pass_rate": "bool_eval_pass_rate",
+        "avg_output_float": "avg_output_float",
+        "user_id_hash": "user_id_hash",
+        "user_id_type": "user_id_type",
+    }
+
+    def get(self, request, *args, **kwargs):
+        try:
+            project_id = request.query_params.get("project_id") or None
+            search = request.query_params.get("search", "")
+            search_name = search.strip() if search else None
+            organization_id = request.user.organization.id
+
+            sort_params = request.query_params.get("sort_params", [])
+            filters = request.query_params.get("filters", [])
+
+            if isinstance(sort_params, str):
+                try:
+                    sort_params = json.loads(sort_params)
+                except (ValueError, TypeError):
+                    sort_params = []
+
+            if isinstance(filters, str):
+                try:
+                    filters = json.loads(filters)
+                except (ValueError, TypeError):
+                    filters = []
+
+            column = None
+            sort_order = None
+            if isinstance(sort_params, dict) and sort_params:
+                column = self.COLUMN_MAPPING.get(sort_params.get("column_id"))
+                direction = sort_params.get("direction", "asc")
+                sort_order = "DESC" if direction == "desc" else "ASC"
+
+            query_params = {
+                "org_id": organization_id,
+                "project_id": project_id,
+                "search_name": search_name,
+                # limit=offset=None makes get_spans_by_end_users skip LIMIT/OFFSET,
+                # returning every matching row for the export.
+                "limit": None,
+                "offset": None,
+                "filters": filters,
+                "column_map": self.COLUMN_MAPPING,
+                "workspace_id": request.workspace.id,
+            }
+            if column and sort_order:
+                query_params["sort_by"] = column
+                query_params["sort_order"] = sort_order
+
+            results = SQLQueryHandler.get_spans_by_end_users(**query_params)
+
+            filename = (
+                f"users_{project_id or 'all'}_"
+                f"{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
+            )
+            response = HttpResponse(content_type="text/csv")
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+
+            headers = [h for h, _ in self.EXPORT_COLUMNS]
+            writer = csv.writer(response)
+            writer.writerow(headers)
+
+            for result in results:
+                row = {
+                    "user_id": result[0],
+                    "total_cost": round(result[1], 6) if result[1] else 0,
+                    "total_tokens": result[2],
+                    "input_tokens": result[3],
+                    "output_tokens": result[4],
+                    "num_traces": result[5],
+                    "num_sessions": result[6],
+                    "avg_session_duration": result[7],
+                    "avg_trace_latency": result[8],
+                    "num_llm_calls": result[9],
+                    "num_guardrails_triggered": result[10],
+                    "activated_at": result[11],
+                    "last_active": result[12],
+                    "bool_eval_pass_rate": result[15],
+                    "user_id_type": result[19],
+                    "user_id_hash": result[20],
+                }
+                writer.writerow(
+                    [
+                        self._format_cell(row.get(field))
+                        for _, field in self.EXPORT_COLUMNS
+                    ]
+                )
+
+            return response
+
+        except Exception as e:
+            logger.exception(f"ERROR {e}")
+            return self._gm.bad_request(f"error exporting users: {str(e)}")
+
+    @staticmethod
+    def _format_cell(value):
+        if value is None:
+            return ""
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return value
 
 
 class GetUserCodeExampleView(APIView):
