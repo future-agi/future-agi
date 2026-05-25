@@ -55,6 +55,9 @@ test-logs/
 .github/
 .gitlab-ci.yml
 .codex-tmp/
+**/.codex-tmp/
+.playwright-mcp/
+**/.playwright-mcp/
 ee.local-leftover/
 
 # Documentation (not needed in image)
