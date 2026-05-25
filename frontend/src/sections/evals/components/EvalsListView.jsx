@@ -293,7 +293,9 @@ const EvalsListView = () => {
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
   // Derive API params
-  const ownerFilter = filters?.owner || "all";
+  const ownerFilter = filters?.owner_not
+    ? (filters.owner_not === "system" ? "user" : "all")
+    : (filters?.owner || "all");
   // `filters.name` from the dropdown is an exact-match list; a single typed
   // value falls back to `search` (fuzzy name__icontains). Multi-select is
   // sent as `filters.names` (name__in).
@@ -307,16 +309,51 @@ const EvalsListView = () => {
     if (!filters) return null;
     const f = {};
     if (filters.eval_type) f.eval_type = filters.eval_type;
+    if (filters.eval_type_not) f.eval_type_not = filters.eval_type_not;
     if (filters.output_type) f.output_type = filters.output_type;
+    if (filters.output_type_not) f.output_type_not = filters.output_type_not;
     if (filters.template_type) f.template_type = filters.template_type;
+    if (filters.template_type_not) f.template_type_not = filters.template_type_not;
     if (filters.tags) f.tags = filters.tags;
+    if (filters.tags_not) f.tags_not = filters.tags_not;
     if (filters.created_by) f.created_by = filters.created_by;
+    if (filters.created_by_not) f.created_by_not = filters.created_by_not;
     if (Array.isArray(filters.name) && filters.name.length > 0) {
       f.names = filters.name;
     } else if (Array.isArray(filters.names) && filters.names.length > 0) {
       f.names = filters.names;
     }
+    if (Array.isArray(filters.name_not) && filters.name_not.length > 0) {
+      f.names_not = filters.name_not;
+    }
     return Object.keys(f).length > 0 ? f : null;
+  }, [filters]);
+
+  // Convert internal API-shaped state back to display-shaped state for
+  // the filter panel. Collapses owner/created_by/owner_not/created_by_not
+  // back to a single "owner" or "owner_not" field with user-visible values.
+  const panelFilters = useMemo(() => {
+    if (!filters) return null;
+    const f = { ...filters };
+    // Reconstruct negated owner display
+    if (Array.isArray(filters.created_by_not) && filters.created_by_not.length > 0) {
+      const negated = [...filters.created_by_not];
+      if (filters.owner_not === "system") negated.push("System");
+      f.owner_not = negated;
+    } else if (filters.owner_not === "system") {
+      f.owner_not = ["System"];
+    }
+    // Reconstruct positive owner display
+    if (Array.isArray(filters.created_by) && filters.created_by.length > 0) {
+      f.owner = [...filters.created_by];
+    } else if (filters.owner === "system") {
+      f.owner = ["System"];
+    } else if (filters.owner === "user" || filters.owner === "all") {
+      delete f.owner;
+    }
+    delete f.created_by;
+    delete f.created_by_not;
+    return f;
   }, [filters]);
 
   // Map TanStack sorting to API params
@@ -644,10 +681,11 @@ const EvalsListView = () => {
   }, []);
 
   const activeFilterCount = useMemo(() => {
-    if (!filters) return 0;
-    return Object.keys(filters).filter((k) => k !== "_tokens" && filters[k])
-      .length;
-  }, [filters]);
+    if (!panelFilters) return 0;
+    return Object.keys(panelFilters).filter(
+      (k) => k !== "_tokens" && panelFilters[k],
+    ).length;
+  }, [panelFilters]);
 
   const handleCancelSelection = useCallback(() => {
     setRowSelection({});
@@ -883,7 +921,7 @@ const EvalsListView = () => {
         open={Boolean(filterAnchorEl)}
         onClose={() => setFilterAnchorEl(null)}
         filterFields={filterFields}
-        currentFilters={filters}
+        currentFilters={panelFilters}
         onApply={(result) => {
           // FilterPanel Basic tab returns {field: [values]}, Query tab returns [{field, op, value}]
           if (!result) {
@@ -891,6 +929,19 @@ const EvalsListView = () => {
             setPage(0);
             return;
           }
+          // Shared: split owner values into system scope + user names
+          const normalizeOwner = (vals, isNeg, target) => {
+            const hasSystem = vals.some((v) => v.toLowerCase() === "system");
+            const userNames = vals.filter((v) => v.toLowerCase() !== "system");
+            if (isNeg) {
+              if (hasSystem) target.owner_not = "system";
+              if (userNames.length) target.created_by_not = userNames;
+            } else {
+              if (hasSystem && !userNames.length) target.owner = "system";
+              else if (!hasSystem && userNames.length) target.owner = "user";
+              if (userNames.length) target.created_by = userNames;
+            }
+          };
           if (Array.isArray(result)) {
             // Query tab — convert token array to flat object
             const flat = {};
@@ -901,46 +952,33 @@ const EvalsListView = () => {
                   ? [t.value]
                   : [];
               if (!val.length) continue;
+              const isNeg = t.operator === "is_not" || t.operator === "not_equals";
               if (t.field === "owner") {
-                const hasSystem = val.some((v) => v.toLowerCase() === "system");
-                const userNames = val.filter(
-                  (v) => v.toLowerCase() !== "system",
-                );
-                if (hasSystem && !userNames.length) flat.owner = "system";
-                else if (!hasSystem && userNames.length) flat.owner = "user";
-                if (userNames.length) flat.created_by = userNames;
+                normalizeOwner(val, isNeg, flat);
               } else if (t.field === "name") {
-                // Single free-text entry → fuzzy `search`; everything else
-                // (including single dropdown pick) → exact match via `name`.
-                // The `apiFilters` memo handles the final name → names/search
-                // transform.
-                if (t.operator === "contains" && val.length === 1) {
+                if (isNeg) {
+                  flat.name_not = val;
+                } else if (t.operator === "contains" && val.length === 1) {
                   flat.search = val[0];
                 } else {
                   flat.name = val;
                 }
               } else {
-                flat[t.field] = val;
+                const key = isNeg ? `${t.field}_not` : t.field;
+                flat[key] = val;
               }
             }
             setFilters(Object.keys(flat).length > 0 ? flat : null);
           } else {
             // Basic tab — already a flat object {field: [values]}.
-            // Leave `flat.name` alone (may be string or array) — `apiFilters`
-            // decides between `names` (exact multi) and `search` (fuzzy one).
             const flat = { ...result };
-            if (flat.owner) {
-              const vals = Array.isArray(flat.owner)
-                ? flat.owner
-                : [flat.owner];
-              const hasSystem = vals.some((v) => v.toLowerCase() === "system");
-              const userNames = vals.filter(
-                (v) => v.toLowerCase() !== "system",
-              );
+            const isNegOwner = Boolean(flat.owner_not);
+            const rawOwner = flat.owner_not || flat.owner;
+            if (rawOwner) {
+              const vals = Array.isArray(rawOwner) ? rawOwner : [rawOwner];
               delete flat.owner;
-              if (hasSystem && !userNames.length) flat.owner = "system";
-              else if (!hasSystem && userNames.length) flat.owner = "user";
-              if (userNames.length) flat.created_by = userNames;
+              delete flat.owner_not;
+              normalizeOwner(vals, isNegOwner, flat);
             }
             setFilters(Object.keys(flat).length > 0 ? flat : null);
           }

@@ -2,6 +2,20 @@ import csv
 import traceback
 
 import structlog
+
+
+def _escape_csv_cell(value):
+    """Defang CSV-formula injection: prefix a leading formula trigger with a
+    single quote so spreadsheet apps (Excel/Sheets/LibreOffice) treat the cell
+    as a literal string rather than evaluating it as a formula. Triggers per
+    OWASP CSV-injection guidance: =, +, -, @, tab, carriage return.
+    """
+    if value is None:
+        return ""
+    s = str(value)
+    if s and s[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + s
+    return s
 from django.db.models import Case, Prefetch, When
 from django.http import HttpResponse
 from rest_framework import status
@@ -401,12 +415,12 @@ class PerformanceDetailsExport(APIView):
                 each_performance = performance[idx]
                 writer.writerow(
                     [
-                        node_message_input[idx].message.content,
-                        node_message_output[idx].message.content,
-                        each_performance[2],
-                        each_performance[3],
-                        each_performance[6],
-                        each_performance[1],
+                        _escape_csv_cell(node_message_input[idx].message.content),
+                        _escape_csv_cell(node_message_output[idx].message.content),
+                        _escape_csv_cell(each_performance[2]),
+                        _escape_csv_cell(each_performance[3]),
+                        _escape_csv_cell(each_performance[6]),
+                        _escape_csv_cell(each_performance[1]),
                     ]
                 )
 

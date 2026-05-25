@@ -1256,7 +1256,10 @@ const TracingTestMode = React.forwardRef(
             </Typography>
             <Tabs
               value={rowType}
-              onChange={(_, val) => setRowType(val)}
+              onChange={(_, val) => {
+                setRowType(val);
+                setMapping({});
+              }}
               variant="standard"
               scrollButtons={false}
               TabIndicatorProps={{ style: { display: "none" } }}

@@ -7,6 +7,7 @@ import jinja2
 from jinja2 import Environment
 
 from agentic_eval.core.llm.llm import LLM
+from agentic_eval.core.utils.jinja_utils import nest_dotted_value
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 from agentic_eval.core.utils.llm_payloads import detect_and_build_media_blocks
 from agentic_eval.core.utils.model_config import ModelConfigs
@@ -18,6 +19,10 @@ from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 
 from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 
+# Maximum chars of context that get injected into the eval prompt. Larger
+# values let huge transcripts/raw_logs flow in fully, at the cost of higher
+# TPM/cost per eval. Tuned for the 200K-window judge models. See TH-4905.
+_MAX_CONTEXT_CHARS = 200000
 
 class CustomPromptEvaluator(LLM):
     """
@@ -209,12 +214,12 @@ class CustomPromptEvaluator(LLM):
                 raise ValueError(f"Missing required key in kwargs: {key}")
             value = kwargs[key]
             # Apply context windowing for large values (traces, spans, JSON blobs)
-            if isinstance(value, str) and len(value) > 15000:
-                value = fit_to_context(value, max_total_chars=15000, label=key)
+            if isinstance(value, str) and len(value) > _MAX_CONTEXT_CHARS:
+                value = fit_to_context(value, max_total_chars=_MAX_CONTEXT_CHARS, label=key)
             elif isinstance(value, (dict, list)):
                 serialized = json.dumps(value, default=str)
-                if len(serialized) > 15000:
-                    value = fit_to_context(value, max_total_chars=15000, label=key)
+                if len(serialized) > _MAX_CONTEXT_CHARS:
+                    value = fit_to_context(value, max_total_chars=_MAX_CONTEXT_CHARS, label=key)
             template_context[key] = value
 
         # Render the rule prompt with the template context using Jinja2
@@ -245,6 +250,12 @@ class CustomPromptEvaluator(LLM):
                     prompt_to_render = prompt_to_render.replace(
                         "{{ " + stripped + " }}", replacement
                     )
+                elif "." in stripped and stripped in safe_context:
+                    # Jinja parses dots as nested access; numeric segments
+                    # become list indices.
+                    parts = stripped.split(".")
+                    value = safe_context.pop(stripped)
+                    nest_dotted_value(safe_context, parts, value)
 
             # In Jinja mode, parse JSON strings to native objects right
             # before rendering so {% for %} loops work correctly.
@@ -291,12 +302,12 @@ class CustomPromptEvaluator(LLM):
             rendered_prompt += "\n\n## Data\n"
             if isinstance(row_context, (dict, list)):
                 rendered_prompt += fit_row_to_context(
-                    row_context, max_chars=15000
+                    row_context, max_chars=_MAX_CONTEXT_CHARS
                 )
             else:
                 ctx_str = str(row_context)
-                if len(ctx_str) > 15000:
-                    ctx_str = fit_to_context(ctx_str, max_total_chars=15000, label="data")
+                if len(ctx_str) > _MAX_CONTEXT_CHARS:
+                    ctx_str = fit_to_context(ctx_str, max_total_chars=_MAX_CONTEXT_CHARS, label="data")
                 rendered_prompt += ctx_str
 
         logger.info(

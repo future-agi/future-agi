@@ -58,6 +58,7 @@ from tracer.models.observation_span import (
 )
 from tracer.models.project import Project
 from tracer.models.trace import Trace
+from tracer.services.clickhouse.query_builders.base import NIL_UUID
 
 session_logger = structlog.get_logger(__name__)
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -552,6 +553,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 WHERE trace_id IN %(trace_ids)s
                   AND custom_eval_config_id IN %(config_ids)s
                   AND _peerdb_is_deleted = 0
+                  AND (deleted = 0 OR deleted IS NULL)
                   AND output_str != 'ERROR'
                   AND (error = 0 OR error IS NULL)
                 GROUP BY trace_id, custom_eval_config_id
@@ -681,6 +683,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     WHERE project_id = %(project_id)s
                       AND _peerdb_is_deleted = 0
                       AND trace_session_id IS NOT NULL
+                      AND trace_session_id != toUUID('{NIL_UUID}')
                       AND (parent_span_id IS NULL OR parent_span_id = '')
                     GROUP BY trace_session_id
                 )
@@ -696,12 +699,16 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 search_clause = (
                     f"AND toString({ch_column}) ILIKE %(search)s" if search else ""
                 )
+                nil_uuid_clause = (
+                    f"AND {ch_column} != toUUID('{NIL_UUID}')" if is_uuid else ""
+                )
                 query = f"""
                 SELECT DISTINCT {select_expr} AS val
                 FROM spans
                 WHERE project_id = %(project_id)s
                   AND _peerdb_is_deleted = 0
                   AND {ch_column} IS NOT NULL
+                  {nil_uuid_clause}
                   AND (parent_span_id IS NULL OR parent_span_id = '')
                   {search_clause}
                 ORDER BY val
@@ -1421,7 +1428,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 _eu_qs = _eu_qs.filter(project_id=project_id)
             _ids = [str(u) for u in _eu_qs.values_list("id", flat=True)]
             if not _ids:
-                _ids = ["00000000-0000-0000-0000-000000000000"]
+                _ids = [NIL_UUID]
             filters.append(
                 {
                     "column_id": "end_user_id",

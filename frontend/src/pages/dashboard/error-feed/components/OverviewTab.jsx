@@ -19,6 +19,7 @@ import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
 import {
+  DEEP_ANALYSIS_STATUS,
   useErrorFeedDeepAnalysis,
   useErrorFeedOverview,
 } from "src/api/errorFeed/error-feed";
@@ -1645,11 +1646,11 @@ export default function OverviewTab({ _error: currentError }) {
   // currently-selected trace. When status flips to ``done`` we smooth-
   // scroll to the results panel.
   const { data: deepAnalysis } = useErrorFeedDeepAnalysis(clusterId, trace?.id);
-  const deepAnalysisState = deepAnalysis?.status ?? "idle";
+  const deepAnalysisState = deepAnalysis?.status ?? DEEP_ANALYSIS_STATUS.IDLE;
   const deepAnalysisRef = useRef(null);
 
   useEffect(() => {
-    if (deepAnalysisState === "done" && deepAnalysisRef.current) {
+    if (deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE && deepAnalysisRef.current) {
       deepAnalysisRef.current.scrollIntoView({
         behavior: "smooth",
         block: "start",
@@ -1909,7 +1910,7 @@ export default function OverviewTab({ _error: currentError }) {
             )}
 
             {/* Deep analysis results — shown only when done */}
-            {deepAnalysisState === "done" && (
+            {deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE && (
               <Box ref={deepAnalysisRef}>
                 <Stack direction="row" alignItems="center" gap={1} mb={1.75}>
                   <Box sx={{ flex: 1, height: "1px", bgcolor: "divider" }} />

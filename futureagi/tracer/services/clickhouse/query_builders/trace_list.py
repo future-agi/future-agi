@@ -439,6 +439,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             ) AS str_lists
         FROM {self.EVAL_TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
+          AND (deleted = 0 OR deleted IS NULL)
           AND trace_id IN %(trace_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY trace_id, custom_eval_config_id

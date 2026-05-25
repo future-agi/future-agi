@@ -68,6 +68,26 @@ class TestCompositeEvalCreateAPI:
         assert parent.template_type == "composite"
         assert CompositeEvalChild.objects.filter(parent=parent).count() == 2
 
+    def test_create_composite_stores_child_configs(
+        self, auth_client, child_eval_1, child_eval_2
+    ):
+        response = auth_client.post(
+            self.url,
+            {
+                "name": "param-composite",
+                "child_template_ids": [str(child_eval_1.id), str(child_eval_2.id)],
+                "child_configs": {
+                    str(child_eval_2.id): {"params": {"min_words": 5}},
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        parent = EvalTemplate.objects.get(id=response.data["result"]["id"])
+        link = CompositeEvalChild.objects.get(parent=parent, child=child_eval_2)
+        assert link.config == {"params": {"min_words": 5}}
+
     def test_create_composite_invalid_child(self, auth_client, child_eval_1):
         response = auth_client.post(
             self.url,
@@ -128,6 +148,31 @@ class TestCompositeEvalDetailAPI:
         assert len(result["children"]) == 2
         assert result["children"][0]["child_name"] == "child-eval-one"
         assert result["children"][1]["child_name"] == "child-eval-two"
+
+    def test_get_composite_detail_includes_child_configs(
+        self, auth_client, child_eval_1, child_eval_2
+    ):
+        response = auth_client.post(
+            "/model-hub/eval-templates/create-composite/",
+            {
+                "name": "detail-config-composite",
+                "child_template_ids": [str(child_eval_1.id), str(child_eval_2.id)],
+                "child_configs": {
+                    str(child_eval_2.id): {"params": {"max_words": 12}},
+                },
+            },
+            format="json",
+        )
+        composite_id = response.data["result"]["id"]
+
+        response = auth_client.get(
+            f"/model-hub/eval-templates/{composite_id}/composite/"
+        )
+
+        assert response.status_code == 200
+        children = response.data["result"]["children"]
+        child = next(c for c in children if c["child_id"] == str(child_eval_2.id))
+        assert child["config"] == {"params": {"max_words": 12}}
 
     def test_get_nonexistent_composite(self, auth_client):
         response = auth_client.get(

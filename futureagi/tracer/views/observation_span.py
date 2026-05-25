@@ -2044,6 +2044,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
             "FROM tracer_eval_logger FINAL "
             "WHERE _peerdb_is_deleted = 0 "
+            "AND (deleted = 0 OR deleted IS NULL) "
             "AND dictGet('trace_dict', 'project_id', "
             "trace_id) = toUUID(%(pid)s)",
             {"pid": str(project_id)},

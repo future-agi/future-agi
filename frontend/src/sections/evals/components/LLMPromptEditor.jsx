@@ -29,6 +29,7 @@ const LLMPromptEditor = ({
   datasetColumns = [],
   datasetJsonSchemas = {},
   disabled = false,
+  modelSelectorDisabled,
   // Optional model selector — forwarded to MessageEditor's top bar so
   // the model picker and template format picker share the same row.
   model,
@@ -353,6 +354,7 @@ const LLMPromptEditor = ({
         datasetColumns={datasetColumns}
         datasetJsonSchemas={datasetJsonSchemas}
         disabled={disabled}
+        modelSelectorDisabled={modelSelectorDisabled}
       />
     </Box>
   );
@@ -366,6 +368,7 @@ LLMPromptEditor.propTypes = {
   model: PropTypes.string,
   onModelChange: PropTypes.func,
   disabled: PropTypes.bool,
+  modelSelectorDisabled: PropTypes.bool,
 };
 
 export default LLMPromptEditor;

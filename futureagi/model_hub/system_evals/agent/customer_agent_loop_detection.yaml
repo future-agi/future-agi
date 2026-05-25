@@ -1,17 +1,7 @@
 eval_id: 112
 name: customer_agent_loop_detection
 description: Identifies if the bot gets stuck asking the same question repeatedly or circling back in loops.
-criteria: "You are evaluating whether the agent gets stuck in repetitive loops during the conversation.\n\n## Criteria\n\n\
-  1. Repeated questions: The agent asking the same question after already receiving an answer.\n   - Never: Agent never repeats\
-  \ a question unnecessarily.\n   - Always: Agent asks the same question 3+ times despite receiving answers.\n\n2. Circular\
-  \ patterns: The agent cycling through the same sequence of responses.\n   - Never: Conversation progresses linearly toward\
-  \ resolution.\n   - Always: Agent keeps returning to the same script points in a cycle.\n\n3. Scripted dead ends: The agent\
-  \ defaulting to the same fallback response repeatedly.\n   - Never: Each response adds new value or moves forward.\n   -\
-  \ Always: Agent says \"Let me check on that\" repeatedly without progress.\n\n## Anti-bias Rules\n\n- Asking the user to\
-  \ re-enter information due to invalid input (e.g., wrong format) is NOT a loop.\n- Summarizing for confirmation is NOT repetition.\n\
-  - Short conversations may lack evidence for loops; default to 'never' if insufficient evidence.\n\n## Scoring\n\nSelect\
-  \ 'never' if no unnecessary repetition occurs. Select 'occasionally' if 1-2 minor instances. Select 'frequently' if repetition\
-  \ causes noticeable friction. Select 'always' if the agent is clearly stuck in a loop.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
+criteria: "You are evaluating whether the agent gets stuck in repetitive loops during the conversation.\n\n## Criteria\n\n1. Repetitive utterances: The agent reuses the same question or the same fallback response despite having already received relevant input.\n   - Never: Each question or fallback is used at most once when warranted.\n   - Always: The agent repeats the same question or \"Let me check on that\" three or more times despite prior answers.\n\n2. Multi-turn cycles: The agent cycles through the same sequence of responses across multiple turns.\n   - Never: Conversation progresses linearly without returning to earlier script segments.\n   - Always: The agent keeps revisiting the same multi-step script segment in a cycle.\n\n3. Failure to incorporate new input: The agent ignores or fails to build on information the user has already supplied.\n   - Never: Each user turn visibly affects the agent's next response.\n   - Always: The agent proceeds as if the user's input did not exist or was not understood.\n\n## Anti-bias Rules\n\n- Asking the user to re-enter information due to invalid input (e.g., wrong format) is NOT a loop.\n- Summarizing for confirmation is NOT repetition.\n- Short conversations may lack evidence for loops; default to 'never' if insufficient evidence.\n\n## Scoring\n\nSelect 'never' if no loop-like behavior occurs. Select 'occasionally' if 1-2 minor instances. Select 'frequently' if loop-like behavior causes noticeable friction. Select 'always' if the agent is clearly stuck.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 eval_tags:
 - Agents
 - Conversation
@@ -44,18 +34,7 @@ config:
     - DATETIME
   config_params_desc:
     conversation: The conversation to be evaluated
-  rule_prompt: "You are evaluating whether the agent gets stuck in repetitive loops during the conversation.\n\n## Criteria\n\
-    \n1. Repeated questions: The agent asking the same question after already receiving an answer.\n   - Never: Agent never\
-    \ repeats a question unnecessarily.\n   - Always: Agent asks the same question 3+ times despite receiving answers.\n\n\
-    2. Circular patterns: The agent cycling through the same sequence of responses.\n   - Never: Conversation progresses linearly\
-    \ toward resolution.\n   - Always: Agent keeps returning to the same script points in a cycle.\n\n3. Scripted dead ends:\
-    \ The agent defaulting to the same fallback response repeatedly.\n   - Never: Each response adds new value or moves forward.\n\
-    \   - Always: Agent says \"Let me check on that\" repeatedly without progress.\n\n## Anti-bias Rules\n\n- Asking the user\
-    \ to re-enter information due to invalid input (e.g., wrong format) is NOT a loop.\n- Summarizing for confirmation is\
-    \ NOT repetition.\n- Short conversations may lack evidence for loops; default to 'never' if insufficient evidence.\n\n\
-    ## Scoring\n\nSelect 'never' if no unnecessary repetition occurs. Select 'occasionally' if 1-2 minor instances. Select\
-    \ 'frequently' if repetition causes noticeable friction. Select 'always' if the agent is clearly stuck in a loop.\n\n\
-    ## Inputs\n\n<conversation>{{conversation}}</conversation>"
+  rule_prompt: "You are evaluating whether the agent gets stuck in repetitive loops during the conversation.\n\n## Criteria\n\n1. Repetitive utterances: The agent reuses the same question or the same fallback response despite having already received relevant input.\n   - Never: Each question or fallback is used at most once when warranted.\n   - Always: The agent repeats the same question or \"Let me check on that\" three or more times despite prior answers.\n\n2. Multi-turn cycles: The agent cycles through the same sequence of responses across multiple turns.\n   - Never: Conversation progresses linearly without returning to earlier script segments.\n   - Always: The agent keeps revisiting the same multi-step script segment in a cycle.\n\n3. Failure to incorporate new input: The agent ignores or fails to build on information the user has already supplied.\n   - Never: Each user turn visibly affects the agent's next response.\n   - Always: The agent proceeds as if the user's input did not exist or was not understood.\n\n## Anti-bias Rules\n\n- Asking the user to re-enter information due to invalid input (e.g., wrong format) is NOT a loop.\n- Summarizing for confirmation is NOT repetition.\n- Short conversations may lack evidence for loops; default to 'never' if insufficient evidence.\n\n## Scoring\n\nSelect 'never' if no loop-like behavior occurs. Select 'occasionally' if 1-2 minor instances. Select 'frequently' if loop-like behavior causes noticeable friction. Select 'always' if the agent is clearly stuck.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>"
 choice_scores:
   never: 1.0
   occasionally: 0.66

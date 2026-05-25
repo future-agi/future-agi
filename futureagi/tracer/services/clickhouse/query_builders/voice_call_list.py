@@ -217,19 +217,41 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             "eval_config_ids": tuple(self.eval_config_ids),
         }
 
+        # Include errored rows but compute aggregates only over successful
+        # rows (error = 0). ``success_count`` / ``error_count`` let the
+        # pivot surface an explicit error state on the UI when every eval
+        # row for a (trace, config) pair errored.
+        # Column order must match what ``pivot_eval_results`` expects:
+        # trace_id, eval_config_id, avg_score, pass_rate, success_count,
+        # error_count, eval_count, str_lists.
         query = f"""
         SELECT
             trace_id,
             toString(custom_eval_config_id) AS eval_config_id,
-            -- ifNotFinite(, NULL): avg over an all-NULL group returns NaN, which
-            -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
-            ifNotFinite(avg(output_float), NULL) AS avg_score,
-            ifNotFinite(avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END), NULL)
-                AS pass_rate,
+            -- ifNotFinite(, NULL): avgIf over an all-NULL group returns NaN,
+            -- which json.dumps(allow_nan=False) rejects. NULL serializes as null.
+            ifNotFinite(avgIf(
+                output_float,
+                error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ), NULL) AS avg_score,
+            ifNotFinite(avgIf(
+                CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
+                error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ), NULL) AS pass_rate,
+            countIf(
+                error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS success_count,
+            countIf(
+                error = 1 OR ifNull(output_str, '') = 'ERROR'
+            ) AS error_count,
             count() AS eval_count,
-            any(output_str_list) AS output_str_list
+            groupArrayIf(
+                output_str_list,
+                error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS str_lists
         FROM {self.EVAL_TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
+          AND (deleted = 0 OR deleted IS NULL)
           AND trace_id IN %(trace_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY trace_id, custom_eval_config_id

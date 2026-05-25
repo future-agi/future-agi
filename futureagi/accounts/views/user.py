@@ -117,6 +117,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                     return self._gm.bad_request(
                         {
                             "error": f"Account temporarily blocked. Please try again in {minutes_left} minutes.",
+                            "error_code": "LOGIN_ACCOUNT_BLOCKED",
                             "blocked": True,
                             "block_time_remaining": int(block_expiry - current_time),
                         }
@@ -135,7 +136,10 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 if not verify_recaptcha(recaptcha_token):
                     logger.error("recaptcha verification failed")
                     return self._gm.bad_request(
-                        {"error": "reCAPTCHA verification failed"}
+                        {
+                            "error": "reCAPTCHA verification failed",
+                            "error_code": "LOGIN_RECAPTCHA_FAILED",
+                        }
                     )
                 else:
                     logger.info("recaptcha verification passed")
@@ -155,10 +159,27 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 cache.set(
                     attempts_key, failed_attempts, settings.FAILED_ATTEMPTS_TIMEOUT
                 )
+                if failed_attempts >= settings.MAX_LOGIN_ATTEMPTS:
+                    block_key = f"user_blocked_{email}"
+                    block_data = {
+                        "blocked": True,
+                        "expiry": datetime.now().timestamp()
+                        + settings.FAILED_ATTEMPTS_TIMEOUT,
+                    }
+                    cache.set(block_key, block_data, settings.FAILED_ATTEMPTS_TIMEOUT)
+                    return self._gm.bad_request(
+                        {
+                            "error": "Too many failed login attempts. Account blocked for 1 hour.",
+                            "error_code": "LOGIN_TOO_MANY_ATTEMPTS",
+                            "blocked": True,
+                            "block_time": settings.FAILED_ATTEMPTS_TIMEOUT,
+                        }
+                    )
                 remaining_attempts = settings.MAX_LOGIN_ATTEMPTS - failed_attempts
                 return self._gm.bad_request(
                     {
                         "error": "Invalid credentials",
+                        "error_code": "LOGIN_INVALID_CREDENTIALS",
                         "remaining_attempts": remaining_attempts,
                     }
                 )
@@ -172,6 +193,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 return self._gm.bad_request(
                     {
                         "error": "Account deactivated",
+                        "error_code": "LOGIN_ACCOUNT_DEACTIVATED",
                         "message": "Your account has been deactivated. Please contact your organization admin.",
                     }
                 )
@@ -189,10 +211,27 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 cache.set(
                     attempts_key, failed_attempts, settings.FAILED_ATTEMPTS_TIMEOUT
                 )
+                if failed_attempts >= settings.MAX_LOGIN_ATTEMPTS:
+                    block_key = f"user_blocked_{email}"
+                    block_data = {
+                        "blocked": True,
+                        "expiry": datetime.now().timestamp()
+                        + settings.FAILED_ATTEMPTS_TIMEOUT,
+                    }
+                    cache.set(block_key, block_data, settings.FAILED_ATTEMPTS_TIMEOUT)
+                    return self._gm.bad_request(
+                        {
+                            "error": "Too many failed login attempts. Account blocked for 1 hour.",
+                            "error_code": "LOGIN_TOO_MANY_ATTEMPTS",
+                            "blocked": True,
+                            "block_time": settings.FAILED_ATTEMPTS_TIMEOUT,
+                        }
+                    )
                 remaining_attempts = settings.MAX_LOGIN_ATTEMPTS - failed_attempts
                 return self._gm.bad_request(
                     {
                         "error": "Invalid credentials",
+                        "error_code": "LOGIN_INVALID_CREDENTIALS",
                         "remaining_attempts": remaining_attempts,
                     }
                 )
@@ -388,6 +427,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
                 return self._gm.bad_request(
                     {
                         "error": "Too many failed login attempts. Account blocked for 1 hour.",
+                        "error_code": "LOGIN_TOO_MANY_ATTEMPTS",
                         "blocked": True,
                         "block_time": settings.FAILED_ATTEMPTS_TIMEOUT,
                     }
@@ -396,6 +436,7 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             return self._gm.bad_request(
                 {
                     "error": "Login failed",
+                    "error_code": "LOGIN_UNEXPECTED_ERROR",
                     "message": "An unexpected error occurred. Please try again.",
                     "remaining_attempts": remaining_attempts,
                 }

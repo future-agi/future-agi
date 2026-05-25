@@ -58,7 +58,7 @@ const PersonaListContent = ({
       >
         <Iconify icon="akar-icons:cross" />
       </IconButton>
-      <Box sx={{ flex: 1, overflow: "hidden", display: "flex", p: 2 }}>
+      <Box sx={{ flex: 1, minHeight: 0, p: 2, display: "flex", flexDirection: "column" }}>
         <PersonaListView
           onCreatePersona={onCreatePersona}
           selectedPersonas={selectedPersonas}

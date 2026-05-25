@@ -779,6 +779,11 @@ class CompositeEvalChild(ModelBaseModel):
         default=1.0,
         help_text="Weight for weighted aggregation (0.0-10.0)",
     )
+    config = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Per-binding child eval runtime config overrides.",
+    )
 
     class Meta:
         db_table = "model_hub_composite_eval_child"

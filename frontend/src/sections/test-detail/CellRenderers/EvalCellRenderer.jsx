@@ -8,32 +8,23 @@ import FormattedValueReason from "src/sections/evals/EvaluationsTabs/FormattedRe
 import { CallExecutionLoadingStatus, TestRunLoadingStatus } from "../common";
 import NumericCell from "../../common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
-
-const getScorePercentage = (s, decimalPlaces = 0) => {
-  if (s <= 0) s = 0;
-  // Scores on 0-1 scale get multiplied by 100; scores already on 0-100 stay as-is
-  const score = s <= 1 ? s * 100 : s;
-  return Number(score.toFixed(decimalPlaces));
-};
+import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 
 const EvalCellRenderer = ({ value: evalData }) => {
+  // Numeric output type keeps its dedicated cell.
+  const isNumeric = evalData?.type === OutputTypes.NUMERIC;
+  const result = normalizeEvalResult(evalData?.value, evalData?.type);
   const getBgColor = () => {
-    if (evalData?.type === "score") {
-      if (!_.isNumber(evalData?.value)) return "";
-      const maxScore = evalData.value <= 1 ? 1 : 100;
-      return interpolateColorBasedOnScore(evalData.value, maxScore);
-    } else if (evalData?.type === "Pass/Fail") {
-      return evalData?.value
-        ? evalData?.value?.includes("Fail")
-          ? interpolateColorBasedOnScore(0, 1)
-          : interpolateColorBasedOnScore(1, 1)
-        : "";
-    } else if (
-      evalData?.type === "choices" ||
-      evalData?.type === OutputTypes.NUMERIC
-    ) {
-      return null;
+    if (result.kind === "score") {
+      const maxScore = result.score <= 1 ? 1 : 100;
+      return interpolateColorBasedOnScore(result.score, maxScore);
     }
+    if (result.kind === "passfail") {
+      return result.pass
+        ? interpolateColorBasedOnScore(1, 1)
+        : interpolateColorBasedOnScore(0, 1);
+    }
+    return null;
   };
 
   const renderContent = () => {
@@ -80,38 +71,33 @@ const EvalCellRenderer = ({ value: evalData }) => {
         </Box>
       );
     }
-    if (
-      evalData?.value === null ||
-      evalData?.value === undefined ||
-      (Array.isArray(evalData?.value) && evalData.value.length === 0)
-    ) {
-      return <Box sx={{ padding: 1 }}>-</Box>;
+    if (isNumeric) {
+      return <NumericCell value={evalData?.value} sx={{ padding: "0 12px" }} />;
     }
-    if (evalData?.type === "score") {
-      return _.isNumber(evalData?.value)
-        ? `${getScorePercentage(evalData?.value)}%`
-        : "";
-    } else if (evalData?.type === "Pass/Fail") {
-      return _.capitalize(evalData?.value);
-    } else if (evalData?.type === "choices") {
-      return (
-        <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
-          {evalData?.value?.map((item, idx) => {
-            const label = typeof item === "object" ? (item?.choice ?? item?.value ?? JSON.stringify(item)) : item;
-            return (
+    switch (result.kind) {
+      case "score": {
+        const pct = result.score <= 1 ? result.score * 100 : result.score;
+        return `${Math.round(pct)}%`;
+      }
+      case "passfail":
+        return _.capitalize(result.label);
+      case "choices":
+        return (
+          <Box sx={{ display: "flex", gap: 0.5, flexWrap: "wrap" }}>
+            {result.items.map((item, idx) => (
               <Chip
+                key={`${item}-${idx}`}
                 color="primary"
                 variant="outlined"
                 size="small"
-                key={label || idx}
-                label={_.capitalize(String(label))}
+                label={_.capitalize(String(item))}
               />
-            );
-          })}
-        </Box>
-      );
-    } else if (evalData?.type === OutputTypes.NUMERIC) {
-      return <NumericCell value={evalData?.value} sx={{ padding: "0 12px" }} />;
+            ))}
+          </Box>
+        );
+      case "empty":
+      default:
+        return <Box sx={{ padding: 1 }}>-</Box>;
     }
   };
 

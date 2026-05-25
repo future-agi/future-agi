@@ -255,6 +255,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             ) AS str_lists
         FROM {self.EVAL_TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
+          AND (deleted = 0 OR deleted IS NULL)
           AND observation_span_id IN %(span_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY observation_span_id, custom_eval_config_id

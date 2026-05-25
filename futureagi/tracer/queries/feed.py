@@ -2152,6 +2152,11 @@ def _recommendation_title_from_category(category: Optional[str]) -> str:
     return parts[-1] if parts else category.strip()
 
 
+# Cap on probable root causes surfaced per cluster — keeps the card
+# readable. See the NOTE in _build_root_causes for the real upstream fix.
+_MAX_ROOT_CAUSES = 4
+
+
 def _build_root_causes(details: List[TraceErrorDetail]) -> List[RootCause]:
     """Flatten ``TraceErrorDetail.root_causes`` across every detail for a
     trace, dedupe, and produce a ranked ``RootCause`` list.
@@ -2161,9 +2166,18 @@ def _build_root_causes(details: List[TraceErrorDetail]) -> List[RootCause]:
     Title = first clause before the first period/comma; description = the
     full string (so the card renders a natural headline + body).
     """
-    seen: set = set()
-    result: List[RootCause] = []
-    rank = 1
+    # NOTE: this is a display-layer mitigation, not the real fix. Two
+    # upstream problems make this list explode and both should be fixed
+    # at the source, not here:
+    #   1. The analysis agent over-generates root causes per trace instead
+    #      of committing to the few that matter — needs a hard cap + ranking
+    #      instruction in the agent prompt.
+    #   2. Dedup below is exact-text only, so the same cause phrased
+    #      slightly differently across traces survives as N near-duplicates
+    #      — needs semantic dedup (same gap as cluster fragmentation).
+    # Until those land we frequency-rank (most recurrent cause first) and
+    # cap the list so the card stays readable.
+    counts: dict = {}
     for d in details:
         for raw in d.root_causes or []:
             if not raw:
@@ -2172,21 +2186,27 @@ def _build_root_causes(details: List[TraceErrorDetail]) -> List[RootCause]:
             if not text:
                 continue
             key = text.lower()
-            if key in seen:
-                continue
-            seen.add(key)
+            entry = counts.get(key)
+            if entry is None:
+                counts[key] = {"text": text, "count": 1}
+            else:
+                entry["count"] += 1
 
-            # Headline: first clause before . or ,
-            split_idx = min(
-                (i for i in (text.find("."), text.find(",")) if i > 0),
-                default=-1,
-            )
-            title = text[:split_idx].strip() if split_idx > 0 else text
-            if len(title) > 120:
-                title = title[:117].rstrip() + "..."
+    # Most-recurrent first; stable on first-seen order for ties.
+    ranked = sorted(counts.values(), key=lambda e: -e["count"])
 
-            result.append(RootCause(rank=rank, title=title, description=text))
-            rank += 1
+    result: List[RootCause] = []
+    for rank, entry in enumerate(ranked[:_MAX_ROOT_CAUSES], start=1):
+        text = entry["text"]
+        # Headline: first clause before . or ,
+        split_idx = min(
+            (i for i in (text.find("."), text.find(",")) if i > 0),
+            default=-1,
+        )
+        title = text[:split_idx].strip() if split_idx > 0 else text
+        if len(title) > 120:
+            title = title[:117].rstrip() + "..."
+        result.append(RootCause(rank=rank, title=title, description=text))
     return result
 
 

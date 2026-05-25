@@ -198,7 +198,10 @@ class AddDatasetEvalTool(BaseTool):
                         error_code="VALIDATION_ERROR",
                     )
 
-        # Validate all required template keys are mapped
+        # Validate all required template keys are mapped. System evals
+        # stay strict; user-built custom evals allow partial mappings —
+        # the shared validator at run time fails on all-empty or warns
+        # on partial.
         from model_hub.utils.eval_validators import validate_required_key_mapping
 
         required_keys = (
@@ -206,13 +209,19 @@ class AddDatasetEvalTool(BaseTool):
             if template.config and isinstance(template.config, dict)
             else []
         )
-        missing_keys = validate_required_key_mapping(resolved_mapping, required_keys)
-        if missing_keys:
-            return ToolResult.error(
-                f"Missing required mapping keys: {', '.join(f'`{k}`' for k in missing_keys)}. "
-                f"Required: {', '.join(f'`{k}`' for k in required_keys)}",
-                error_code="VALIDATION_ERROR",
+        is_user_custom_eval = bool(
+            template.config and template.config.get("custom_eval", False)
+        )
+        if not is_user_custom_eval:
+            missing_keys = validate_required_key_mapping(
+                resolved_mapping, required_keys
             )
+            if missing_keys:
+                return ToolResult.error(
+                    f"Missing required mapping keys: {', '.join(f'`{k}`' for k in missing_keys)}. "
+                    f"Required: {', '.join(f'`{k}`' for k in required_keys)}",
+                    error_code="VALIDATION_ERROR",
+                )
 
         # Build config — always enable reason_column so eval runner creates
         # reason cells (MCP tool always creates reason columns)

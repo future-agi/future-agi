@@ -21,7 +21,7 @@ import {
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import { enhanceCol, getStatusColor } from "../common";
-import { getLabel } from "../common";
+import { getLabel, normalizeEvalCellValue } from "../common";
 import DatapointCard from "src/sections/common/DatapointCard";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
@@ -444,13 +444,8 @@ const DatapointDrawerChild = () => {
   };
 
   const finalArray = useMemo(() => {
-    if (
-      evalOpen?.cellValue &&
-      evalOpen?.cellValue.startsWith("[") &&
-      evalOpen?.cellValue.endsWith("]")
-    ) {
-      return JSON.parse(evalOpen?.cellValue.replace(/'/g, '"'));
-    }
+    const v = normalizeEvalCellValue(evalOpen?.cellValue);
+    return Array.isArray(v) ? v : undefined;
   }, [evalOpen?.cellValue]);
 
   const onNavigate = async (direction) => {
@@ -804,7 +799,7 @@ const DatapointDrawerChild = () => {
                                 }}
                               />
                             </ShowComponent>
-                            <ShowComponent condition={finalArray?.length > 0}>
+                            <ShowComponent condition={(finalArray?.length ?? 0) > 0}>
                               {finalArray?.map((val) => (
                                 <Chip
                                   key={val}

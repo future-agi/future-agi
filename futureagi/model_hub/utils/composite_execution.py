@@ -99,6 +99,19 @@ def _execute_child(
             if version.model:
                 runtime_config["model"] = version.model
 
+        link_config = link.config or {}
+        if link_config:
+            link_params = link_config.get("params")
+            runtime_config.update(
+                {k: v for k, v in link_config.items() if k != "params"}
+            )
+            if isinstance(link_params, dict):
+                existing_params = runtime_config.get("params")
+                runtime_config["params"] = {
+                    **(existing_params if isinstance(existing_params, dict) else {}),
+                    **link_params,
+                }
+
         effective_model = model or child_template.model or None
 
         result = run_eval_func(

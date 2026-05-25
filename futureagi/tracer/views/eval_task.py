@@ -45,6 +45,21 @@ from tracer.utils.eval import _walk_dotted_path  # noqa: E402, F401
 _INPUT_VAR_MAX_BYTES = 8 * 1024
 
 
+def _extract_partial_input_warnings(output_metadata):
+    if not isinstance(output_metadata, dict):
+        return []
+    warnings = output_metadata.get("warnings") or []
+    if isinstance(warnings, dict):
+        warnings = [warnings]
+    if not isinstance(warnings, list):
+        return []
+    return [
+        warning
+        for warning in warnings
+        if isinstance(warning, dict) and warning.get("type") == "partial_input"
+    ]
+
+
 def _resolve_input_variables(custom_eval_config, obs_span):
     """
     Resolve the eval mapping against the span to produce a
@@ -142,6 +157,18 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             queryset = queryset.filter(name__icontains=search_name)
 
         return queryset
+
+    def perform_destroy(self, instance):
+        # Cascade soft-delete to the task's loggers and eval results so they
+        # don't outlive the deleted task (mirrors mark_eval_tasks_deleted).
+        now = timezone.now()
+        EvalTaskLogger.objects.filter(eval_task_id=instance.id).update(
+            deleted=True, deleted_at=now
+        )
+        EvalLogger.objects.filter(eval_task_id=instance.id).update(
+            deleted=True, deleted_at=now
+        )
+        instance.delete()
 
     def create(self, request, *args, **kwargs):
         try:
@@ -257,6 +284,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     # produce 1-5 distinct error types; this cap is a safety net for tasks
     # with many varied custom-eval failures and keeps the payload bounded.
     _ERROR_GROUPS_LIMIT = 50
+    _WARNING_GROUPS_LIMIT = 20
+    _WARNING_LOG_SCAN_LIMIT = 1000
 
     @action(detail=False, methods=["get"])
     def get_eval_task_logs(self, request, *args, **kwargs):
@@ -272,6 +301,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             counts = EvalLogger.objects.filter(eval_task_id=eval_task_id).aggregate(
                 errors_count=Count("id", filter=Q(error=True)),
                 success_count=Count("id", filter=Q(error=False)),
+                # Partial-input warnings live in
+                # output_metadata.warnings as a JSON array. has_key on
+                # the JSONField gives us a cheap "any warnings?" filter
+                # without scanning the contents.
+                warnings_count=Count(
+                    "id", filter=Q(output_metadata__has_key="warnings")
+                ),
             )
 
             # ── Pre-aggregate error groups in SQL ──
@@ -327,6 +363,43 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 for row in error_groups_qs
             ]
 
+            warning_groups_by_key = {}
+            warning_logs_qs = (
+                EvalLogger.objects.filter(
+                    eval_task_id=eval_task_id,
+                    output_metadata__has_key="warnings",
+                )
+                .order_by("-created_at")
+                .values_list("output_metadata", flat=True)[
+                    : self._WARNING_LOG_SCAN_LIMIT
+                ]
+            )
+            for output_metadata in warning_logs_qs:
+                for warning in _extract_partial_input_warnings(output_metadata):
+                    empty_keys = sorted(warning.get("empty_keys") or [])
+                    filled_keys = sorted(warning.get("filled_keys") or [])
+                    key = tuple(empty_keys)
+                    if key not in warning_groups_by_key:
+                        warning_groups_by_key[key] = {
+                            "type": "partial_input",
+                            "empty_keys": empty_keys,
+                            "filled_keys": filled_keys,
+                            "message": warning.get("message")
+                            or (
+                                "Eval ran with some inputs empty. "
+                                "Result may be less reliable. "
+                                "Ignore if this is intentional."
+                            ),
+                            "count": 0,
+                        }
+                    warning_groups_by_key[key]["count"] += 1
+
+            warning_groups = sorted(
+                warning_groups_by_key.values(),
+                key=lambda group: group["count"],
+                reverse=True,
+            )[: self._WARNING_GROUPS_LIMIT]
+
             total_count = counts["errors_count"] + counts["success_count"]
 
             result = {
@@ -334,11 +407,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 "end_time": eval_task.end_time,
                 "errors_count": counts["errors_count"],
                 "success_count": counts["success_count"],
+                "warnings_count": counts["warnings_count"],
                 "total_count": total_count,
                 "error_groups": error_groups,
+                "warning_groups": warning_groups,
                 # Indicates whether we capped at _ERROR_GROUPS_LIMIT — the
                 # frontend can show a "showing top 50 error types" hint.
                 "error_groups_truncated": len(error_groups) == self._ERROR_GROUPS_LIMIT,
+                "warning_groups_truncated": counts["warnings_count"]
+                > self._WARNING_LOG_SCAN_LIMIT
+                or len(warning_groups_by_key) > self._WARNING_GROUPS_LIMIT,
                 "row_type": eval_task.row_type,
             }
 
@@ -642,6 +720,16 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
                 reason = log.eval_explanation or log.error_message or ""
 
+                # Partial-input warnings stored on output_metadata by the
+                # tracer eval path. Surface at the row level so the FE
+                # can render a yellow indicator alongside other status.
+                _output_meta = log.output_metadata or {}
+                warnings = (
+                    _output_meta.get("warnings")
+                    if isinstance(_output_meta, dict)
+                    else None
+                )
+
                 log_items.append(
                     {
                         "id": str(log.id),
@@ -651,6 +739,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         "reason": reason,
                         "status": status,
                         "source": "eval_task",
+                        "warnings": warnings or [],
                         "created_at": (
                             log.created_at.isoformat() if log.created_at else ""
                         ),
@@ -674,6 +763,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         "detail": {
                             "eval_name": config.name if config else None,
                             "model": config.model if config else None,
+                            "warnings": warnings or [],
                             "output_type": (
                                 config.eval_template.output_type_normalized
                                 if config and config.eval_template

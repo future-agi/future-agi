@@ -377,11 +377,10 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
           onChange={(e) => setNotes(e.target.value)}
         />
 
-        <Stack direction="row" spacing={1}>
+        <Stack direction="row" justifyContent={"flex-end"} spacing={1}>
           <Button
             variant="contained"
             size="small"
-            fullWidth
             onClick={handleSubmit}
             disabled={isSaving || !hasValues}
             startIcon={

@@ -9,6 +9,10 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
+# ClickHouse zero-value for UUID columns. dictGetOrDefault on Nullable(UUID)
+# dictionary columns may return this instead of NULL — see dashboard.py:1919.
+NIL_UUID = "00000000-0000-0000-0000-000000000000"
+
 
 def _parse_dt(val: Any) -> Optional[datetime]:
     """Parse a datetime value from various formats.

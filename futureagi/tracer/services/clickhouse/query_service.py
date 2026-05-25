@@ -265,6 +265,7 @@ class AnalyticsQueryService:
             SELECT DISTINCT toString(custom_eval_config_id) AS config_id
             FROM tracer_eval_logger FINAL
             WHERE _peerdb_is_deleted = 0
+              AND (deleted = 0 OR deleted IS NULL)
               AND trace_id IN (
                   SELECT DISTINCT trace_id
                   FROM spans

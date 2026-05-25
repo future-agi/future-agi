@@ -5,7 +5,6 @@ import {
   Chip,
   IconButton,
   Popover,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
@@ -214,10 +213,19 @@ const buildFilterChips = (filtersApplied) => {
   }
   if (filtersApplied.spanAttributesFilters?.length) {
     filtersApplied.spanAttributesFilters.forEach((f) => {
-      const key = f.key || f.field || f.name;
-      const op = f.operator || f.op || "=";
-      const val = f.value ?? "";
-      chips.push(`${key} ${op} ${val}`);
+      const key = f.columnId || f.column_id;
+      if (!key) return;
+      const op =
+        f.filterConfig?.filterOp || f.filter_config?.filter_op || "equals";
+      const rawVal =
+        f.filterConfig?.filterValue ?? f.filter_config?.filter_value;
+      const val = Array.isArray(rawVal) ? rawVal.join(", ") : (rawVal ?? "");
+      const isValuelessOp = op === "is_null" || op === "is_not_null";
+      chips.push(
+        isValuelessOp
+          ? `${key} ${op.replace(/_/g, " ")}`
+          : `${key} ${op} ${val}`,
+      );
     });
   }
   if (filtersApplied.project_id) {

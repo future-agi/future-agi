@@ -149,6 +149,7 @@ from simulate.services.test_executor import (
     run_new_evals_on_call_executions_task,
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+from simulate.utils.baseline import resolve_baseline_id
 from simulate.utils.agent_optimiser import (
     create_optimiser_run_for_test_execution,
     get_latest_optimiser_result,
@@ -2398,13 +2399,7 @@ class TestExecutionDetailView(APIView):
                 for row_id, metadata in Row.all_objects.filter(
                     id__in=row_ids
                 ).values_list("id", "metadata"):
-                    if not isinstance(metadata, dict):
-                        continue
-                    # Chat replays use session_id, voice replays use trace_id.
-                    # For replay sessions, intent_id is the baseline trace ID.
-                    baseline_id = metadata.get("session_id") or metadata.get("trace_id")
-                    if not baseline_id and is_replay:
-                        baseline_id = metadata.get("intent_id")
+                    baseline_id = resolve_baseline_id(metadata, is_replay=is_replay)
                     if baseline_id:
                         row_session_id_map[str(row_id)] = baseline_id
 
@@ -3177,6 +3172,29 @@ class CallExecutionDetailView(APIView):
                 test_execution__run_test__deleted=False,
             )
 
+            # Mirror the list endpoint's lookup so the drawer's
+            # "Compare with baseline" button stays visible after the
+            # detail fetch.
+            row_session_id_map = {}
+            row_id = call_execution.row_id
+            if not row_id and isinstance(call_execution.call_metadata, dict):
+                row_id = call_execution.call_metadata.get("row_id")
+            if row_id:
+                metadata = (
+                    Row.all_objects.filter(id=row_id)
+                    .values_list("metadata", flat=True)
+                    .first()
+                )
+                scenario_ids = call_execution.test_execution.scenario_ids
+                is_replay = bool(scenario_ids) and Scenarios.objects.filter(
+                    id__in=scenario_ids,
+                    deleted=False,
+                    metadata__created_from="replay_session",
+                ).exists()
+                baseline_id = resolve_baseline_id(metadata, is_replay=is_replay)
+                if baseline_id:
+                    row_session_id_map[str(row_id)] = baseline_id
+
             # Serialize with the same serializer as the list view, but with full detail
             serializer = CallExecutionDetailSerializer(
                 call_execution,
@@ -3184,7 +3202,7 @@ class CallExecutionDetailView(APIView):
                     "request": request,
                     "eval_configs": {},
                     "scenarios": {},
-                    "row_session_id_map": {},
+                    "row_session_id_map": row_session_id_map,
                     "rows_map": {},
                     "columns_by_dataset": {},
                     "cells_by_row": {},

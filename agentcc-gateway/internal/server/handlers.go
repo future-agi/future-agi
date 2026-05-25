@@ -395,7 +395,7 @@ func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, mo
 			continue
 		}
 		for _, m := range pcfg.Models {
-			if m == model {
+			if orgModelMatches(m, model, providerID) {
 				p, err := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, providerID, pcfg.APIKey, pcfg)
 				if err != nil {
 					slog.Warn("failed to create org provider for model",
@@ -407,6 +407,38 @@ func (h *Handlers) resolveOrgProvider(orgID string, orgCfg *tenant.OrgConfig, mo
 		}
 	}
 	return nil, ""
+}
+
+func (h *Handlers) effectiveFailover(orgCfg *tenant.OrgConfig) *routing.Failover {
+	if orgCfg != nil && orgCfg.Routing != nil && (orgCfg.Routing.FallbackEnabled || (orgCfg.Routing.Failover != nil && orgCfg.Routing.Failover.Enabled)) {
+		foCfg := h.buildOrgFailoverConfig(orgCfg.Routing)
+		var retryer *routing.Retryer
+		if orgCfg.Routing.Retry != nil && orgCfg.Routing.Retry.Enabled {
+			retryer = routing.NewRetryer(h.buildOrgRetryConfig(orgCfg.Routing.Retry))
+		}
+		return routing.NewFailover(foCfg, h.registry.Router(), retryer, nil)
+	}
+	return h.failover.Load()
+}
+
+func (h *Handlers) resolveFallbackProvider(orgID string, orgCfg *tenant.OrgConfig, rc *models.RequestContext, fallbackModel string) (providers.Provider, string, string, bool) {
+	if orgProvider, orgProviderID := h.resolveOrgProvider(orgID, orgCfg, fallbackModel); orgProvider != nil {
+		return orgProvider, orgProviderID, fallbackModel, true
+	}
+
+	fbResult, fbErr := h.registry.ResolveWithRouting(fallbackModel)
+	if fbErr != nil {
+		return nil, "", fallbackModel, false
+	}
+	fbProvider := fbResult.Provider
+	if shouldApplyOrgProviderOverride(rc) {
+		fbProvider = h.applyOrgProviderOverride(orgID, orgCfg, fbResult.Provider.ID(), fbResult.Provider)
+	}
+	resolvedModel := fallbackModel
+	if fbResult.ModelOverride != "" {
+		resolvedModel = fbResult.ModelOverride
+	}
+	return fbProvider, fbResult.Provider.ID(), resolvedModel, true
 }
 
 // applyOrgRoutingOverrides applies per-org routing config to the request context.
@@ -1056,7 +1088,7 @@ func (h *Handlers) ChatCompletion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Stream {
-		h.handleStream(ctx, w, rc, provider)
+		h.handleStream(ctx, w, rc, provider, orgCfg)
 	} else {
 		h.handleNonStream(ctx, w, rc, provider, orgCfg)
 	}
@@ -1210,17 +1242,7 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 
 func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig) {
 	// Determine effective failover: org routing config takes priority over global.
-	var effectiveFailover *routing.Failover
-	if orgCfg != nil && orgCfg.Routing != nil && (orgCfg.Routing.FallbackEnabled || (orgCfg.Routing.Failover != nil && orgCfg.Routing.Failover.Enabled)) {
-		foCfg := h.buildOrgFailoverConfig(orgCfg.Routing)
-		var retryer *routing.Retryer
-		if orgCfg.Routing.Retry != nil && orgCfg.Routing.Retry.Enabled {
-			retryer = routing.NewRetryer(h.buildOrgRetryConfig(orgCfg.Routing.Retry))
-		}
-		effectiveFailover = routing.NewFailover(foCfg, h.registry.Router(), retryer, nil)
-	} else if fo := h.failover.Load(); fo != nil {
-		effectiveFailover = fo
-	}
+	effectiveFailover := h.effectiveFailover(orgCfg)
 
 	if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
 		h.handleNonStreamWithFailover(ctx, w, rc, effectiveFailover, orgCfg)
@@ -1251,47 +1273,13 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 		}
 
 		for _, fbModel := range modelChain {
-			var fbProvider providers.Provider
-			var fbProviderID string
-
-			if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-				for pid, pcfg := range orgCfg.Providers {
-					if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
-						continue
-					}
-					for _, m := range pcfg.Models {
-						if orgModelMatches(m, fbModel, pid) {
-							op, opErr := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, pid, pcfg.APIKey, pcfg)
-							if opErr == nil {
-								fbProvider = op
-								fbProviderID = pid
-							}
-							break
-						}
-					}
-					if fbProvider != nil {
-						break
-					}
-				}
-			}
-
-			if fbProvider == nil {
-				fbResult, fbErr := h.registry.ResolveWithRouting(fbModel)
-				if fbErr != nil {
-					continue
-				}
-				fbProvider = fbResult.Provider
-				if shouldApplyOrgProviderOverride(rc) {
-					fbProvider = h.applyOrgProviderOverride(orgID, orgCfg, fbResult.Provider.ID(), fbResult.Provider)
-				}
-				fbProviderID = fbResult.Provider.ID()
-				if fbResult.ModelOverride != "" {
-					fbModel = fbResult.ModelOverride
-				}
+			fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
+			if !ok {
+				continue
 			}
 
 			rc.Provider = fbProviderID
-			rc.Request.Model = fbModel
+			rc.Request.Model = resolvedModel
 
 			fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 			if fbCallErr == nil {
@@ -1299,7 +1287,7 @@ func (h *Handlers) handleNonStream(ctx context.Context, w http.ResponseWriter, r
 				rc.ResolvedModel = fbResp.Model
 				rc.Flags.FallbackUsed = true
 				rc.Metadata["original_model"] = originalModel
-				rc.Metadata["fallback_model"] = fbModel
+				rc.Metadata["fallback_model"] = resolvedModel
 				return nil
 			}
 		}
@@ -1370,47 +1358,13 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 
 			for _, fbModel := range modelChain {
 				// Resolve fallback model: check org providers first, then global registry.
-				var fbProvider providers.Provider
-				var fbProviderID string
-
-				if orgCfg != nil && orgID != "" && h.orgProviderCache != nil {
-					for pid, pcfg := range orgCfg.Providers {
-						if pcfg == nil || !pcfg.Enabled || !pcfg.HasCredentials() {
-							continue
-						}
-						for _, m := range pcfg.Models {
-							if orgModelMatches(m, fbModel, pid) {
-								op, opErr := h.orgProviderCache.GetOrCreateWithTenantConfig(orgID, pid, pcfg.APIKey, pcfg)
-								if opErr == nil {
-									fbProvider = op
-									fbProviderID = pid
-								}
-								break
-							}
-						}
-						if fbProvider != nil {
-							break
-						}
-					}
-				}
-
-				if fbProvider == nil {
-					fbResult, fbErr := h.registry.ResolveWithRouting(fbModel)
-					if fbErr != nil {
-						continue
-					}
-					fbProvider = fbResult.Provider
-					if shouldApplyOrgProviderOverride(rc) {
-						fbProvider = h.applyOrgProviderOverride(orgID, orgCfg, fbResult.Provider.ID(), fbResult.Provider)
-					}
-					fbProviderID = fbResult.Provider.ID()
-					if fbResult.ModelOverride != "" {
-						fbModel = fbResult.ModelOverride
-					}
+				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fbModel)
+				if !ok {
+					continue
 				}
 
 				rc.Provider = fbProviderID
-				rc.Request.Model = fbModel
+				rc.Request.Model = resolvedModel
 
 				fbResp, fbCallErr := fbProvider.ChatCompletion(ctx, rc.Request)
 				if fbCallErr == nil {
@@ -1418,7 +1372,7 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 					rc.ResolvedModel = fbResp.Model
 					rc.Flags.FallbackUsed = true
 					rc.Metadata["original_model"] = originalModel
-					rc.Metadata["fallback_model"] = fbModel
+					rc.Metadata["fallback_model"] = resolvedModel
 					return nil
 				}
 			}
@@ -1454,25 +1408,130 @@ func (h *Handlers) handleNonStreamWithFailover(ctx context.Context, w http.Respo
 	json.NewEncoder(w).Encode(rc.Response)
 }
 
-func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider) {
+func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *models.RequestContext, provider providers.Provider, orgCfg *tenant.OrgConfig) {
 	sseWriter := streaming.NewSSEWriter(w)
 	if sseWriter == nil {
 		models.WriteError(w, models.ErrInternal("streaming not supported by server"))
 		return
 	}
 
-	// For streaming, we call the provider directly (pre/post plugins run but provider is streaming).
 	var chunks <-chan models.StreamChunk
 	var errCh <-chan error
+	var firstChunk *models.StreamChunk
+	var upstreamStreamCancel context.CancelFunc
+	defer func() {
+		if upstreamStreamCancel != nil {
+			upstreamStreamCancel()
+		}
+	}()
+	effectiveFailover := h.effectiveFailover(orgCfg)
 
-	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
-		chunks, errCh = provider.StreamChatCompletion(ctx, rc.Request)
+	openStream := func(callCtx context.Context, callProvider providers.Provider) error {
+		attemptCtx, attemptCancel := context.WithCancel(callCtx)
+		candidateChunks, candidateErrCh := callProvider.StreamChatCompletion(attemptCtx, rc.Request)
+		if candidateChunks == nil {
+			attemptCancel()
+			return models.ErrUpstreamProvider(http.StatusBadGateway, "upstream provider returned no stream")
+		}
+
+		chunk, err := waitForFirstStreamChunk(attemptCtx, candidateChunks, candidateErrCh)
+		if err != nil {
+			cancelAndDrainStream(attemptCancel, candidateChunks)
+			return err
+		}
+
+		if upstreamStreamCancel != nil {
+			cancelAndDrainStream(upstreamStreamCancel, chunks)
+		}
+		upstreamStreamCancel = attemptCancel
+		chunks = candidateChunks
+		errCh = candidateErrCh
+		firstChunk = chunk
 		return nil
 	}
 
-	// Run pre-plugins, initiate streaming, then post-plugins will run after.
+	providerCall := func(ctx context.Context, rc *models.RequestContext) error {
+		originalModel := rc.Request.Model
+		orgID := rc.Metadata["org_id"]
+
+		tryModelFallbacks := func(firstErr error) error {
+			if effectiveFailover == nil || !effectiveFailover.ShouldFailover(firstErr) {
+				return firstErr
+			}
+
+			var modelChain []string
+			if len(rc.OrgModelFallbacks) > 0 {
+				modelChain = rc.OrgModelFallbacks[originalModel]
+			} else if mf := h.modelFallbacks.Load(); mf != nil {
+				modelChain = mf.GetChain(originalModel)
+			}
+
+			for _, fbModel := range modelChain {
+				fallbackModel := fbModel
+				fbProvider, fbProviderID, resolvedModel, ok := h.resolveFallbackProvider(orgID, orgCfg, rc, fallbackModel)
+				if !ok {
+					continue
+				}
+
+				rc.Provider = fbProviderID
+				rc.Request.Model = resolvedModel
+				if err := openStream(ctx, fbProvider); err == nil {
+					rc.Flags.FallbackUsed = true
+					rc.Metadata["original_model"] = originalModel
+					rc.Metadata["fallback_model"] = resolvedModel
+					return nil
+				}
+			}
+
+			rc.Request.Model = originalModel
+			return firstErr
+		}
+
+		if effectiveFailover != nil && effectiveFailover.IsEnabled() && h.registry.Router() != nil && h.registry.Router().HasTargets(rc.Model) {
+			result, err := effectiveFailover.Execute(ctx, rc.Model, func(callCtx context.Context, providerID string, modelOverride string) error {
+				p, ok := h.registry.GetProvider(providerID)
+				if !ok {
+					return models.ErrUpstreamProvider(http.StatusBadGateway, fmt.Sprintf("provider %q not found", providerID))
+				}
+				if shouldApplyOrgProviderOverride(rc) {
+					p = h.applyOrgProviderOverride(orgID, orgCfg, providerID, p)
+				}
+				if modelOverride != "" {
+					rc.Request.Model = modelOverride
+				} else {
+					rc.Request.Model = originalModel
+				}
+				return openStream(callCtx, p)
+			})
+			if err != nil {
+				return tryModelFallbacks(err)
+			}
+			if result != nil {
+				rc.Provider = result.ProviderID
+				if result.ModelOverride != "" {
+					rc.Request.Model = result.ModelOverride
+				}
+				if result.FallbackUsed {
+					rc.Flags.FallbackUsed = true
+					rc.Metadata["original_provider"] = result.OriginalProvider
+					rc.Metadata["fallback_provider"] = result.ProviderID
+				}
+				if result.StrategyName != "" {
+					rc.Metadata["routing_strategy"] = result.StrategyName
+				}
+			}
+			return nil
+		}
+
+		if err := openStream(ctx, provider); err != nil {
+			return tryModelFallbacks(err)
+		}
+		return nil
+	}
+
+	// Run pre-plugins before opening the upstream stream.
 	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
-		models.WriteError(w, models.ErrInternal(err.Error()))
+		models.WriteErrorFromError(w, err)
 		return
 	}
 
@@ -1544,6 +1603,42 @@ func (h *Handlers) handleStream(ctx context.Context, w http.ResponseWriter, rc *
 	}
 
 	for {
+		if firstChunk != nil {
+			chunk := *firstChunk
+			firstChunk = nil
+			if streamID == "" && chunk.ID != "" {
+				streamID = chunk.ID
+			}
+			if streamCreated == 0 && chunk.Created != 0 {
+				streamCreated = chunk.Created
+			}
+			if len(chunk.Choices) > 0 && rc.ResolvedModel == "" {
+				rc.ResolvedModel = chunk.Model
+			}
+			if chunk.Usage != nil {
+				lastUsage = chunk.Usage
+			}
+
+			if streamChecker != nil {
+				if res := streamChecker.ProcessChunk(streamCtx, chunk); res.Blocked {
+					rc.Flags.GuardrailTriggered = true
+					sseWriter.WriteError(models.ErrGuardrailBlocked("stream_blocked", res.Message))
+					finalizeStream(false)
+					return
+				}
+			}
+
+			if err := sseWriter.WriteChunk(chunk); err != nil {
+				slog.Warn("error writing stream chunk",
+					"request_id", rc.RequestID,
+					"error", err,
+				)
+				finalizeStream(false)
+				return
+			}
+			continue
+		}
+
 		select {
 		case chunk, ok := <-chunks:
 			if !ok {
@@ -1665,6 +1760,41 @@ func (h *Handlers) buildStreamingMetadataChunk(rc *models.RequestContext, stream
 		}
 	}
 	return chunk
+}
+
+func waitForFirstStreamChunk(ctx context.Context, chunks <-chan models.StreamChunk, errCh <-chan error) (*models.StreamChunk, error) {
+	for {
+		select {
+		case chunk, ok := <-chunks:
+			if !ok {
+				return nil, models.ErrUpstreamProvider(http.StatusBadGateway, "upstream stream closed before sending any chunks")
+			}
+			return &chunk, nil
+		case err, ok := <-errCh:
+			if !ok {
+				errCh = nil
+				continue
+			}
+			if err != nil {
+				return nil, err
+			}
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+func cancelAndDrainStream(cancel context.CancelFunc, chunks <-chan models.StreamChunk) {
+	if cancel != nil {
+		cancel()
+	}
+	if chunks == nil {
+		return
+	}
+	go func() {
+		for range chunks {
+		}
+	}()
 }
 
 func (h *Handlers) setAgentccHeaders(w http.ResponseWriter, rc *models.RequestContext) {

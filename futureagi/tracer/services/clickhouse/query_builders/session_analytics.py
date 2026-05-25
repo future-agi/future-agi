@@ -9,7 +9,7 @@ tables with efficient ClickHouse GROUP BY queries on the denormalized
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 
 
 class SessionAnalyticsQueryBuilder(BaseQueryBuilder):
@@ -93,6 +93,7 @@ class SessionAnalyticsQueryBuilder(BaseQueryBuilder):
         FROM {self.TABLE}
         {self.project_where()}
           AND trace_session_id != ''
+          AND trace_session_id != toUUID('{NIL_UUID}')
         GROUP BY trace_session_id
         ORDER BY started_at DESC
         """

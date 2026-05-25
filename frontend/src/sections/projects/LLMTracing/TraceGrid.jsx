@@ -133,6 +133,10 @@ const TraceGrid = React.forwardRef(
         window.removeEventListener("observe-reset-selection", handler);
     }, [gridRef]);
 
+    useEffect(() => {
+      gridRef?.current?.api?.hideOverlay?.();
+    }, [filters, extraFilters, hasEvalFilter, metricFilters, gridRef]);
+
     const defaultColDef = useMemo(
       () => ({
         lockVisible: true,
@@ -175,6 +179,7 @@ const TraceGrid = React.forwardRef(
             }
             try {
               setLoading(true);
+              params.api?.hideOverlay();
               const { request } = params;
 
               const pageSize = request.endRow - request.startRow;

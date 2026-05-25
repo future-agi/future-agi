@@ -39,7 +39,7 @@ const STEPS = [
     key: "hasRequests",
     icon: "mdi:send-outline",
     cta: "View Docs",
-    href: "https://docs.futureagi.com/docs/agentcc/quickstart",
+    href: "https://docs.futureagi.com/docs/command-center",
   },
 ];
 

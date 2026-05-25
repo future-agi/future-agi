@@ -32,3 +32,14 @@ class EvalClusteringSummary:
     clustered: int = 0
     new_clusters: int = 0
     assigned: int = 0
+
+
+@dataclass
+class EvalClusterMeta:
+    """Cheap-LLM-derived metadata for an eval cluster. Any field may be
+    None — the caller falls back per field (title -> first-sentence,
+    severity -> default priority, fix_layer -> unset)."""
+
+    title: Optional[str] = None
+    fix_layer: Optional[str] = None  # Tools|Prompt|Orchestration|Guardrails
+    severity: Optional[str] = None  # critical|high|medium|low

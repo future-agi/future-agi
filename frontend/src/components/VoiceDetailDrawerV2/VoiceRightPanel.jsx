@@ -215,6 +215,7 @@ const VoiceRightPanel = ({
       const rawValue = e?.score ?? e?.output ?? e?.value;
       let score = null;
       let scoreLabel;
+      let scoreItems;
 
       if (typeof rawValue === "number") {
         // Numbers in [0, 1] → percent. Numbers already in [0, 100] → as-is.
@@ -236,6 +237,10 @@ const VoiceRightPanel = ({
           scoreLabel =
             rawValue.length > 24 ? `${rawValue.slice(0, 24)}…` : rawValue;
         }
+      } else if (Array.isArray(rawValue) && rawValue.length > 0) {
+        // Choices-type results surface their selected labels as an array —
+        // keep them as items so the table can render one chip per label.
+        scoreItems = rawValue.map((v) => String(v));
       }
 
       return {
@@ -243,7 +248,9 @@ const VoiceRightPanel = ({
         eval_name: e?.name || e?.metric || String(id),
         score,
         score_label: scoreLabel,
+        score_items: scoreItems,
         explanation: e?.reason || e?.explanation,
+        error: e?.error === true,
         // Error localization fields — pulled from whatever key the
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.

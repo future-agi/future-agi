@@ -24,7 +24,7 @@ import { enqueueSnackbar } from "notistack";
 
 import AudioDatapointCard from "src/components/custom-audio/AudioDatapointCard";
 import { getStatusColor } from "../common";
-import { getLabel } from "../common";
+import { getLabel, normalizeEvalCellValue } from "../common";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import { ShowComponent } from "src/components/show";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
@@ -70,9 +70,7 @@ const StatusCellRenderer = (data) => {
     );
   }
 
-  if (cellValue?.startsWith("[") && cellValue?.endsWith("]")) {
-    cellValue = JSON.parse(cellValue.replace(/'/g, '"'));
-  }
+  cellValue = normalizeEvalCellValue(cellValue);
   if (!hasRenderableCellValue(cellValue)) return;
 
   return (
@@ -486,13 +484,8 @@ const DatapointDrawerChild = ({
   const isNextDisabled = rowIndex >= totalCount - 1;
 
   const finalArray = useMemo(() => {
-    if (
-      runEval?.cellValue &&
-      runEval?.cellValue.startsWith("[") &&
-      runEval?.cellValue.endsWith("]")
-    ) {
-      return JSON.parse(runEval?.cellValue.replace(/'/g, '"'));
-    }
+    const v = normalizeEvalCellValue(runEval?.cellValue);
+    return Array.isArray(v) ? v : undefined;
   }, [runEval?.cellValue]);
 
   return (

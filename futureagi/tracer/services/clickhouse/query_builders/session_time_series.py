@@ -17,7 +17,7 @@ shape — but the numbers reflect session-level aggregation.
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
 
@@ -97,6 +97,7 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
               AND trace_session_id IS NOT NULL
+              AND trace_session_id != toUUID('{NIL_UUID}')
               AND {where_clause}
             GROUP BY trace_session_id
         )

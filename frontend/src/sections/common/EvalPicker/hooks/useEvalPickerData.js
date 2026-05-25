@@ -83,6 +83,16 @@ export function useEvalPickerData({
   const isLoading = isUsingOldEndpoint
     ? oldEndpointQuery.isLoading
     : newEndpointQuery.isLoading;
+  const isFetching = isUsingOldEndpoint
+    ? oldEndpointQuery.isFetching
+    : newEndpointQuery.isFetching;
+
+  // True while the user is typing (debounce window) or the server is fetching
+  // results. `isLoading` only flips during the initial load because the
+  // queries use keepPreviousData, so we expose this as the search-in-progress
+  // signal for the input adornment.
+  const isSearchPending = searchQuery.trim() !== debouncedSearch;
+  const isSearching = isSearchPending || isFetching;
 
   const items = useMemo(() => {
     if (!rawData) return [];
@@ -191,6 +201,7 @@ export function useEvalPickerData({
     items: paginatedItems,
     total,
     isLoading,
+    isSearching,
     searchQuery,
     setSearchQuery,
     page,

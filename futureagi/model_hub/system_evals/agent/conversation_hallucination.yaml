@@ -1,0 +1,57 @@
+eval_id: 200
+name: conversation_hallucination
+description: Identifies if the agent fabricated facts across the conversation, optionally grounded against provided context.
+criteria: "You are evaluating whether the agent's turns in the conversation contain fabricated information not supported by the conversation history or the provided context.\n\n## Criteria\n\n1. User-attributed fabrication: The agent claims the user said, asked, or believes something that does not appear in the user's actual turns.\n   - Pass: \"You mentioned you live in Austin\" when the user did state this earlier in the conversation.\n   - Fail: \"You said you preferred email\" when the user never expressed that preference.\n\n2. Self-contradiction or self-attributed fabrication: The agent contradicts its own prior turn or claims to have already said or done something it did not.\n   - Pass: Agent's later turns remain consistent with earlier ones; corrections are explicitly framed as such.\n   - Fail: Agent says \"As I told you, the deadline is Friday\" when no such statement was made earlier, or quotes a price that contradicts a price it gave in an earlier turn.\n\n3. External fact fabrication: The agent asserts world-facts (names, dates, numbers, events, policies) not supported by the conversation or, when provided, by the context.\n   - Pass: Every concrete factual claim is grounded in conversation content or in the provided context.\n   - Fail: Agent invents a product spec, policy detail, or statistic that has no basis in either source.\n\n## Anti-bias Rules\n\n- If context is empty or absent, evaluate against the conversation alone; do not treat the absence of context as a hallucination signal.\n- Reasonable logical inferences from facts present in the conversation or context are NOT hallucinations.\n- Generic filler (\"That's a great question\", \"Let me help\") making no factual claims is NOT a hallucination.\n- Agent acknowledgments of uncertainty (\"I don't have that information\") are NOT hallucinations, even if the underlying fact is known to be true elsewhere.\n- Evaluate only the agent's turns; user turns are the ground truth for what the user said, not subjects of evaluation.\n\n## Scoring\n\nReturn 'Passed' if every claim in every agent turn is supported by the conversation history or the provided context (or appropriately hedged as uncertain). Return 'Failed' if any agent turn contains a fabricated user attribution, a self-contradiction or false self-quotation, or an unsupported external factual claim.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>\n\n<context>{{context}}</context>"
+eval_tags:
+- Hallucination
+- Conversation
+- Agents
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - conversation
+  - context
+  optional_keys:
+  - context
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    conversation: The full conversation (user and agent turns) to be evaluated for hallucinations in the agent's responses
+    context: Optional external grounding (e.g., retrieved documents, knowledge base) against which agent factual claims should also be validated
+  param_modalities:
+    conversation:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    context:
+    - TEXT
+    - AUDIO
+    - IMAGE
+    - PDF
+    - KNOWLEDGE_BASE
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    - IMAGES
+  rule_prompt: "You are evaluating whether the agent's turns in the conversation contain fabricated information not supported by the conversation history or the provided context.\n\n## Criteria\n\n1. User-attributed fabrication: The agent claims the user said, asked, or believes something that does not appear in the user's actual turns.\n   - Pass: \"You mentioned you live in Austin\" when the user did state this earlier in the conversation.\n   - Fail: \"You said you preferred email\" when the user never expressed that preference.\n\n2. Self-contradiction or self-attributed fabrication: The agent contradicts its own prior turn or claims to have already said or done something it did not.\n   - Pass: Agent's later turns remain consistent with earlier ones; corrections are explicitly framed as such.\n   - Fail: Agent says \"As I told you, the deadline is Friday\" when no such statement was made earlier, or quotes a price that contradicts a price it gave in an earlier turn.\n\n3. External fact fabrication: The agent asserts world-facts (names, dates, numbers, events, policies) not supported by the conversation or, when provided, by the context.\n   - Pass: Every concrete factual claim is grounded in conversation content or in the provided context.\n   - Fail: Agent invents a product spec, policy detail, or statistic that has no basis in either source.\n\n## Anti-bias Rules\n\n- If context is empty or absent, evaluate against the conversation alone; do not treat the absence of context as a hallucination signal.\n- Reasonable logical inferences from facts present in the conversation or context are NOT hallucinations.\n- Generic filler (\"That's a great question\", \"Let me help\") making no factual claims is NOT a hallucination.\n- Agent acknowledgments of uncertainty (\"I don't have that information\") are NOT hallucinations, even if the underlying fact is known to be true elsewhere.\n- Evaluate only the agent's turns; user turns are the ground truth for what the user said, not subjects of evaluation.\n\n## Scoring\n\nReturn 'Passed' if every claim in every agent turn is supported by the conversation history or the provided context (or appropriately hedged as uncertain). Return 'Failed' if any agent turn contains a fabricated user attribution, a self-contradiction or false self-quotation, or an unsupported external factual claim.\n\n## Inputs\n\n<conversation>{{conversation}}</conversation>\n\n<context>{{context}}</context>"

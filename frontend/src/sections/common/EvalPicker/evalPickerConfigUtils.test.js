@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildCompositeSourceModeProps,
+  buildDataInjection,
   contextOptionsForRowType,
   extractCodeEvaluateParams,
   getSourceModeVariables,
@@ -20,6 +21,37 @@ describe("contextOptionsForRowType", () => {
     expect(contextOptionsForRowType(null)).toBeNull();
     expect(contextOptionsForRowType("")).toBeNull();
     expect(contextOptionsForRowType("unknown")).toBeNull();
+  });
+});
+
+describe("buildDataInjection", () => {
+  it("defaults to variables_only for empty / undefined input", () => {
+    expect(buildDataInjection()).toEqual({ variables_only: true });
+    expect(buildDataInjection([])).toEqual({ variables_only: true });
+    expect(buildDataInjection(["variables_only"])).toEqual({
+      variables_only: true,
+    });
+  });
+
+  it("maps each context option to its specific flag", () => {
+    expect(buildDataInjection(["dataset_row"])).toEqual({ full_row: true });
+    expect(buildDataInjection(["span_context"])).toEqual({ span_context: true });
+    expect(buildDataInjection(["trace_context"])).toEqual({ trace_context: true });
+    expect(buildDataInjection(["session_context"])).toEqual({
+      session_context: true,
+    });
+    expect(buildDataInjection(["call_context"])).toEqual({ call_context: true });
+  });
+
+  it("accepts a legacy full_row option as an alias for dataset_row", () => {
+    expect(buildDataInjection(["full_row"])).toEqual({ full_row: true });
+  });
+
+  it("combines multiple selections into a single flag dict", () => {
+    expect(buildDataInjection(["span_context", "call_context"])).toEqual({
+      span_context: true,
+      call_context: true,
+    });
   });
 });
 
@@ -250,6 +282,7 @@ describe("buildCompositeSourceModeProps", () => {
       isComposite: true,
       compositeAdhocConfig: {
         child_template_ids: ["child-a", "child-b"],
+        child_configs: {},
         aggregation_enabled: false,
         aggregation_function: "min",
         composite_child_axis: "percentage",

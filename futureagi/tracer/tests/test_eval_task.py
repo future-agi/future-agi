@@ -9,7 +9,8 @@ import uuid
 import pytest
 from rest_framework import status
 
-from tracer.models.eval_task import EvalTask, EvalTaskStatus
+from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus
+from tracer.models.observation_span import EvalLogger
 
 
 def get_result(response):
@@ -264,6 +265,148 @@ class TestEvalTaskDeleteAPI:
         task2.refresh_from_db()
         assert task1.status == EvalTaskStatus.DELETED
         assert task2.status == EvalTaskStatus.DELETED
+
+    def test_bulk_delete_cascades_soft_delete(
+        self, auth_client, eval_task, trace, observation_span
+    ):
+        """Bulk delete soft-deletes each task's loggers and eval results."""
+        task_logger = EvalTaskLogger.objects.create(
+            eval_task=eval_task,
+            status=EvalTaskStatus.PENDING,
+        )
+        eval_logger = EvalLogger.objects.create(
+            trace=trace,
+            observation_span=observation_span,
+            eval_task_id=str(eval_task.id),
+        )
+
+        response = auth_client.post(
+            "/tracer/eval-task/mark_eval_tasks_deleted/",
+            {"eval_task_ids": [str(eval_task.id)]},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        eval_task.refresh_from_db()
+        assert eval_task.status == EvalTaskStatus.DELETED
+        assert eval_task.deleted is True
+
+        task_logger = EvalTaskLogger.all_objects.get(id=task_logger.id)
+        assert task_logger.deleted is True
+        assert task_logger.deleted_at is not None
+
+        eval_logger = EvalLogger.all_objects.get(id=eval_logger.id)
+        assert eval_logger.deleted is True
+        assert eval_logger.deleted_at is not None
+
+    def test_bulk_delete_leaves_other_tasks_results(
+        self, auth_client, project, eval_task, trace, observation_span
+    ):
+        """Bulk-deleting one task must not touch another task's eval results."""
+        other_task = EvalTask.objects.create(
+            project=project,
+            name="Other Task",
+            status=EvalTaskStatus.PENDING,
+        )
+        other_logger = EvalLogger.objects.create(
+            trace=trace,
+            observation_span=observation_span,
+            eval_task_id=str(other_task.id),
+        )
+
+        response = auth_client.post(
+            "/tracer/eval-task/mark_eval_tasks_deleted/",
+            {"eval_task_ids": [str(eval_task.id)]},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        other_logger.refresh_from_db()
+        assert other_logger.deleted is False
+
+    def test_bulk_delete_rejects_running_tasks(self, auth_client, project):
+        """Running tasks cannot be bulk-deleted; they must be paused first."""
+        running_task = EvalTask.objects.create(
+            project=project,
+            name="Running Task",
+            status=EvalTaskStatus.RUNNING,
+        )
+
+        response = auth_client.post(
+            "/tracer/eval-task/mark_eval_tasks_deleted/",
+            {"eval_task_ids": [str(running_task.id)]},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+        running_task.refresh_from_db()
+        assert running_task.status == EvalTaskStatus.RUNNING
+        assert running_task.deleted is False
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestEvalTaskDestroyAPI:
+    """Tests for DELETE /tracer/eval-task/{id}/ (single REST delete)."""
+
+    def test_destroy_eval_task_unauthenticated(self, api_client, eval_task):
+        """Unauthenticated requests should be rejected."""
+        response = api_client.delete(f"/tracer/eval-task/{eval_task.id}/")
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    def test_destroy_eval_task_cascades_soft_delete(
+        self, auth_client, eval_task, trace, observation_span
+    ):
+        """DELETE on a single eval task soft-deletes its loggers and results."""
+        task_logger = EvalTaskLogger.objects.create(
+            eval_task=eval_task,
+            status=EvalTaskStatus.PENDING,
+        )
+        eval_logger = EvalLogger.objects.create(
+            trace=trace,
+            observation_span=observation_span,
+            eval_task_id=str(eval_task.id),
+        )
+
+        response = auth_client.delete(f"/tracer/eval-task/{eval_task.id}/")
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        # The task itself is soft-deleted (filtered out of the default manager).
+        assert not EvalTask.objects.filter(id=eval_task.id).exists()
+        eval_task.refresh_from_db()
+        assert eval_task.deleted is True
+        assert eval_task.deleted_at is not None
+
+        # Loggers and eval results cascade to soft-deleted (use all_objects
+        # since the default manager hides deleted rows).
+        task_logger = EvalTaskLogger.all_objects.get(id=task_logger.id)
+        assert task_logger.deleted is True
+        assert task_logger.deleted_at is not None
+
+        eval_logger = EvalLogger.all_objects.get(id=eval_logger.id)
+        assert eval_logger.deleted is True
+        assert eval_logger.deleted_at is not None
+
+    def test_destroy_eval_task_leaves_other_tasks_results(
+        self, auth_client, project, eval_task, trace, observation_span
+    ):
+        """Deleting one task must not touch another task's eval results."""
+        other_task = EvalTask.objects.create(
+            project=project,
+            name="Other Task",
+            status=EvalTaskStatus.PENDING,
+        )
+        other_logger = EvalLogger.objects.create(
+            trace=trace,
+            observation_span=observation_span,
+            eval_task_id=str(other_task.id),
+        )
+
+        response = auth_client.delete(f"/tracer/eval-task/{eval_task.id}/")
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+
+        other_logger.refresh_from_db()
+        assert other_logger.deleted is False
 
 
 @pytest.mark.integration

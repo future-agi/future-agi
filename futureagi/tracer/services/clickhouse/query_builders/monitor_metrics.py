@@ -738,6 +738,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         return (
             f"WHERE custom_eval_config_id = toUUID(%(eval_config_id)s) "
             f"AND _peerdb_is_deleted = 0 "
+            f"AND (deleted = 0 OR deleted IS NULL) "
             f"AND observation_span_id IN ("
             f"  SELECT id FROM {SPANS_TABLE} "
             f"  WHERE project_id = %(project_id)s "
