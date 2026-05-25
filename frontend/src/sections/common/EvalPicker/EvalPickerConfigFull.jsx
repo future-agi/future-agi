@@ -1121,7 +1121,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
       {/* ── Eval Name ── */}
       <Box sx={{ py: 1.5, flexShrink: 0 }}>
-        <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+        <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
           Name<span style={{ color: "#d32f2f" }}>*</span>
         </Typography>
         <TextField
@@ -1464,7 +1464,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
               {/* Output Type (not applicable to composites) */}
               {isComposite ? null : evalType === "code" ? (
                 <Box>
-                  <Typography variant="body2" fontWeight={600} sx={{ mb: 0.5 }}>
+                  <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
                     Scoring
                   </Typography>
                   <Typography
@@ -1475,7 +1475,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     Code evaluator returns a score between 0 and 1. Set a pass
                     threshold below.
                   </Typography>
-                  <Typography typography="s1"  sx={{ mb: 0.5,color:"text.primary" }}>
+                  <Typography variant="subtitle2"  sx={{ mb: 0.5,color:"text.primary" }}>
                     Pass Threshold
                   </Typography>
                   <Typography
@@ -1769,7 +1769,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
                 {source !== "composite" && visibleCodeParamEntries.length > 0 && (
                   <Box sx={{ mt: 2 }}>
-                    <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
+                    <Typography variant="subtitle2" sx={{ mb: 1 }}>
                       Parameters
                     </Typography>
                     {visibleCodeParamEntries.map(([key, schema]) => (
