@@ -81,3 +81,25 @@ docker-compose*.yml
 # External deploy configs (not consumed by this image)
 vercel.json
 renew-ssl.sh
+
+# === Python virtualenvs + caches (added by setup) ===
+.venv
+.venv/
+.venv*/
+**/.venv
+**/.venv/
+**/.venv*/
+venv
+venv/
+**/venv
+**/venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+.mypy_cache/
+**/.mypy_cache/
