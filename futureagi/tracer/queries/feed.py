@@ -301,6 +301,7 @@ def _row_from_cluster(
         assignees=assignees,
         project=cluster.project.name if cluster.project_id else None,
         project_id=str(cluster.project_id) if cluster.project_id else None,
+        project_source=cluster.project.source if cluster.project_id else None,
         trace_id=latest_trace_id,
         external_issue_url=cluster.external_issue_url,
         external_issue_id=cluster.external_issue_id,

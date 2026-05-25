@@ -104,6 +104,7 @@ class FeedListRowSerializer(serializers.Serializer):
     model_version = serializers.CharField(allow_null=True)
     project = serializers.CharField(allow_null=True)
     project_id = serializers.CharField(allow_null=True)
+    project_source = serializers.CharField(allow_null=True)
     environment = serializers.CharField(allow_null=True)
     eval_score = serializers.FloatField(allow_null=True)
     trace_id = serializers.CharField(allow_null=True)

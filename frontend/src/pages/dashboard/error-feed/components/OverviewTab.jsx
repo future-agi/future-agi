@@ -806,7 +806,8 @@ function PatternSummary({ summary, clusterId }) {
 
   if (!insights.length) {
     // Cluster ID prefix is canonical: E-* = eval-source, S-* = scanner-source.
-    const isEvalCluster = typeof clusterId === "string" && clusterId.startsWith("E-");
+    const isEvalCluster =
+      typeof clusterId === "string" && clusterId.startsWith("E-");
     const message = isEvalCluster
       ? "No eval scores aggregated yet — this cluster's evaluations are still landing."
       : "Not enough data yet — waiting for more scanner results.";
@@ -1207,7 +1208,7 @@ function RootCauses({ causes }) {
 
   return (
     <Stack gap={0.75}>
-      {causes.map((c) => {
+      {causes.slice(0, 3).map((c) => {
         // Backend splits title vs description at first period/comma. When
         // the agent produces a short single-clause string with no internal
         // punctuation, both fields end up identical — skip the description
@@ -1294,10 +1295,9 @@ function RecSectionLabel({ icon, label }) {
 }
 RecSectionLabel.propTypes = { icon: PropTypes.string, label: PropTypes.string };
 
-function RecommendationCard({ rec, rootCauses, isDark }) {
+function RecommendationCard({ rec, isDark }) {
   const [expanded, setExpanded] = useState(false);
   const pm = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
-  const linkedCause = rootCauses?.find((c) => c.rank === rec.rootCauseLink);
 
   return (
     <Box
@@ -1375,7 +1375,8 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
         />
       </Stack>
 
-      {/* Expanded body */}
+      {/* Expanded body — only Immediate Fix; other sub-fields are intentionally
+          omitted per the Error Feed simplification. */}
       {expanded && (
         <Box
           sx={{
@@ -1386,152 +1387,31 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
             pb: 1.5,
           }}
         >
-          <Stack gap={1.5}>
-            {/* Description */}
-            <Box>
-              <RecSectionLabel
-                icon="mdi:text-box-outline"
-                label="Description"
-              />
+          <Box>
+            <RecSectionLabel icon="mdi:wrench-outline" label="Immediate Fix" />
+            <Box
+              sx={{
+                px: 1.25,
+                py: 1,
+                borderRadius: "6px",
+                bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
+                border: "1px solid",
+                borderColor: "divider",
+              }}
+            >
               <Typography
                 fontSize="11.5px"
                 color="text.primary"
-                sx={{ lineHeight: 1.65 }}
-              >
-                {rec.description}
-              </Typography>
-            </Box>
-
-            {/* Immediate Fix */}
-            <Box>
-              <RecSectionLabel
-                icon="mdi:wrench-outline"
-                label="Immediate Fix"
-              />
-              <Box
                 sx={{
-                  px: 1.25,
-                  py: 1,
-                  borderRadius: "6px",
-                  bgcolor: isDark ? alpha("#fff", 0.04) : alpha("#000", 0.03),
-                  border: "1px solid",
-                  borderColor: "divider",
+                  lineHeight: 1.65,
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
                 }}
               >
-                <Typography
-                  fontSize="11.5px"
-                  color="text.primary"
-                  sx={{
-                    lineHeight: 1.65,
-                    whiteSpace: "pre-wrap",
-                    wordBreak: "break-word",
-                  }}
-                >
-                  {rec.immediateFix}
-                </Typography>
-              </Box>
+                {rec.immediateFix}
+              </Typography>
             </Box>
-
-            {/* Insights */}
-            {rec.insights && (
-              <Box>
-                <RecSectionLabel
-                  icon="mdi:lightbulb-outline"
-                  label="Insights"
-                />
-                <Typography
-                  fontSize="11.5px"
-                  color="text.primary"
-                  sx={{ lineHeight: 1.65 }}
-                >
-                  {rec.insights}
-                </Typography>
-              </Box>
-            )}
-
-            {/* Evidence */}
-            {rec.evidence?.length > 0 && (
-              <Box>
-                <RecSectionLabel icon="mdi:magnify" label="Evidence" />
-                <Stack gap={0.55}>
-                  {rec.evidence.map((e, i) => (
-                    <Stack
-                      key={i}
-                      direction="row"
-                      alignItems="flex-start"
-                      gap={0.75}
-                    >
-                      <Box
-                        sx={{
-                          width: 4,
-                          height: 4,
-                          borderRadius: "50%",
-                          bgcolor: "text.disabled",
-                          mt: "6px",
-                          flexShrink: 0,
-                        }}
-                      />
-                      <Typography
-                        fontSize="11px"
-                        color="text.primary"
-                        sx={{ lineHeight: 1.6 }}
-                      >
-                        {e}
-                      </Typography>
-                    </Stack>
-                  ))}
-                </Stack>
-              </Box>
-            )}
-
-            {/* Root Cause link */}
-            {linkedCause && (
-              <Box>
-                <RecSectionLabel icon="mdi:magnify-scan" label="Root Cause" />
-                <Stack
-                  direction="row"
-                  alignItems="flex-start"
-                  gap={0.75}
-                  sx={{
-                    px: 1.25,
-                    py: 0.9,
-                    borderRadius: "6px",
-                    bgcolor: isDark
-                      ? alpha("#fff", 0.03)
-                      : alpha("#000", 0.025),
-                    border: "1px solid",
-                    borderColor: "divider",
-                  }}
-                >
-                  <Typography
-                    fontSize="10px"
-                    fontWeight={700}
-                    color="text.disabled"
-                    sx={{ flexShrink: 0, mt: "1px" }}
-                  >
-                    #{linkedCause.rank}
-                  </Typography>
-                  <Stack gap={0.2} minWidth={0}>
-                    <Typography
-                      fontSize="11.5px"
-                      fontWeight={600}
-                      color="text.primary"
-                      noWrap
-                    >
-                      {linkedCause.title}
-                    </Typography>
-                    <Typography
-                      fontSize="11px"
-                      color="text.secondary"
-                      sx={{ lineHeight: 1.55 }}
-                    >
-                      {linkedCause.description}
-                    </Typography>
-                  </Stack>
-                </Stack>
-              </Box>
-            )}
-          </Stack>
+          </Box>
         </Box>
       )}
     </Box>
@@ -1539,30 +1419,23 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
 }
 RecommendationCard.propTypes = {
   rec: PropTypes.object.isRequired,
-  rootCauses: PropTypes.array,
   isDark: PropTypes.bool,
 };
 
-function Recommendations({ recs, rootCauses }) {
+function Recommendations({ recs }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   if (!recs?.length) return null;
   return (
     <Stack gap={0.75}>
       {recs.map((rec) => (
-        <RecommendationCard
-          key={rec.id}
-          rec={rec}
-          rootCauses={rootCauses}
-          isDark={isDark}
-        />
+        <RecommendationCard key={rec.id} rec={rec} isDark={isDark} />
       ))}
     </Stack>
   );
 }
 Recommendations.propTypes = {
   recs: PropTypes.array,
-  rootCauses: PropTypes.array,
 };
 
 // ── Deep analysis revealed section ───────────────────────────────────────────
@@ -1586,7 +1459,7 @@ function DeepAnalysisResults({ rootCauses, recommendations }) {
           title="Recommendations & Fixes"
           icon="mdi:lightbulb-on-outline"
         >
-          <Recommendations recs={recommendations} rootCauses={rootCauses} />
+          <Recommendations recs={recommendations} />
         </SectionCard>
       )}
     </Stack>
@@ -1641,6 +1514,22 @@ export default function OverviewTab({ _error: currentError }) {
 
   const eventsOverTime = overview?.eventsOverTime ?? null;
   const patternSummary = overview?.patternSummary ?? null;
+
+  // Voice/Vapi projects swap the events chart for the trace recording
+  // (a graph is less useful than listening to the actual failing call).
+  // Detected via backend's project_source on the cluster row.
+  const isVoiceProject = currentError?.projectSource === "simulator";
+  const { data: representativeTraceDetail } = useGetTraceDetail(
+    isVoiceProject ? trace?.id : null,
+  );
+  const recordingUrl =
+    representativeTraceDetail?.metadata?.recording_url ||
+    representativeTraceDetail?.metadata?.recordingUrl ||
+    representativeTraceDetail?.metadata?.recording?.mono?.combined_url ||
+    representativeTraceDetail?.metadata?.recording?.mono?.combinedUrl ||
+    representativeTraceDetail?.metadata?.stereo_recording_url ||
+    representativeTraceDetail?.metadata?.stereoRecordingUrl ||
+    null;
 
   // Deep analysis is driven by the backend root-cause query for the
   // currently-selected trace. When status flips to ``done`` we smooth-
@@ -1706,7 +1595,8 @@ export default function OverviewTab({ _error: currentError }) {
           overflow: "hidden",
         }}
       >
-        {/* Events/Users chart — flat (no own border) */}
+        {/* Events/Users chart (default) — swapped for the trace recording
+            when the project is a Vapi/simulator project. */}
         <Box
           sx={{
             flexShrink: 0,
@@ -1714,12 +1604,41 @@ export default function OverviewTab({ _error: currentError }) {
             borderColor: "divider",
           }}
         >
-          <EventsUsersChart
-            flat
-            data={eventsOverTime}
-            deployMarkers={[]}
-            loading={isOverviewLoading && !overview}
-          />
+          {isVoiceProject ? (
+            <Box sx={{ px: 1.5, py: 1.25, minHeight: 80 }}>
+              <Typography
+                fontSize="11px"
+                fontWeight={600}
+                color="text.secondary"
+                sx={{
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                  mb: 0.75,
+                }}
+              >
+                Trace recording
+              </Typography>
+              {recordingUrl ? (
+                <audio
+                  src={recordingUrl}
+                  controls
+                  preload="metadata"
+                  style={{ width: "100%" }}
+                />
+              ) : (
+                <Typography fontSize="11px" color="text.disabled">
+                  No recording available for the selected trace.
+                </Typography>
+              )}
+            </Box>
+          ) : (
+            <EventsUsersChart
+              flat
+              data={eventsOverTime}
+              deployMarkers={[]}
+              loading={isOverviewLoading && !overview}
+            />
+          )}
         </Box>
 
         {/* Traces heading */}
@@ -1951,5 +1870,6 @@ OverviewTab.propTypes = {
   _error: PropTypes.shape({
     clusterId: PropTypes.string,
     source: PropTypes.string,
+    projectSource: PropTypes.string,
   }),
 };

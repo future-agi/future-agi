@@ -131,6 +131,9 @@ services:
     image: futureagi/future-agi:dev
     volumes:
       - ./futureagi:/app/backend
+      # Host repo's .tmp/ exposed inside container so replicate-locally can
+      # drop snapshot dirs directly without a `docker cp` round-trip.
+      - ./.tmp:/app/.tmp
     environment:
       FAST_STARTUP: "true"
 

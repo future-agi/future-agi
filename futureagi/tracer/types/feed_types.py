@@ -60,6 +60,7 @@ class FeedListRow:
     model_version: Optional[str] = None
     project: Optional[str] = None
     project_id: Optional[str] = None
+    project_source: Optional[str] = None
     environment: Optional[str] = None
     eval_score: Optional[float] = None
     trace_id: Optional[str] = None
