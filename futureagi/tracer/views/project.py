@@ -249,6 +249,8 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             instance = self.get_object()
             serializer = self.get_serializer(instance)
             data = serializer.data
+            if instance.trace_type == "experiment" and not data.get("config"):
+                data["config"] = get_default_project_version_config()
 
             try:
                 scan_config = TraceScanConfig.objects.get(project=instance)

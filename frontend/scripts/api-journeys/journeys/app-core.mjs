@@ -265,7 +265,7 @@ export const appCoreJourneys = [
       assertPrototypeProjectDetail(detail, {
         projectId: selectedProject.id,
         organizationId,
-        workspaceId,
+        workspaceId: selectedProject.workspace ?? null,
       });
 
       const runList = await client.get(
@@ -503,6 +503,7 @@ export const appCoreJourneys = [
       evidence.push({
         selected_project_id: selectedProject.id,
         selected_project_name: selectedProject.name,
+        selected_project_workspace_id: selectedProject.workspace ?? null,
         project_count: list.total_count,
         search_count: search.total_count,
         list_rows_without_workspace: listRowsWithoutWorkspace,
