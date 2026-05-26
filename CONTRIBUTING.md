@@ -104,11 +104,11 @@ Good feature requests:
 
 1. Pick a [`good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) (or open one)
 2. Comment that you're working on it so we don't double-up
-3. Branch from `main`: `git checkout -b fix/short-description`
+3. Branch from `dev` (our integration branch): `git checkout -b fix/short-description dev`
 4. Make your change — keep the diff small and focused
 5. Add tests (every bug fix needs a regression test)
 6. Make sure `make check-all` passes
-7. Push and open a PR using the template
+7. Push and open a PR against `dev` using the template
 8. Sign the CLA when the bot asks
 
 ### 🧪 Adding a new evaluator
@@ -138,7 +138,7 @@ We follow:
 - **Types:** new code must pass `mypy` (we use a baseline for existing code)
 - **JS / TS:** ESLint (Airbnb) + Prettier
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`)
-- **Branch names:** `type/short-description` (e.g. `fix/session-list-pagination`)
+- **Branch names:** `type/short-description` (e.g. `fix/session-list-pagination`). See [`BRANCH_NAMING_CONVENTION.md`](BRANCH_NAMING_CONVENTION.md) for the full convention and allowed `type` prefixes.
 
 Run `make format` to auto-fix most issues.
 
