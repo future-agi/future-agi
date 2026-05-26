@@ -326,6 +326,7 @@ class GraphDatasetViewSet(GenericViewSet):
                 return self._gm.bad_request(serializer.errors)
 
             row_ids = serializer.validated_data.get("row_ids")
+            task_queue = serializer.validated_data.get("task_queue")
 
             graph_version = GraphVersion.no_workspace_objects.get(
                 graph=graph_dataset.graph,
@@ -336,6 +337,7 @@ class GraphDatasetViewSet(GenericViewSet):
                 graph_version=graph_version,
                 dataset=graph_dataset.dataset,
                 row_ids=row_ids,
+                task_queue=task_queue,
             )
 
             return self._gm.create_response({"execution_ids": execution_ids})

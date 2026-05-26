@@ -903,6 +903,278 @@ export const agentPlaygroundJourneys = [
       });
     },
   },
+  {
+    id: "AGT-API-003",
+    title:
+      "Agent playground active dataset execute creates pollable execution state",
+    tags: ["agents", "agent-playground", "execution", "mutating", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
+      requireMutations();
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const marker = runId.replace(/[^a-z0-9]/gi, "").slice(0, 18);
+      const graphName = `api journey agent active exec ${marker}`;
+      const nodeName = `api_active_exec_${marker}`.slice(0, 80);
+      const inputValue = `agent active execution input ${runId}`;
+
+      const templateListPayload = await client.get(
+        apiPath("/agent-playground/node-templates/"),
+      );
+      const nodeTemplates = Array.isArray(templateListPayload?.node_templates)
+        ? templateListPayload.node_templates
+        : asArray(templateListPayload);
+      const llmTemplate = nodeTemplates.find(
+        (item) => item.name === "llm_prompt",
+      );
+      assert(
+        llmTemplate?.id,
+        "Agent node templates did not include the seeded llm_prompt template.",
+      );
+
+      const createdGraph = await client.post(
+        apiPath("/agent-playground/graphs/"),
+        {
+          name: graphName,
+          description: `Disposable active execution graph ${runId}`,
+        },
+      );
+      const graphId = createdGraph.id;
+      const draftVersionId = createdGraph.active_version?.id;
+      assert(isUuid(graphId), "Agent graph create did not return a graph id.");
+      assert(
+        isUuid(draftVersionId),
+        "Agent graph create did not return an initial draft version id.",
+      );
+
+      cleanup.defer("hard delete disposable active execution graph", () =>
+        hardDeleteAgentGraph({
+          graphId,
+          graphNames: [graphName],
+          promptNames: [nodeName],
+          organizationId,
+          workspaceId,
+        }),
+      );
+
+      const node = await client.post(
+        apiPath("/agent-playground/graphs/{id}/versions/{version_id}/nodes/", {
+          id: graphId,
+          version_id: draftVersionId,
+        }),
+        {
+          id: randomUUID(),
+          type: "atomic",
+          name: nodeName,
+          node_template_id: llmTemplate.id,
+          position: { x: 80, y: 120 },
+          prompt_template: {
+            messages: [
+              {
+                id: "msg-active-exec",
+                role: "user",
+                content: [
+                  {
+                    type: "text",
+                    text: "Return exactly this topic value: {{topic}}.",
+                  },
+                ],
+              },
+            ],
+            response_format: "text",
+            model: "gpt-4o-mini",
+            temperature: 0,
+            metadata: { api_journey: "AGT-API-003", run_id: runId },
+          },
+        },
+      );
+      assert(isUuid(node.id), "Active execution node create returned no id.");
+      const inputPort = findPort(node, {
+        direction: "input",
+        displayName: "topic",
+      });
+      const outputPort = findPort(node, {
+        direction: "output",
+        displayName: "response",
+      });
+      assert(
+        inputPort?.id,
+        "Active execution node did not expose topic input.",
+      );
+      assert(
+        outputPort?.id,
+        "Active execution node did not expose response output.",
+      );
+
+      const dataset = await client.get(
+        apiPath("/agent-playground/graphs/{graph_id}/dataset/", {
+          graph_id: graphId,
+        }),
+        { query: { version_id: draftVersionId, page: 1, page_size: 10 } },
+      );
+      const topicColumn = (dataset.columns || []).find(
+        (column) => column.name === "topic",
+      );
+      assert(topicColumn?.id, "Graph dataset did not include topic column.");
+      const inputRow = (dataset.rows || [])[0];
+      assert(inputRow?.id, "Graph dataset did not include an input row.");
+      const topicCell = (inputRow.cells || []).find(
+        (cell) => cell.column_id === topicColumn.id,
+      );
+      assert(topicCell?.id, "Graph dataset row did not include a topic cell.");
+
+      await client.put(
+        apiPath(
+          "/agent-playground/graphs/{graph_id}/dataset/cells/{cell_id}/",
+          {
+            graph_id: graphId,
+            cell_id: topicCell.id,
+          },
+        ),
+        { value: inputValue },
+      );
+
+      const activatedVersion = await client.patch(
+        apiPath("/agent-playground/graphs/{id}/versions/{version_id}/", {
+          id: graphId,
+          version_id: draftVersionId,
+        }),
+        { status: "active", commit_message: "activate AGT-API-003 graph" },
+      );
+      assert(
+        activatedVersion.status === "active",
+        "Graph version activation did not return active status.",
+      );
+
+      let workflowDispatch = "started";
+      let executionId = null;
+      let terminalDetail = null;
+      let executeErrorStatus = null;
+      try {
+        const execute = await client.post(
+          apiPath("/agent-playground/graphs/{graph_id}/dataset/execute/", {
+            graph_id: graphId,
+          }),
+          { row_ids: [inputRow.id], task_queue: "tasks_l" },
+        );
+        const executionIds = execute.execution_ids || [];
+        executionId = executionIds[0];
+        assert(
+          isUuid(executionId),
+          "Active graph dataset execute did not return an execution id.",
+        );
+        terminalDetail = await pollAgentExecutionDetail({
+          client,
+          graphId,
+          executionId,
+        });
+        workflowDispatch = terminalDetail.terminal
+          ? "terminal"
+          : "started_pending";
+      } catch (error) {
+        assert(
+          error?.status === 500,
+          `Active graph dataset execute failed before persistence with unexpected status: ${
+            error?.status || error.message
+          }`,
+        );
+        executeErrorStatus = error.status;
+        workflowDispatch = "failed_to_start";
+      }
+
+      const dispatchAudit = await loadAgentActiveExecutionAudit({
+        graphId,
+      });
+      assert(
+        dispatchAudit.execution_count === 1,
+        "Active dataset execute did not create exactly one graph execution row.",
+      );
+      if (!executionId) {
+        executionId = dispatchAudit.latest_execution_id;
+      }
+      assert(
+        isUuid(executionId),
+        "DB audit did not find a graph execution id.",
+      );
+      assert(
+        dispatchAudit.latest_input_topic === inputValue,
+        "Graph execution input payload did not persist the dataset row value.",
+      );
+      if (workflowDispatch === "failed_to_start") {
+        assert(
+          dispatchAudit.latest_status === "failed",
+          "Temporal dispatch failure left GraphExecution non-failed.",
+        );
+        assert(
+          String(dispatchAudit.latest_error_message || "").includes(
+            "Failed to start graph execution workflow",
+          ),
+          "Temporal dispatch failure did not persist an actionable error message.",
+        );
+      }
+      if (terminalDetail?.terminal) {
+        assert(
+          ["success", "failed"].includes(terminalDetail.status),
+          "Terminal execution detail returned an unexpected status.",
+        );
+        assert(
+          (terminalDetail.nodes || []).some(
+            (detailNode) => detailNode.id === node.id,
+          ),
+          "Terminal execution detail did not include the executed node.",
+        );
+      }
+
+      await client.post(apiPath("/agent-playground/graphs/delete/"), {
+        ids: [graphId],
+      });
+
+      const postDeleteAudit = await loadAgentExecutionDbAudit({
+        graphId,
+        graphExecutionId: executionId,
+        nodeExecutionId:
+          terminalDetail?.nodes?.find((detailNode) => detailNode.id === node.id)
+            ?.node_execution?.id || randomUUID(),
+      });
+      assert(
+        postDeleteAudit.graph_execution_visible === 0,
+        "Public graph delete left active execution graph row visible.",
+      );
+
+      evidence.push({
+        graph_id: graphId,
+        version_id: draftVersionId,
+        node_id: node.id,
+        input_port_id: inputPort.id,
+        output_port_id: outputPort.id,
+        input_row_id: inputRow.id,
+        execution_id: executionId,
+        workflow_dispatch: workflowDispatch,
+        execute_error_status: executeErrorStatus,
+        latest_status: dispatchAudit.latest_status,
+        latest_error_message_present: Boolean(
+          dispatchAudit.latest_error_message,
+        ),
+        terminal_status: terminalDetail?.terminal
+          ? terminalDetail.status
+          : null,
+        post_delete_audit: postDeleteAudit,
+      });
+    },
+  },
 ];
 
 function findPort(node, { direction, displayName }) {
@@ -1313,6 +1585,72 @@ SELECT json_build_object(
 );
 `;
   return runPostgresJson(sql);
+}
+
+async function loadAgentActiveExecutionAudit({ graphId }) {
+  const sql = `
+WITH target_versions AS (
+  SELECT id FROM agent_playground_graph_version
+  WHERE graph_id = ${sqlUuid(graphId)}
+),
+target_executions AS (
+  SELECT id, status, input_payload, error_message, created_at
+  FROM agent_playground_graph_execution
+  WHERE graph_version_id IN (SELECT id FROM target_versions)
+    AND deleted = false
+),
+latest_execution AS (
+  SELECT * FROM target_executions
+  ORDER BY created_at DESC
+  LIMIT 1
+)
+SELECT json_build_object(
+  'execution_count', (SELECT count(*) FROM target_executions),
+  'latest_execution_id', (SELECT id::text FROM latest_execution),
+  'latest_status', (SELECT status FROM latest_execution),
+  'latest_input_topic', (SELECT input_payload->>'topic' FROM latest_execution),
+  'latest_error_message', (SELECT error_message FROM latest_execution),
+  'latest_node_execution_count', (
+    SELECT count(*)
+    FROM agent_playground_node_execution
+    WHERE graph_execution_id = (SELECT id FROM latest_execution)
+      AND deleted = false
+  )
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function pollAgentExecutionDetail({
+  client,
+  graphId,
+  executionId,
+  attempts = 30,
+  intervalMs = 2000,
+}) {
+  let lastDetail = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    lastDetail = await client.get(
+      apiPath(
+        "/agent-playground/graphs/{graph_id}/executions/{execution_id}/",
+        {
+          graph_id: graphId,
+          execution_id: executionId,
+        },
+      ),
+    );
+    if (["success", "failed", "cancelled"].includes(lastDetail.status)) {
+      return { ...lastDetail, terminal: true };
+    }
+    await sleep(intervalMs);
+  }
+  return { ...(lastDetail || {}), terminal: false };
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function agentExecutionAuditSql({ graphExecutionId, nodeExecutionId }) {

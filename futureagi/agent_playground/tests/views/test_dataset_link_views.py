@@ -10,7 +10,7 @@ from rest_framework import status
 from agent_playground.models.choices import GraphVersionStatus
 from agent_playground.models.graph import Graph
 from agent_playground.models.graph_version import GraphVersion
-from model_hub.models.develop_dataset import Cell, Column, Row
+from model_hub.models.develop_dataset import Cell, Row
 
 # =============================================================================
 # Dataset retrieve
@@ -515,12 +515,17 @@ class TestDatasetExecute:
         with patch(
             "agent_playground.views.dataset_link.execute_rows",
             return_value=fake_ids,
-        ):
+        ) as mock_execute_rows:
             url = reverse("graph-dataset-execute", kwargs={"graph_id": graph.id})
-            response = authenticated_client.post(url, data={}, format="json")
+            response = authenticated_client.post(
+                url, data={"task_queue": "agent-playground-test"}, format="json"
+            )
 
         assert response.status_code == status.HTTP_201_CREATED
         assert response.data["result"]["execution_ids"] == fake_ids
+        assert (
+            mock_execute_rows.call_args.kwargs["task_queue"] == "agent-playground-test"
+        )
 
     def test_not_found_no_active_version(
         self,
