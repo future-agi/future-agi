@@ -33,6 +33,7 @@ export const agentPlaygroundJourneys = [
       const updatedGraphName = `${graphName} updated`;
       const sourceNodeName = `api_source_${marker}`.slice(0, 80);
       const targetNodeName = `api_target_${marker}`.slice(0, 80);
+      const restoreNodeName = `api_restore_${marker}`.slice(0, 80);
 
       const templateListPayload = await client.get(
         apiPath("/agent-playground/node-templates/"),
@@ -78,7 +79,7 @@ export const agentPlaygroundJourneys = [
         hardDeleteAgentGraph({
           graphId,
           graphNames: [graphName, updatedGraphName],
-          promptNames: [sourceNodeName, targetNodeName],
+          promptNames: [sourceNodeName, targetNodeName, restoreNodeName],
           organizationId,
           workspaceId,
         }),
@@ -361,6 +362,111 @@ export const agentPlaygroundJourneys = [
         "Graph version activation did not return active status.",
       );
 
+      const restoreDraftVersion = await client.post(
+        apiPath("/agent-playground/graphs/{id}/versions/", { id: graphId }),
+        {
+          commit_message: "temporary active version before restore coverage",
+          nodes: [
+            {
+              id: randomUUID(),
+              type: "atomic",
+              name: restoreNodeName,
+              node_template_id: llmTemplate.id,
+              position: { x: 80, y: 220 },
+              prompt_template: {
+                messages: [
+                  {
+                    id: "msg-restore",
+                    role: "user",
+                    content: [
+                      {
+                        type: "text",
+                        text: "Respond with one short sentence about {{topic}}.",
+                      },
+                    ],
+                  },
+                ],
+                response_format: "text",
+                model: "gpt-4o-mini",
+                temperature: 0,
+                metadata: { api_journey: "AGT-API-001", run_id: runId },
+              },
+            },
+          ],
+        },
+      );
+      assert(
+        isUuid(restoreDraftVersion.id) && restoreDraftVersion.status === "draft",
+        "Temporary restore version create did not return a draft version.",
+      );
+      const restoreVersion = await client.patch(
+        apiPath("/agent-playground/graphs/{id}/versions/{version_id}/", {
+          id: graphId,
+          version_id: restoreDraftVersion.id,
+        }),
+        {
+          status: "active",
+          commit_message: "temporary active version before restore coverage",
+        },
+      );
+      assert(
+        isUuid(restoreVersion.id) && restoreVersion.status === "active",
+        "Temporary restore version activation did not return active status.",
+      );
+      const inactiveDraftDetail = await client.get(
+        apiPath("/agent-playground/graphs/{id}/versions/{version_id}/", {
+          id: graphId,
+          version_id: draftVersionId,
+        }),
+      );
+      assert(
+        inactiveDraftDetail.status === "inactive",
+        "Creating a second active graph version did not demote the prior active version.",
+      );
+
+      const restoredVersion = await client.post(
+        apiPath("/agent-playground/graphs/{id}/versions/{version_id}/activate/", {
+          id: graphId,
+          version_id: draftVersionId,
+        }),
+      );
+      assert(
+        restoredVersion.id === draftVersionId && restoredVersion.status === "active",
+        "Graph restore activate endpoint did not restore the prior version.",
+      );
+      assert(
+        restoredVersion.nodes?.some((node) => node.id === sourceNode.id) &&
+          restoredVersion.nodes?.some((node) => node.id === targetNode.id),
+        "Restored graph version did not return the original nodes.",
+      );
+      const demotedRestoreVersion = await client.get(
+        apiPath("/agent-playground/graphs/{id}/versions/{version_id}/", {
+          id: graphId,
+          version_id: restoreVersion.id,
+        }),
+      );
+      assert(
+        demotedRestoreVersion.status === "inactive",
+        "Restoring the prior graph version did not demote the temporary active version.",
+      );
+      const activeRestoreError = await expectApiError(
+        () =>
+          client.post(
+            apiPath(
+              "/agent-playground/graphs/{id}/versions/{version_id}/activate/",
+              { id: graphId, version_id: draftVersionId },
+            ),
+          ),
+        [400],
+        "Activating an already-active graph version unexpectedly succeeded.",
+      );
+      await client.delete(
+        apiPath("/agent-playground/graphs/{id}/versions/{version_id}/", {
+          id: graphId,
+          version_id: restoreVersion.id,
+        }),
+      );
+
       const referenceableGraphs = await client.get(
         apiPath("/agent-playground/graphs/{id}/referenceable-graphs/", {
           id: graphId,
@@ -421,6 +527,9 @@ export const agentPlaygroundJourneys = [
         template_count: nodeTemplates.length,
         dataset_id: datasetBeforeRowCreate.dataset_id,
         inactive_execute_status: inactiveExecute.status,
+        restored_version_id: restoredVersion.id,
+        demoted_restore_version_id: restoreVersion.id,
+        active_restore_error_status: activeRestoreError.status,
         missing_execution_status: missingExecution.status,
         deleted_graph_status: deletedGraphDetail.status,
         pre_delete_audit: preDeleteAudit,
