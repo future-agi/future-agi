@@ -213,17 +213,19 @@ def fetch_prompt_metrics_span_query(
     #   getattr(result, f"metric_<config_id>", ...)
     # off each row.
     #
+    # Wave-3 status (93c5c415f): no reader covering filter-driven
+    # span listing by prompt_template was added. The required
+    # extension is still:
+    #
+    #   list_spans_for_prompt_template(prompt_template_id, *,
+    #       prompt_version_ids, filters, search_term,
+    #       page_number, page_size) -> (rows: list[dict], total_count: int)
+    #
+    # ... where filters route through the v2 ClickHouseFilterBuilder
+    # (same translator as TraceListQueryBuilder uses).
+    #
     # Migration plan (deferred):
-    #   1. Reader extension:
-    #      list_spans_for_prompt_template(prompt_template_id, *,
-    #          prompt_version_ids, filters, search_term,
-    #          page_number, page_size)
-    #          -> (rows: list[dict], total_count: int)
-    #      Where prompt_version_ids is the set of PG-resolved PromptVersion
-    #      ids tied to the template (kept PG since PromptVersion isn't in
-    #      CH); CH filter is ``prompt_version_id IN (...)``. Filters use
-    #      the same v2 ClickHouseFilterBuilder path the trace/voice-call
-    #      builders use.
+    #   1. Reader extension as above.
     #   2. Caller refactor:
     #      Replace `result.project.id` (FK traversal) with a Project
     #      lookup keyed on `result["project_id"]`; the in-CH row already
@@ -236,8 +238,9 @@ def fetch_prompt_metrics_span_query(
     #      for the (span_id, custom_eval_config_id) pairs returned from
     #      CH and stitch them in.
     #
-    # Cross-cutting blast radius makes this a separate commit; KEEP-PG
-    # until the reader extension lands.
+    # Cross-cutting blast radius (caller refactor + new reader +
+    # EvalLogger zip) makes this a separate commit; KEEP-PG until the
+    # reader extension lands.
 
     base_query = (
         ObservationSpan.objects.filter(
