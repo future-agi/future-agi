@@ -53,6 +53,7 @@ class GetTraceAnalyticsTool(BaseTool):
 
         from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.v2 import get_reader
 
         # Parse time range
         hours = TIME_RANGE_MAP.get(params.time_range)
@@ -80,30 +81,9 @@ class GetTraceAnalyticsTool(BaseTool):
 
         # Span stats.
         #
-        # CH25-TODO: this aggregate has two CH-incompatible shapes that
-        # block a clean drop-in:
-        #   1) The filter is `trace__created_at__gte=since` — a join on
-        #      the Trace FK to filter by trace.created_at. CH spans don't
-        #      carry trace.created_at; the closest analog is span.start_time
-        #      which can drift up to a trace's full duration. For accurate
-        #      parity we'd need either (a) a pre-fetch of trace_ids from PG
-        #      then `aggregate_by_trace_ids(trace_ids)`, or (b) acceptance
-        #      that "spans started in the window" is the right semantic.
-        #      The PG read keeps the original semantic; do not silently
-        #      shift to start_time.
-        #   2) No project_id case: an org-wide rollup. CHSpanReader has no
-        #      `aggregate_by_organization(org_id, *, since, until)` yet —
-        #      proposed signature for a future reader extension:
-        #         aggregate_by_organization(org_id, *, since, until,
-        #                                   trace_ids=None) ->
-        #             {span_count, prompt_tokens, completion_tokens,
-        #              total_tokens, cost, avg_latency_ms}
-        #      That would let the no-project_id branch route to CH with the
-        #      same time window the caller chose.
-        # See `time_bucket_aggregate` and `per_project_group_by_name`; both
-        # require a project_id and time window so they only fit if a
-        # caller-supplied `project_id` is present (and we accept the
-        # start_time semantic shift).
+        # PG fallback `span_qs` is always built — the group-by branches
+        # below still route through PG (no CH reader covers per-model /
+        # per-status group-by yet — see CH25-TODO at each branch).
         span_qs = ObservationSpan.objects.filter(
             trace__created_at__gte=since,
             deleted=False,
@@ -112,14 +92,68 @@ class GetTraceAnalyticsTool(BaseTool):
         if params.project_id:
             span_qs = span_qs.filter(project_id=params.project_id)
 
-        agg = span_qs.aggregate(
-            total_tokens=Sum("total_tokens"),
-            total_prompt_tokens=Sum("prompt_tokens"),
-            total_completion_tokens=Sum("completion_tokens"),
-            total_cost=Sum("cost"),
-            avg_latency=Avg("latency_ms"),
-            span_count=Count("id"),
-        )
+        # Main span aggregate: route to CH when project_id is set.
+        #
+        # The legacy filter was `trace__created_at__gte=since` — a join on
+        # the Trace FK to filter by trace.created_at. CH spans don't carry
+        # trace.created_at, so we pre-fetch trace_ids from the already-
+        # built (org+project) PG `trace_qs` and feed them to
+        # `per_trace_aggregate`. This preserves the original semantic
+        # (spans of traces created in the window) without silently
+        # shifting to `start_time`.
+        #
+        # The pre-fetched trace_ids list is bounded by `total_traces` (the
+        # PG count of matching traces). For very large org-wide queries
+        # without a project_id this could exceed reasonable CH IN-clause
+        # size, so we KEEP-PG for the no-project_id branch. A future
+        # reader extension would close this gap:
+        #
+        #   aggregate_by_organization(org_id, *, since, until,
+        #                             trace_ids=None) ->
+        #     {span_count, prompt_tokens, completion_tokens,
+        #      total_tokens, cost, avg_latency_ms}
+        if params.project_id:
+            trace_ids_str = [
+                str(tid) for tid in trace_qs.values_list("id", flat=True)
+            ]
+            with get_reader() as reader:
+                per_trace = reader.per_trace_aggregate(trace_ids_str)
+            # Sum across all matching traces. `per_trace_aggregate`'s
+            # `latency_ms` is `sum(latency_ms)` per trace, so total_lat =
+            # sum-of-sums across traces; avg over spans is reconstructed
+            # as total_lat / total_spans (matches the legacy
+            # `Avg("latency_ms")` semantic — mean over all matching spans).
+            span_count = sum(v.get("span_count", 0) for v in per_trace.values())
+            total_tokens = sum(v.get("total_tokens", 0) for v in per_trace.values())
+            total_prompt_tokens = sum(
+                v.get("prompt_tokens", 0) for v in per_trace.values()
+            )
+            total_completion_tokens = sum(
+                v.get("completion_tokens", 0) for v in per_trace.values()
+            )
+            total_cost = sum(v.get("cost", 0.0) for v in per_trace.values())
+            total_lat_sum = sum(v.get("latency_ms", 0) for v in per_trace.values())
+            avg_latency = (total_lat_sum / span_count) if span_count else 0
+            agg = {
+                "span_count": span_count,
+                "total_tokens": total_tokens,
+                "total_prompt_tokens": total_prompt_tokens,
+                "total_completion_tokens": total_completion_tokens,
+                "total_cost": total_cost,
+                "avg_latency": avg_latency,
+            }
+        else:
+            # KEEP-PG (org-wide rollup): no project_id means an unbounded
+            # IN clause; route through PG until the reader gains
+            # `aggregate_by_organization(org_id, *, since, until)`.
+            agg = span_qs.aggregate(
+                total_tokens=Sum("total_tokens"),
+                total_prompt_tokens=Sum("prompt_tokens"),
+                total_completion_tokens=Sum("completion_tokens"),
+                total_cost=Sum("cost"),
+                avg_latency=Avg("latency_ms"),
+                span_count=Count("id"),
+            )
 
         info = key_value_block(
             [
