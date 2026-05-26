@@ -7,7 +7,7 @@ import { useMemo } from "react";
 import PropTypes from "prop-types";
 import { useQuery } from "@tanstack/react-query";
 import { useTheme } from "@mui/material/styles";
-import { Box, Typography, Skeleton } from "@mui/material";
+import { Box, Typography, Skeleton, Stack } from "@mui/material";
 import ApexChart from "react-apexcharts";
 
 import axios, { endpoints } from "src/utils/axios";
@@ -38,6 +38,21 @@ export default function UsageChart({
     select: (res) => res.data?.result?.series || [],
     enabled: !!dimension,
   });
+
+  const yAxisFormatter = useMemo(
+    () => (val) => {
+      if (val == null) return "";
+      if (val >= 1e6) return `${(val / 1e6).toFixed(1)}M`;
+      if (val >= 1e3) return `${(val / 1e3).toFixed(1)}K`;
+      if (val === 0) return "0";
+      const abs = Math.abs(val);
+      if (abs < 0.001) return val.toFixed(4);
+      if (abs < 0.01) return val.toFixed(3);
+      if (abs < 0.1) return val.toFixed(2);
+      return val.toFixed(1);
+    },
+    [],
+  );
 
   const chartOptions = useMemo(
     () => ({
@@ -71,17 +86,7 @@ export default function UsageChart({
       yaxis: {
         labels: {
           style: { colors: theme.palette.text.secondary, fontSize: "11px" },
-          formatter: (val) => {
-            if (val == null) return "";
-            if (val >= 1e6) return `${(val / 1e6).toFixed(1)}M`;
-            if (val >= 1e3) return `${(val / 1e3).toFixed(1)}K`;
-            if (val === 0) return "0";
-            const abs = Math.abs(val);
-            if (abs < 0.001) return val.toFixed(4);
-            if (abs < 0.01) return val.toFixed(3);
-            if (abs < 0.1) return val.toFixed(2);
-            return val.toFixed(1);
-          },
+          formatter: yAxisFormatter,
         },
       },
       grid: {
@@ -104,22 +109,12 @@ export default function UsageChart({
                   y: freeAllowance,
                   borderColor: theme.palette.warning.main,
                   strokeDashArray: 4,
-                  label: {
-                    text: `Free tier: ${freeAllowance.toLocaleString()} ${displayUnit}`,
-                    position: "front",
-                    style: {
-                      color: theme.palette.warning.contrastText,
-                      background: theme.palette.warning.main,
-                      fontSize: "11px",
-                      padding: { left: 6, right: 6, top: 2, bottom: 2 },
-                    },
-                  },
                 },
               ],
             }
           : {},
     }),
-    [theme, freeAllowance, displayUnit],
+    [theme, freeAllowance, displayUnit, yAxisFormatter],
   );
   const chartSeries = useMemo(
     () => [
@@ -158,14 +153,51 @@ export default function UsageChart({
     );
   }
 
+  /** @type {any} */
+  const apexOptions = chartOptions;
+
   return (
     <Box>
       <ApexChart
         type="area"
         series={chartSeries}
-        options={chartOptions}
+        options={apexOptions}
         height={250}
       />
+      <Stack
+        direction="row"
+        spacing={2.5}
+        alignItems="center"
+        sx={{ mt: 1, pl: 1 }}
+      >
+        <Stack direction="row" spacing={0.75} alignItems="center">
+          <Box
+            sx={{
+              width: 18,
+              height: 2,
+              borderRadius: 1,
+              bgcolor: theme.palette.primary.main,
+            }}
+          />
+          <Typography variant="caption" color="text.secondary">
+            Daily usage
+          </Typography>
+        </Stack>
+        {freeAllowance > 0 && (
+          <Stack direction="row" spacing={0.75} alignItems="center">
+            <Box
+              sx={{
+                width: 18,
+                height: 0,
+                borderTop: `2px dashed ${theme.palette.warning.main}`,
+              }}
+            />
+            <Typography variant="caption" color="text.secondary">
+              Free tier ({freeAllowance.toLocaleString()} {displayUnit})
+            </Typography>
+          </Stack>
+        )}
+      </Stack>
     </Box>
   );
 }
