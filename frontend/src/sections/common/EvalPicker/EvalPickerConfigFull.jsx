@@ -1139,11 +1139,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             setEvalName(raw);
             setIsDirty(true);
           }}
-          error={!isEditMode && evalName.length > 51}
+          error={!isEditMode && evalName.length >= 51}
           helperText={
             isEditMode
               ? undefined
-              : evalName.length > 51
+              : evalName.length >= 51
                 ? "Name can't be longer than 50 characters"
                 : `Lowercase letters, numbers, hyphens and underscores only · ${evalName.length}/50`
           }
