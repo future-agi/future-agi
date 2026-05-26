@@ -4839,6 +4839,386 @@ export const appCoreJourneys = [
     },
   },
   {
+    id: "CORE-API-017",
+    title:
+      "Falcon memory and skill create/list/detail/update/delete workspace isolation and cleanup",
+    tags: [
+      "core",
+      "falcon",
+      "memory",
+      "skills",
+      "mutating",
+      "data-integrity",
+      "workspace-scope",
+    ],
+    async run({
+      client,
+      user,
+      organizationId,
+      workspaceId,
+      cleanup,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      const userId = currentUserId(user);
+      assert(isUuid(userId), "Falcon memory/skill journey requires user id.");
+      assert(
+        isUuid(organizationId),
+        "Falcon memory/skill journey requires organization context.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Falcon memory/skill journey requires workspace context.",
+      );
+
+      const suffix = runId.replace(/[^a-z0-9]/gi, "-").toLowerCase();
+      const marker = `api-journey-falcon-ms-${suffix}`;
+      const memoryKey = `${marker}-memory`;
+      const skillName = marker;
+      let hardCleaned = false;
+
+      await hardDeleteFalconMemorySkillFixturesDb({ marker, organizationId });
+      cleanup.defer("hard-delete Falcon memory/skill fixture", () =>
+        hardCleaned
+          ? null
+          : hardDeleteFalconMemorySkillFixturesDb({ marker, organizationId }),
+      );
+
+      const invalidMemoryCreate = await expectApiError(
+        () =>
+          client.post(apiPath("/falcon-ai/memory/"), {
+            key: `${marker}-invalid`,
+            value: "invalid",
+            displayName: "legacy alias",
+          }),
+        [400],
+        "Falcon memory create accepted an unknown field.",
+      );
+      const missingMemoryValue = await expectApiError(
+        () =>
+          client.post(apiPath("/falcon-ai/memory/"), {
+            key: `${marker}-missing-value`,
+          }),
+        [400],
+        "Falcon memory create accepted a missing value.",
+      );
+
+      const memory = await client.post(apiPath("/falcon-ai/memory/"), {
+        key: memoryKey,
+        value: "Initial Falcon memory value",
+      });
+      assert(
+        isUuid(memory?.id) &&
+          memory.key === memoryKey &&
+          memory.value === "Initial Falcon memory value" &&
+          memory.source === "user",
+        "Falcon memory create did not persist expected fields.",
+      );
+
+      const updatedMemory = await client.post(apiPath("/falcon-ai/memory/"), {
+        key: memoryKey,
+        value: "Updated Falcon memory value",
+      });
+      assert(
+        updatedMemory.id === memory.id &&
+          updatedMemory.value === "Updated Falcon memory value",
+        "Falcon memory upsert did not update the existing key.",
+      );
+
+      const seeded = await seedFalconMemorySkillIsolationDb({
+        marker,
+        organizationId,
+        userId,
+      });
+
+      const memories = asArray(await client.get(apiPath("/falcon-ai/memory/")));
+      const matchingMemories = memories.filter((row) =>
+        String(row.key || "").startsWith(marker),
+      );
+      assert(
+        matchingMemories.length === 1 &&
+          matchingMemories[0].id === memory.id &&
+          matchingMemories[0].value === "Updated Falcon memory value",
+        `Falcon memory list should expose only active-workspace fixture row: ${JSON.stringify(matchingMemories)}`,
+      );
+      assert(
+        !memories.some((row) => row.id === seeded.other_memory_id),
+        "Falcon memory list leaked another workspace memory.",
+      );
+
+      const otherMemoryDelete = await expectApiError(
+        () =>
+          client.delete(
+            apiPath("/falcon-ai/memory/{memory_id}/", {
+              memory_id: seeded.other_memory_id,
+            }),
+          ),
+        [404],
+        "Falcon memory delete removed another workspace memory.",
+      );
+      const missingMemoryDelete = await expectApiError(
+        () =>
+          client.delete(
+            apiPath("/falcon-ai/memory/{memory_id}/", {
+              memory_id: "00000000-0000-0000-0000-000000000000",
+            }),
+          ),
+        [404],
+        "Falcon missing memory delete unexpectedly succeeded.",
+      );
+
+      const invalidSkillCreate = await expectApiError(
+        () =>
+          client.post(apiPath("/falcon-ai/skills/"), {
+            name: `${marker} invalid`,
+            description: "Invalid skill",
+            instructions: "Never created",
+            trigger_phrases: ["invalid skill"],
+            displayName: "legacy alias",
+          }),
+        [400],
+        "Falcon skill create accepted an unknown field.",
+      );
+      const invalidSkillTrigger = await expectApiError(
+        () =>
+          client.post(apiPath("/falcon-ai/skills/"), {
+            name: `${marker} invalid trigger`,
+            description: "Invalid skill",
+            instructions: "Never created",
+            trigger_phrases: [],
+          }),
+        [400],
+        "Falcon skill create accepted empty trigger phrases.",
+      );
+
+      const skill = await client.post(apiPath("/falcon-ai/skills/"), {
+        name: skillName,
+        description: "Falcon skill API journey",
+        icon: "mdi:test-tube",
+        instructions: "Use the test memory safely.",
+        tool_names: ["list_memories"],
+        trigger_phrases: [`${marker} trigger`],
+      });
+      assert(
+        isUuid(skill?.id) &&
+          skill.name === skillName &&
+          skill.slug === marker &&
+          skill.is_builtin === false,
+        "Falcon skill create did not persist expected fields.",
+      );
+
+      const duplicateSkill = await expectApiError(
+        () =>
+          client.post(apiPath("/falcon-ai/skills/"), {
+            name: skillName,
+            description: "Duplicate skill",
+            instructions: "Duplicate",
+            trigger_phrases: [`${marker} duplicate`],
+          }),
+        [409],
+        "Falcon skill create accepted a duplicate slug.",
+      );
+
+      const skills = asArray(await client.get(apiPath("/falcon-ai/skills/")));
+      const matchingSkills = skills.filter((row) =>
+        String(row.slug || "").startsWith(marker),
+      );
+      assert(
+        matchingSkills.some((row) => row.id === skill.id) &&
+          matchingSkills.some((row) => row.id === seeded.builtin_skill_id) &&
+          !matchingSkills.some((row) => row.id === seeded.other_skill_id),
+        `Falcon skill list should include active custom/global builtin and exclude other workspace: ${JSON.stringify(matchingSkills)}`,
+      );
+
+      const skillDetail = await client.get(
+        apiPath("/falcon-ai/skills/{skill_id}/", { skill_id: skill.id }),
+      );
+      assert(
+        skillDetail.id === skill.id &&
+          skillDetail.instructions === "Use the test memory safely." &&
+          asArray(skillDetail.tool_names).includes("list_memories"),
+        "Falcon skill detail did not return created custom skill fields.",
+      );
+      const builtinDetail = await client.get(
+        apiPath("/falcon-ai/skills/{skill_id}/", {
+          skill_id: seeded.builtin_skill_id,
+        }),
+      );
+      assert(
+        builtinDetail.is_builtin === true && builtinDetail.slug === seeded.builtin_slug,
+        "Falcon skill detail did not expose global builtin skill.",
+      );
+
+      const builtinPatch = await expectApiError(
+        () =>
+          client.patch(
+            apiPath("/falcon-ai/skills/{skill_id}/", {
+              skill_id: seeded.builtin_skill_id,
+            }),
+            { description: "should not mutate" },
+          ),
+        [403],
+        "Falcon skill PATCH edited a builtin skill.",
+      );
+      const builtinDelete = await expectApiError(
+        () =>
+          client.delete(
+            apiPath("/falcon-ai/skills/{skill_id}/", {
+              skill_id: seeded.builtin_skill_id,
+            }),
+          ),
+        [403],
+        "Falcon skill DELETE removed a builtin skill.",
+      );
+      const otherSkillDetail = await expectApiError(
+        () =>
+          client.get(
+            apiPath("/falcon-ai/skills/{skill_id}/", {
+              skill_id: seeded.other_skill_id,
+            }),
+          ),
+        [404],
+        "Falcon skill detail leaked another workspace skill.",
+      );
+      const otherSkillPatch = await expectApiError(
+        () =>
+          client.patch(
+            apiPath("/falcon-ai/skills/{skill_id}/", {
+              skill_id: seeded.other_skill_id,
+            }),
+            { description: "should not mutate" },
+          ),
+        [404],
+        "Falcon skill PATCH mutated another workspace skill.",
+      );
+      const otherSkillDelete = await expectApiError(
+        () =>
+          client.delete(
+            apiPath("/falcon-ai/skills/{skill_id}/", {
+              skill_id: seeded.other_skill_id,
+            }),
+          ),
+        [404],
+        "Falcon skill DELETE removed another workspace skill.",
+      );
+
+      const invalidSkillPatch = await expectApiError(
+        () =>
+          client.patch(
+            apiPath("/falcon-ai/skills/{skill_id}/", { skill_id: skill.id }),
+            { description: "Updated", displayName: "legacy alias" },
+          ),
+        [400],
+        "Falcon skill PATCH accepted an unknown field.",
+      );
+      const invalidSkillToolNames = await expectApiError(
+        () =>
+          client.patch(
+            apiPath("/falcon-ai/skills/{skill_id}/", { skill_id: skill.id }),
+            { tool_names: "not-a-list" },
+          ),
+        [400],
+        "Falcon skill PATCH accepted invalid tool_names shape.",
+      );
+      const patchedSkill = await client.patch(
+        apiPath("/falcon-ai/skills/{skill_id}/", { skill_id: skill.id }),
+        {
+          description: "Updated Falcon skill API journey",
+          tool_names: ["list_memories", "save_memory"],
+          trigger_phrases: [`${marker} updated`],
+          is_active: false,
+        },
+      );
+      assert(
+        patchedSkill.description === "Updated Falcon skill API journey" &&
+          asArray(patchedSkill.tool_names).includes("save_memory") &&
+          patchedSkill.is_active === false,
+        "Falcon skill PATCH did not persist updated fields.",
+      );
+      const inactiveSkills = asArray(await client.get(apiPath("/falcon-ai/skills/")));
+      assert(
+        !inactiveSkills.some((row) => row.id === skill.id) &&
+          inactiveSkills.some((row) => row.id === seeded.builtin_skill_id),
+        "Falcon skill list did not hide inactive custom skill while keeping builtin.",
+      );
+
+      await client.delete(
+        apiPath("/falcon-ai/memory/{memory_id}/", { memory_id: memory.id }),
+      );
+      await client.delete(
+        apiPath("/falcon-ai/skills/{skill_id}/", { skill_id: skill.id }),
+      );
+      const deletedSkillDetail = await expectApiError(
+        () =>
+          client.get(
+            apiPath("/falcon-ai/skills/{skill_id}/", { skill_id: skill.id }),
+          ),
+        [404],
+        "Falcon deleted skill detail unexpectedly remained visible.",
+      );
+
+      const deleteAudit = await loadFalconMemorySkillDbAudit({
+        memoryIds: [memory.id, seeded.other_memory_id],
+        skillIds: [skill.id, seeded.other_skill_id, seeded.builtin_skill_id],
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        deleteAudit.memory_count === 2 &&
+          deleteAudit.deleted_memory_count === 1 &&
+          deleteAudit.memory_deleted_at_count === 1,
+        `Falcon memory DB audit did not find expected delete state: ${JSON.stringify(deleteAudit)}`,
+      );
+      assert(
+        deleteAudit.skill_count === 3 &&
+          deleteAudit.deleted_skill_count === 1 &&
+          deleteAudit.skill_deleted_at_count === 1 &&
+          deleteAudit.builtin_skill_count === 1,
+        `Falcon skill DB audit did not find expected delete state: ${JSON.stringify(deleteAudit)}`,
+      );
+
+      const cleanupAudit = await hardDeleteFalconMemorySkillFixturesDb({
+        marker,
+        organizationId,
+      });
+      hardCleaned = true;
+      assert(
+        cleanupAudit.remaining_memory_count === 0 &&
+          cleanupAudit.remaining_skill_count === 0 &&
+          cleanupAudit.remaining_workspace_count === 0,
+        `Falcon memory/skill hard cleanup left rows behind: ${JSON.stringify(cleanupAudit)}`,
+      );
+
+      evidence.push({
+        memory_id: memory.id,
+        other_memory_id: seeded.other_memory_id,
+        skill_id: skill.id,
+        builtin_skill_id: seeded.builtin_skill_id,
+        other_skill_id: seeded.other_skill_id,
+        invalid_memory_create_status: invalidMemoryCreate.status,
+        missing_memory_value_status: missingMemoryValue.status,
+        other_memory_delete_status: otherMemoryDelete.status,
+        missing_memory_delete_status: missingMemoryDelete.status,
+        invalid_skill_create_status: invalidSkillCreate.status,
+        invalid_skill_trigger_status: invalidSkillTrigger.status,
+        duplicate_skill_status: duplicateSkill.status,
+        builtin_patch_status: builtinPatch.status,
+        builtin_delete_status: builtinDelete.status,
+        other_skill_detail_status: otherSkillDetail.status,
+        other_skill_patch_status: otherSkillPatch.status,
+        other_skill_delete_status: otherSkillDelete.status,
+        invalid_skill_patch_status: invalidSkillPatch.status,
+        invalid_skill_tool_names_status: invalidSkillToolNames.status,
+        deleted_skill_detail_status: deletedSkillDetail.status,
+        memory_deleted_at_count: deleteAudit.memory_deleted_at_count,
+        skill_deleted_at_count: deleteAudit.skill_deleted_at_count,
+        cleanup_remaining_memory_count: cleanupAudit.remaining_memory_count,
+        cleanup_remaining_skill_count: cleanupAudit.remaining_skill_count,
+      });
+    },
+  },
+  {
     id: "CORE-API-002",
     title:
       "Developer secret key create, masked list, disable, enable, and delete lifecycle",
@@ -8000,6 +8380,291 @@ SELECT json_build_object(
   'deleted_message_count', (SELECT count(*) FROM deleted_messages),
   'remaining_message_count',
     (SELECT count(*) FROM target_messages) - (SELECT count(*) FROM deleted_messages),
+  'deleted_workspace_count', (SELECT count(*) FROM deleted_workspaces),
+  'remaining_workspace_count',
+    (SELECT count(*) FROM target_workspaces) - (SELECT count(*) FROM deleted_workspaces)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function seedFalconMemorySkillIsolationDb({
+  marker,
+  organizationId,
+  userId,
+}) {
+  const workspaceId = randomUUID();
+  const memoryId = randomUUID();
+  const skillId = randomUUID();
+  const builtinSkillId = randomUUID();
+  const workspaceName = `${marker}-other-workspace`;
+  const otherMemoryKey = `${marker}-other-memory`;
+  const otherSkillSlug = `${marker}-other-skill`;
+  const builtinSlug = `${marker}-builtin`;
+  const sql = `
+WITH inserted_workspace AS (
+  INSERT INTO accounts_workspace (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    display_name,
+    description,
+    is_active,
+    is_default,
+    created_by_id,
+    organization_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(workspaceId)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral(workspaceName)},
+    ${sqlTextLiteral("Temporary workspace for Falcon memory and skill API journey.")},
+    true,
+    false,
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)}
+  )
+  RETURNING id, name
+),
+inserted_memory AS (
+  INSERT INTO falcon_ai_falconmemory (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    key,
+    value,
+    source,
+    conversation_id,
+    created_by_id,
+    organization_id,
+    workspace_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(memoryId)},
+    ${sqlTextLiteral(otherMemoryKey)},
+    ${sqlTextLiteral("Other workspace memory should not be visible.")},
+    'user',
+    NULL,
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)}
+  )
+  RETURNING id, key
+),
+inserted_other_skill AS (
+  INSERT INTO falcon_ai_skill (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    slug,
+    description,
+    icon,
+    is_builtin,
+    is_active,
+    instructions,
+    tool_names,
+    example_trajectories,
+    trigger_phrases,
+    created_by_id,
+    organization_id,
+    workspace_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(skillId)},
+    ${sqlTextLiteral(`${marker} other skill`)},
+    ${sqlTextLiteral(otherSkillSlug)},
+    ${sqlTextLiteral("Other workspace skill should not be visible.")},
+    'mdi:test-tube',
+    false,
+    true,
+    ${sqlTextLiteral("Do not expose from another workspace.")},
+    ${sqlJson(["list_memories"])},
+    '[]'::jsonb,
+    ${sqlJson([`${marker} other trigger`])},
+    ${sqlUuid(userId)},
+    ${sqlUuid(organizationId)},
+    ${sqlUuid(workspaceId)}
+  )
+  RETURNING id, slug
+),
+inserted_builtin_skill AS (
+  INSERT INTO falcon_ai_skill (
+    created_at,
+    updated_at,
+    deleted,
+    deleted_at,
+    id,
+    name,
+    slug,
+    description,
+    icon,
+    is_builtin,
+    is_active,
+    instructions,
+    tool_names,
+    example_trajectories,
+    trigger_phrases,
+    created_by_id,
+    organization_id,
+    workspace_id
+  )
+  VALUES (
+    NOW(),
+    NOW(),
+    false,
+    NULL,
+    ${sqlUuid(builtinSkillId)},
+    ${sqlTextLiteral(`${marker} builtin skill`)},
+    ${sqlTextLiteral(builtinSlug)},
+    ${sqlTextLiteral("Disposable global builtin skill.")},
+    'mdi:star',
+    true,
+    true,
+    ${sqlTextLiteral("Global builtin skill for API journey.")},
+    ${sqlJson(["list_memories"])},
+    '[]'::jsonb,
+    ${sqlJson([`${marker} builtin trigger`])},
+    NULL,
+    NULL,
+    NULL
+  )
+  RETURNING id, slug
+)
+SELECT json_build_object(
+  'workspace_id', (SELECT id::text FROM inserted_workspace LIMIT 1),
+  'workspace_name', (SELECT name FROM inserted_workspace LIMIT 1),
+  'other_memory_id', (SELECT id::text FROM inserted_memory LIMIT 1),
+  'other_memory_key', (SELECT key FROM inserted_memory LIMIT 1),
+  'other_skill_id', (SELECT id::text FROM inserted_other_skill LIMIT 1),
+  'other_skill_slug', (SELECT slug FROM inserted_other_skill LIMIT 1),
+  'builtin_skill_id', (SELECT id::text FROM inserted_builtin_skill LIMIT 1),
+  'builtin_slug', (SELECT slug FROM inserted_builtin_skill LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadFalconMemorySkillDbAudit({
+  memoryIds,
+  skillIds,
+  organizationId,
+  workspaceId,
+}) {
+  const sql = `
+WITH requested_memories AS (
+  SELECT unnest(${sqlUuidArray(memoryIds)}) AS memory_id
+),
+requested_skills AS (
+  SELECT unnest(${sqlUuidArray(skillIds)}) AS skill_id
+),
+memory_rows AS (
+  SELECT memory.*
+  FROM falcon_ai_falconmemory memory
+  JOIN requested_memories requested
+    ON memory.id = requested.memory_id
+  WHERE memory.organization_id = ${sqlUuid(organizationId)}
+),
+skill_rows AS (
+  SELECT skill.*
+  FROM falcon_ai_skill skill
+  JOIN requested_skills requested
+    ON skill.id = requested.skill_id
+  WHERE skill.organization_id = ${sqlUuid(organizationId)}
+     OR (skill.organization_id IS NULL AND skill.is_builtin = true)
+)
+SELECT json_build_object(
+  'memory_count', (SELECT count(*) FROM memory_rows),
+  'deleted_memory_count',
+    (SELECT count(*) FROM memory_rows WHERE deleted = true),
+  'memory_deleted_at_count',
+    (SELECT count(*) FROM memory_rows WHERE deleted = true AND deleted_at IS NOT NULL),
+  'other_workspace_memory_count',
+    (SELECT count(*) FROM memory_rows WHERE workspace_id <> ${sqlUuid(workspaceId)}),
+  'skill_count', (SELECT count(*) FROM skill_rows),
+  'deleted_skill_count',
+    (SELECT count(*) FROM skill_rows WHERE deleted = true),
+  'skill_deleted_at_count',
+    (SELECT count(*) FROM skill_rows WHERE deleted = true AND deleted_at IS NOT NULL),
+  'builtin_skill_count',
+    (SELECT count(*) FROM skill_rows WHERE is_builtin = true AND organization_id IS NULL),
+  'other_workspace_skill_count',
+    (SELECT count(*) FROM skill_rows WHERE workspace_id <> ${sqlUuid(workspaceId)})
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteFalconMemorySkillFixturesDb({
+  marker,
+  organizationId,
+}) {
+  const sql = `
+WITH target_memories AS (
+  SELECT id
+  FROM falcon_ai_falconmemory
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND key LIKE ${sqlTextLiteral(`${marker}%`)}
+),
+deleted_memories AS (
+  DELETE FROM falcon_ai_falconmemory memory
+  USING target_memories target
+  WHERE memory.id = target.id
+  RETURNING memory.id
+),
+target_skills AS (
+  SELECT id
+  FROM falcon_ai_skill
+  WHERE slug LIKE ${sqlTextLiteral(`${marker}%`)}
+    AND (
+      organization_id = ${sqlUuid(organizationId)}
+      OR (organization_id IS NULL AND is_builtin = true)
+    )
+),
+deleted_skills AS (
+  DELETE FROM falcon_ai_skill skill
+  USING target_skills target
+  WHERE skill.id = target.id
+  RETURNING skill.id
+),
+target_workspaces AS (
+  SELECT id
+  FROM accounts_workspace
+  WHERE organization_id = ${sqlUuid(organizationId)}
+    AND name LIKE ${sqlTextLiteral(`${marker}%`)}
+),
+deleted_workspaces AS (
+  DELETE FROM accounts_workspace workspace
+  USING target_workspaces target
+  WHERE workspace.id = target.id
+  RETURNING workspace.id
+)
+SELECT json_build_object(
+  'deleted_memory_count', (SELECT count(*) FROM deleted_memories),
+  'remaining_memory_count',
+    (SELECT count(*) FROM target_memories) - (SELECT count(*) FROM deleted_memories),
+  'deleted_skill_count', (SELECT count(*) FROM deleted_skills),
+  'remaining_skill_count',
+    (SELECT count(*) FROM target_skills) - (SELECT count(*) FROM deleted_skills),
   'deleted_workspace_count', (SELECT count(*) FROM deleted_workspaces),
   'remaining_workspace_count',
     (SELECT count(*) FROM target_workspaces) - (SELECT count(*) FROM deleted_workspaces)
