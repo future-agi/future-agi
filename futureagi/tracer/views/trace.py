@@ -2127,14 +2127,24 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         """
         Compare traces across project versions with optimized queries.
         """
-        # CH25-TODO: this endpoint has no CH dispatch — it does PG-side
-        # Trace.objects + ObservationSpan Subquery + EvalLogger pivot to
-        # build cross-version comparison rows and then calls the PG-only
-        # get_observation_spans() helper. Migrating cleanly needs a CH
-        # cross-version reader plus the orphaned-span tree builder lifted
-        # from get_observation_spans. Staying PG-only until the
-        # compare_traces endpoint is either retired or a CH cross-version
-        # comparison reader exists.
+        # CH25-TODO: this endpoint has no CH dispatch. It does:
+        #   1. Trace.objects + per-trace ObservationSpan Subquery to
+        #      derive node_type / avg_latency / avg_cost (the per-trace
+        #      part could be lifted to reader.per_trace_aggregate / the
+        #      per-trace rollup, but it's an ORM subquery, not a Python
+        #      walk).
+        #   2. EvalLogger pivot via .annotate(Round/Avg/Case/JSONObject)
+        #      that produces per-config float/bool/str_list rows — pure
+        #      PG EvalLogger reads.
+        #   3. get_observation_spans() helper (observation_span.py
+        #      L3019-3059), which is documented KEEP-PG: it walks the
+        #      orphaned-span tree and constructs dummy parents, a
+        #      schema-coupled pattern that CHSpanReader doesn't expose.
+        # Migrating cleanly needs (a) a CH cross-version comparison
+        # reader (eval pivots across project_versions in one query) and
+        # (b) the orphaned-span tree builder lifted to CH. Until both
+        # exist, or compare_traces is retired in favor of the per-trace
+        # CH retrieve path, this stays PG.
         try:
             project_version_ids = self.request.data.get("project_version_ids", [])
             index = self.request.data.get("index", 0)
@@ -2389,11 +2399,30 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         Get the previous and next trace id by index using efficient database queries.
         """
         # CH25-TODO: PG-only prev/next navigation for experiment traces
-        # (project_version-scoped). Needs the same eval/annotation filter
-        # pivot the CH TraceListQueryBuilder produces plus a "by-start_time
-        # prev/next" step. Reader-gap candidate documented inline in
-        # observation_span.py (potential
-        # `prev_next_trace_by_start_time(...)` method).
+        # (project_version-scoped). Needs the same eval/annotation
+        # filter pivot the CH TraceListQueryBuilder produces plus a
+        # "by-start_time prev/next" step.
+        #
+        # Wave-3 partial coverage (commit 93c5c415f): the reader exposes
+        # `prev_next_trace_by_start_time(*, project_id, trace_id,
+        # project_version_id=None)` which does an unfiltered walk and
+        # returns (prev_trace_id, next_trace_id) — the correct return
+        # shape. It does NOT accept the eval/annotation/span-attribute
+        # filters this endpoint applies (FilterEngine pivots +
+        # _build_annotation_subqueries) before walking. The frontend
+        # always sends `filters` (verified in
+        # components/traceDetailDrawer/trace-detail-drawer.jsx) so a
+        # drop-in swap would silently change the navigation set under
+        # any non-empty filter. Staying PG-only.
+        #
+        # Reader-gap proposal:
+        #   prev_next_trace_by_start_time_with_filters(*, project_id,
+        #       trace_id, project_version_id=None, filters=None)
+        #       -> tuple[Optional[str], Optional[str]]
+        # where `filters` accepts the TraceListQueryBuilder filter
+        # shape (system metrics + eval pivots + annotation joins + span
+        # attributes). On filters=None / [] it would degrade to the
+        # existing `prev_next_trace_by_start_time`.
         try:
             query = request.validated_query_data
             trace_id = str(query["trace_id"])
@@ -3376,18 +3405,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("Project not found")
 
             # Check if project has voice/conversation traces.
-            # CH25-TODO: KEEP-PG for now. The filter combines
-            # observation_type='conversation' with parent_span_id IS NULL
-            # which CHSpanReader.count_by_project doesn't expose. A
-            # dedicated `has_root_spans_of_type(project_id, type)` reader
-            # method would replace this — would need to filter
-            # parent_span_id='' on the CH side. Cheap PG existence check
-            # in the meantime.
-            has_voice_traces = ObservationSpan.objects.filter(
-                trace__project_id=project_id,
-                parent_span_id__isnull=True,
-                observation_type="conversation",
-            ).exists()
+            # Wave-3 (commit 93c5c415f) added the exact reader the prior
+            # CH25-TODO requested: `has_root_spans_of_type(project_id,
+            # observation_type)` ANDs is_deleted=0 + parent_span_id='' +
+            # observation_type on the CH side, returning a bool from a
+            # SELECT … LIMIT 1. Tenant scope is preserved by the
+            # workspace-scoped `_project_queryset_for_request` check
+            # above; the reader call is project-scoped.
+            from tracer.services.clickhouse.v2 import get_reader
+
+            with get_reader() as reader:
+                has_voice_traces = reader.has_root_spans_of_type(
+                    str(project_id), "conversation"
+                )
 
             if has_voice_traces:
                 return self._export_voice_calls(request, project, project_id)
@@ -3424,13 +3454,28 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         """
         Export voice/conversation traces as CSV with call-specific fields.
         """
-        # CH25-TODO: voice-call CSV export is PG-only — it needs to walk
-        # the full result set without pagination (no CH equivalent
-        # surface in VoiceCallListQueryBuilder today). Migrating cleanly
-        # would need either a CH builder that emits unbounded rows or a
-        # cursor-style pagination loop. Staying PG-only until the export
-        # path is moved to a Temporal job that does the unbounded walk
-        # against CH and streams to S3.
+        # CH25-TODO: voice-call CSV export is PG-only. Two blockers:
+        #   1. Unbounded walk — no CH equivalent in
+        #      VoiceCallListQueryBuilder today. The CH list endpoint
+        #      always paginates; export skips pagination.
+        #   2. populate_call_logs_result (L1586-1707) iterates a Django
+        #      queryset and reads per-row annotations attached upstream
+        #      (`span_attributes`, `provider`, `metadata`,
+        #      `metric_{config.id}`, `annotation_{label.id}`, etc.).
+        #      The wave-3 reader's `list_by_trace_ids` returns
+        #      list[CHSpan] without these annotations; reusing
+        #      `populate_call_logs_result` would require either a
+        #      wrapper that fakes the queryset attribute shape or a
+        #      rewritten variant that takes
+        #      (CHSpan-rooted-rows, eval_outputs_map,
+        #       annotation_outputs_map) and emits the same dict.
+        # Migrating cleanly would need (a) a CH unbounded-walk builder
+        # (or a Temporal job that streams CH rows in batches), and (b)
+        # a `populate_call_logs_result_from_ch(...)` variant that does
+        # not rely on Django-queryset side annotations. Staying PG-only
+        # until both land or this export is moved to a Temporal job
+        # that streams unbounded CH rows + assembles voice-call shape +
+        # writes the CSV to S3.
         serializer = TraceExportQuerySerializer(data=request.query_params)
         if not serializer.is_valid():
             return self._gm.bad_request(serializer.errors)
