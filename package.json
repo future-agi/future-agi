@@ -4,7 +4,7 @@
   "private": true,
   "description": "Repo-level tooling for Future AGI (hooks + formatters). App code lives in frontend/ and futureagi/.",
   "scripts": {
-    "prepare": "husky",
+    "prepare": "husky || true",
     "lint-staged": "lint-staged"
   },
   "devDependencies": {

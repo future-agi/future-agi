@@ -47,22 +47,34 @@ docker compose up -d
 
 The backend will be at `http://localhost:8000`, the frontend at `http://localhost:3031`.
 
-### 3. Install git hooks
+### 3. Install git hooks (optional)
+
+Git hooks are **contributor tooling only** — you don't need them to run or
+self-host Future AGI (the Docker stack never touches them). They just format
+and lint your changes before they leave your machine.
 
 ```bash
-# From repo root — installs husky hooks and lint-staged tooling.
+# From repo root — installs husky hooks + lint-staged (frontend formatting).
 yarn install
 
-# For Python hooks (black, isort, mypy, Django system checks):
+# Optional: Python checks (black, isort, mypy, Django system checks).
 cd futureagi && make pre-commit-install
 ```
 
-On every commit, `lint-staged` auto-formats and lints the staged files:
+What runs:
 
-- `frontend/src/**` → ESLint + Prettier
-- `futureagi/**/*.py` → `black`, `isort`, `mypy` (via pre-commit)
+- **pre-commit** → `lint-staged` on staged `frontend/src/**` files (ESLint + Prettier).
+- **pre-commit (Python)** → `black`, `isort`, `mypy` on staged `futureagi/**/*.py` —
+  only if you ran `make pre-commit-install` above. Not part of `lint-staged`.
+- **pre-push** → branch-name validation (skipped automatically on `main`/`dev`).
 
-Branch names are validated on `git push`.
+The hooks are fully skippable when you need to bypass them:
+
+```bash
+git commit --no-verify     # skip the pre-commit hook for this commit
+git push --no-verify       # skip branch-name validation for this push
+HUSKY=0 git commit         # disable husky hooks entirely for the command
+```
 
 ### 4. Run tests
 

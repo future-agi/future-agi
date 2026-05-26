@@ -2,4 +2,12 @@
 # not just your changes, making it slow and pointless.
 [ -f "$(git rev-parse --git-path MERGE_HEAD 2>/dev/null)" ] && exit 0
 
+# lint-staged is contributor tooling — you only need it to contribute, not to
+# run the app. If it isn't installed, skip cleanly instead of blocking the
+# commit. Run `yarn install` from the repo root to enable formatting on commit.
+if [ ! -x node_modules/.bin/lint-staged ]; then
+  echo "⏭  lint-staged not installed — skipping pre-commit formatting (run 'yarn install' to enable)."
+  exit 0
+fi
+
 npx --no-install lint-staged
