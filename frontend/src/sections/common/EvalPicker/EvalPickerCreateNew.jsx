@@ -261,7 +261,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       try {
         const data = await createEval.mutateAsync({
           is_draft: true,
-          eval_type: "agent",
+          // eval_type: "agent",
           output_type: "pass_fail",
           model: "turing_large",
           pass_threshold: 0.5,
@@ -276,6 +276,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   // Auto-save to draft
   const buildPayload = useCallback(
     () => ({
+      eval_type: evalType,
       instructions: evalType === "code" ? "" : instructions,
       code: evalType === "code" ? code : undefined,
       code_language: evalType === "code" ? codeLanguage : undefined,
