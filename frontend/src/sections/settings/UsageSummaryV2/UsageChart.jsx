@@ -72,9 +72,15 @@ export default function UsageChart({
         labels: {
           style: { colors: theme.palette.text.secondary, fontSize: "11px" },
           formatter: (val) => {
+            if (val == null) return "";
             if (val >= 1e6) return `${(val / 1e6).toFixed(1)}M`;
             if (val >= 1e3) return `${(val / 1e3).toFixed(1)}K`;
-            return val?.toFixed(1);
+            if (val === 0) return "0";
+            const abs = Math.abs(val);
+            if (abs < 0.001) return val.toFixed(4);
+            if (abs < 0.01) return val.toFixed(3);
+            if (abs < 0.1) return val.toFixed(2);
+            return val.toFixed(1);
           },
         },
       },
@@ -115,7 +121,6 @@ export default function UsageChart({
     }),
     [theme, freeAllowance, displayUnit],
   );
-
   const chartSeries = useMemo(
     () => [
       {
