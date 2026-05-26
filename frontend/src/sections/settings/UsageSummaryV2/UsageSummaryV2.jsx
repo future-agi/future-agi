@@ -71,6 +71,8 @@ function formatUsage(value, unit) {
   if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M ${unit}`;
   if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K ${unit}`;
   if (Number.isInteger(value)) return `${value.toLocaleString()} ${unit}`;
+  if (value < 0.1) return `${value.toFixed(3)} ${unit}`;
+  if (value < 1) return `${value.toFixed(2)} ${unit}`;
   return `${value.toFixed(1)} ${unit}`;
 }
 
@@ -245,7 +247,7 @@ StatCard.propTypes = {
 
 // ── Dimension Product Card ────────────────────────────────────────────────
 
-function DimensionCard({ dim }) {
+function DimensionCard({ dim, periodCaption }) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
   const config = DIMENSION_CONFIG[dim.key] || {};
@@ -311,7 +313,10 @@ function DimensionCard({ dim }) {
                 )}
                 {dim.free_allowance > 0 && !isOverFree && (
                   <Typography variant="caption" color="text.secondary">
-                    {usagePct.toFixed(0)}% of free tier used
+                    {usagePct > 0 && usagePct < 1
+                      ? `${usagePct.toFixed(2)}`
+                      : usagePct.toFixed(0)}
+                    % of free tier used
                   </Typography>
                 )}
               </Stack>
@@ -323,7 +328,7 @@ function DimensionCard({ dim }) {
               {fCurrency(dim.estimated_cost)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              month to date
+              {periodCaption}
             </Typography>
           </Stack>
         </Stack>
@@ -461,6 +466,7 @@ const dimensionPropType = PropTypes.shape({
 
 DimensionCard.propTypes = {
   dim: dimensionPropType.isRequired,
+  periodCaption: PropTypes.string.isRequired,
 };
 
 // ── Legend ─────────────────────────────────────────────────────────────────
@@ -563,6 +569,11 @@ const TIME_RANGES = [
   { value: "6", label: "6M" },
   { value: "12", label: "12M" },
 ];
+
+function getPeriodCaption(rangeValue) {
+  if (rangeValue === "current") return "month to date";
+  return `last ${rangeValue} months`;
+}
 
 function getPeriodRange(rangeValue) {
   const now = new Date();
@@ -904,7 +915,11 @@ export default function UsageSummaryV2() {
 
       <Stack spacing={2}>
         {overview?.dimensions?.map((dim) => (
-          <DimensionCard key={dim.key} dim={dim} />
+          <DimensionCard
+            key={dim.key}
+            dim={dim}
+            periodCaption={getPeriodCaption(timeRange)}
+          />
         ))}
       </Stack>
 
