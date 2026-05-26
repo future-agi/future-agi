@@ -6,65 +6,55 @@ export function fNumber(number) {
   return numeral(number).format();
 }
 export function fCurrency(number, showThreeDecimals = false) {
-  // Return empty string if input is null or undefined
-  if (number === null || number === undefined) return "";
-
-  // Convert string inputs to numbers
+  if (number == null) return "";
   if (typeof number === "string") number = parseFloat(number);
+  if (!Number.isFinite(number) || number === 0) return "$0";
 
-  // If number is exactly 0, return "$0"
-  if (number === 0) return "$0";
-
-  // If number is a whole integer, return formatted string with no decimals
-  if (Number.isInteger(number)) return numeral(number).format("$0,0");
-
-  // Treat near-zero values as zero (use smaller threshold when showing extra decimals)
-  if (Math.abs(number) < (showThreeDecimals ? 0.0000001 : 0.000001))
-    return "$0";
-
-  // If showThreeDecimals flag is false, use default 2 decimal formatting
-  if (!showThreeDecimals) {
-    const format = number ? numeral(number).format("$0,0.00") : "";
-    return result(format, ".00"); // Remove unnecessary trailing zeros if needed
-  }
-
-  // -----------------------------
-  // For showThreeDecimals = true
-  // -----------------------------
-
-  // Work with absolute value to calculate magnitude
   const absNumber = Math.abs(number);
+  if (absNumber < (showThreeDecimals ? 0.0000001 : 0.000001)) return "$0";
 
-  // Calculate order of magnitude (log10) of the number
-  // Example: 123 -> 2, 0.00456 -> -3
-  const orderOfMagnitude = Math.floor(Math.log10(absNumber));
-
-  let decimalPlaces;
-
-  // Determine number of decimal places based on magnitude
-  if (orderOfMagnitude >= 0) {
-    // Numbers >= 1 → show up to 3 decimal places
-    decimalPlaces = 3;
+  let decimals;
+  if (Number.isInteger(number)) {
+    decimals = 0;
+  } else if (!showThreeDecimals) {
+    decimals = 2;
+  } else if (absNumber >= 1) {
+    decimals = 3;
   } else {
-    // Numbers < 1 → show enough decimals to capture first 3 significant digits
-    // Cap at 7 decimal places to support micro-pricing (e.g., $0.000002/token)
-    decimalPlaces = Math.min(7, -orderOfMagnitude + 2);
+    // Capture first 3 significant digits for sub-1 values, capped at 7
+    // to support micro-pricing like $0.000002/token.
+    decimals = Math.min(7, -Math.floor(Math.log10(absNumber)) + 2);
   }
 
-  // Build a numeral.js format string with the calculated decimal places
-  const formatString = "$0,0." + "0".repeat(decimalPlaces);
+  let formatted = new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  }).format(number);
 
-  // Format the number
-  let formatted = numeral(number).format(formatString);
-
-  // Remove unnecessary trailing zeros after significant decimals
-  formatted = formatted.replace(/(\.\d*?[1-9])0+$/g, "$1");
-
-  // Remove .0 if the number has no meaningful decimals
-  formatted = formatted.replace(/\.0+$/g, "");
-
-  // Return the formatted currency string
+  if (decimals > 0) {
+    formatted = formatted.replace(/(\.\d*?[1-9])0+$/g, "$1");
+    formatted = formatted.replace(/\.0+$/g, "");
+  }
   return formatted;
+}
+
+
+export function fUsage(value, unit) {
+  const suffix = unit ? ` ${unit}` : "";
+  if (value == null || value === 0) return `0${suffix}`;
+  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B${suffix}`;
+  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M${suffix}`;
+  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K${suffix}`;
+  if (Number.isInteger(value)) return `${value.toLocaleString()}${suffix}`;
+  if (value < 1) {
+  
+    const order = Math.floor(Math.log10(Math.abs(value)));
+    const decimals = Math.min(6, Math.max(2, -order + 1));
+    return `${Number(value.toFixed(decimals))}${suffix}`;
+  }
+  return `${value.toFixed(1)}${suffix}`;
 }
 
 export function fPercent(number) {
