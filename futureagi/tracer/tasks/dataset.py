@@ -202,19 +202,28 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
         by_id = {s.id: s for s in fetched}
         observation_spans = [by_id[str(s)] for s in span_ids if str(s) in by_id]
 
-        # Surface CH lag / divergence: span IDs found in PG but missing in CH
-        # would have silently produced fewer rows under the legacy ORM, which
-        # is the wrong outcome for a dataset build. Log loudly so the
-        # operator can decide whether to retry or rebackfill CH.
+        # Codex consolidated review P0 (2026-05-26): silently dropping
+        # missing-CH spans is data loss. Caller derived span_ids from a
+        # PG queryset — the legacy ORM path would have built dataset rows
+        # for ALL of them. We FAIL FAST so Celery retry can absorb
+        # transient CH lag; sustained misses surface as a real divergence
+        # the operator must triage (rebackfill or rerun once CH catches up).
         if len(observation_spans) != len(span_ids):
             missing = [str(s) for s in span_ids if str(s) not in by_id]
-            logger.warning(
+            logger.error(
                 "dataset_chunk_ch_spans_missing",
                 requested=len(span_ids),
                 found=len(observation_spans),
                 missing_count=len(missing),
                 missing_sample=missing[:10],
                 dataset_id=str(dataset_id),
+            )
+            raise RuntimeError(
+                f"CH missing {len(missing)} of {len(span_ids)} requested spans "
+                f"for dataset {dataset_id}; refusing to silently drop rows. "
+                f"Sample missing ids: {missing[:5]}. "
+                f"Action: let Celery retry, OR re-run after rebackfill if "
+                f"misses are sustained beyond the dual-write window."
             )
 
         rows_to_create = []

@@ -537,6 +537,14 @@ def _get_transcripts_from_session_query(trace_query: QuerySet) -> dict[str, list
     Returns:
         Dictionary with session IDs as keys and transcript lists as values.
     """
+    # CH25-TODO: cross-store Subquery+OuterRef can't be expressed against
+    # CH spans directly. Pending reader extension:
+    #   CHSpanReader.per_trace_root_span_start_times(trace_ids) ->
+    #       dict[trace_id, start_time] (one row per trace, root span only).
+    # Once that lands, this becomes a bulk CH read + a Python join on the
+    # trace iterator. Until then the PG Subquery is correct because
+    # writes are still dual-write PG-then-CH (D-027), so PG still has
+    # every root span the CH path would.
     root_span_start_time = Subquery(
         ObservationSpan.objects.filter(
             trace_id=OuterRef("id"),

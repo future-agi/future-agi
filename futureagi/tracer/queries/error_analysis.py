@@ -264,7 +264,9 @@ class TraceErrorAnalysisDB:
                 project_id, observation_type, since=..., aggregates=...)
             (returning [{name, usage_count, error_count, avg_latency}, ...]).
 
-        Currently no production callers — raising NotImplementedError so
+        CH25-TODO: see method-level docstring for the named reader
+        extension required. Currently no production callers — raising
+        NotImplementedError so
         the gap surfaces loudly if a future caller wires this up before
         the reader method lands.
         """
@@ -535,7 +537,9 @@ class TraceErrorAnalysisDB:
         queries). A new per_project_group_by_name(project_id,
         observation_type, aggregates=...) is the correct shape.
 
-        Currently no production callers — raising NotImplementedError so
+        CH25-TODO: see method-level docstring for the named reader
+        extension required. Currently no production callers — raising
+        NotImplementedError so
         a future caller surfaces the gap rather than silently slow-loading
         the entire project's retriever span set.
         """

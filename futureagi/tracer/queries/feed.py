@@ -235,6 +235,14 @@ def _fetch_users_affected_batch(cluster_ids: List[str]) -> dict:
     if not trace_to_clusters:
         return {}
 
+    # CH25-TODO (codex consolidated review P2 2026-05-26): this materializes
+    # every span for every trace in the cluster list. Bounded by clustering
+    # page-size today but unsafe under "all-clusters" sweeps. Pending reader
+    # extension:
+    #   CHSpanReader.distinct_end_users_by_trace_ids(trace_ids) ->
+    #       dict[trace_id, set[end_user_id]]
+    # which would push the DISTINCT into CH and return only the user-ids,
+    # not the full span payload.
     with get_reader() as reader:
         spans = reader.list_by_trace_ids(list(trace_to_clusters.keys()))
 

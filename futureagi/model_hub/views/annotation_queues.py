@@ -4354,6 +4354,24 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 id__in=missing_default_ids,
             ).select_related("project", "dataset", "agent_definition")
 
+            # Codex consolidated review P2 (2026-05-26): the original loop
+            # called `get_reader().get(sid)` inside both the project- and
+            # agent-definition-scope branches for every queue × source
+            # combination, producing N×M CH round-trips. Precompute the
+            # span lookup once with list_by_ids; the inner branches now
+            # consult an in-memory dict.
+            _ch_span_by_id: dict[str, "object"] = {}
+            _span_source_ids = [
+                str(src["source_id"]) for src in sources
+                if src["source_type"] == "observation_span"
+            ]
+            if _span_source_ids:
+                from tracer.services.clickhouse.v2 import get_reader as _gr_bulk
+
+                with _gr_bulk() as _reader_bulk:
+                    for _s in _reader_bulk.list_by_ids(_span_source_ids):
+                        _ch_span_by_id[str(_s.id)] = _s
+
             for dq in missing_defaults:
                 if dq.id in seen_queues:
                     continue
@@ -4377,15 +4395,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                                 id=sid, project_id=dq.project_id, deleted=False
                             ).exists()
                         elif st == "observation_span":
-                            # CH read replaces ObservationSpan.objects.filter(
-                            #   id=sid, project_id=dq.project_id, deleted=False
-                            # ).exists(). CHSpanReader.get already filters
-                            # is_deleted=0; the project_id match is a single
-                            # equality on the span's project_id column.
-                            from tracer.services.clickhouse.v2 import get_reader
-
-                            with get_reader() as reader:
-                                _sp = reader.get(str(sid))
+                            # Bulk-prefetched above; in-memory dict lookup
+                            # (avoids N×M CH round-trips per codex P2).
+                            _sp = _ch_span_by_id.get(str(sid))
                             exists = _sp is not None and _sp.project_id == str(
                                 dq.project_id
                             )
@@ -4442,19 +4454,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                                 deleted=False,
                             ).exists()
                         elif st == "observation_span":
-                            # CH read replaces ObservationSpan.objects.filter(
-                            #   id=sid,
-                            #   project__observability_providers__agent_definition=dq.agent_definition_id,
-                            #   deleted=False,
-                            # ).exists(). The FK traversal
+                            # Bulk-prefetched above. FK traversal
                             # `project__observability_providers__agent_definition`
-                            # is not on the CH span row, so we fetch the span
-                            # (cheap, indexed lookup), confirm it exists, and
-                            # then verify the project linkage via PG.
-                            from tracer.services.clickhouse.v2 import get_reader
-
-                            with get_reader() as reader:
-                                _sp = reader.get(str(sid))
+                            # isn't on the CH span row, so verify the project
+                            # linkage via PG after the in-memory CH lookup.
+                            _sp = _ch_span_by_id.get(str(sid))
                             exists = (
                                 _sp is not None
                                 and Project.objects.filter(
@@ -5291,18 +5295,50 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # SpanNotes.span FK accepts as the `span_id=` argument; the FK
             # column itself remains a PG CharField pointing at
             # tracer_observation_span.id.
-            if item_notes:
-                SpanNotes.objects.update_or_create(
-                    span_id=span_notes_target.id,
-                    created_by_user=request.user,
-                    defaults={
-                        "notes": item_notes,
-                        "created_by_annotator": request.user.email,
-                    },
+            #
+            # Codex consolidated review P1 (2026-05-26): if the CH span has
+            # no matching PG ObservationSpan row (e.g. dual-write skew, or
+            # OTel-direct-to-CH cutover before PG dual-write removed),
+            # SpanNotes.update_or_create raises ForeignKey IntegrityError
+            # AFTER scores + queue-notes were already committed earlier in
+            # this submit handler. Catch and degrade gracefully — span notes
+            # are annotator commentary, not load-bearing; the operator gets
+            # a warning log and the user still sees their annotation land.
+            from django.db import IntegrityError
+            from tracer.models.observation_span import ObservationSpan
+
+            target_id = span_notes_target.id
+            pg_span_exists = ObservationSpan.no_workspace_objects.filter(
+                id=target_id
+            ).exists()
+            if not pg_span_exists:
+                logger.warning(
+                    "span_notes_skipped_no_pg_row",
+                    span_id=str(target_id),
+                    queue_item_id=str(item.id),
+                    user_id=str(request.user.id),
+                    reason="CH has the span but PG ObservationSpan FK target missing",
                 )
+            elif item_notes:
+                try:
+                    SpanNotes.objects.update_or_create(
+                        span_id=target_id,
+                        created_by_user=request.user,
+                        defaults={
+                            "notes": item_notes,
+                            "created_by_annotator": request.user.email,
+                        },
+                    )
+                except IntegrityError as e:
+                    logger.warning(
+                        "span_notes_integrity_error",
+                        span_id=str(target_id),
+                        queue_item_id=str(item.id),
+                        error=str(e),
+                    )
             else:
                 SpanNotes.objects.filter(
-                    span_id=span_notes_target.id,
+                    span_id=target_id,
                     created_by_user=request.user,
                 ).delete()
 

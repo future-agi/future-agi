@@ -524,6 +524,34 @@ def run_for_processed_spans(span_ids: list, eval_ids: list, eval_task_id: str):
         with get_reader() as reader:
             spans = reader.list_by_ids([str(sid) for sid in span_ids])
 
+        # Codex consolidated review P1 (2026-05-26): under-dispatch is a
+        # silent correctness gap — eval rows the caller selected can be
+        # skipped if CH is lagging. Surface the divergence loudly so it
+        # gets retried (Temporal will re-run on raised exceptions) or
+        # triaged. Don't dispatch ANY evals from this batch if the CH
+        # set doesn't match what the caller selected; partial dispatch
+        # is worse than no dispatch (operator sees nothing or sees
+        # complete success).
+        found_ids = {str(s.id) for s in spans}
+        requested_ids = {str(sid) for sid in span_ids}
+        missing = requested_ids - found_ids
+        if missing:
+            logger.error(
+                "eval_task_ch_spans_missing",
+                eval_task_id=str(eval_task.id),
+                requested=len(requested_ids),
+                found=len(found_ids),
+                missing_count=len(missing),
+                missing_sample=list(missing)[:10],
+            )
+            raise RuntimeError(
+                f"CH missing {len(missing)} of {len(span_ids)} requested "
+                f"spans for eval_task {eval_task.id}; refusing partial "
+                f"dispatch. Sample missing: {list(missing)[:5]}. "
+                f"Temporal will retry; if misses persist, rebackfill CH "
+                f"or wait for the dual-write window to converge."
+            )
+
         for span in spans:
             for eval_config in evals:
                 evaluate_observation_span_observe.delay(

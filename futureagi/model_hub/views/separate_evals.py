@@ -5689,20 +5689,28 @@ class EvalPlayGroundAPIView(APIView):
             _call_id = validated_data.get("call_id")
             if span_context is None and _span_id:
                 try:
-                    # CH read replaces ObservationSpan.objects.filter(id=).first().
-                    # The PG path was unscoped (no project__organization filter)
-                    # and span_context is consumed downstream by template
-                    # rendering only — we preserve that semantic here.
-                    # CHSpan attribute names differ from the Django model in two
-                    # places that _build_span_context reads: `span_attributes`
-                    # (typed maps + attributes_extra merge → use to_django_dict)
-                    # and `resource_attributes` (CH stores as JSON string in
-                    # `resource_attrs`). The shim namespace below maps both.
+                    # Codex consolidated review P1 (2026-05-26): the legacy ORM
+                    # path was unscoped, but the eval playground accepts a
+                    # caller-supplied span_id and renders its content into a
+                    # template — that's a cross-org read surface. We now
+                    # require org-scope verification via a Project lookup on
+                    # the span's project_id (CH spans store project_id as a
+                    # UUID string).
+                    #
+                    # CHSpan attribute names differ from the Django model in
+                    # two places that _build_span_context reads:
+                    # `span_attributes` (typed maps + attributes_extra merge →
+                    # use to_django_dict) and `resource_attributes` (CH stores
+                    # as JSON string in `resource_attrs`). The shim namespace
+                    # below maps both.
+                    from tracer.models.project import Project
                     from tracer.services.clickhouse.v2 import get_reader
 
                     with get_reader() as reader:
                         _s = reader.get(str(_span_id))
-                    if _s:
+                    if _s and Project.objects.filter(
+                        id=_s.project_id, organization=org
+                    ).exists():
                         span_context = _build_span_context(
                             _chspan_to_eval_playground_view(_s)
                         )
@@ -5713,7 +5721,11 @@ class EvalPlayGroundAPIView(APIView):
                     from tracer.models.trace import Trace
                     from tracer.services.clickhouse.v2 import get_reader
 
-                    _t = Trace.objects.filter(id=_trace_id).first()
+                    # Codex P1: scope Trace lookup to org so a caller can't
+                    # feed another tenant's trace_id into the playground.
+                    _t = Trace.objects.filter(
+                        id=_trace_id, project__organization=org
+                    ).first()
                     if _t:
                         # CH read replaces two ObservationSpan ORM calls:
                         #   1. .filter(trace=_t, deleted=False).aggregate(...)
@@ -5794,7 +5806,10 @@ class EvalPlayGroundAPIView(APIView):
                     from tracer.models.trace_session import TraceSession
                     from tracer.services.clickhouse.v2 import get_reader
 
-                    _ss = TraceSession.objects.filter(id=_session_id).first()
+                    # Codex P1: scope TraceSession lookup to org.
+                    _ss = TraceSession.objects.filter(
+                        id=_session_id, project__organization=org
+                    ).first()
                     if _ss:
                         # Get trace IDs for this session (Trace still PG)
                         _trace_qs = Trace.objects.filter(session=_ss, deleted=False)
