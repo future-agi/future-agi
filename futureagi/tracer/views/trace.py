@@ -2136,10 +2136,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         #   2. EvalLogger pivot via .annotate(Round/Avg/Case/JSONObject)
         #      that produces per-config float/bool/str_list rows — pure
         #      PG EvalLogger reads.
-        #   3. get_observation_spans() helper (observation_span.py
-        #      L3019-3059), which is documented KEEP-PG: it walks the
-        #      orphaned-span tree and constructs dummy parents, a
-        #      schema-coupled pattern that CHSpanReader doesn't expose.
+        #   3. get_observation_spans() helper
+        #      (observation_span.py:get_observation_spans), which is
+        #      documented KEEP-PG: it walks the orphaned-span tree and
+        #      constructs dummy parents, a schema-coupled pattern that
+        #      CHSpanReader doesn't expose.
         # Migrating cleanly needs (a) a CH cross-version comparison
         # reader (eval pivots across project_versions in one query) and
         # (b) the orphaned-span tree builder lifted to CH. Until both
