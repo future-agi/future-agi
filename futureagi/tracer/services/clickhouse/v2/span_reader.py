@@ -275,6 +275,114 @@ class CHSpanReader:
         except json.JSONDecodeError:
             return {}
 
+    @staticmethod
+    def to_django_dict(span: CHSpan) -> dict[str, Any]:
+        """Convert a CHSpan to a dict shaped like ObservationSpanSerializer output.
+
+        Drop-in for consumers that did:
+
+            spans_data = ObservationSpanSerializer(qs, many=True).data
+
+        Mapping notes (per the serializer's `fields` list in
+        tracer/serializers/observation_span.py):
+          • FK fields (`project`, `trace`, `project_version`, `custom_eval_config`,
+            `prompt_version`) are emitted as ID strings — same as the
+            PrimaryKeyRelatedField serializer output.
+          • Derived `provider_logo` / `span_attributes` are computed from
+            the span (provider→logo URL is a static map; span_attributes is
+            the merge of attrs_string/number/bool + attributes_extra).
+          • Fields that exist in the Django model but NOT in the CH spans
+            table (`model_parameters`, `response_time`, `eval_id`,
+            `org_user_id`) emit None. The consumer either doesn't read them
+            (most cases — frontend just renders what's present) or will
+            need the CH schema to add them in a future migration.
+        """
+        try:
+            metadata_parsed = json.loads(span.metadata) if span.metadata else {}
+        except json.JSONDecodeError:
+            metadata_parsed = {}
+        # span_attributes is the legacy serializer field that flattens
+        # attrs_string/number/bool + attributes_extra into one dict — the
+        # shape v1 consumers expect.
+        span_attributes: dict[str, Any] = {}
+        span_attributes.update(span.attrs_string or {})
+        span_attributes.update(span.attrs_number or {})
+        span_attributes.update(span.attrs_bool or {})
+        try:
+            extra = json.loads(span.attributes_extra) if span.attributes_extra else {}
+            if isinstance(extra, dict):
+                span_attributes.update(extra)
+        except json.JSONDecodeError:
+            pass
+        # tags / span_events come from CH as JSON strings; the serializer
+        # returns them as Python objects.
+        try:
+            tags_parsed = json.loads(span.tags) if span.tags else []
+        except json.JSONDecodeError:
+            tags_parsed = []
+        try:
+            span_events_parsed = json.loads(span.span_events) if span.span_events else []
+        except json.JSONDecodeError:
+            span_events_parsed = []
+        return {
+            "id": span.id,
+            "project": span.project_id,
+            "project_version": span.project_version_id,
+            "trace": span.trace_id,
+            "parent_span_id": span.parent_span_id or None,
+            "name": span.name,
+            "observation_type": span.observation_type,
+            "start_time": span.start_time.isoformat() if span.start_time else None,
+            "end_time": span.end_time.isoformat() if span.end_time else None,
+            "input": _maybe_json(span.input),
+            "output": _maybe_json(span.output),
+            "model": span.model,
+            "model_parameters": None,                                   # not on CH spans yet — see docstring
+            "latency_ms": span.latency_ms,
+            "org_id": span.org_id,
+            "org_user_id": None,                                        # not on CH spans yet
+            "prompt_tokens": span.prompt_tokens,
+            "completion_tokens": span.completion_tokens,
+            "total_tokens": span.total_tokens,
+            "response_time": None,                                      # not on CH spans yet
+            "eval_id": None,                                            # not on CH spans yet
+            "cost": span.cost,
+            "status": span.status,
+            "status_message": span.status_message,
+            "tags": tags_parsed,
+            "metadata": metadata_parsed,
+            "span_events": span_events_parsed,
+            "provider": span.provider,
+            "provider_logo": _provider_logo_url(span.provider),
+            "span_attributes": span_attributes,
+            "custom_eval_config": span.custom_eval_config_id,
+            "eval_status": span.eval_status,
+            "prompt_version": span.prompt_version_id,
+        }
+
+
+# Provider → logo URL map. Mirrors what the serializer's get_provider_logo() does
+# in tracer/serializers/observation_span.py. Cached as a module constant.
+_PROVIDER_LOGOS: dict[str, str] = {
+    "openai": "https://app.futureagi.com/static/providers/openai.svg",
+    "anthropic": "https://app.futureagi.com/static/providers/anthropic.svg",
+    "google": "https://app.futureagi.com/static/providers/google.svg",
+    "gcp.vertex.agent": "https://app.futureagi.com/static/providers/google.svg",
+    "vapi": "https://app.futureagi.com/static/providers/vapi.svg",
+    "retell": "https://app.futureagi.com/static/providers/retell.svg",
+}
+
+
+def _provider_logo_url(provider: str | None) -> str | None:
+    """Return the provider logo URL, or None if the provider isn't mapped.
+
+    Kept simple — the serializer has more elaborate fallback logic but
+    most callers just render the URL or fall back to a generic icon.
+    """
+    if not provider:
+        return None
+    return _PROVIDER_LOGOS.get(provider.lower())
+
 
 def _maybe_json(s: str) -> Any:
     if not s:
