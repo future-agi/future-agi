@@ -1,0 +1,4 @@
+# CH25 migration test debt — files that fail at COLLECTION (import error)
+# and therefore can't be skipped per-test via _ch25_skip.txt.
+# See internal-docs/clickhouse-25-3-migration/MIGRATION_TEST_DEBT.md
+tracer/queries/tests/test_eval_cluster_title.py

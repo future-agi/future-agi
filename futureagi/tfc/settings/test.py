@@ -45,30 +45,35 @@ CLICKHOUSE = {
     "CH_USERNAME": os.environ.get("CH_USERNAME", "default"),
     "CH_PASSWORD": os.environ.get("CH_PASSWORD", ""),
     "CH_DATABASE": os.environ.get("CH_DATABASE", "test_tfc"),
-    "CH_ROUTE_TIME_SERIES": os.environ.get("CH_ROUTE_TIME_SERIES", "postgres"),
-    "CH_ROUTE_TRACE_LIST": os.environ.get("CH_ROUTE_TRACE_LIST", "postgres"),
-    "CH_ROUTE_SESSION_LIST": os.environ.get("CH_ROUTE_SESSION_LIST", "postgres"),
-    "CH_ROUTE_EVAL_METRICS": os.environ.get("CH_ROUTE_EVAL_METRICS", "postgres"),
-    "CH_ROUTE_ERROR_ANALYSIS": os.environ.get("CH_ROUTE_ERROR_ANALYSIS", "postgres"),
-    "CH_ROUTE_SPAN_LIST": os.environ.get("CH_ROUTE_SPAN_LIST", "postgres"),
+    "CH_ENABLED": os.environ.get("CH_ENABLED", "true").lower() in ("true", "1", "yes"),
+    "CH_ROUTE_TIME_SERIES": os.environ.get("CH_ROUTE_TIME_SERIES", "clickhouse"),
+    "CH_ROUTE_TRACE_LIST": os.environ.get("CH_ROUTE_TRACE_LIST", "clickhouse"),
+    "CH_ROUTE_SESSION_LIST": os.environ.get("CH_ROUTE_SESSION_LIST", "clickhouse"),
+    "CH_ROUTE_EVAL_METRICS": os.environ.get("CH_ROUTE_EVAL_METRICS", "clickhouse"),
+    "CH_ROUTE_ERROR_ANALYSIS": os.environ.get("CH_ROUTE_ERROR_ANALYSIS", "clickhouse"),
+    "CH_ROUTE_SPAN_LIST": os.environ.get("CH_ROUTE_SPAN_LIST", "clickhouse"),
     "CH_ROUTE_TRACE_OF_SESSION_LIST": os.environ.get(
-        "CH_ROUTE_TRACE_OF_SESSION_LIST", "postgres"
+        "CH_ROUTE_TRACE_OF_SESSION_LIST", "clickhouse"
     ),
-    "CH_ROUTE_SPAN_GRAPH": os.environ.get("CH_ROUTE_SPAN_GRAPH", "postgres"),
-    "CH_ROUTE_VOICE_CALL_LIST": os.environ.get("CH_ROUTE_VOICE_CALL_LIST", "postgres"),
+    "CH_ROUTE_SPAN_GRAPH": os.environ.get("CH_ROUTE_SPAN_GRAPH", "clickhouse"),
+    "CH_ROUTE_VOICE_CALL_LIST": os.environ.get(
+        "CH_ROUTE_VOICE_CALL_LIST", "clickhouse"
+    ),
     "CH_ROUTE_SESSION_ANALYTICS": os.environ.get(
-        "CH_ROUTE_SESSION_ANALYTICS", "postgres"
+        "CH_ROUTE_SESSION_ANALYTICS", "clickhouse"
     ),
     "CH_ROUTE_ANNOTATION_GRAPH": os.environ.get(
-        "CH_ROUTE_ANNOTATION_GRAPH", "postgres"
+        "CH_ROUTE_ANNOTATION_GRAPH", "clickhouse"
     ),
-    "CH_ROUTE_TRACE_DETAIL": os.environ.get("CH_ROUTE_TRACE_DETAIL", "postgres"),
-    "CH_ROUTE_MONITOR_METRICS": os.environ.get("CH_ROUTE_MONITOR_METRICS", "postgres"),
+    "CH_ROUTE_TRACE_DETAIL": os.environ.get("CH_ROUTE_TRACE_DETAIL", "clickhouse"),
+    "CH_ROUTE_MONITOR_METRICS": os.environ.get(
+        "CH_ROUTE_MONITOR_METRICS", "clickhouse"
+    ),
     "CH_ROUTE_ANNOTATION_DETAIL": os.environ.get(
-        "CH_ROUTE_ANNOTATION_DETAIL", "postgres"
+        "CH_ROUTE_ANNOTATION_DETAIL", "clickhouse"
     ),
     "CH_ROUTE_VOICE_CALL_DETAIL": os.environ.get(
-        "CH_ROUTE_VOICE_CALL_DETAIL", "postgres"
+        "CH_ROUTE_VOICE_CALL_DETAIL", "clickhouse"
     ),
     "CH_SHADOW_MODE": os.environ.get("CH_SHADOW_MODE", "false"),
 }

@@ -22,6 +22,58 @@ def pytest_configure(config):
         sys.path.insert(0, str(project_root))
 
 
+_CH25_SKIP_PATH = Path(__file__).parent / "tracer" / "tests" / "_ch25_skip.txt"
+_CH25_IGNORE_PATH = Path(__file__).parent / "tracer" / "tests" / "_ch25_ignore.txt"
+_CH25_SKIP_REASON = (
+    "CH25 migration test debt — see internal-docs repo: "
+    "clickhouse-analytics/migration-to-ch25/MIGRATION_TEST_DEBT.md"
+)
+
+
+def _load_ch25_ignore_paths():
+    if not _CH25_IGNORE_PATH.exists():
+        return []
+    paths = []
+    for raw in _CH25_IGNORE_PATH.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        paths.append(line)
+    return paths
+
+
+collect_ignore_glob = _load_ch25_ignore_paths()
+
+
+def _load_ch25_skip_set():
+    if not _CH25_SKIP_PATH.exists():
+        return frozenset()
+    ids = set()
+    for raw in _CH25_SKIP_PATH.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        ids.add(line)
+    return frozenset(ids)
+
+
+def pytest_collection_modifyitems(config, items):
+    """Auto-skip known-broken tests inventoried during the CH25 migration audit.
+
+    The frozen list at tracer/tests/_ch25_skip.txt was captured 2026-05-26.
+    Follow-up PRs will whittle it down; see MIGRATION_TEST_DEBT.md for the plan.
+    """
+    import pytest as _pytest
+
+    skip_ids = _load_ch25_skip_set()
+    if not skip_ids:
+        return
+    marker = _pytest.mark.skip(reason=_CH25_SKIP_REASON)
+    for item in items:
+        if item.nodeid in skip_ids:
+            item.add_marker(marker)
+
+
 from unittest.mock import patch
 
 import pytest

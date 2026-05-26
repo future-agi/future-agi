@@ -14,7 +14,11 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
-from model_hub.tasks.user_evaluation import trigger_error_localization_for_span
+# NOTE: trigger_error_localization_for_span is imported lazily inside the
+# function that uses it (see line ~1358). Eager import here re-enters
+# model_hub.tasks.__init__ which imports tracer.utils.eval_tasks, which imports
+# back from this module — a cycle that surfaces under settings where the
+# ClickHouse client warms up at startup. Keep it lazy.
 from sdk.utils.helpers import _get_api_call_type
 from tfc.temporal import temporal_activity
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
@@ -22,8 +26,11 @@ from tracer.models.eval_task import EvalTask
 from tracer.models.observation_span import EvalLogger, EvalTargetType, ObservationSpan
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.utils.helper import FieldConfig, get_default_trace_config
-from tracer.views.project import get_default_project_version_config
+from tracer.utils.helper import (
+    FieldConfig,
+    get_default_project_version_config,
+    get_default_trace_config,
+)
 try:
     from ee.usage.models.usage import APICallStatusChoices
 except ImportError:
@@ -1349,7 +1356,10 @@ def _execute_evaluation(
             ).get(pk=eval_log.pk)
 
         if custom_eval_config.error_localizer:
-            from model_hub.tasks.user_evaluation import _eval_passed
+            from model_hub.tasks.user_evaluation import (
+                _eval_passed,
+                trigger_error_localization_for_span,
+            )
 
             if not _eval_passed(value):
                 trigger_error_localization_for_span(
