@@ -1907,9 +1907,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         shapes to ``list[str]`` so callers never see dicts f-stringed
         into paths like ``traces.0.spans.0.{'key': '...', ...}``.
         """
-        # CH-only path post-migration. The PG SQL_query_handler fallback was
-        # removed; span attribute keys are sourced from the CH attrs_*
-        # typed-Map indexes which is the authoritative inventory.
+        # CH-first; PG fallback retained for the CH-not-routed config.
+        # Codex wave-2 P3 (REVIEWS/codex-trace-obs-views-chunk-20260526T1135.md):
+        # earlier comment claimed the PG fallback was removed, but the
+        # `else` branch still calls SQL_query_handler — the path runs
+        # when operators have SPAN_LIST routed to PG. Span attribute
+        # keys come from the CH attrs_* typed-Map indexes (authoritative
+        # inventory) under CH dispatch, and from the PG span_attributes
+        # JSONB column under PG dispatch.
         analytics = AnalyticsQueryService()
         if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
             raw = analytics.get_span_attribute_keys_ch(str(project_id))
@@ -2161,7 +2166,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             analytics = AnalyticsQueryService()
-            # CH-only path post-migration. PG fallback removed.
+            # CH-first; PG fallback retained for the CH-not-routed config.
+            # Codex wave-2 P3 (REVIEWS/codex-trace-obs-views-chunk-20260526T1135.md):
+            # the earlier comment claimed the PG fallback was removed but
+            # the PG path below still runs when TRACE_DETAIL is not routed
+            # to ClickHouse. D-027 only removed the try/except-around-CH
+            # fallback; the PG-not-routed branch is a legitimate dispatch
+            # arm. EvalLogger reads here are PG-backed; the CH variant
+            # reads from `tracer_eval_logger` via the CDC pipeline.
             if analytics.should_use_clickhouse(QueryType.TRACE_DETAIL):
                 return self._get_evaluation_details_clickhouse(
                     observation_span_id, custom_eval_config_id, analytics
@@ -2515,10 +2527,28 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # CH25-TODO: this endpoint is the prev/next navigation companion
         # to list_spans (non-observe). It needs the same eval/annotation
         # filter pivot that the CH SpanListQueryBuilder produces plus a
-        # cursor-style "find by start_time before/after span_id" step. No
-        # reader method matches today; staying on PG until the v2 builder
-        # exposes a navigation entry point. (Reader-gap candidate:
-        # `prev_next_span_by_start_time` taking the same builder filters.)
+        # cursor-style "find by start_time before/after span_id" step.
+        #
+        # Wave-3 partial coverage (commit 93c5c415f): the reader exposes
+        # `prev_next_span_by_start_time(project_id=, span_id=,
+        # project_version_id=, observation_type=)` which covers the
+        # unfiltered walk but
+        #   (a) returns span_ids while this endpoint returns trace_ids,
+        #       and
+        #   (b) does not accept the eval/annotation/span-attribute
+        #       filters this endpoint applies (FilterEngine pivots +
+        #       build_annotation_subqueries) before walking.
+        # The frontend always sends `filters` (could be []) so a
+        # drop-in swap would silently change the navigation set under
+        # any non-empty filter. Staying PG-only.
+        #
+        # Reader-gap proposal:
+        #   prev_next_trace_id_by_span_start_time(*, project_id,
+        #       span_id, project_version_id=None, observation_type=None,
+        #       filters=None) -> tuple[Optional[str], Optional[str]]
+        # where `filters` accepts the SpanListQueryBuilder filter shape
+        # (system metrics + eval pivots + annotation joins + span
+        # attributes) and the return is (prev_trace_id, next_trace_id).
         try:
             query = request.validated_query_data
             span_id = query["span_id"]
@@ -2750,9 +2780,25 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Mirrors the query/filter logic of list_spans_as_observe.
         """
         # CH25-TODO: observe sibling of get_trace_id_by_index_spans_as_base.
-        # Same reader-gap rationale — staying on PG until the v2 builder
-        # exposes a navigation entry point that takes the same filter
-        # shape and returns prev/next trace_id by start_time.
+        # Same reader-gap rationale — staying on PG.
+        #
+        # Wave-3 partial coverage (commit 93c5c415f):
+        # `prev_next_span_by_start_time` does the unfiltered walk but
+        #   (a) returns span_ids while this endpoint returns trace_ids,
+        #   (b) does not accept the eval/annotation/span-attribute
+        #       filters this endpoint applies before walking, and
+        #   (c) the observe variant also applies an `end_user_id` scope
+        #       (from EndUser lookup) that the reader method doesn't
+        #       expose.
+        # The frontend always sends `filters` (could be []) so a
+        # drop-in swap would silently change the navigation set under
+        # any non-empty filter. Staying PG-only.
+        #
+        # Reader-gap proposal (shared with non-observe variant above):
+        #   prev_next_trace_id_by_span_start_time(*, project_id,
+        #       span_id, project_version_id=None, observation_type=None,
+        #       end_user_id=None, filters=None)
+        #       -> tuple[Optional[str], Optional[str]]
         try:
             query = request.validated_query_data
             span_id = query["span_id"]
