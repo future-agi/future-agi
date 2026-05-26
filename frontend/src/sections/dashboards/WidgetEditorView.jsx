@@ -2074,8 +2074,9 @@ export default function WidgetEditorView() {
           data: { ...data, width: 12, height: 320, position: 999 },
         });
         // Track created ID so subsequent saves update instead of creating again
-        if (result?.data?.id) {
-          setCreatedWidgetId(result.data.id);
+        const newWidgetId = result?.data?.result?.id || result?.data?.id;
+        if (newWidgetId) {
+          setCreatedWidgetId(newWidgetId);
         }
       }
       setSaveStatus("saved");
