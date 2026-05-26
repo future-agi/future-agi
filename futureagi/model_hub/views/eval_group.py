@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 logger = structlog.get_logger(__name__)
+from model_hub.db_routing import DATABASE_FOR_EVAL_GROUP_LIST
 from model_hub.models.eval_groups import EvalGroup, History
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.serializers.eval_group import (
@@ -21,6 +22,7 @@ from model_hub.services.eval_group import (
 )
 from model_hub.utils.function_eval_params import get_function_params_schema
 from model_hub.views.utils.utils import fetch_required_keys_for_eval_template
+from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 
@@ -61,8 +63,15 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 )
             return self._gm.bad_request(f"Failed to create eval group: {str(e)}")
 
+    @uses_db(DATABASE_FOR_EVAL_GROUP_LIST, feature_key="feature:eval_group_list")
     def list(self, request, *args, **kwargs):
-        """List all eval groups for the user's organization"""
+        """List all eval groups for the user's organization.
+
+        Pure routing: three independent bulk reads in this method (main
+        EvalGroup queryset, EvalGroup.eval_templates through-table, and
+        EvalTemplate) all route to DATABASE_FOR_EVAL_GROUP_LIST when
+        "feature:eval_group_list" is opted in. No query semantics change.
+        """
         try:
             name = request.query_params.get("name")
             page_size = int(request.query_params.get("page_size", 10))
@@ -70,7 +79,9 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             start = page_number * page_size
             end = start + page_size
 
-            eval_groups = EvalGroup.no_workspace_objects.filter(
+            eval_groups = EvalGroup.no_workspace_objects.db_manager(
+                DATABASE_FOR_EVAL_GROUP_LIST
+            ).filter(
                 Q(
                     workspace=request.workspace,
                     deleted=False,
@@ -99,9 +110,12 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             eval_group_ids = [str(eval_group.id) for eval_group in eval_groups]
 
             # Single query to get all template relationships from through table
-            all_relationships = EvalGroup.eval_templates.through.objects.filter(
-                evalgroup_id__in=eval_group_ids
-            ).values_list("evalgroup_id", "evaltemplate_id")
+            all_relationships = (
+                EvalGroup.eval_templates.through.objects
+                .using(DATABASE_FOR_EVAL_GROUP_LIST)
+                .filter(evalgroup_id__in=eval_group_ids)
+                .values_list("evalgroup_id", "evaltemplate_id")
+            )
 
             # Build mapping of eval_group_id -> template_ids
             for eval_group_id, template_id in all_relationships:
@@ -115,7 +129,9 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
 
             # Single query to get all eval_templates
             all_eval_templates = filter_eval_templates_for_group_scope(
-                EvalTemplate.no_workspace_objects.filter(id__in=list(all_template_ids)),
+                EvalTemplate.no_workspace_objects.db_manager(
+                    DATABASE_FOR_EVAL_GROUP_LIST
+                ).filter(id__in=list(all_template_ids)),
                 getattr(request, "organization", None) or request.user.organization,
                 request.workspace,
             )

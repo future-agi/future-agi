@@ -84,6 +84,7 @@ from model_hub.constants import (
     UPDATE_KB_SDK_CODE,
     get_curl_ts_code,
 )
+from model_hub.db_routing import DATABASE_FOR_DATASET_LIST
 from model_hub.models.api_key import ApiKey, SecretModel
 from model_hub.models.choices import (
     BooleanChoices,
@@ -259,6 +260,7 @@ from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 # Define a Temporal activity for running the evaluation
 from tfc.ee_gates import strip_turing_from_config_options
 from tfc.middleware.workspace_context import get_current_workspace
+from tfc.routers import uses_db
 from tfc.settings.settings import BASE_URL, HUGGINGFACE_API_TOKEN
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
@@ -1611,6 +1613,7 @@ class GetDatasetsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @uses_db(DATABASE_FOR_DATASET_LIST, feature_key="feature:dataset_list")
     @validated_request(
         query_serializer=DatasetListQuerySerializer,
         responses={200: DatasetListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
@@ -1648,9 +1651,15 @@ class GetDatasetsView(APIView):
                 except (ValueError, TypeError):
                     sort_params = []
 
-            # Base queryset with annotations for counts
+            # Base queryset with annotations for counts.
+            # Routes to replica when "feature:dataset_list" is opted in;
+            # otherwise stays on default. The aggregate Subqueries
+            # (number_of_datapoints/experiments/optimisations/derived)
+            # inherit the alias because they're compiled into the same
+            # SELECT, not separate related-manager calls.
             queryset = (
-                Dataset.objects.filter(
+                Dataset.objects.db_manager(DATABASE_FOR_DATASET_LIST)
+                .filter(
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
                     deleted=False,

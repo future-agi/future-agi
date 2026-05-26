@@ -13,8 +13,10 @@ logger = structlog.get_logger(__name__)
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.serializers.develop_optimisation import EvalTemplateSerializer
+from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
+from tracer.db_routing import DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
@@ -239,6 +241,10 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             )
 
     @action(detail=False, methods=["get"])
+    @uses_db(
+        DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST,
+        feature_key="feature:custom_eval_config_list",
+    )
     def list_custom_eval_configs(self, request, *args, **kwargs):
         """
         List CustomEvalConfigs filtered by canonical query parameters.
@@ -252,7 +258,15 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             query_data = query_serializer.validated_data
             task_id = query_data.get("task_id")
 
-            queryset = CustomEvalConfig.objects.filter(
+            # Pure-routing change: only the alias is different from the
+            # original query. CustomEvalConfigSerializer.get_eval_group()
+            # does `obj.eval_group.name` per row — that per-row FK fetch
+            # still goes through the router for EvalGroup (likely landing
+            # on `default`) and remains a pre-existing N+1. We do NOT fix
+            # that here — fixing the serializer is a separate refactor.
+            queryset = CustomEvalConfig.objects.db_manager(
+                DATABASE_FOR_CUSTOM_EVAL_CONFIG_LIST
+            ).filter(
                 deleted=False,
                 project__organization=getattr(request, "organization", None)
                 or request.user.organization,
