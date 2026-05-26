@@ -146,7 +146,7 @@ config:
             elif not tokens1 or not tokens2:
                 score = 0.0
             else:
-                score = len(tokens1.intersection(tokens2)) / max(len(tokens1), len(tokens2))
+                score = len(tokens1.intersection(tokens2)) / len(tokens1.union(tokens2))
         else:
             # Default: CosineSimilarity approximated via SequenceMatcher
             score = difflib.SequenceMatcher(None, response.lower(), expected_response.lower()).ratio()
