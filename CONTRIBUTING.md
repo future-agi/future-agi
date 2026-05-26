@@ -62,8 +62,6 @@ On every commit, `lint-staged` auto-formats and lints the staged files:
 - `frontend/src/**` → ESLint + Prettier
 - `futureagi/**/*.py` → `black`, `isort`, `mypy` (via pre-commit)
 
-Branch names are validated on `git push`.
-
 ### 4. Run tests
 
 ```bash
@@ -104,12 +102,13 @@ Good feature requests:
 
 1. Pick a [`good first issue`](https://github.com/future-agi/future-agi/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22) (or open one)
 2. Comment that you're working on it so we don't double-up
-3. Branch from `dev` (our integration branch): `git checkout -b fix/short-description dev`
-4. Make your change — keep the diff small and focused
-5. Add tests (every bug fix needs a regression test)
-6. Make sure `make check-all` passes
-7. Push and open a PR against `dev` using the template
-8. Sign the CLA when the bot asks
+3. Fork the repository to your own GitHub account, then clone your fork locally (see [Development setup](#development-setup) above for the exact commands)
+4. Branch from `dev` (our integration branch): `git checkout -b fix/short-description dev`
+5. Make your change — keep the diff small and focused
+6. Add tests (every bug fix needs a regression test)
+7. Make sure `make check-all` passes
+8. Push to your fork and open a PR against `dev` using the template
+9. Sign the CLA when the bot asks
 
 ### 🧪 Adding a new evaluator
 
@@ -138,7 +137,7 @@ We follow:
 - **Types:** new code must pass `mypy` (we use a baseline for existing code)
 - **JS / TS:** ESLint (Airbnb) + Prettier
 - **Commits:** [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`, `perf:`)
-- **Branch names:** `type/short-description` (e.g. `fix/session-list-pagination`). See [`BRANCH_NAMING_CONVENTION.md`](BRANCH_NAMING_CONVENTION.md) for the full convention and allowed `type` prefixes.
+- **Branch names:** for internal consistency, we use `type/short-description` (e.g. `fix/session-list-pagination`). Not required for fork PRs since we squash-merge and the branch name doesn't carry over.
 
 Run `make format` to auto-fix most issues.
 
