@@ -2139,9 +2139,13 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         # `.resource_attributes` dict access. Migrating that chain requires
         # either teaching `resolve_source_content` about CHSpan or attaching
         # CHSpan objects through `Prefetch.to_attr`, which Django's prefetch
-        # machinery does not support. Deferred to a follow-up commit that
-        # refactors the export path to assemble its own per-trace span maps
-        # via CHSpanReader instead of leaning on Prefetch — see also DECISIONS.
+        # machinery does not support for non-model objects. Wave-3
+        # (commit 93c5c415f) added 9 new reader methods but none hydrate
+        # CHSpan via Prefetch.to_attr (that's structurally a Django ORM
+        # concept that doesn't bridge to dataclasses). Deferred to a
+        # follow-up commit that refactors the export path to assemble its
+        # own per-trace span maps via CHSpanReader instead of leaning on
+        # Prefetch — see also DECISIONS.
         sample_items = (
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
