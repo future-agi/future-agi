@@ -40,8 +40,8 @@ class AnalyzeErrorsTool(BaseTool):
 
         from django.db.models import Q
 
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.v2 import get_reader
 
         since = datetime.now(timezone.utc) - timedelta(days=params.days)
 
@@ -81,12 +81,21 @@ class AnalyzeErrorsTool(BaseTool):
         offset = params.page_number * params.page_size
         error_traces = trace_qs[offset : offset + params.page_size]
 
-        # Find spans with errors
-        error_spans = ObservationSpan.objects.filter(
-            trace__in=error_traces,
-            status="error",
-            deleted=False,
-        ).order_by("-created_at")
+        # Find spans with errors — was ObservationSpan.objects.filter(
+        # trace__in=error_traces, status="error", deleted=False)
+        # .order_by("-created_at"). CH read fetches all spans for those
+        # trace ids in one query; we filter status="error" in Python.
+        # Ordering reverses the CH default (start_time, id) since the
+        # consumer only needs the top 200 for pattern analysis below;
+        # reverse-Python after fetch.
+        error_trace_ids = [str(t.id) for t in error_traces]
+        with get_reader() as reader:
+            all_trace_spans = reader.list_by_trace_ids(error_trace_ids)
+        error_spans = sorted(
+            (s for s in all_trace_spans if (s.status or "").lower() == "error"),
+            key=lambda s: s.start_time or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
 
         # Analyze error patterns
         error_messages = Counter()
