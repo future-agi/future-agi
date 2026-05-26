@@ -43,11 +43,12 @@ config:
         expected_response = kwargs.get("expected_response", expected or "")
         comparator = kwargs.get("comparator", "CosineSimilarity")
         failure_threshold = float(kwargs.get("failure_threshold", 0.5))
-        response = str(response)
-        expected_response = str(expected_response)
-        if not response or not expected_response:
+        # Allow empty strings through so individual comparators can evaluate them
+        if response is None or expected_response is None:
             return {"score": 0.0, "reason": "Missing response or expected_response"}
 
+        response = str(response)
+        expected_response = str(expected_response)
         if comparator == "NormalisedLevenshteinSimilarity":
             # Normalized Levenshtein using SequenceMatcher as approximation
             score = difflib.SequenceMatcher(None, response, expected_response).ratio()
