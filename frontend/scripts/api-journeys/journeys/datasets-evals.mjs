@@ -4548,14 +4548,30 @@ export const datasetEvalJourneys = [
         organizationId,
         email,
       );
-      const createResult = await client.get(
-        apiPath("/model-hub/knowledge-base/"),
-        { query: { type: "create", name: `api journey kb ${runId}` } },
-      );
-      const updateResult = await client.get(
-        apiPath("/model-hub/knowledge-base/"),
-        { query: { type: "update", name: `api journey kb ${runId}` } },
-      );
+      let createResult;
+      let updateResult;
+      try {
+        createResult = await client.get(
+          apiPath("/model-hub/knowledge-base/"),
+          { query: { type: "create", name: `api journey kb ${runId}` } },
+        );
+        updateResult = await client.get(
+          apiPath("/model-hub/knowledge-base/"),
+          { query: { type: "update", name: `api journey kb ${runId}` } },
+        );
+      } catch (error) {
+        if (isLegacyKnowledgeBaseEntitlementDeniedError(error)) {
+          evidence.push({
+            mode: "legacy_entitlement_denied",
+            status: error.status,
+            body: error.body,
+          });
+          skip(
+            "Legacy knowledge-base SDK endpoint is entitlement-blocked in this local workspace; KB-API-004 covers the current gate.",
+          );
+        }
+        throw error;
+      }
       const afterAudit = await loadUserSdkCredentialDbAudit(
         organizationId,
         email,
@@ -4593,6 +4609,7 @@ export const datasetEvalJourneys = [
       runId,
     }) {
       requireMutations();
+      await skipIfLegacyKnowledgeBaseEntitlementDenied(client, evidence);
       const suffix = runId.toLowerCase().replace(/[^a-z0-9]+/g, "_");
       const kbName = `api_journey_kb_${suffix}`;
       const fileName = `api_journey_kb_${suffix}.txt`;
@@ -4777,11 +4794,26 @@ export const datasetEvalJourneys = [
       assertStructuredEmbeddingModels(underscoreModels);
       const embeddingModel = hyphenModels[0].value;
 
-      const created = await client.post(apiPath("/model-hub/kb/"), {
-        name,
-        embedding_model: embeddingModel,
-        chunk_size: 256,
-      });
+      let created;
+      try {
+        created = await client.post(apiPath("/model-hub/kb/"), {
+          name,
+          embedding_model: embeddingModel,
+          chunk_size: 256,
+        });
+      } catch (error) {
+        if (isLegacyKnowledgeBaseEntitlementDeniedError(error)) {
+          evidence.push({
+            mode: "structured_create_entitlement_denied",
+            status: error.status,
+            body: error.body,
+          });
+          skip(
+            "Structured knowledge-base create is entitlement-blocked in this local workspace; KB-API-004 covers the current gate.",
+          );
+        }
+        throw error;
+      }
       kbId = created?.id;
       assert(isUuid(kbId), "Structured KB create did not return a UUID id.");
       cleanup.defer(
@@ -4899,6 +4931,55 @@ export const datasetEvalJourneys = [
         deleted_at_set: deletedAudit.deleted_at_set === true,
         frontend_usage:
           "No current frontend caller found; UI uses legacy endpoints.knowledge.*",
+      });
+    },
+  },
+  {
+    id: "KB-API-004",
+    title: "Legacy knowledge base entitlement gate and structured KB read availability",
+    tags: ["knowledge-base", "safe", "entitlement", "smoke"],
+    async run({ client, evidence }) {
+      const tableError = await expectLegacyKnowledgeBaseEntitlementDenied(
+        () =>
+          client.get(apiPath("/model-hub/knowledge-base/get/"), {
+            query: { page_number: 0, page_size: 1 },
+          }),
+        "Legacy Knowledge Base table endpoint did not return the expected entitlement gate.",
+      );
+      const optionError = await expectLegacyKnowledgeBaseEntitlementDenied(
+        () => client.get(apiPath("/model-hub/knowledge-base/list/")),
+        "Legacy Knowledge Base option endpoint did not return the expected entitlement gate.",
+      );
+
+      const structuredList = await client.get(apiPath("/model-hub/kb/"), {
+        query: { page: 1, page_size: 5 },
+      });
+      const structuredRows = payloadArray(structuredList, "results");
+      const embeddingModels = asArray(
+        await client.get(apiPath("/model-hub/kb/supported-embedding-models")),
+      );
+      assertStructuredEmbeddingModels(embeddingModels);
+      const structuredCreateError =
+        await expectLegacyKnowledgeBaseEntitlementDenied(
+          () =>
+            client.post(apiPath("/model-hub/kb/"), {
+              name: `api_journey_structured_gate_${Date.now().toString(36)}`,
+              embedding_model: embeddingModels[0].value,
+              chunk_size: 256,
+            }),
+          "Structured Knowledge Base create did not return the expected entitlement gate.",
+        );
+
+      evidence.push({
+        legacy_table_status: tableError.status,
+        legacy_table_code: tableError.body?.code,
+        legacy_option_status: optionError.status,
+        legacy_option_code: optionError.body?.code,
+        structured_create_status: structuredCreateError.status,
+        structured_create_code: structuredCreateError.body?.code,
+        structured_kb_count: structuredList?.count ?? structuredRows.length,
+        structured_embedding_model_count: embeddingModels.length,
+        mode: "legacy_and_structured_create_entitlement_denied_structured_read_available",
       });
     },
   },
@@ -13107,6 +13188,51 @@ async function expectApiErrorStatus(fn, status, message) {
     return error;
   }
   throw new Error(message);
+}
+
+async function expectLegacyKnowledgeBaseEntitlementDenied(fn, message) {
+  try {
+    await fn();
+  } catch (error) {
+    assert(
+      isLegacyKnowledgeBaseEntitlementDeniedError(error),
+      `${message} Expected HTTP 402 knowledge_base entitlement metadata, got ${
+        error?.status || error.message
+      }: ${JSON.stringify(error?.body || {})}`,
+    );
+    return error;
+  }
+  throw new Error(message);
+}
+
+async function skipIfLegacyKnowledgeBaseEntitlementDenied(client, evidence) {
+  try {
+    await client.get(apiPath("/model-hub/knowledge-base/get/"), {
+      query: { page_number: 0, page_size: 1 },
+    });
+  } catch (error) {
+    if (isLegacyKnowledgeBaseEntitlementDeniedError(error)) {
+      evidence.push({
+        mode: "legacy_entitlement_denied",
+        status: error.status,
+        body: error.body,
+      });
+      skip(
+        "Legacy knowledge-base endpoints are entitlement-blocked in this local workspace; KB-API-004 covers the current gate.",
+      );
+    }
+    throw error;
+  }
+}
+
+function isLegacyKnowledgeBaseEntitlementDeniedError(error) {
+  const text = JSON.stringify(error?.body || {}).toLowerCase();
+  return (
+    error?.status === 402 &&
+    (text.includes("entitlement") ||
+      text.includes("upgrade") ||
+      text.includes("knowledge_base"))
+  );
 }
 
 function assertFunctionRows(functions) {

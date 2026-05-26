@@ -104,7 +104,7 @@ const CreateKnowledgeBaseDrawerChild = ({
     },
     onSuccess: (data) => {
       refetchKnowledgeBaseList();
-      const id = data?.data?.result?.kbId;
+      const id = data?.data?.result?.kb_id ?? data?.data?.result?.kbId;
       if (!knowledgeId && id) {
         setHasData?.(true);
         enqueueSnackbar(
@@ -128,7 +128,7 @@ const CreateKnowledgeBaseDrawerChild = ({
       if (data?.statusCode == RESPONSE_CODES.LIMIT_REACHED) return;
 
       // Handle file upload errors - update file statuses and don't show generic error
-      if (data?.result?.notUploaded) {
+      if (data?.result?.not_uploaded || data?.result?.notUploaded) {
         const file = data?.result?.files ?? [];
         setValue("file", {
           file: files.file.map((item) => {

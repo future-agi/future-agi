@@ -120,7 +120,7 @@ class OrganizationCreateAPIView(APIView):
             user.config["currentOrganizationId"] = str(organization.id)
             user.save(update_fields=["config"])
 
-        # 8. Trigger post-registration onboarding (demo data, etc.)
+        # 8. Trigger post-registration onboarding.
         # Password is None since the user already has an account — the signup
         # email portion will be a no-op or gracefully skipped.
         try:
