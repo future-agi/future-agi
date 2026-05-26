@@ -339,6 +339,14 @@ case "$SERVICE_TYPE" in
         fi
         ;;
 
+    # -----------------------------------------------------------------------
+    # LEGACY (Celery). The "worker", "beat", and "flower" service types below
+    # are the old Celery-based execution path. Background work now runs on
+    # Temporal — see the "temporal-worker" case. The OSS docker-compose only
+    # uses SERVICE_TYPE=backend and SERVICE_TYPE=temporal-worker, so these
+    # Celery branches are NOT exercised by a default self-host. They are kept
+    # for backward compatibility only; prefer temporal-worker for new setups.
+    # -----------------------------------------------------------------------
     "worker")
         echo "Starting Celery worker for queue(s): $CELERY_QUEUE..."
 
