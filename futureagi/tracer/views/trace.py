@@ -5753,127 +5753,129 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request("Failed to compute agent graph")
 
 
+# NOTE: num_sessions is computed in the SQL as COALESCE(fo.num_sessions, 0).
+# Filtering with "equals 0" must match NULL session aggregates (no sessions),
+# so we coalesce in the filter expression as well.
+USERS_COLUMN_MAPPING = {
+    "user_id": "user_id",
+    "activated_at": "created_at",
+    "avg_trace_latency": "avg_latency_trace",
+    "total_cost": "total_cost",
+    "total_tokens": "total_tokens",
+    "input_tokens": "input_tokens",
+    "output_tokens": "output_tokens",
+    "num_traces": "num_traces",
+    "num_sessions": "COALESCE(fo.num_sessions, 0)",
+    "avg_session_duration": "avg_session_duration_seconds",
+    "num_llm_calls": "num_llm_calls",
+    "num_guardrails_triggered": "num_guardrails_triggered",
+    "last_active": "la.last_active",
+    "num_active_days": "num_active_days",
+    "num_traces_with_errors": "num_traces_with_errors",
+    "bool_eval_pass_rate": "bool_eval_pass_rate",
+    "avg_output_float": "avg_output_float",
+    "user_id_hash": "user_id_hash",
+    "user_id_type": "user_id_type",
+}
+
+
+def _parse_json_query_param(raw, default):
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except (ValueError, TypeError):
+            return default
+    return raw if raw else default
+
+
+def _resolve_users_sort(sort_params):
+    if not (isinstance(sort_params, dict) and sort_params):
+        return None, None
+    column = USERS_COLUMN_MAPPING.get(sort_params.get("column_id"))
+    direction = sort_params.get("direction", "asc")
+    return column, ("DESC" if direction == "desc" else "ASC")
+
+
+def build_users_query_params(request, *, limit, offset):
+    """Build the kwargs dict passed to SQLQueryHandler.get_spans_by_end_users.
+
+    Shared by the paginated users view and the CSV export view — both parse
+    the same request shape; only `limit`/`offset` differ (export passes None
+    to fetch every row).
+    """
+    sort_params = _parse_json_query_param(
+        request.query_params.get("sort_params", []), []
+    )
+    filters = _parse_json_query_param(request.query_params.get("filters", []), [])
+    sort_column, sort_order = _resolve_users_sort(sort_params)
+    search = request.query_params.get("search", "")
+    query_params = {
+        "org_id": request.user.organization.id,
+        "project_id": request.query_params.get("project_id") or None,
+        "search_name": search.strip() if search else None,
+        "limit": limit,
+        "offset": offset,
+        "filters": filters,
+        "column_map": USERS_COLUMN_MAPPING,
+        "workspace_id": request.workspace.id,
+    }
+    if sort_column and sort_order:
+        query_params["sort_by"] = sort_column
+        query_params["sort_order"] = sort_order
+    return query_params
+
+
+def users_row_to_dict(result):
+    """Map a get_spans_by_end_users result tuple to the API row shape."""
+    return {
+        "user_id": result[0],
+        "total_cost": round(result[1], 6) if result[1] else 0,
+        "total_tokens": result[2],
+        "input_tokens": result[3],
+        "output_tokens": result[4],
+        "num_traces": result[5],
+        "num_sessions": result[6],
+        "avg_session_duration": result[7],
+        "avg_trace_latency": result[8],
+        "num_llm_calls": result[9],
+        "num_guardrails_triggered": result[10],
+        "activated_at": result[11],
+        "last_active": result[12],
+        "num_active_days": result[13],
+        "num_traces_with_errors": result[14],
+        "bool_eval_pass_rate": result[15],
+        "avg_output_float": result[16],
+        "project_id": result[17],
+        "user_id_type": result[19],
+        "user_id_hash": result[20],
+        "end_user_id": result[21],
+    }
+
+
 class UsersView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
     def get(self, request, *args, **kwargs):
-        """
-        List traces filtered by project ID with optimized queries.
-        """
+        """List end users for a project with optimized queries."""
         try:
-            project_id = request.query_params.get("project_id") or None
-            search = request.query_params.get("search", "")
-            page_size = int(request.query_params.get("page_size", 30))
-            current_page = int(request.query_params.get("current_page_index", 0))
-            search_name = search.strip() if search else None
-            organization_id = request.user.organization.id
-            limit = page_size
-            offset = current_page * page_size
-            sort_params = request.query_params.get("sort_params", [])
-            filters = request.query_params.get("filters", [])
-
-            # Convert string parameters to appropriate types
             try:
-                page_size = int(page_size)
-                current_page = int(current_page)
+                page_size = int(request.query_params.get("page_size", 30))
+                current_page = int(request.query_params.get("current_page_index", 0))
             except (ValueError, TypeError):
                 page_size = 10
                 current_page = 0
 
-            # Parse sort_params and filters if they're strings
-            if isinstance(sort_params, str):
-                try:
-                    sort_params = json.loads(sort_params)
-                except (ValueError, TypeError):
-                    sort_params = []
-
-            if isinstance(filters, str):
-                try:
-                    filters = json.loads(filters)
-                except (ValueError, TypeError):
-                    filters = []
-
-            column_mapping = {
-                "user_id": "user_id",
-                "activated_at": "created_at",
-                "avg_trace_latency": "avg_latency_trace",
-                "total_cost": "total_cost",
-                "total_tokens": "total_tokens",
-                "input_tokens": "input_tokens",
-                "output_tokens": "output_tokens",
-                "num_traces": "num_traces",
-                # NOTE: num_sessions is computed in the SQL as COALESCE(fo.num_sessions, 0).
-                # Filtering with "equals 0" must match NULL session aggregates (no sessions),
-                # so we coalesce in the filter expression as well.
-                "num_sessions": "COALESCE(fo.num_sessions, 0)",
-                "avg_session_duration": "avg_session_duration_seconds",
-                "num_llm_calls": "num_llm_calls",
-                "num_guardrails_triggered": "num_guardrails_triggered",
-                "last_active": "la.last_active",
-                "num_active_days": "num_active_days",
-                "num_traces_with_errors": "num_traces_with_errors",
-                "bool_eval_pass_rate": "bool_eval_pass_rate",
-                "avg_output_float": "avg_output_float",
-                "user_id_hash": "user_id_hash",
-                "user_id_type": "user_id_type",
-            }
-
-            column = None
-            sort_order = None
-            if isinstance(sort_params, dict) and sort_params:
-                column = sort_params.get("column_id")
-                column = column_mapping.get(column, None)
-                direction = sort_params.get("direction", "asc")
-                if direction == "desc":
-                    sort_order = "DESC"
-                else:
-                    sort_order = "ASC"
-
-            query_params = {
-                "org_id": organization_id,
-                "project_id": project_id,
-                "search_name": search_name,
-                "limit": limit,
-                "offset": offset,
-                "filters": filters,
-                "column_map": column_mapping,
-                "workspace_id": request.workspace.id,
-            }
-
-            if column and sort_order:
-                query_params["sort_by"] = column
-                query_params["sort_order"] = sort_order
+            query_params = build_users_query_params(
+                request, limit=page_size, offset=current_page * page_size
+            )
+            project_id = query_params["project_id"]
 
             results = SQLQueryHandler.get_spans_by_end_users(**query_params)
             output = []
             count = 0
             for result in results:
-                output.append(
-                    {
-                        "user_id": result[0],
-                        "total_cost": round(result[1], 6) if result[1] else 0,
-                        "total_tokens": result[2],
-                        "input_tokens": result[3],
-                        "output_tokens": result[4],
-                        "num_traces": result[5],
-                        "num_sessions": result[6],
-                        "avg_session_duration": result[7],
-                        "avg_trace_latency": result[8],
-                        "num_llm_calls": result[9],
-                        "num_guardrails_triggered": result[10],
-                        "activated_at": result[11],
-                        "last_active": result[12],
-                        "num_active_days": result[13],
-                        "num_traces_with_errors": result[14],
-                        "bool_eval_pass_rate": result[15],
-                        "avg_output_float": result[16],
-                        "project_id": result[17],
-                        "user_id_type": result[19],
-                        "user_id_hash": result[20],
-                        "end_user_id": result[21],
-                    }
-                )
+                output.append(users_row_to_dict(result))
                 count = result[18]
 
             # Enrich with aggregated span attributes from ClickHouse
@@ -5985,9 +5987,11 @@ class UsersView(APIView):
 class UsersExportView(APIView):
     """Export the Users tab as a CSV.
 
-    Mirrors the parsing and filtering of `UsersView` but ignores pagination so
-    every matching row is written to the response. Columns match the static
-    set the frontend shows in its column-visibility menu (visible + hidden).
+    Reuses `build_users_query_params` and `users_row_to_dict` from the module
+    helpers so request parsing and the result-tuple mapping stay in one place.
+    Pagination is intentionally skipped (limit=offset=None) so every matching
+    row is exported. Columns match the static set the frontend shows in its
+    column-visibility menu (visible + hidden).
     """
 
     permission_classes = [IsAuthenticated]
@@ -6012,105 +6016,22 @@ class UsersExportView(APIView):
         ("Output Tokens", "output_tokens"),
     ]
 
-    COLUMN_MAPPING = {
-        "user_id": "user_id",
-        "activated_at": "created_at",
-        "avg_trace_latency": "avg_latency_trace",
-        "total_cost": "total_cost",
-        "total_tokens": "total_tokens",
-        "input_tokens": "input_tokens",
-        "output_tokens": "output_tokens",
-        "num_traces": "num_traces",
-        "num_sessions": "COALESCE(fo.num_sessions, 0)",
-        "avg_session_duration": "avg_session_duration_seconds",
-        "num_llm_calls": "num_llm_calls",
-        "num_guardrails_triggered": "num_guardrails_triggered",
-        "last_active": "la.last_active",
-        "num_active_days": "num_active_days",
-        "num_traces_with_errors": "num_traces_with_errors",
-        "bool_eval_pass_rate": "bool_eval_pass_rate",
-        "avg_output_float": "avg_output_float",
-        "user_id_hash": "user_id_hash",
-        "user_id_type": "user_id_type",
-    }
-
     def get(self, request, *args, **kwargs):
         try:
-            project_id = request.query_params.get("project_id") or None
-            search = request.query_params.get("search", "")
-            search_name = search.strip() if search else None
-            organization_id = request.user.organization.id
-
-            sort_params = request.query_params.get("sort_params", [])
-            filters = request.query_params.get("filters", [])
-
-            if isinstance(sort_params, str):
-                try:
-                    sort_params = json.loads(sort_params)
-                except (ValueError, TypeError):
-                    sort_params = []
-
-            if isinstance(filters, str):
-                try:
-                    filters = json.loads(filters)
-                except (ValueError, TypeError):
-                    filters = []
-
-            column = None
-            sort_order = None
-            if isinstance(sort_params, dict) and sort_params:
-                column = self.COLUMN_MAPPING.get(sort_params.get("column_id"))
-                direction = sort_params.get("direction", "asc")
-                sort_order = "DESC" if direction == "desc" else "ASC"
-
-            query_params = {
-                "org_id": organization_id,
-                "project_id": project_id,
-                "search_name": search_name,
-                # limit=offset=None makes get_spans_by_end_users skip LIMIT/OFFSET,
-                # returning every matching row for the export.
-                "limit": None,
-                "offset": None,
-                "filters": filters,
-                "column_map": self.COLUMN_MAPPING,
-                "workspace_id": request.workspace.id,
-            }
-            if column and sort_order:
-                query_params["sort_by"] = column
-                query_params["sort_order"] = sort_order
-
+            query_params = build_users_query_params(request, limit=None, offset=None)
             results = SQLQueryHandler.get_spans_by_end_users(**query_params)
 
             filename = (
-                f"users_{project_id or 'all'}_"
+                f"users_{query_params['project_id'] or 'all'}_"
                 f"{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
             )
             response = HttpResponse(content_type="text/csv")
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
 
-            headers = [h for h, _ in self.EXPORT_COLUMNS]
             writer = csv.writer(response)
-            writer.writerow(headers)
-
+            writer.writerow([header for header, _ in self.EXPORT_COLUMNS])
             for result in results:
-                row = {
-                    "user_id": result[0],
-                    "total_cost": round(result[1], 6) if result[1] else 0,
-                    "total_tokens": result[2],
-                    "input_tokens": result[3],
-                    "output_tokens": result[4],
-                    "num_traces": result[5],
-                    "num_sessions": result[6],
-                    "avg_session_duration": result[7],
-                    "avg_trace_latency": result[8],
-                    "num_llm_calls": result[9],
-                    "num_guardrails_triggered": result[10],
-                    "activated_at": result[11],
-                    "last_active": result[12],
-                    "bool_eval_pass_rate": result[15],
-                    "user_id_type": result[19],
-                    "user_id_hash": result[20],
-                }
+                row = users_row_to_dict(result)
                 writer.writerow(
                     [
                         self._format_cell(row.get(field))
