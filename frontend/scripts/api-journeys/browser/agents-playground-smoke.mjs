@@ -23,8 +23,10 @@ async function main() {
   const marker = auth.runId.replace(/[^a-z0-9]/gi, "").slice(0, 18);
   const graphName = `browser agent ${marker}`;
   const sourceNodeName = `browser_source_${marker}`.slice(0, 80);
+  const editedSourceNodeName = `${sourceNodeName}_edited`.slice(0, 80);
   const targetNodeName = `browser_target_${marker}`.slice(0, 80);
   const connectedNodeName = "llm_prompt_node_1";
+  const sourcePromptText = "Write one test fact about {{topic}}.";
   const variableInitialValue = `browser variable initial ${auth.runId}`;
   const variableUpdatedValue = `browser variable updated ${auth.runId}`;
   const executionInputValue = `browser execution input ${auth.runId}`;
@@ -34,7 +36,12 @@ async function main() {
   const inputDataId = randomUUID();
   const outputDataId = randomUUID();
   const graphNames = [graphName];
-  const promptNames = [sourceNodeName, targetNodeName, connectedNodeName];
+  const promptNames = [
+    sourceNodeName,
+    editedSourceNodeName,
+    targetNodeName,
+    connectedNodeName,
+  ];
   let graphId = null;
   let publicDeleteStatus = null;
   let cleanupAudit = null;
@@ -45,6 +52,7 @@ async function main() {
       graphName,
       sourceNodeName,
       targetNodeName,
+      sourcePromptText,
     });
     graphId = setup.graphId;
 
@@ -142,6 +150,15 @@ async function main() {
           request.method() === "POST" &&
           url.includes(
             `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/`,
+          )
+        ) {
+          expectedMutations.push(`${request.method()} ${url}`);
+          return;
+        }
+        if (
+          request.method() === "PATCH" &&
+          url.includes(
+            `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/${setup.sourceNode.id}/`,
           )
         ) {
           expectedMutations.push(`${request.method()} ${url}`);
@@ -250,6 +267,94 @@ async function main() {
       await waitForVisibleText(page, targetNodeName, { exact: true });
       await waitForSelectorWithSize(page, ".react-flow");
       evidence.rendered_edge_count = await waitForRenderedEdgeCount(page, 1);
+
+      logStep("save source prompt drawer");
+      const sourceNodeDetailResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "GET" &&
+          response
+            .url()
+            .includes(
+              `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/${setup.sourceNode.id}/`,
+            ) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      await clickCanvasNode(page, sourceNodeName);
+      const sourceNodeDetail = nodePayloadFromResponse(
+        await sourceNodeDetailResponse.then((response) => response.json()),
+      );
+      const sourcePromptTemplate = promptTemplateFromNode(sourceNodeDetail);
+      assert(
+        sourcePromptTemplate?.model === "gpt-4o-mini",
+        "Prompt node detail did not return the seeded model.",
+      );
+      assert(
+        promptTemplateMessagesInclude(sourcePromptTemplate, sourcePromptText),
+        "Prompt node detail did not return the seeded message.",
+      );
+      await waitForVisibleText(page, "Prompt Name");
+      await waitForInputValue(page, sourceNodeName);
+      await waitForPromptEditorText(page, ["Write one test fact", "topic"]);
+      await waitForVisibleText(page, "gpt-4o-mini");
+      await replaceInputValue(page, sourceNodeName, editedSourceNodeName);
+
+      const sourceNodePatchResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "PATCH" &&
+          response
+            .url()
+            .includes(
+              `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/${setup.sourceNode.id}/`,
+            ) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      await waitForEnabledButton(page, "Save prompt");
+      await clickVisibleText(page, "Save prompt", { exact: true });
+      const patchedSourceNode = nodePayloadFromResponse(
+        await sourceNodePatchResponse.then((response) => response.json()),
+      );
+      const patchedPromptTemplate = promptTemplateFromNode(patchedSourceNode);
+      assert(
+        patchedSourceNode?.name === editedSourceNodeName,
+        "Prompt drawer save did not return the edited prompt name.",
+      );
+      assert(
+        patchedPromptTemplate?.model === "gpt-4o-mini",
+        "Prompt drawer save lost the seeded model.",
+      );
+      assert(
+        promptTemplateMessagesInclude(patchedPromptTemplate, sourcePromptText),
+        "Prompt drawer save lost the seeded prompt message.",
+      );
+      await waitForVisibleText(page, editedSourceNodeName, { exact: true });
+      const sourceNodeReadback = await loadAgentNode({
+        auth,
+        graphId,
+        versionId: setup.draftVersionId,
+        nodeId: setup.sourceNode.id,
+      });
+      const readbackPromptTemplate = promptTemplateFromNode(sourceNodeReadback);
+      assert(
+        sourceNodeReadback?.name === editedSourceNodeName,
+        "Prompt drawer save did not persist the edited prompt name.",
+      );
+      assert(
+        readbackPromptTemplate?.model === "gpt-4o-mini",
+        "Prompt drawer readback lost the seeded model.",
+      );
+      assert(
+        promptTemplateMessagesInclude(readbackPromptTemplate, sourcePromptText),
+        "Prompt drawer readback lost the seeded prompt message.",
+      );
+      evidence.prompt_drawer_save = {
+        node_id: setup.sourceNode.id,
+        original_name: sourceNodeName,
+        updated_name: editedSourceNodeName,
+        model: readbackPromptTemplate.model,
+        message_verified: true,
+      };
 
       logStep("add connected node from builder");
       const connectedNodeCreateResponse = page.waitForResponse(
@@ -377,7 +482,7 @@ async function main() {
         { timeout: 30000 },
       );
       await waitForVisibleText(page, "Version 1", { exact: true });
-      await waitForVisibleText(page, sourceNodeName, { exact: true });
+      await waitForVisibleText(page, editedSourceNodeName, { exact: true });
       await waitForVisibleText(page, targetNodeName, { exact: true });
 
       logStep("open executions");
@@ -501,8 +606,8 @@ async function main() {
         `Agent playground smoke fired unexpected mutations: ${unexpectedMutations.join("; ")}`,
       );
       assert(
-        expectedMutations.length === 2,
-        `Expected one browser node add mutation and one variable update mutation, saw ${expectedMutations.length}.`,
+        expectedMutations.length === 3,
+        `Expected one prompt save, one browser node add mutation, and one variable update mutation, saw ${expectedMutations.length}.`,
       );
       evidence.expected_mutation_count = expectedMutations.length;
     } finally {
@@ -599,6 +704,7 @@ async function createDisposableAgentGraph({
   graphName,
   sourceNodeName,
   targetNodeName,
+  sourcePromptText,
 }) {
   const templatePayload = await auth.client.get(
     apiPath("/agent-playground/node-templates/"),
@@ -643,7 +749,7 @@ async function createDisposableAgentGraph({
             content: [
               {
                 type: "text",
-                text: "Write one test fact about {{topic}}.",
+                text: sourcePromptText,
               },
             ],
           },
@@ -758,6 +864,45 @@ async function loadGraphVariable({ auth, graphId, versionId, columnName }) {
     cell_id: cell.id,
     value: cell.value,
   };
+}
+
+async function loadAgentNode({ auth, graphId, versionId, nodeId }) {
+  return nodePayloadFromResponse(
+    await auth.client.get(
+      apiPath(
+        "/agent-playground/graphs/{id}/versions/{version_id}/nodes/{node_id}/",
+        {
+          id: graphId,
+          version_id: versionId,
+          node_id: nodeId,
+        },
+      ),
+    ),
+  );
+}
+
+function nodePayloadFromResponse(payload) {
+  return payload?.result || payload?.node || payload;
+}
+
+function promptTemplateFromNode(node) {
+  return node?.prompt_template || node?.promptTemplate || null;
+}
+
+function promptTemplateMessagesInclude(promptTemplate, expectedText) {
+  const normalizedExpected = String(expectedText).replace(/\s+/g, " ").trim();
+  return (promptTemplate?.messages || []).some((message) => {
+    const content = Array.isArray(message.content)
+      ? message.content
+          .map((block) => block?.text || "")
+          .join("")
+          .replace(/\s+/g, " ")
+          .trim()
+      : String(message.content || "")
+          .replace(/\s+/g, " ")
+          .trim();
+    return content === normalizedExpected;
+  });
 }
 
 function getCellColumnId(cell) {
@@ -926,6 +1071,64 @@ async function waitForRenderedEdgeCount(page, minimumCount, timeout = 30000) {
       Array.from(document.querySelectorAll(".react-flow__edge")).filter(
         (edge) => edge.querySelector("path")?.getAttribute("d"),
       ).length,
+  );
+}
+
+async function clickCanvasNode(page, nodeLabel) {
+  const point = await page.evaluate((expectedLabel) => {
+    const isVisible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+    const node = Array.from(
+      document.querySelectorAll(".react-flow__node"),
+    ).find(
+      (candidate) =>
+        isVisible(candidate) &&
+        String(candidate.textContent || "").includes(expectedLabel),
+    );
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+  }, nodeLabel);
+  assert(point, `Could not find canvas node ${nodeLabel}.`);
+  await page.mouse.click(point.x, point.y);
+}
+
+async function waitForPromptEditorText(page, terms, timeout = 30000) {
+  const expectedTerms = Array.isArray(terms) ? terms : [terms];
+  await page.waitForFunction(
+    (termsToFind) => {
+      const isVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      return Array.from(document.querySelectorAll(".ql-editor")).some(
+        (editor) => {
+          if (!isVisible(editor)) return false;
+          const quillText = editor.__quill?.getText?.() || "";
+          const text = `${editor.textContent || ""} ${quillText}`;
+          return termsToFind.every((term) => text.includes(term));
+        },
+      );
+    },
+    { timeout },
+    expectedTerms,
   );
 }
 
