@@ -8193,19 +8193,23 @@ class AddUserEvalView(CreateAPIView):
             # Validate required mapping keys. System evals stay strict —
             # every required key must be mapped. Custom evals allow
             # partial mappings; the shared validator at run time decides
-            # whether to fail (all empty) or run with a warning.
-            from model_hub.utils.eval_validators import validate_required_key_mapping
+            # whether to fail (all empty) or run with a warning. Composite
+            # parents are always strict because their required keys live on
+            # child templates, not on the parent config.
+            from model_hub.utils.eval_validators import (
+                get_required_mapping_keys_for_template,
+                validate_required_key_mapping,
+            )
 
             mapping = validated_data.get("config", {}).get("mapping", {})
-            required_keys = (
-                template.config.get("required_keys", [])
-                if template.config and isinstance(template.config, dict)
-                else []
+            required_keys = get_required_mapping_keys_for_template(template)
+            is_composite_eval = (
+                getattr(template, "template_type", "single") == "composite"
             )
             is_user_custom_eval = bool(
                 template.config and template.config.get("custom_eval", False)
             )
-            if not is_user_custom_eval:
+            if is_composite_eval or not is_user_custom_eval:
                 missing_keys = validate_required_key_mapping(
                     mapping, required_keys
                 )
