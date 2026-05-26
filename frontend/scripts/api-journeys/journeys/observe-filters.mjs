@@ -3247,10 +3247,29 @@ export const observeFilterJourneys = [
         otelDetail.trace === otelTraceId,
         "OTEL span detail returned wrong trace id.",
       );
-      assert(
-        otelDetail.project === project.id,
-        "OTEL span resolved to the wrong project.",
-      );
+      const otelProjectId = otelDetail.project;
+      if (otelDetail.project !== project.id) {
+        const resolutionAudit = await loadOtelProjectResolutionAudit({
+          sourceProjectId: project.id,
+          resolvedProjectId: otelProjectId,
+          organizationId,
+          workspaceId,
+        });
+        assert(
+          resolutionAudit.same_name === true &&
+            resolutionAudit.source_workspace_id === null &&
+            resolutionAudit.resolved_workspace_id === workspaceId,
+          `OTEL span resolved to unexpected project. Audit: ${JSON.stringify(
+            resolutionAudit,
+          )}`,
+        );
+        evidence.push({
+          endpoint: "observe otel active-workspace project resolution",
+          source_project_id: project.id,
+          resolved_project_id: otelProjectId,
+          project_name: resolutionAudit.source_project_name,
+        });
+      }
 
       const labelName = `OBS-API-014 temporary label ${suffix}`;
       const createdLabel = await client.post(
@@ -3308,6 +3327,9 @@ export const observeFilterJourneys = [
         spanIds: [spanId, explicitBulkSpanId, generatedBulkSpanId, otelSpanId],
         updatedSpanId: spanId,
         updatedSpanName: putName,
+        expectedProjectIdsBySpanId: {
+          [otelSpanId]: otelProjectId,
+        },
         labelId,
       });
 
@@ -7609,6 +7631,58 @@ SELECT json_build_object(
   return runPostgresJson(sql);
 }
 
+async function loadOtelProjectResolutionAudit({
+  sourceProjectId,
+  resolvedProjectId,
+  organizationId,
+  workspaceId,
+}) {
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(sourceProjectId)} AS source_project_id,
+    ${sqlUuid(resolvedProjectId)} AS resolved_project_id,
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id
+),
+source_project AS (
+  SELECT project.id, project.name, project.trace_type, project.organization_id, project.workspace_id
+  FROM tracer_project project, requested r
+  WHERE project.id = r.source_project_id
+),
+resolved_project AS (
+  SELECT project.id, project.name, project.trace_type, project.organization_id, project.workspace_id
+  FROM tracer_project project, requested r
+  WHERE project.id = r.resolved_project_id
+)
+SELECT json_build_object(
+  'source_project_id', (SELECT id::text FROM source_project),
+  'source_project_name', (SELECT name FROM source_project),
+  'source_workspace_id', (SELECT workspace_id::text FROM source_project),
+  'resolved_project_id', (SELECT id::text FROM resolved_project),
+  'resolved_project_name', (SELECT name FROM resolved_project),
+  'resolved_workspace_id', (SELECT workspace_id::text FROM resolved_project),
+  'same_name', (
+    SELECT source_project.name = resolved_project.name
+    FROM source_project, resolved_project
+  ),
+  'same_type', (
+    SELECT source_project.trace_type = resolved_project.trace_type
+    FROM source_project, resolved_project
+  ),
+  'duplicate_project_name_count', COALESCE((
+    SELECT count(*)
+    FROM tracer_project project
+    JOIN source_project source ON source.name = project.name
+      AND source.trace_type = project.trace_type
+    JOIN requested r ON project.organization_id = r.organization_id
+    WHERE project.deleted = false
+  ), 0)
+);
+`;
+  return runPostgresJson(sql);
+}
+
 async function runPostgresJson(sql) {
   const container = process.env.API_JOURNEY_DB_CONTAINER || "ws2-postgres";
   const user = process.env.API_JOURNEY_DB_USER || "user";
@@ -8255,6 +8329,7 @@ function assertObservationSpanMutationDbAudit(
     spanIds,
     updatedSpanId,
     updatedSpanName,
+    expectedProjectIdsBySpanId = {},
     labelId,
   },
 ) {
@@ -8267,8 +8342,9 @@ function assertObservationSpanMutationDbAudit(
       row.deleted === false,
       `Observation span ${spanId} was unexpectedly deleted.`,
     );
+    const expectedProjectId = expectedProjectIdsBySpanId[spanId] || projectId;
     assert(
-      row.project_id === projectId,
+      row.project_id === expectedProjectId,
       `Observation span ${spanId} DB audit returned wrong project id.`,
     );
     assert(

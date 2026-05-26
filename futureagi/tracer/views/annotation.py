@@ -937,7 +937,7 @@ class BulkAnnotationView(APIView):
             value=value_fields,
             score_source="human",
             organization=span.project.organization,
-            workspace=span.project.workspace,
+            workspace=getattr(request, "workspace", None) or span.project.workspace,
         )
         return {
             "error": None,

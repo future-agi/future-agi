@@ -3584,6 +3584,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     ),
                     output_field=IntegerField(),
                 ),
+                row_avg_latency_ms=Case(
+                    When(
+                        Exists(_root_span_qs),
+                        then=Subquery(_root_span_qs.values("latency_ms")[:1]),
+                    ),
+                    output_field=IntegerField(),
+                ),
                 total_tokens=Coalesce(
                     Subquery(
                         _all_span_qs.values("trace_id")
@@ -3593,7 +3600,34 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     0,
                     output_field=IntegerField(),
                 ),
+                avg_input_tokens=Coalesce(
+                    Subquery(
+                        _all_span_qs.values("trace_id")
+                        .annotate(total=Sum("prompt_tokens"))
+                        .values("total")[:1]
+                    ),
+                    0,
+                    output_field=IntegerField(),
+                ),
+                avg_output_tokens=Coalesce(
+                    Subquery(
+                        _all_span_qs.values("trace_id")
+                        .annotate(total=Sum("completion_tokens"))
+                        .values("total")[:1]
+                    ),
+                    0,
+                    output_field=IntegerField(),
+                ),
                 total_cost=Coalesce(
+                    Subquery(
+                        _all_span_qs.values("trace_id")
+                        .annotate(total=Sum("cost"))
+                        .values("total")[:1]
+                    ),
+                    0,
+                    output_field=FloatField(),
+                ),
+                row_avg_cost=Coalesce(
                     Subquery(
                         _all_span_qs.values("trace_id")
                         .annotate(total=Sum("cost"))
@@ -4006,6 +4040,31 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     ),
                     root_metadata=Subquery(root_span_qs.values("metadata")[:1]),
                     provider=Subquery(root_span_qs.values("provider")[:1]),
+                    row_avg_latency_ms=Coalesce(
+                        Subquery(root_span_qs.values("latency_ms")[:1]),
+                        0,
+                        output_field=IntegerField(),
+                    ),
+                    row_avg_cost=Coalesce(
+                        Subquery(root_span_qs.values("cost")[:1]),
+                        0.0,
+                        output_field=FloatField(),
+                    ),
+                    avg_input_tokens=Coalesce(
+                        Subquery(root_span_qs.values("prompt_tokens")[:1]),
+                        0,
+                        output_field=IntegerField(),
+                    ),
+                    avg_output_tokens=Coalesce(
+                        Subquery(root_span_qs.values("completion_tokens")[:1]),
+                        0,
+                        output_field=IntegerField(),
+                    ),
+                    total_tokens=Coalesce(
+                        Subquery(root_span_qs.values("total_tokens")[:1]),
+                        0,
+                        output_field=IntegerField(),
+                    ),
                     start_time=Coalesce(
                         Subquery(
                             root_span_qs.order_by("start_time").values("start_time")[:1]

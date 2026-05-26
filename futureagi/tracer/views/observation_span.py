@@ -1693,6 +1693,16 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 user_id=F("end_user__user_id"),
                 user_id_type=F("end_user__user_id_type"),
                 user_id_hash=F("end_user__user_id_hash"),
+                row_avg_latency_ms=Coalesce(
+                    "latency_ms", 0, output_field=IntegerField()
+                ),
+                row_avg_cost=Coalesce("cost", 0.0, output_field=FloatField()),
+                avg_input_tokens=Coalesce(
+                    "prompt_tokens", 0, output_field=IntegerField()
+                ),
+                avg_output_tokens=Coalesce(
+                    "completion_tokens", 0, output_field=IntegerField()
+                ),
             )
 
             # Get all eval configs for the project
