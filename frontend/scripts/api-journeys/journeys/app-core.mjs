@@ -3966,6 +3966,159 @@ export const appCoreJourneys = [
     },
   },
   {
+    id: "CORE-API-020",
+    title: "MCP disposable session revoke and status-filter readback",
+    tags: ["core", "settings", "mcp", "sessions", "data-integrity", "mutating"],
+    async run({
+      client,
+      user,
+      organizationId,
+      workspaceId,
+      cleanup,
+      runId,
+      evidence,
+    }) {
+      requireMutations();
+      const userInfo = await client.get(apiPath("/accounts/user-info/"));
+      const userId = currentUserId(userInfo) || currentUserId(user);
+      assert(
+        isUuid(userId),
+        "Authenticated user-info did not include a valid user id.",
+      );
+      assert(
+        isUuid(organizationId),
+        "Authenticated context did not resolve an organization id.",
+      );
+      assert(
+        isUuid(workspaceId),
+        "Authenticated context did not resolve a workspace id.",
+      );
+
+      const config = await client.get(apiPath("/mcp/config/"));
+      assertMCPConnectionConfig(config);
+
+      const sessionId = randomUUID();
+      const clientName = `api_journey_mcp_${String(runId)
+        .replaceAll("-", "_")
+        .slice(0, 40)}`;
+      const createAudit = await createDisposableMCPSessionDb({
+        sessionId,
+        connectionId: config.id,
+        userId,
+        organizationId,
+        workspaceId,
+        clientName,
+      });
+      assert(
+        createAudit.inserted_session_count === 1,
+        "DB fixture did not create exactly one disposable MCP session.",
+      );
+      assert(
+        createAudit.status === "active" &&
+          createAudit.transport === "stdio" &&
+          createAudit.client_name === clientName,
+        "Disposable MCP session DB fixture did not persist the expected initial state.",
+      );
+      cleanup.defer("hard-delete disposable MCP session", async () => {
+        const deleted = await deleteDisposableMCPSessionDb({ sessionId });
+        assert(
+          deleted.remaining_session_count === 0 &&
+            deleted.remaining_usage_count === 0,
+          "Disposable MCP session or usage rows remained after cleanup.",
+        );
+      });
+
+      const activeSessions = asArray(
+        await client.get(apiPath("/mcp/sessions/"), {
+          query: { status: "active" },
+        }),
+      );
+      const activeRow = activeSessions.find(
+        (session) => session.id === sessionId,
+      );
+      assert(
+        activeRow,
+        "Active MCP sessions list did not include the disposable session.",
+      );
+      assertMCPSessionRow(activeRow);
+      assert(
+        activeRow.client_name === clientName,
+        "Disposable active MCP session list row did not preserve client_name.",
+      );
+
+      const revokeResult = await client.delete(
+        apiPath("/mcp/sessions/{session_id}/", {
+          session_id: sessionId,
+        }),
+      );
+      assert(
+        revokeResult?.message === "Session revoked",
+        "MCP session revoke response did not return the expected message.",
+      );
+
+      const activeAfterRevoke = asArray(
+        await client.get(apiPath("/mcp/sessions/"), {
+          query: { status: "active" },
+        }),
+      );
+      assert(
+        !activeAfterRevoke.some((session) => session.id === sessionId),
+        "Revoked MCP session still appeared in the active session filter.",
+      );
+
+      const revokedSessions = asArray(
+        await client.get(apiPath("/mcp/sessions/"), {
+          query: { status: "revoked" },
+        }),
+      );
+      const revokedRow = revokedSessions.find(
+        (session) => session.id === sessionId,
+      );
+      assert(
+        revokedRow,
+        "Revoked MCP sessions list did not include the disposable session.",
+      );
+      assertMCPSessionRow(revokedRow);
+      assert(
+        revokedRow.status === "revoked" &&
+          String(revokedRow.ended_at || "").trim(),
+        "Revoked MCP session row did not include revoked status and ended_at.",
+      );
+
+      const audit = await loadDisposableMCPSessionDbAudit({
+        sessionId,
+        connectionId: config.id,
+        userId,
+        organizationId,
+        workspaceId,
+      });
+      assert(
+        audit.session_count === 1 &&
+          audit.status === "revoked" &&
+          audit.ended_at_set === true,
+        "DB audit did not find the disposable MCP session revoked with ended_at.",
+      );
+      assert(
+        audit.connection_id === config.id &&
+          audit.user_id === userId &&
+          audit.organization_id === organizationId &&
+          audit.workspace_id === workspaceId,
+        "DB audit found the disposable MCP session outside the active context.",
+      );
+
+      evidence.push({
+        session_id: sessionId,
+        connection_id: config.id,
+        client_name: clientName,
+        active_filter_count_before_revoke: activeSessions.length,
+        revoked_filter_count_after_revoke: revokedSessions.length,
+        revoke_message: revokeResult.message,
+        db_status_after_revoke: audit.status,
+        db_ended_at_set: audit.ended_at_set,
+      });
+    },
+  },
+  {
     id: "CORE-API-015",
     title:
       "Falcon MCP connector create, secret masking, tool selection, delete, and DB cleanup",
@@ -8144,6 +8297,182 @@ SELECT json_build_object(
 );
 `;
   return runPostgresJson(sql);
+}
+
+async function createDisposableMCPSessionDb({
+  sessionId,
+  connectionId,
+  userId,
+  organizationId,
+  workspaceId,
+  clientName,
+}) {
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(sessionId)} AS session_id,
+    ${sqlUuid(connectionId)} AS connection_id,
+    ${sqlUuid(userId)} AS user_id,
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id,
+    ${sqlTextLiteral(clientName)} AS client_name
+),
+inserted AS (
+  INSERT INTO mcp_server_mcpsession (
+    id,
+    connection_id,
+    user_id,
+    organization_id,
+    workspace_id,
+    status,
+    transport,
+    client_name,
+    client_version,
+    client_os,
+    started_at,
+    last_activity_at,
+    ended_at,
+    tool_call_count,
+    error_count
+  )
+  SELECT
+    r.session_id,
+    r.connection_id,
+    r.user_id,
+    r.organization_id,
+    r.workspace_id,
+    'active',
+    'stdio',
+    r.client_name,
+    'api-journey',
+    'local',
+    now(),
+    now(),
+    NULL,
+    0,
+    0
+  FROM requested r
+  JOIN mcp_server_mcpconnection conn
+    ON conn.id = r.connection_id
+   AND conn.user_id = r.user_id
+   AND conn.organization_id = r.organization_id
+   AND conn.workspace_id = r.workspace_id
+   AND conn.deleted = false
+  RETURNING id, status, transport, client_name, connection_id, user_id, organization_id, workspace_id
+)
+SELECT json_build_object(
+  'inserted_session_count', (SELECT count(*) FROM inserted),
+  'session_id', (SELECT id::text FROM inserted LIMIT 1),
+  'status', (SELECT status FROM inserted LIMIT 1),
+  'transport', (SELECT transport FROM inserted LIMIT 1),
+  'client_name', (SELECT client_name FROM inserted LIMIT 1),
+  'connection_id', (SELECT connection_id::text FROM inserted LIMIT 1),
+  'user_id', (SELECT user_id::text FROM inserted LIMIT 1),
+  'organization_id', (SELECT organization_id::text FROM inserted LIMIT 1),
+  'workspace_id', (SELECT workspace_id::text FROM inserted LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function loadDisposableMCPSessionDbAudit({
+  sessionId,
+  connectionId,
+  userId,
+  organizationId,
+  workspaceId,
+}) {
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(sessionId)} AS session_id,
+    ${sqlUuid(connectionId)} AS connection_id,
+    ${sqlUuid(userId)} AS user_id,
+    ${sqlUuid(organizationId)} AS organization_id,
+    ${sqlUuid(workspaceId)} AS workspace_id
+),
+session_rows AS (
+  SELECT
+    session.id,
+    session.connection_id,
+    session.user_id,
+    session.organization_id,
+    session.workspace_id,
+    session.status,
+    session.transport,
+    session.client_name,
+    session.ended_at IS NOT NULL AS ended_at_set,
+    session.tool_call_count,
+    session.error_count
+  FROM mcp_server_mcpsession session
+  JOIN requested r ON session.id = r.session_id
+)
+SELECT json_build_object(
+  'session_count', (SELECT count(*) FROM session_rows),
+  'session_id', (SELECT id::text FROM session_rows LIMIT 1),
+  'connection_id', (SELECT connection_id::text FROM session_rows LIMIT 1),
+  'user_id', (SELECT user_id::text FROM session_rows LIMIT 1),
+  'organization_id', (SELECT organization_id::text FROM session_rows LIMIT 1),
+  'workspace_id', (SELECT workspace_id::text FROM session_rows LIMIT 1),
+  'matches_requested_context', COALESCE((
+    SELECT connection_id = (SELECT connection_id FROM requested)
+       AND user_id = (SELECT user_id FROM requested)
+       AND organization_id = (SELECT organization_id FROM requested)
+       AND workspace_id = (SELECT workspace_id FROM requested)
+    FROM session_rows
+    LIMIT 1
+  ), false),
+  'status', (SELECT status FROM session_rows LIMIT 1),
+  'transport', (SELECT transport FROM session_rows LIMIT 1),
+  'client_name', (SELECT client_name FROM session_rows LIMIT 1),
+  'ended_at_set', COALESCE((SELECT ended_at_set FROM session_rows LIMIT 1), false),
+  'tool_call_count', (SELECT tool_call_count FROM session_rows LIMIT 1),
+  'error_count', (SELECT error_count FROM session_rows LIMIT 1)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function deleteDisposableMCPSessionDb({ sessionId }) {
+  const deleted = await runPostgresJson(`
+WITH requested AS (
+  SELECT ${sqlUuid(sessionId)} AS session_id
+),
+deleted_usage AS (
+  DELETE FROM mcp_server_mcpusagerecord usage
+  USING requested r
+  WHERE usage.session_id = r.session_id
+  RETURNING usage.id
+),
+deleted_session AS (
+  DELETE FROM mcp_server_mcpsession session
+  USING requested r
+  WHERE session.id = r.session_id
+  RETURNING session.id
+)
+SELECT json_build_object(
+  'deleted_usage_count', (SELECT count(*) FROM deleted_usage),
+  'deleted_session_count', (SELECT count(*) FROM deleted_session)
+);
+`);
+  const residue = await runPostgresJson(`
+WITH requested AS (
+  SELECT ${sqlUuid(sessionId)} AS session_id
+)
+SELECT json_build_object(
+  'remaining_session_count', (
+    SELECT count(*)
+    FROM mcp_server_mcpsession session, requested r
+    WHERE session.id = r.session_id
+  ),
+  'remaining_usage_count', (
+    SELECT count(*)
+    FROM mcp_server_mcpusagerecord usage, requested r
+    WHERE usage.session_id = r.session_id
+  )
+);
+`);
+  return { ...deleted, ...residue };
 }
 
 async function loadFalconConnectorDbAudit({
