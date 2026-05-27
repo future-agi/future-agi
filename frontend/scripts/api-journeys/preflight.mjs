@@ -27,10 +27,26 @@ try {
     })),
   );
   checks.push(
+    ...(await checkContainerDiskAvailability({
+      envName: "API_JOURNEY_DB_CONTAINER",
+      fallbackNames: DEFAULT_DB_CONTAINERS,
+      service: "postgres",
+      paths: ["/", "/var/lib/postgresql/data"],
+    })),
+  );
+  checks.push(
     ...(await checkDockerContainers({
       envName: "API_JOURNEY_REDIS_CONTAINER",
       fallbackNames: DEFAULT_REDIS_CONTAINERS,
       service: "redis",
+    })),
+  );
+  checks.push(
+    ...(await checkContainerDiskAvailability({
+      envName: "API_JOURNEY_REDIS_CONTAINER",
+      fallbackNames: DEFAULT_REDIS_CONTAINERS,
+      service: "redis",
+      paths: ["/", "/data"],
     })),
   );
   checks.push(
@@ -261,6 +277,70 @@ async function checkRedisWriteHealth({ envName, fallbackNames }) {
   return results;
 }
 
+async function checkContainerDiskAvailability({
+  envName,
+  fallbackNames,
+  service,
+  paths,
+}) {
+  const explicit = splitEnvList(process.env[envName]);
+  const names = [
+    ...new Set((explicit.length ? explicit : fallbackNames).filter(Boolean)),
+  ];
+  const results = [];
+
+  for (const name of names) {
+    const state = await loadDockerContainerState(name);
+    if (!state?.exists || state.status !== "running") continue;
+    results.push(await checkContainerDisk(name, service, paths));
+  }
+
+  return results;
+}
+
+async function checkContainerDisk(name, service, paths) {
+  try {
+    const { stdout } = await execFileAsync("docker", [
+      "exec",
+      name,
+      "sh",
+      "-lc",
+      `df -Pk ${paths.map(shellQuote).join(" ")} 2>/dev/null || df -Pk`,
+    ]);
+    const rows = parseDfRows(stdout);
+    const worstCapacity = rows.reduce(
+      (max, row) => Math.max(max, row.capacity_percent),
+      0,
+    );
+    const lowestAvailable = rows.reduce(
+      (min, row) => Math.min(min, row.available_kib),
+      Number.POSITIVE_INFINITY,
+    );
+    const status =
+      lowestAvailable <= 0 || worstCapacity >= 100
+        ? "failed"
+        : lowestAvailable < 1024 * 1024 || worstCapacity >= 95
+          ? "warning"
+          : "passed";
+
+    return {
+      name: `${service}_disk:${name}`,
+      status,
+      filesystems: rows,
+      detail:
+        status === "passed"
+          ? "Container filesystems have enough free space for API journey probes."
+          : "Container filesystem free space is low; database, cache, and auth writes may fail.",
+    };
+  } catch (error) {
+    return {
+      name: `${service}_disk:${name}`,
+      status: "warning",
+      error: error.message,
+    };
+  }
+}
+
 async function loadDockerContainerState(name) {
   try {
     const { stdout } = await execFileAsync("docker", [
@@ -274,6 +354,33 @@ async function loadDockerContainerState(name) {
   } catch {
     return { exists: false, status: "" };
   }
+}
+
+function parseDfRows(output) {
+  const rows = [];
+  const seenMounts = new Set();
+  for (const line of output.split(/\r?\n/).slice(1)) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 6) continue;
+    const [filesystem, blocks, used, available, capacity, ...mountParts] =
+      parts;
+    const mounted_on = mountParts.join(" ");
+    if (seenMounts.has(mounted_on)) continue;
+    seenMounts.add(mounted_on);
+    rows.push({
+      filesystem,
+      blocks_kib: Number(blocks),
+      used_kib: Number(used),
+      available_kib: Number(available),
+      capacity_percent: Number(String(capacity).replace("%", "")),
+      mounted_on,
+    });
+  }
+  return rows;
+}
+
+function shellQuote(value) {
+  return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
 
 async function checkRedisContainerWriteHealth(name) {
