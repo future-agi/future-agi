@@ -778,6 +778,28 @@ const normalizeDailyQualityProductCard = (raw) => {
   };
 };
 
+const normalizeDailyQualityWeeklyReview = (raw) => {
+  if (!raw) return null;
+  const route = raw.route ?? "";
+  if (!isInternalHref(route)) {
+    throw new Error(`Weekly quality review has external route: ${route}`);
+  }
+  return {
+    due: Boolean(raw.due),
+    status: raw.status,
+    route,
+    window: {
+      startAt: raw.window?.start_at ?? raw.window?.startAt ?? null,
+      endAt: raw.window?.end_at ?? raw.window?.endAt ?? null,
+    },
+    summary: raw.summary,
+    unresolvedCount: raw.unresolved_count ?? raw.unresolvedCount ?? 0,
+    completedCount: raw.completed_count ?? raw.completedCount ?? 0,
+    lastCompletedAt: raw.last_completed_at ?? raw.lastCompletedAt ?? null,
+    actionLabel: raw.action_label ?? raw.actionLabel ?? null,
+  };
+};
+
 const normalizeDailyQuality = (raw) => {
   if (!raw) return null;
   return {
@@ -798,6 +820,9 @@ const normalizeDailyQuality = (raw) => {
     ),
     productCards: (raw.product_cards ?? raw.productCards ?? []).map(
       normalizeDailyQualityProductCard,
+    ),
+    weeklyReview: normalizeDailyQualityWeeklyReview(
+      raw.weekly_review ?? raw.weeklyReview ?? null,
     ),
     digestEligible: Boolean(raw.digest_eligible ?? raw.digestEligible),
     digestSuppressionReason:

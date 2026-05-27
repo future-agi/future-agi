@@ -253,6 +253,18 @@ describe("OnboardingHomeView", () => {
         digest_context_id: null,
       }),
     );
+    expect(screen.getByTestId("weekly-quality-review")).toBeVisible();
+
+    await userEvent.click(screen.getByTestId("weekly-quality-review-action"));
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "weekly_quality_review_opened",
+      expect.objectContaining({
+        weekly_review_status: "due",
+        unresolved_count: 1,
+        route: "/dashboard/home?mode=weekly-review",
+      }),
+    );
 
     await userEvent.click(screen.getByTestId("daily-quality-primary-action"));
 

@@ -1166,6 +1166,53 @@ class DailyQualityProductCardSerializer(serializers.Serializer):
     route = serializers.CharField()
 
 
+class DailyQualityWeeklyReviewSerializer(serializers.Serializer):
+    due = serializers.BooleanField()
+    status = serializers.ChoiceField(
+        choices=choices(
+            (
+                "due",
+                "not_due",
+                "permission_limited",
+                "flag_disabled",
+                "no_useful_signal",
+                "completed_recently",
+            )
+        )
+    )
+    route = serializers.CharField()
+    window = DailyQualityWindowSerializer()
+    summary = serializers.CharField()
+    unresolved_count = serializers.IntegerField(min_value=0)
+    completed_count = serializers.IntegerField(min_value=0)
+    last_completed_at = serializers.DateTimeField(required=False, allow_null=True)
+    action_label = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+
+    def validate(self, attrs):
+        route = attrs["route"]
+        if (
+            not isinstance(route, str)
+            or not route.startswith("/")
+            or route.startswith("//")
+        ):
+            raise serializers.ValidationError(
+                "Weekly quality review route must be internal."
+            )
+        if attrs["due"] and attrs["status"] != "due":
+            raise serializers.ValidationError(
+                "Due weekly quality review must use due status."
+            )
+        if attrs["status"] == "due" and not attrs["due"]:
+            raise serializers.ValidationError(
+                "Weekly quality review due status must be marked due."
+            )
+        return attrs
+
+
 class DailyQualityStateSerializer(serializers.Serializer):
     mode = serializers.ChoiceField(
         choices=choices(
@@ -1184,6 +1231,10 @@ class DailyQualityStateSerializer(serializers.Serializer):
     primary_action = DailyQualityActionSerializer(required=False, allow_null=True)
     action_cards = DailyQualityActionSerializer(many=True, required=False)
     product_cards = DailyQualityProductCardSerializer(many=True, required=False)
+    weekly_review = DailyQualityWeeklyReviewSerializer(
+        required=False,
+        allow_null=True,
+    )
     digest_eligible = serializers.BooleanField()
     digest_suppression_reason = serializers.CharField(
         required=False,

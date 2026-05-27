@@ -17,6 +17,7 @@ export const OnboardingHomeEvents = {
   dailyQualityDigestDestinationOpened:
     "daily_quality_digest_destination_opened",
   dailyQualityRouteFallbackUsed: "daily_quality_route_fallback_used",
+  weeklyQualityReviewOpened: "weekly_quality_review_opened",
   sampleProjectOpenClicked: "sample_project_open_clicked",
   sampleProjectOpenFailed: "sample_project_open_failed",
   sampleProjectHideClicked: "sample_project_hide_clicked",

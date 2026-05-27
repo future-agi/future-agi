@@ -68,6 +68,9 @@ describe("onboarding home events", () => {
     expect(OnboardingHomeEvents.dailyQualityEmptyStateViewed).toBe(
       "daily_quality_empty_state_viewed",
     );
+    expect(OnboardingHomeEvents.weeklyQualityReviewOpened).toBe(
+      "weekly_quality_review_opened",
+    );
   });
 
   it("normalizes unsafe or empty properties", () => {

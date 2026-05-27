@@ -38,6 +38,7 @@ def _flags(**overrides):
         "onboarding_eval_route_modes": True,
         "onboarding_voice_path": True,
         "onboarding_voice_route_modes": True,
+        "onboarding_weekly_team_review": False,
         "onboarding_lifecycle_email_dry_run": True,
         "onboarding_email_welcome_enabled": False,
         "onboarding_email_first_action_recovery_enabled": False,
@@ -329,7 +330,10 @@ def test_daily_quality_promotes_gateway_failed_request_signal(
         user,
         organization,
         workspace,
-        flags=_flags(onboarding_email_daily_digest_enabled=True),
+        flags=_flags(
+            onboarding_email_daily_digest_enabled=True,
+            onboarding_weekly_team_review=True,
+        ),
         selected_goal="control_model_traffic",
         primary_path="gateway",
     )
@@ -344,6 +348,9 @@ def test_daily_quality_promotes_gateway_failed_request_signal(
     assert payload["recommended_action"]["analytics"]["target_path"] == "gateway"
     assert daily_quality["product_cards"][0]["path"] == "gateway"
     assert daily_quality["digest_eligible"] is True
+    assert daily_quality["weekly_review"]["due"] is True
+    assert daily_quality["weekly_review"]["status"] == "due"
+    assert daily_quality["weekly_review"]["unresolved_count"] == 1
 
 
 @pytest.mark.django_db

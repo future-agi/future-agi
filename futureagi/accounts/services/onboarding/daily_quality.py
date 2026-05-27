@@ -5,7 +5,10 @@ from datetime import timedelta
 
 from django.db.models import Q
 
-from accounts.services.onboarding.activation_events import latest_event
+from accounts.services.onboarding.activation_events import (
+    events_for_workspace,
+    latest_event,
+)
 from accounts.services.onboarding.route_availability import route_entry
 
 REVIEW_EVENTS = (
@@ -13,6 +16,8 @@ REVIEW_EVENTS = (
     "daily_quality_top_change_reviewed",
     "daily_quality_action_completed",
 )
+WEEKLY_REVIEW_COMPLETED_EVENTS = ("weekly_quality_review_completed",)
+WEEKLY_REVIEW_ROUTE = "/dashboard/home?mode=weekly-review"
 
 SUPPORTED_PATHS = {"prompt", "agent", "observe", "gateway", "evals", "voice"}
 
@@ -155,6 +160,31 @@ def _window(context, signals, now):
         "start_at": max(starts) if starts else earliest,
         "end_at": now,
     }
+
+
+def _weekly_window(now):
+    return {
+        "start_at": now - timedelta(days=7),
+        "end_at": now,
+    }
+
+
+def _recent_event_count(context, *, event_names, window):
+    if not context.organization or not context.workspace:
+        return 0
+    events = events_for_workspace(
+        organization=context.organization,
+        workspace=context.workspace,
+        event_names=event_names,
+        product_path=_path(context),
+        is_sample=False,
+        limit=500,
+    )
+    return sum(
+        1
+        for event in events
+        if window["start_at"] < event.occurred_at <= window["end_at"]
+    )
 
 
 def _trace_queryset(context):
@@ -660,9 +690,62 @@ def _unavailable(reason, now):
         "primary_action": None,
         "action_cards": [],
         "product_cards": [],
+        "weekly_review": None,
         "digest_eligible": False,
         "digest_suppression_reason": reason,
         "diagnostics": [reason],
+    }
+
+
+def _weekly_review_state(context, flags, *, mode, top_signal, now):
+    window = _weekly_window(now)
+    completed_count = _recent_event_count(
+        context,
+        event_names=REVIEW_EVENTS,
+        window=window,
+    )
+    unresolved_count = 1 if top_signal or mode == "open_action" else 0
+    last_completed = latest_event(
+        organization=context.organization,
+        workspace=context.workspace,
+        event_names=WEEKLY_REVIEW_COMPLETED_EVENTS,
+        product_path=_path(context),
+        is_sample=False,
+    )
+    last_completed_at = last_completed.occurred_at if last_completed else None
+
+    status = "not_due"
+    due = False
+    summary = "No weekly team review is due right now."
+    if not flags.get("onboarding_weekly_team_review"):
+        status = "flag_disabled"
+        summary = "Weekly team review is disabled."
+    elif context.permissions["permission_limited"]:
+        status = "permission_limited"
+        summary = "Workspace access is needed before weekly review."
+    elif last_completed_at and last_completed_at > window["start_at"]:
+        status = "completed_recently"
+        summary = "Weekly team review is already complete for this window."
+    elif not unresolved_count and not completed_count:
+        status = "no_useful_signal"
+        summary = "No unresolved quality work was found for this weekly window."
+    elif unresolved_count:
+        status = "due"
+        due = True
+        summary = "Review unresolved quality work with your team."
+    else:
+        summary = "Recent daily quality work is current."
+
+    return {
+        "due": due,
+        "status": status,
+        "route": WEEKLY_REVIEW_ROUTE,
+        "window": window,
+        "summary": summary,
+        "unresolved_count": unresolved_count,
+        "completed_count": completed_count,
+        "last_completed_at": last_completed_at,
+        "action_label": "Open weekly review" if due else None,
     }
 
 
@@ -725,6 +808,13 @@ def resolve_daily_quality_state(*, context, flags, signals, routes, stage, now):
                 routes=routes,
             )
         ],
+        "weekly_review": _weekly_review_state(
+            context,
+            flags,
+            mode=mode,
+            top_signal=top_signal,
+            now=now,
+        ),
         "digest_eligible": digest_eligible,
         "digest_suppression_reason": digest_suppression_reason,
         "diagnostics": diagnostics,

@@ -67,9 +67,11 @@ export default function DailyQualityHome({
   canAct = true,
   onActionClick,
   onSignalReview,
+  onWeeklyReviewOpen,
 }) {
   const topSignal = dailyQuality?.topSignal;
   const primaryAction = dailyQuality?.primaryAction;
+  const weeklyReview = dailyQuality?.weeklyReview;
   const href = actionHref(primaryAction);
   const isWriteBlocked = !canAct && primaryAction?.requiresPermission;
 
@@ -177,6 +179,52 @@ export default function DailyQualityHome({
         </Box>
       ) : null}
 
+      {weeklyReview?.due ? (
+        <Box
+          data-testid="weekly-quality-review"
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            p: 2,
+            bgcolor: "background.paper",
+          }}
+        >
+          <Stack spacing={1}>
+            <Stack direction="row" spacing={1} alignItems="center">
+              <Typography variant="subtitle2">Weekly team review</Typography>
+              <Chip size="small" color="info" label="Due" />
+            </Stack>
+            <Typography variant="body2" color="text.secondary">
+              {weeklyReview.summary}
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Chip
+                size="small"
+                variant="outlined"
+                label={`${weeklyReview.unresolvedCount} unresolved`}
+              />
+              <Chip
+                size="small"
+                variant="outlined"
+                label={`${weeklyReview.completedCount} completed`}
+              />
+            </Stack>
+            <Button
+              data-testid="weekly-quality-review-action"
+              variant="outlined"
+              component={RouterLink}
+              href={weeklyReview.route}
+              onClick={() => onWeeklyReviewOpen?.(weeklyReview)}
+              startIcon={<Iconify icon="mdi:calendar-check" width={18} />}
+              sx={{ alignSelf: "flex-start" }}
+            >
+              {weeklyReview.actionLabel || "Open weekly review"}
+            </Button>
+          </Stack>
+        </Box>
+      ) : null}
+
       {dailyQuality?.productCards?.length ? (
         <Box
           sx={{
@@ -202,5 +250,6 @@ DailyQualityHome.propTypes = {
   dailyQuality: PropTypes.object,
   onActionClick: PropTypes.func,
   onSignalReview: PropTypes.func,
+  onWeeklyReviewOpen: PropTypes.func,
   recommendedAction: PropTypes.object,
 };

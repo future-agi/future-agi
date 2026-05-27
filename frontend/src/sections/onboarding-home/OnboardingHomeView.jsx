@@ -368,6 +368,16 @@ export default function OnboardingHomeView() {
     });
   };
 
+  const handleWeeklyReviewOpen = (weeklyReview) => {
+    trackOnboardingHomeEvent(OnboardingHomeEvents.weeklyQualityReviewOpened, {
+      ...dailyTrackContext,
+      weekly_review_status: weeklyReview?.status,
+      unresolved_count: weeklyReview?.unresolvedCount,
+      completed_count: weeklyReview?.completedCount,
+      route: weeklyReview?.route,
+    });
+  };
+
   const handlePathClick = (path) => {
     trackOnboardingHomeEvent(OnboardingHomeEvents.homePathClicked, {
       ...trackContext,
@@ -435,6 +445,7 @@ export default function OnboardingHomeView() {
         recommendedAction={renderedState.recommendedAction}
         onActionClick={handleDailyActionClick}
         onSignalReview={handleDailySignalReview}
+        onWeeklyReviewOpen={handleWeeklyReviewOpen}
         canAct={!renderedState.permissions?.permissionLimited}
       />
     ) : null;

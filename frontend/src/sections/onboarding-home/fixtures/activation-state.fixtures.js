@@ -694,6 +694,22 @@ const dailyQualityState = (overrides = {}) => ({
   ...overrides,
 });
 
+const weeklyReviewState = (overrides = {}) => ({
+  due: false,
+  status: "flag_disabled",
+  route: "/dashboard/home?mode=weekly-review",
+  window: {
+    start_at: "2026-05-20T10:00:00Z",
+    end_at: "2026-05-27T10:00:00Z",
+  },
+  summary: "Weekly team review is disabled.",
+  unresolved_count: 0,
+  completed_count: 0,
+  last_completed_at: null,
+  action_label: null,
+  ...overrides,
+});
+
 const dailyQualityActivationAction = (overrides = {}) =>
   action({
     id: "review_failed_trace",
@@ -893,6 +909,7 @@ const baseState = (overrides = {}) => ({
     onboarding_sample_project: true,
     onboarding_lifecycle_send_enabled: false,
     onboarding_daily_quality_home: true,
+    onboarding_weekly_team_review: false,
     onboarding_prompt_path: false,
     onboarding_prompt_route_modes: false,
     onboarding_agent_path: false,
@@ -1213,7 +1230,16 @@ export const activationStateFixtures = {
       ship: "available",
       improve: "complete",
     },
-    daily_quality: dailyQualityState(),
+    daily_quality: dailyQualityState({
+      weekly_review: weeklyReviewState({
+        due: true,
+        status: "due",
+        summary: "Review unresolved quality work with your team.",
+        unresolved_count: 1,
+        completed_count: 0,
+        action_label: "Open weekly review",
+      }),
+    }),
     signals: {
       ...baseState().signals,
       observe_projects: 1,
@@ -1228,6 +1254,10 @@ export const activationStateFixtures = {
       ...baseState().email_eligibility,
       digest_eligible: true,
       next_email_key: "first_loop_complete_next_v1",
+    },
+    feature_flags: {
+      ...baseState().feature_flags,
+      onboarding_weekly_team_review: true,
     },
     last_meaningful_event: {
       name: "first_quality_loop_completed",

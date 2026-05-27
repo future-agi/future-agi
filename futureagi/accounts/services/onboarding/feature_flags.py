@@ -18,6 +18,7 @@ ONBOARDING_FLAG_NAMES = (
     "onboarding_eval_route_modes",
     "onboarding_voice_path",
     "onboarding_voice_route_modes",
+    "onboarding_weekly_team_review",
     "onboarding_lifecycle_email_dry_run",
     "onboarding_email_welcome_enabled",
     "onboarding_email_first_action_recovery_enabled",
