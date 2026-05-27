@@ -36,6 +36,12 @@ describe("onboarding home events", () => {
     );
   });
 
+  it("exposes the post-login routing analytics event", () => {
+    expect(OnboardingHomeEvents.postLoginDestinationResolved).toBe(
+      "onboarding_post_login_destination_resolved",
+    );
+  });
+
   it("normalizes unsafe or empty properties", () => {
     expect(
       normalizeOnboardingEventProperties({

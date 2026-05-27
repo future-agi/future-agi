@@ -13,7 +13,12 @@ import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
 import { trackTwitterSignup } from "src/utils/twitterAds";
 import { ROLES } from "src/utils/rolePermissionMapping";
-import { usePostLoginPath } from "src/hooks/useDeploymentMode";
+import { usePostLoginDestination } from "src/sections/onboarding-home/hooks/usePostLoginDestination";
+import {
+  OnboardingHomeEvents,
+  trackOnboardingHomeEvent,
+} from "src/sections/onboarding-home/analytics/onboarding-events";
+import { routeForAnalytics } from "src/sections/onboarding-home/utils/post-login-routing";
 import {
   buildCurrentFlowContext,
   CurrentFlowEvents,
@@ -44,7 +49,21 @@ function Container({ children }) {
   const router = useRouter();
 
   const { authenticated, method, user } = useAuthContext();
-  const postLoginPath = usePostLoginPath();
+  const currentPath = `${window.location.pathname}${window.location.search}`;
+  const postLoginReturnTo = localStorage.getItem("redirectUrl");
+  const {
+    activationState: postLoginActivationState,
+    activationStateError: postLoginActivationStateError,
+    deploymentMode: postLoginDeploymentMode,
+    destination: postLoginDestination,
+    fallbackDestination: postLoginPath,
+    flags: postLoginFlags,
+    isResolving: isPostLoginDestinationResolving,
+  } = usePostLoginDestination({
+    currentPath,
+    returnTo: postLoginReturnTo,
+    user,
+  });
 
   const [checked, setChecked] = useState(false);
 
@@ -139,6 +158,40 @@ function Container({ children }) {
         },
       );
     };
+    const trackPostLoginDestination = (destination, targetRoute) => {
+      trackOnboardingHomeEvent(
+        OnboardingHomeEvents.postLoginDestinationResolved,
+        {
+          destination: routeForAnalytics(targetRoute),
+          fallback_destination: routeForAnalytics(postLoginPath),
+          reason: destination?.reason || "unknown",
+          current_path: routeForAnalytics(currentPath),
+          had_return_to: Boolean(postLoginReturnTo),
+          used_return_to: Boolean(destination?.usedReturnTo),
+          deployment_mode: postLoginDeploymentMode,
+          onboarding_home_flag: Boolean(
+            postLoginFlags?.onboarding_first_run_home,
+          ),
+          internal_release_flag: Boolean(
+            postLoginFlags?.onboarding_release_0_internal,
+          ),
+          activation_api_flag: Boolean(
+            postLoginFlags?.onboarding_activation_state_api,
+          ),
+          activation_stage:
+            destination?.activationStage ||
+            postLoginActivationState?.stage ||
+            null,
+          is_activated: Boolean(postLoginActivationState?.isActivated),
+          permission_limited: Boolean(
+            postLoginActivationState?.permissions?.permissionLimited,
+          ),
+          activation_state_error: Boolean(
+            postLoginActivationStateError || destination?.activationStateError,
+          ),
+        },
+      );
+    };
 
     const isNewOAuthSignup = localStorage.getItem("isNewOAuthSignup") === "1";
     if (isNewOAuthSignup) {
@@ -214,10 +267,18 @@ function Container({ children }) {
 
     if (initial !== "done") {
       // If user has an organization_role, they're already part of an org (invited or owner)
-      // Skip onboarding and go straight to dashboard
+      // Resolve the first dashboard destination through the post-login router.
       if (user?.organization_role) {
-        trackPostLoginDecision("organization_role_post_login", postLoginPath);
-        router.replace(postLoginPath);
+        if (isPostLoginDestinationResolving) return;
+        const targetRoute = postLoginDestination?.href || postLoginPath;
+        trackPostLoginDecision(postLoginDestination?.reason, targetRoute);
+        trackPostLoginDestination(postLoginDestination, targetRoute);
+        if (postLoginDestination?.shouldClearReturnTo) {
+          localStorage.removeItem("redirectUrl");
+        }
+        if (postLoginDestination?.shouldReplace !== false) {
+          router.replace(targetRoute);
+        }
       } else {
         trackPostLoginDecision(
           "no_org_role_get_started",
@@ -228,7 +289,19 @@ function Container({ children }) {
       localStorage.setItem("initial-render", "done");
       localStorage.removeItem("redirectUrl");
     }
-  }, [postLoginPath, user, router]);
+  }, [
+    currentPath,
+    isPostLoginDestinationResolving,
+    postLoginActivationState,
+    postLoginActivationStateError,
+    postLoginDeploymentMode,
+    postLoginDestination,
+    postLoginFlags,
+    postLoginPath,
+    postLoginReturnTo,
+    router,
+    user,
+  ]);
 
   // Gate "no org → setup-org" redirect on isOrgReady to avoid false
   // redirects while org context is still hydrating.

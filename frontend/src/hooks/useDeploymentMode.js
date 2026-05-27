@@ -32,11 +32,13 @@ export function useDeploymentMode() {
   };
 }
 
+export function getDeploymentPostLoginPath(mode) {
+  return mode === "oss" ? paths.dashboard.develop : paths.dashboard.falconAI;
+}
+
 export function usePostLoginPath() {
-  const { isOSS } = useDeploymentMode();
-
-
- const returnTo = localStorage.getItem("redirectUrl");
+  const { mode } = useDeploymentMode();
+  const returnTo = localStorage.getItem("redirectUrl");
   if (returnTo) return returnTo;
-  return isOSS ? paths.dashboard.develop : paths.dashboard.falconAI;
+  return getDeploymentPostLoginPath(mode);
 }

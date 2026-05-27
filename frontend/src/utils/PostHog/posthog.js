@@ -186,8 +186,8 @@ export const getFeatureFlagPayload = (flagName) => {
  * Callback when feature flags are loaded
  */
 export const onFeatureFlags = (callback) => {
-  if (!initialized) return;
-  posthog.onFeatureFlags(callback);
+  if (!initialized) return undefined;
+  return posthog.onFeatureFlags(callback);
 };
 
 export { posthog };
