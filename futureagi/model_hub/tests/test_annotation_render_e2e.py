@@ -380,10 +380,11 @@ def annotation_render_seed(db, organization, workspace, user):
     )
     label = _create_label(organization=organization, workspace=workspace)
     AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
-    AnnotationQueueAnnotator.objects.create(
+    AnnotationQueueAnnotator.objects.get_or_create(
         queue=queue,
         user=user,
-        role=AnnotatorRole.MANAGER.value,
+        deleted=False,
+        defaults={"role": AnnotatorRole.MANAGER.value},
     )
     return {
         "queue": queue,

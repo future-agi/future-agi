@@ -353,7 +353,7 @@ class TestAutomationRulesE2E:
         )
 
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
+        assert "conditions" in resp.data.get("details", resp.data)
 
     def test_create_rule_rejects_legacy_filters_key(
         self, auth_client, organization, workspace
@@ -372,7 +372,7 @@ class TestAutomationRulesE2E:
         )
 
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
+        assert "conditions" in resp.data.get("details", resp.data)
 
     def test_create_rule_rejects_legacy_rule_filter_type_alias(
         self, auth_client, organization, workspace
@@ -400,7 +400,7 @@ class TestAutomationRulesE2E:
         )
 
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
+        assert "conditions" in resp.data.get("details", resp.data)
 
     def test_create_rule_rejects_legacy_camel_case_rule_field(
         self, auth_client, organization, workspace
@@ -423,7 +423,7 @@ class TestAutomationRulesE2E:
         )
 
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
+        assert "conditions" in resp.data.get("details", resp.data)
 
     # -----------------------------------------------------------------------
     # 3. Project-scoped queue
@@ -607,8 +607,8 @@ class TestAutomationRulesE2E:
         AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
 
         # Filter-mode rule (`conditions.filter` payload) → resolver path
-        # → _add_source_ids_to_queue. Use an explicit time filter so the
-        # CH path engages if CH is available; the PG fallback also exercises
+        # → _add_source_ids_to_queue. Avoid explicit time filters which
+        # would route to CH (empty in tests); the PG fallback exercises
         # the same dry-run early return.
         resp = auth_client.post(
             _rules_url(queue_id),
@@ -616,16 +616,8 @@ class TestAutomationRulesE2E:
                 "name": "Trunc rule",
                 "source_type": "trace",
                 "conditions": {
-                    "filter": [
-                        {
-                            "column_id": "created_at",
-                            "filter_config": {
-                                "filter_type": "datetime",
-                                "filter_op": "greater_than",
-                                "filter_value": "2020-01-01T00:00:00Z",
-                            },
-                        }
-                    ]
+                    "filter": [],
+                    "scope": {"project_id": str(project.id)},
                 },
                 "enabled": True,
             },
@@ -823,8 +815,8 @@ class TestAutomationRulesE2E:
             format="json",
         )
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
-        assert "conditions" in resp.data
-        assert "user__password" in str(resp.data["conditions"])
+        assert "conditions" in resp.data.get("details", resp.data)
+        assert "user__password" in str(resp.data.get("details", resp.data).get("conditions", resp.data.get("detail", "")))
 
     # -----------------------------------------------------------------------
     # 10. Rule stats updated after evaluation

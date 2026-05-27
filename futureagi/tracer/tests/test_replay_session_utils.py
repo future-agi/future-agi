@@ -1,4 +1,5 @@
 import uuid
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -603,29 +604,37 @@ class TestGetTranscriptsFromSessionQuery:
     def test_groups_traces_by_session_id(self):
         """Should group traces by session_id."""
         session_id = uuid.uuid4()
+        now = datetime(2025, 1, 1, tzinfo=None)
 
-        mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
-
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = [
+        trace_rows = [
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id,
                 "input": "Turn 1 input",
                 "output": "Turn 1 output",
+                "created_at": now,
             },
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id,
                 "input": "Turn 2 input",
                 "output": "Turn 2 output",
+                "created_at": now,
             },
         ]
 
+        mock_queryset = MagicMock()
+        mock_queryset.values.return_value = trace_rows
+
+        mock_reader = MagicMock()
+        mock_reader.per_trace_root_span_start_times.return_value = {}
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
+
         with patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=mock_reader,
+        ), patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
@@ -638,29 +647,37 @@ class TestGetTranscriptsFromSessionQuery:
         """Should handle multiple sessions correctly."""
         session_id_1 = uuid.uuid4()
         session_id_2 = uuid.uuid4()
+        now = datetime(2025, 1, 1, tzinfo=None)
 
-        mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
-
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = [
+        trace_rows = [
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id_1,
                 "input": "S1 Input",
                 "output": "S1 Output",
+                "created_at": now,
             },
             {
                 "id": uuid.uuid4(),
                 "session_id": session_id_2,
                 "input": "S2 Input",
                 "output": "S2 Output",
+                "created_at": now,
             },
         ]
 
+        mock_queryset = MagicMock()
+        mock_queryset.values.return_value = trace_rows
+
+        mock_reader = MagicMock()
+        mock_reader.per_trace_root_span_start_times.return_value = {}
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
+
         with patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=mock_reader,
+        ), patch(
             "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
             return_value=set(),
         ):
@@ -673,30 +690,60 @@ class TestGetTranscriptsFromSessionQuery:
     def test_returns_empty_dict_for_empty_queryset(self):
         """Should return empty dict when queryset is empty."""
         mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
-
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = []
+        mock_queryset.values.return_value = []
 
         result = _get_transcripts_from_session_query(mock_queryset)
 
         assert result == {}
 
-    def test_orders_by_span_start_time(self):
-        """Should order traces by span_start_time."""
+    def test_orders_by_root_span_start_time(self):
+        """Should order traces by root span start_time from CH, falling back to created_at."""
+        session_id = uuid.uuid4()
+        trace_id_early = uuid.uuid4()
+        trace_id_late = uuid.uuid4()
+
+        # Intentionally list the late trace first in PG results
+        trace_rows = [
+            {
+                "id": trace_id_late,
+                "session_id": session_id,
+                "input": "Late",
+                "output": "Late out",
+                "created_at": datetime(2025, 1, 2, tzinfo=None),
+            },
+            {
+                "id": trace_id_early,
+                "session_id": session_id,
+                "input": "Early",
+                "output": "Early out",
+                "created_at": datetime(2025, 1, 1, tzinfo=None),
+            },
+        ]
+
         mock_queryset = MagicMock()
-        mock_annotate = MagicMock()
-        mock_order = MagicMock()
+        mock_queryset.values.return_value = trace_rows
 
-        mock_queryset.annotate.return_value = mock_annotate
-        mock_annotate.order_by.return_value = mock_order
-        mock_order.values.return_value = []
+        # CH returns root-span start_times that should drive sort order
+        mock_reader = MagicMock()
+        mock_reader.per_trace_root_span_start_times.return_value = {
+            str(trace_id_early): datetime(2025, 1, 1, 0, 0, 0),
+            str(trace_id_late): datetime(2025, 1, 2, 0, 0, 0),
+        }
+        mock_reader.__enter__ = lambda s: s
+        mock_reader.__exit__ = MagicMock(return_value=False)
 
-        _get_transcripts_from_session_query(mock_queryset)
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=mock_reader,
+        ), patch(
+            "tracer.utils.replay_session.trace_ids_with_simulator_call_execution_id",
+            return_value=set(),
+        ):
+            result = _get_transcripts_from_session_query(mock_queryset)
 
-        mock_annotate.order_by.assert_called_once_with("span_start_time")
+        turns = result[str(session_id)]
+        assert turns[0]["input"] == "Early"
+        assert turns[1]["input"] == "Late"
 
 
 @pytest.mark.unit

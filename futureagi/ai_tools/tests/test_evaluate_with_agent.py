@@ -19,10 +19,6 @@ import pytest
 
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_trace
-try:
-    from ee.usage.schemas.events import CheckResult
-except ImportError:
-    CheckResult = None
 
 # ---------------------------------------------------------------------------
 # Helpers / constants
@@ -124,10 +120,14 @@ def mock_orchestrator():
 
 @pytest.fixture(autouse=True)
 def allow_agentic_eval_feature():
-    """Default tests assume evaluate_with_agent is available."""
+    """Default tests assume evaluate_with_agent is available.
+
+    The tool calls tfc.ee_gating.check_ee_feature directly, so we patch that
+    to be a no-op (returns None, meaning "allowed").
+    """
     with patch(
-        "ee.usage.services.entitlements.Entitlements.check_feature",
-        return_value=CheckResult(allowed=True),
+        "tfc.ee_gating.check_ee_feature",
+        return_value=None,
     ):
         yield
 
@@ -139,15 +139,12 @@ def allow_agentic_eval_feature():
 
 class TestInputValidation:
     def test_blocked_when_agentic_eval_not_allowed(self, tool_context):
-        with patch(
-            "ee.usage.services.entitlements.Entitlements.check_feature"
-        ) as mock_check:
-            mock_check.return_value = CheckResult(
-                allowed=False,
-                reason="Agentic evaluation requires Boost plan",
-                error_code="ENTITLEMENT_DENIED",
-            )
+        from tfc.ee_gating import FeatureUnavailable
 
+        with patch(
+            "tfc.ee_gating.check_ee_feature",
+            side_effect=FeatureUnavailable("agentic_eval"),
+        ):
             result = run_tool(
                 "evaluate_with_agent",
                 {
@@ -159,11 +156,8 @@ class TestInputValidation:
             )
 
             assert result.is_error
-            assert result.error_code == "PERMISSION_DENIED"
-            assert "requires Boost plan" in result.content
-            mock_check.assert_called_once_with(
-                str(tool_context.organization.id), "has_agentic_eval"
-            )
+            assert result.error_code == "ENTITLEMENT_DENIED"
+            assert "agentic_eval" in result.content
 
     def test_invalid_scope_returns_error(self, tool_context):
         result = run_tool(

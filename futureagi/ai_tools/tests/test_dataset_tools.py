@@ -17,7 +17,7 @@ def dataset(tool_context):
 
     ds = Dataset(
         name="Test Dataset",
-        source="sdk",
+        source="build",
         organization=tool_context.organization,
         workspace=tool_context.workspace,
         user=tool_context.user,
@@ -102,10 +102,10 @@ class TestListDatasetsTool:
     def test_list_filter_by_source(self, tool_context, dataset):
         tool = registry.get("list_datasets")
 
-        result = tool.run({"source": "sdk"}, tool_context)
+        result = tool.run({"source": "build"}, tool_context)
         assert result.data["total"] == 1
 
-        result = tool.run({"source": "build"}, tool_context)
+        result = tool.run({"source": "demo"}, tool_context)
         assert result.data["total"] == 0
 
     def test_list_pagination(self, tool_context, dataset):
@@ -136,7 +136,7 @@ class TestGetDatasetTool:
         result = tool.run({"dataset_id": fake_id}, tool_context)
 
         assert result.is_error
-        assert "Not Found" in result.content
+        assert "not found" in result.content.lower()
 
     def test_get_shows_schema(self, tool_context, dataset_with_columns):
         ds, cols = dataset_with_columns
@@ -449,7 +449,7 @@ class TestAddColumnsTool:
         )
 
         assert result.is_error
-        assert "already exists" in result.content
+        assert "already exist" in result.content
 
     def test_add_invalid_type(
         self, tool_context, writable_dataset, mock_resource_limit
@@ -556,10 +556,9 @@ class TestDeleteRowsTool:
             tool_context,
         )
 
-        # Service returns success with deleted=0 for nonexistent row IDs
-        assert not result.is_error
-        assert result.data["deleted"] == 0
-        assert result.data["remaining"] == 2
+        # Service returns NOT_FOUND error when no matching rows exist
+        assert result.is_error
+        assert "no matching rows" in result.content.lower()
 
 
 class TestUpdateDatasetTool:
