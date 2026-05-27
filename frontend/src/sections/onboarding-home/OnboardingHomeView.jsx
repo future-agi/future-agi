@@ -714,7 +714,15 @@ export default function OnboardingHomeView() {
           </Stack>
         </Box>
 
-        <ProductLoopStepper progress={renderedState.progress} />
+        <ProductLoopStepper
+          fallbackAction={renderedState.fallbackAction}
+          goal={renderedState.goal}
+          onActionClick={handleActionClick}
+          primaryPath={renderedState.primaryPath}
+          progress={renderedState.progress}
+          recommendedAction={renderedState.recommendedAction}
+          stage={renderedState.stage}
+        />
         {observePanel ? (
           <ObserveDiagnosticsPanel signals={renderedState.signals} />
         ) : null}

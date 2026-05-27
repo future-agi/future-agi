@@ -529,14 +529,17 @@ describe("OnboardingHomeView", () => {
 
     renderView();
 
+    const primaryAction = screen.getByTestId("onboarding-primary-action");
     expect(screen.getByText("Run a prompt test")).toBeVisible();
-    expect(screen.getByText("Run prompt test")).toBeVisible();
-    expect(screen.getByRole("link", { name: /run test/i })).toHaveAttribute(
+    expect(within(primaryAction).getByText("Run prompt test")).toBeVisible();
+    expect(
+      within(primaryAction).getByRole("link", { name: /run test/i }),
+    ).toHaveAttribute(
       "href",
       "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=run-test",
     );
     expect(screen.getByText("Selected path")).toBeVisible();
-    expect(screen.getByText("prompt")).toBeVisible();
+    expect(screen.getAllByText("prompt").length).toBeGreaterThan(0);
   });
 
   it("renders agent onboarding as one recommended agent action", () => {
@@ -551,14 +554,17 @@ describe("OnboardingHomeView", () => {
 
     renderView();
 
+    const primaryAction = screen.getByTestId("onboarding-primary-action");
     expect(screen.getByText("Run a scenario")).toBeVisible();
-    expect(screen.getByText("Run one scenario")).toBeVisible();
-    expect(screen.getByRole("link", { name: /run scenario/i })).toHaveAttribute(
+    expect(within(primaryAction).getByText("Run one scenario")).toBeVisible();
+    expect(
+      within(primaryAction).getByRole("link", { name: /run scenario/i }),
+    ).toHaveAttribute(
       "href",
       "/dashboard/agents/playground/agent-1/build?onboarding=run-scenario",
     );
     expect(screen.getByText("Selected path")).toBeVisible();
-    expect(screen.getByText("agent")).toBeVisible();
+    expect(screen.getAllByText("agent").length).toBeGreaterThan(0);
   });
 
   it("renders gateway onboarding as one recommended gateway action", () => {
@@ -573,14 +579,16 @@ describe("OnboardingHomeView", () => {
 
     renderView();
 
+    const primaryAction = screen.getByTestId("onboarding-primary-action");
     expect(screen.getByText("Run a gateway request")).toBeVisible();
-    expect(screen.getByText("Send first gateway request")).toBeVisible();
-    expect(screen.getByRole("link", { name: /send request/i })).toHaveAttribute(
-      "href",
-      "/dashboard/gateway?onboarding=test-request",
-    );
+    expect(
+      within(primaryAction).getByText("Send first gateway request"),
+    ).toBeVisible();
+    expect(
+      within(primaryAction).getByRole("link", { name: /send request/i }),
+    ).toHaveAttribute("href", "/dashboard/gateway?onboarding=test-request");
     expect(screen.getByText("Selected path")).toBeVisible();
-    expect(screen.getByText("gateway")).toBeVisible();
+    expect(screen.getAllByText("gateway").length).toBeGreaterThan(0);
   });
 
   it("saves a selected goal through the goal mutation", async () => {
