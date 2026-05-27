@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Review the agent run{% endblock %}
+{% block heading %}Review what happened in the agent run{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, an agent run is ready for review in {{ workspace_name }}.</p>
+  <p style="margin:0;">Open the run details to inspect the trace and choose the first quality improvement.</p>
+{% endblock %}

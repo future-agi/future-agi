@@ -109,6 +109,44 @@ describe("activation-state utilities", () => {
     ).toThrow(/Sample prompt state/);
   });
 
+  it("normalizes agent onboarding state and route modes", () => {
+    const normalized = normalizeActivationState(
+      getActivationStateFixture("agentRunReadyForReview"),
+    );
+
+    expect(normalized.primaryPath).toBe("agent");
+    expect(normalized.stage).toBe("review_agent_trace");
+    expect(normalized.agent.agentId).toBe("agent-1");
+    expect(normalized.agent.hasRun).toBe(true);
+    expect(normalized.signals.agentGraphExecutionId).toBe("graph-execution-1");
+    expect(normalized.recommendedAction.href).toContain(
+      "onboarding=review-run",
+    );
+  });
+
+  it("keeps sample agent activity out of real activation", () => {
+    const normalized = normalizeActivationState(
+      getActivationStateFixture("sampleAgentScenarioReady"),
+    );
+
+    expect(normalized.isActivated).toBe(false);
+    expect(normalized.agent.hasAgent).toBe(false);
+    expect(normalized.agent.sampleAgentCount).toBe(1);
+    expect(normalized.signals.agentSampleCount).toBe(1);
+
+    const fixture = getActivationStateFixture("agentCreatedNoRun");
+    expect(() =>
+      normalizeActivationState({
+        ...fixture,
+        agent: {
+          ...fixture.agent,
+          is_sample: true,
+          has_agent: true,
+        },
+      }),
+    ).toThrow(/Sample agent state/);
+  });
+
   it("normalizes daily quality state and rejects sample signals", () => {
     const normalized = normalizeActivationState(
       getActivationStateFixture("dailyQualityObserveNewSignal"),

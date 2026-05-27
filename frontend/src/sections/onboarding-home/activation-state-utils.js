@@ -166,6 +166,38 @@ const normalizeSignals = (raw = {}) => ({
     raw.prompt_sample_templates ?? raw.promptSampleTemplates ?? 0,
   agents: raw.agents ?? 0,
   agentPrototypeRuns: raw.agent_prototype_runs ?? raw.agentPrototypeRuns ?? 0,
+  agentId: raw.agent_id ?? raw.agentId ?? null,
+  agentSource: raw.agent_source ?? raw.agentSource ?? null,
+  agentVersionId: raw.agent_version_id ?? raw.agentVersionId ?? null,
+  agentScenarioId: raw.agent_scenario_id ?? raw.agentScenarioId ?? null,
+  agentTestId: raw.agent_test_id ?? raw.agentTestId ?? null,
+  agentExecutionId: raw.agent_execution_id ?? raw.agentExecutionId ?? null,
+  agentCallExecutionId:
+    raw.agent_call_execution_id ?? raw.agentCallExecutionId ?? null,
+  agentGraphExecutionId:
+    raw.agent_graph_execution_id ?? raw.agentGraphExecutionId ?? null,
+  agentRunStatus: raw.agent_run_status ?? raw.agentRunStatus ?? null,
+  agentSampleCount: raw.agent_sample_count ?? raw.agentSampleCount ?? 0,
+  agentHasAgent: Boolean(raw.agent_has_agent ?? raw.agentHasAgent),
+  agentHasAgentVersion: Boolean(
+    raw.agent_has_agent_version ?? raw.agentHasAgentVersion,
+  ),
+  agentHasScenario: Boolean(raw.agent_has_scenario ?? raw.agentHasScenario),
+  agentHasRun: Boolean(raw.agent_has_run ?? raw.agentHasRun),
+  agentRunFailed: Boolean(raw.agent_run_failed ?? raw.agentRunFailed),
+  agentHasReview: Boolean(raw.agent_has_review ?? raw.agentHasReview),
+  agentHasEvalCoverage: Boolean(
+    raw.agent_has_eval_coverage ?? raw.agentHasEvalCoverage,
+  ),
+  agentMultipleScenarios: Boolean(
+    raw.agent_multiple_scenarios ?? raw.agentMultipleScenarios,
+  ),
+  agentFirstLoopCompleted: Boolean(
+    raw.agent_first_loop_completed ?? raw.agentFirstLoopCompleted,
+  ),
+  agentVoiceFeatureUnavailable: Boolean(
+    raw.agent_voice_feature_unavailable ?? raw.agentVoiceFeatureUnavailable,
+  ),
   observeProjects: raw.observe_projects ?? raw.observeProjects ?? 0,
   traces: raw.traces ?? 0,
   traceReviews: raw.trace_reviews ?? raw.traceReviews ?? 0,
@@ -281,6 +313,40 @@ const normalizePromptState = (raw) => {
     ),
     isSample,
     samplePromptCount: raw.sample_prompt_count ?? raw.samplePromptCount ?? 0,
+    diagnostics: raw.diagnostics ?? [],
+  };
+};
+
+const normalizeAgentState = (raw) => {
+  if (!raw) return null;
+  const isSample = Boolean(raw.is_sample ?? raw.isSample);
+  if (isSample && Boolean(raw.has_agent ?? raw.hasAgent)) {
+    throw new Error("Sample agent state cannot count as a real agent");
+  }
+  return {
+    agentId: raw.agent_id ?? raw.agentId ?? null,
+    agentSource: raw.agent_source ?? raw.agentSource ?? null,
+    agentVersionId: raw.agent_version_id ?? raw.agentVersionId ?? null,
+    scenarioId: raw.scenario_id ?? raw.scenarioId ?? null,
+    testId: raw.test_id ?? raw.testId ?? null,
+    executionId: raw.execution_id ?? raw.executionId ?? null,
+    callExecutionId: raw.call_execution_id ?? raw.callExecutionId ?? null,
+    graphExecutionId: raw.graph_execution_id ?? raw.graphExecutionId ?? null,
+    runStatus: raw.run_status ?? raw.runStatus ?? null,
+    runCompletedAt: raw.run_completed_at ?? raw.runCompletedAt ?? null,
+    stage: raw.stage ?? null,
+    hasAgent: Boolean(raw.has_agent ?? raw.hasAgent),
+    hasAgentVersion: Boolean(raw.has_agent_version ?? raw.hasAgentVersion),
+    hasScenario: Boolean(raw.has_scenario ?? raw.hasScenario),
+    hasRun: Boolean(raw.has_run ?? raw.hasRun),
+    hasReview: Boolean(raw.has_review ?? raw.hasReview),
+    hasEvalCoverage: Boolean(raw.has_eval_coverage ?? raw.hasEvalCoverage),
+    isSample,
+    sampleAgentCount: raw.sample_agent_count ?? raw.sampleAgentCount ?? 0,
+    voiceFeatureUnavailable: Boolean(
+      raw.voice_feature_unavailable ?? raw.voiceFeatureUnavailable,
+    ),
+    permissionLimited: Boolean(raw.permission_limited ?? raw.permissionLimited),
     diagnostics: raw.diagnostics ?? [],
   };
 };
@@ -566,6 +632,7 @@ export const normalizeActivationState = (raw) => {
     availablePaths: (raw.available_paths || []).map(normalizeAvailablePath),
     sampleProject: normalizeSampleProject(raw.sample_project),
     prompt: normalizePromptState(raw.prompt),
+    agent: normalizeAgentState(raw.agent),
     dailyQuality: normalizeDailyQuality(raw.daily_quality ?? raw.dailyQuality),
     emailEligibility: normalizeEmailEligibility(raw.email_eligibility),
     permissions: normalizePermissions(raw.permissions),

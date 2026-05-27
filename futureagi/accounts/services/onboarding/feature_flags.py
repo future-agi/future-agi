@@ -10,6 +10,8 @@ ONBOARDING_FLAG_NAMES = (
     "onboarding_daily_quality_home",
     "onboarding_prompt_path",
     "onboarding_prompt_route_modes",
+    "onboarding_agent_path",
+    "onboarding_agent_route_modes",
     "onboarding_lifecycle_email_dry_run",
     "onboarding_email_welcome_enabled",
     "onboarding_email_first_action_recovery_enabled",
@@ -18,6 +20,8 @@ ONBOARDING_FLAG_NAMES = (
     "onboarding_email_sample_bridge_enabled",
     "onboarding_email_daily_digest_enabled",
     "onboarding_email_prompt_enabled",
+    "onboarding_email_agent_enabled",
+    "onboarding_email_agent",
     "onboarding_lifecycle_send_enabled",
 )
 
@@ -70,6 +74,11 @@ def get_onboarding_flags(*, user, organization, workspace):
 
     for alias, source_flag in CONTRACT_FLAG_ALIASES.items():
         flags[alias] = bool(flags.get(source_flag, False))
+    flags["onboarding_email_agent"] = bool(
+        flags.get("onboarding_email_agent")
+        or flags.get("onboarding_email_agent_enabled")
+    )
+    flags["onboarding_email_agent_enabled"] = bool(flags["onboarding_email_agent"])
     flags["onboarding_lifecycle_email_send"] = bool(
         flags.get("onboarding_lifecycle_send_enabled", False)
     )

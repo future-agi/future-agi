@@ -16,6 +16,7 @@ SUBJECTS = {
     "sample": "Use a sample trace while you connect data",
     "first_signal": "Your first trace is ready to review",
     "prompt": "Continue your prompt quality loop",
+    "agent": "Continue your agent quality loop",
     "next_loop": "Turn the trace review into coverage",
     "activation_success": "Review today's AI quality signal",
 }
@@ -112,6 +113,12 @@ def _label_from_action(action_id, campaign_group):
         "compare_prompt_versions": "Compare versions",
         "add_prompt_failure_example": "Add failing example",
         "open_prompt_metrics": "Open prompt metrics",
+        "create_agent": "Create agent",
+        "run_agent_scenario": "Run scenario",
+        "review_agent_trace": "Review run",
+        "save_agent_eval": "Save as eval",
+        "create_agent_eval": "Create eval",
+        "open_agent_quality": "Open agent quality",
         "review_daily_quality": "Review quality signal",
     }
     if action_id in labels:

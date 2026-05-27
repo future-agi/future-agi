@@ -178,6 +178,34 @@ def _first_prompt_created_at(activation_state, workspace):
     return prompt.created_at if prompt else None
 
 
+def _first_agent_created_at(activation_state, workspace):
+    agent_state = activation_state.get("agent") or {}
+    agent_id = agent_state.get("agent_id") or (
+        activation_state.get("signals") or {}
+    ).get("agent_id")
+    agent_source = agent_state.get("agent_source") or (
+        activation_state.get("signals") or {}
+    ).get("agent_source")
+    if not agent_id:
+        return None
+    if agent_source == "simulate":
+        from simulate.models.agent_definition import AgentDefinition
+
+        agent = AgentDefinition.no_workspace_objects.filter(
+            id=agent_id,
+            workspace=workspace,
+        ).first()
+    else:
+        from agent_playground.models.graph import Graph
+
+        agent = Graph.no_workspace_objects.filter(
+            id=agent_id,
+            workspace=workspace,
+            is_template=False,
+        ).first()
+    return agent.created_at if agent else None
+
+
 def _latest_event_at(organization, workspace, event_name, *, is_sample=False):
     event = (
         OnboardingActivationEvent.no_workspace_objects.filter(
@@ -249,6 +277,33 @@ def stage_started_at(*, activation_state, organization, workspace, now):
             organization,
             workspace,
             "prompt_comparison_completed",
+            is_sample=False,
+        )
+    if stage == "create_agent":
+        return _latest_goal_selected_at(organization, workspace) or getattr(
+            workspace,
+            "created_at",
+            None,
+        )
+    if stage == "run_agent_scenario":
+        return _first_agent_created_at(activation_state, workspace) or _latest_event_at(
+            organization,
+            workspace,
+            "agent_created",
+            is_sample=False,
+        )
+    if stage == "review_agent_trace":
+        return _latest_event_at(
+            organization,
+            workspace,
+            "agent_prototype_run_completed",
+            is_sample=False,
+        ) or ((activation_state.get("agent") or {}).get("run_completed_at"))
+    if stage in {"save_agent_eval", "agent_create_eval"}:
+        return _latest_event_at(
+            organization,
+            workspace,
+            "agent_trace_reviewed",
             is_sample=False,
         )
     if stage in {"activated", "daily_review"}:
@@ -422,6 +477,7 @@ def apply_lifecycle_suppressions(
                 "sample": "sample_bridge_enabled",
                 "first_signal": "first_action_recovery_enabled",
                 "prompt": "first_action_recovery_enabled",
+                "agent": "first_action_recovery_enabled",
                 "next_loop": "next_loop_enabled",
                 "activation_success": "daily_digest_enabled",
             }.get(campaign["campaign_group"])

@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from "react";
+import React, { useState, useCallback, useEffect, useMemo } from "react";
 import {
   Box,
   CircularProgress,
@@ -6,13 +6,14 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import { useGetExecutions } from "src/api/agent-playground/agent-playground";
 import ExecutionsList from "./ExecutionsList";
 import ExecutionDetailView from "./ExecutionDetailView";
 
 export default function Executions() {
   const { agentId } = useParams();
+  const location = useLocation();
   const [selectedExecutionId, setSelectedExecutionId] = useState(null);
 
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } =
@@ -34,6 +35,24 @@ export default function Executions() {
   const handleExecutionChange = useCallback((executionId) => {
     setSelectedExecutionId(executionId);
   }, []);
+
+  useEffect(() => {
+    const onboardingMode = new URLSearchParams(location.search).get(
+      "onboarding",
+    );
+    if (
+      onboardingMode !== "review-run" ||
+      selectedExecutionId ||
+      executions.length === 0
+    ) {
+      return;
+    }
+    const terminalExecution =
+      executions.find((execution) =>
+        ["success", "failed", "error"].includes(execution.status),
+      ) || executions[0];
+    setSelectedExecutionId(terminalExecution.id);
+  }, [executions, location.search, selectedExecutionId]);
 
   if (isLoading) {
     return (

@@ -98,6 +98,11 @@ def resolve_recommended_action(*, context, flags, signals, stage, routes):
             configured_activation_action("open_prompt_metrics", routes),
             configured_activation_action("open_prompt_workbench", routes),
         )
+    if stage == "activated" and context.primary_path == "agent":
+        return (
+            configured_activation_action("open_agent_quality", routes),
+            configured_activation_action("open_agent_playground", routes),
+        )
     fallback = _fallback_for_stage(stage, flags, routes)
     action_id = configured_stage(stage)["recommended_action"]
     action = configured_activation_action(action_id, routes)

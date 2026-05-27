@@ -311,6 +311,10 @@ export type ActivationEventRequestApiArtifactType = typeof ActivationEventReques
 export const ActivationEventRequestApiArtifactType = {
   trace: 'trace',
   project: 'project',
+  agent: 'agent',
+  graph_execution: 'graph_execution',
+  test_execution: 'test_execution',
+  call_execution: 'call_execution',
 } as const;
 
 export type ActivationEventRequestApiMetadata = {[key: string]: string};
@@ -387,6 +391,13 @@ export const ActivationEventResultApiEventName = {
   dataset_example_added: 'dataset_example_added',
   eval_scorer_created: 'eval_scorer_created',
   prompt_version_promoted: 'prompt_version_promoted',
+  agent_created: 'agent_created',
+  agent_scenario_created: 'agent_scenario_created',
+  agent_prototype_run_completed: 'agent_prototype_run_completed',
+  agent_trace_reviewed: 'agent_trace_reviewed',
+  agent_scenario_saved_as_eval: 'agent_scenario_saved_as_eval',
+  agent_eval_created: 'agent_eval_created',
+  agent_live_trace_received: 'agent_live_trace_received',
   team_member_invited: 'team_member_invited',
   trace_failure_detected: 'trace_failure_detected',
 } as const;
@@ -643,6 +654,27 @@ export interface ActivationSignalsApi {
   agents?: number;
   /** @minimum 0 */
   agent_prototype_runs?: number;
+  agent_id?: string;
+  agent_source?: string;
+  agent_version_id?: string;
+  agent_scenario_id?: string;
+  agent_test_id?: string;
+  agent_execution_id?: string;
+  agent_call_execution_id?: string;
+  agent_graph_execution_id?: string;
+  agent_run_status?: string;
+  /** @minimum 0 */
+  agent_sample_count?: number;
+  agent_has_agent?: boolean;
+  agent_has_agent_version?: boolean;
+  agent_has_scenario?: boolean;
+  agent_has_run?: boolean;
+  agent_run_failed?: boolean;
+  agent_has_review?: boolean;
+  agent_has_eval_coverage?: boolean;
+  agent_multiple_scenarios?: boolean;
+  agent_first_loop_completed?: boolean;
+  agent_voice_feature_unavailable?: boolean;
   /** @minimum 0 */
   observe_projects?: number;
   /** @minimum 0 */
@@ -862,6 +894,81 @@ export interface ActivationPromptStateApi {
   is_sample?: boolean;
   /** @minimum 0 */
   sample_prompt_count?: number;
+  diagnostics?: string[];
+}
+
+export type ActivationAgentStateApiStage = typeof ActivationAgentStateApiStage[keyof typeof ActivationAgentStateApiStage];
+
+
+export const ActivationAgentStateApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export interface ActivationAgentStateApi {
+  agent_id?: string;
+  agent_source?: string;
+  agent_version_id?: string;
+  scenario_id?: string;
+  test_id?: string;
+  execution_id?: string;
+  call_execution_id?: string;
+  graph_execution_id?: string;
+  run_status?: string;
+  run_completed_at?: string;
+  stage: ActivationAgentStateApiStage;
+  has_agent: boolean;
+  has_agent_version: boolean;
+  has_scenario: boolean;
+  has_run: boolean;
+  has_review: boolean;
+  has_eval_coverage: boolean;
+  is_sample?: boolean;
+  /** @minimum 0 */
+  sample_agent_count?: number;
+  voice_feature_unavailable?: boolean;
+  permission_limited?: boolean;
   diagnostics?: string[];
 }
 
@@ -1287,6 +1394,7 @@ export interface ActivationStateResponseApi {
   available_paths: AvailablePathApi[];
   sample_project: SampleProjectStateApi;
   prompt?: ActivationPromptStateApi;
+  agent?: ActivationAgentStateApi;
   lifecycle?: LifecyclePreviewApi;
   daily_quality?: DailyQualityStateApi;
   email_eligibility: LifecycleEligibilityApi;

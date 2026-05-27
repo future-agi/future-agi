@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Save agent coverage{% endblock %}
+{% block heading %}Turn the reviewed run into coverage{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, the first agent run has been reviewed in {{ workspace_name }}.</p>
+  <p style="margin:0;">Save the finding as eval coverage so future agent changes can be checked against it.</p>
+{% endblock %}

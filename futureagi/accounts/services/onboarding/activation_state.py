@@ -234,6 +234,11 @@ def resolve_activation_state(*, context, flags, signals):
             if context.primary_path == "prompt"
             else None
         ),
+        "agent": (
+            signals.agent_signals.to_activation_agent_state(stage)
+            if context.primary_path == "agent"
+            else None
+        ),
         "permissions": context.permissions,
         "feature_flags": flags,
         "route_availability": routes,

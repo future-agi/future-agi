@@ -42341,7 +42341,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "enum": [
             "trace",
-            "project"
+            "project",
+            "agent",
+            "graph_execution",
+            "test_execution",
+            "call_execution"
           ],
           "x-nullable": true
         },
@@ -75039,6 +75043,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "dataset_example_added",
             "eval_scorer_created",
             "prompt_version_promoted",
+            "agent_created",
+            "agent_scenario_created",
+            "agent_prototype_run_completed",
+            "agent_trace_reviewed",
+            "agent_scenario_saved_as_eval",
+            "agent_eval_created",
+            "agent_live_trace_received",
             "team_member_invited",
             "trace_failure_detected"
           ]
@@ -75278,6 +75289,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "prompt": {
           "$ref": "#/definitions/ActivationPromptState"
+        },
+        "agent": {
+          "$ref": "#/definitions/ActivationAgentState"
         },
         "lifecycle": {
           "$ref": "#/definitions/LifecyclePreview"
@@ -91058,6 +91072,173 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true
     },
+    "ActivationAgentState": {
+      "required": [
+        "stage",
+        "has_agent",
+        "has_agent_version",
+        "has_scenario",
+        "has_run",
+        "has_review",
+        "has_eval_coverage"
+      ],
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "title": "Agent id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_source": {
+          "title": "Agent source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_version_id": {
+          "title": "Agent version id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "scenario_id": {
+          "title": "Scenario id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "test_id": {
+          "title": "Test id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "execution_id": {
+          "title": "Execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "call_execution_id": {
+          "title": "Call execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "graph_execution_id": {
+          "title": "Graph execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "run_status": {
+          "title": "Run status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "run_completed_at": {
+          "title": "Run completed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ]
+        },
+        "has_agent": {
+          "title": "Has agent",
+          "type": "boolean"
+        },
+        "has_agent_version": {
+          "title": "Has agent version",
+          "type": "boolean"
+        },
+        "has_scenario": {
+          "title": "Has scenario",
+          "type": "boolean"
+        },
+        "has_run": {
+          "title": "Has run",
+          "type": "boolean"
+        },
+        "has_review": {
+          "title": "Has review",
+          "type": "boolean"
+        },
+        "has_eval_coverage": {
+          "title": "Has eval coverage",
+          "type": "boolean"
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "sample_agent_count": {
+          "title": "Sample agent count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "voice_feature_unavailable": {
+          "title": "Voice feature unavailable",
+          "type": "boolean",
+          "default": false
+        },
+        "permission_limited": {
+          "title": "Permission limited",
+          "type": "boolean",
+          "default": false
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "x-nullable": true
+    },
     "ActivationDiagnostics": {
       "required": [
         "resolver_version",
@@ -91565,6 +91746,107 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "integer",
           "default": 0,
           "minimum": 0
+        },
+        "agent_id": {
+          "title": "Agent id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_source": {
+          "title": "Agent source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_version_id": {
+          "title": "Agent version id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_scenario_id": {
+          "title": "Agent scenario id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_test_id": {
+          "title": "Agent test id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_execution_id": {
+          "title": "Agent execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_call_execution_id": {
+          "title": "Agent call execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_graph_execution_id": {
+          "title": "Agent graph execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_run_status": {
+          "title": "Agent run status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_sample_count": {
+          "title": "Agent sample count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "agent_has_agent": {
+          "title": "Agent has agent",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_agent_version": {
+          "title": "Agent has agent version",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_scenario": {
+          "title": "Agent has scenario",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_run": {
+          "title": "Agent has run",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_run_failed": {
+          "title": "Agent run failed",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_review": {
+          "title": "Agent has review",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_eval_coverage": {
+          "title": "Agent has eval coverage",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_multiple_scenarios": {
+          "title": "Agent multiple scenarios",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_first_loop_completed": {
+          "title": "Agent first loop completed",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_voice_feature_unavailable": {
+          "title": "Agent voice feature unavailable",
+          "type": "boolean",
+          "default": false
         },
         "observe_projects": {
           "title": "Observe projects",

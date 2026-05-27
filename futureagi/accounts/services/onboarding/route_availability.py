@@ -44,6 +44,13 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
     prompt_id = signals.latest_prompt_id or signals.first_prompt_id
     prompt_route_modes_enabled = bool(flags.get("onboarding_prompt_route_modes"))
     prompt_path_enabled = bool(flags.get("onboarding_prompt_path"))
+    agent_route_modes_enabled = bool(flags.get("onboarding_agent_route_modes"))
+    agent_path_enabled = bool(flags.get("onboarding_agent_path"))
+    agent_id = signals.agent_id
+    agent_source = signals.agent_source
+    agent_test_id = signals.agent_test_id
+    agent_execution_id = signals.agent_execution_id
+    agent_graph_execution_id = signals.agent_graph_execution_id
 
     prompt_workbench_href = "/dashboard/workbench/all?source=onboarding"
     prompt_create_href = (
@@ -82,6 +89,65 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
             else ""
         )
         return route_entry(f"{prompt_editor_href}{suffix}", is_available=True)
+
+    agent_create_href = (
+        "/dashboard/agents?onboarding=create"
+        if agent_route_modes_enabled
+        else "/dashboard/agents"
+    )
+
+    def agent_route(href, *, requires_write=True, is_available=True, reason=None):
+        if not agent_path_enabled:
+            return route_entry(href, is_available=False, reason="feature_disabled")
+        if requires_write and not can_write:
+            return route_entry(href, is_available=False, reason="missing_permission")
+        return route_entry(href, is_available=is_available, reason=reason)
+
+    if agent_source == "simulate":
+        agent_run_href = (
+            f"/dashboard/simulate/test/{agent_test_id}?onboarding=run-test"
+            if agent_test_id
+            else "/dashboard/simulate/test?onboarding=create-test"
+        )
+    else:
+        agent_run_href = (
+            f"/dashboard/agents/playground/{agent_id}/build"
+            if agent_id
+            else agent_create_href
+        )
+        if agent_route_modes_enabled and agent_id:
+            agent_run_href = f"{agent_run_href}?onboarding=run-scenario"
+
+    if agent_source == "simulate" and agent_test_id and agent_execution_id:
+        agent_review_href = (
+            f"/dashboard/simulate/test/{agent_test_id}/{agent_execution_id}/"
+            "call-details?from=onboarding"
+        )
+    elif agent_id and (agent_graph_execution_id or agent_source == "agent_playground"):
+        agent_review_href = f"/dashboard/agents/playground/{agent_id}/executions"
+        if agent_route_modes_enabled:
+            agent_review_href = f"{agent_review_href}?onboarding=review-run"
+    else:
+        agent_review_href = "/dashboard/home?reason=route-unavailable"
+
+    agent_eval_href = (
+        f"/dashboard/simulate/test/{agent_test_id}"
+        if agent_test_id
+        else "/dashboard/simulate/test"
+    )
+    if agent_route_modes_enabled:
+        separator = "&" if "?" in agent_eval_href else "?"
+        agent_save_eval_href = f"{agent_eval_href}{separator}onboarding=save-eval"
+        agent_create_eval_href = f"{agent_eval_href}{separator}onboarding=create-eval"
+    else:
+        agent_save_eval_href = agent_eval_href
+        agent_create_eval_href = agent_eval_href
+
+    agent_quality_href = (
+        f"/dashboard/agents/playground/{agent_id}/executions"
+        if agent_id and agent_source == "agent_playground"
+        else "/dashboard/agents"
+    )
 
     routes = {
         "home": route_entry("/dashboard/home"),
@@ -138,6 +204,22 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
         "prompt_compare_versions": prompt_route("compare"),
         "prompt_add_failure": prompt_route("add-failure"),
         "prompt_metrics": prompt_route("metrics", requires_write=False),
+        "agent_list": _available_if(agent_path_enabled, "/dashboard/agents"),
+        "agent_create": agent_route(agent_create_href),
+        "agent_run_scenario": agent_route(
+            agent_run_href,
+            is_available=bool(agent_id or agent_source == "simulate"),
+            reason="missing_id",
+        ),
+        "agent_review_trace": agent_route(
+            agent_review_href,
+            requires_write=False,
+            is_available=bool(agent_execution_id or agent_graph_execution_id),
+            reason="missing_id",
+        ),
+        "agent_save_eval": agent_route(agent_save_eval_href),
+        "agent_create_eval": agent_route(agent_create_eval_href),
+        "agent_quality": agent_route(agent_quality_href, requires_write=False),
     }
 
     for path in PRODUCT_PATHS:
@@ -149,6 +231,7 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
             is_available=(
                 path in {"observe", "sample"}
                 or (path == "prompt" and prompt_path_enabled)
+                or (path == "agent" and agent_path_enabled)
             )
             and not sample_hidden,
             reason=(

@@ -7,6 +7,10 @@ from accounts.services.onboarding.activation_events import (
     has_event,
     latest_event,
 )
+from accounts.services.onboarding.agent_signals import (
+    AgentOnboardingSignals,
+    collect_agent_onboarding_signals,
+)
 from accounts.services.onboarding.prompt_signals import (
     PromptOnboardingSignals,
     collect_prompt_onboarding_signals,
@@ -37,6 +41,30 @@ class OnboardingSignals:
     )
     agents: int = 0
     agent_prototype_runs: int = 0
+    agent_id: str | None = None
+    agent_source: str | None = None
+    agent_version_id: str | None = None
+    agent_scenario_id: str | None = None
+    agent_test_id: str | None = None
+    agent_execution_id: str | None = None
+    agent_call_execution_id: str | None = None
+    agent_graph_execution_id: str | None = None
+    agent_run_status: str | None = None
+    agent_sample_count: int = 0
+    agent_has_agent: bool = False
+    agent_has_agent_version: bool = False
+    agent_has_scenario: bool = False
+    agent_has_run: bool = False
+    agent_run_failed: bool = False
+    agent_has_review: bool = False
+    agent_has_eval_coverage: bool = False
+    agent_multiple_scenarios: bool = False
+    agent_first_loop_completed: bool = False
+    agent_voice_feature_unavailable: bool = False
+    agent_permission_limited: bool = False
+    agent_signals: AgentOnboardingSignals = field(
+        default_factory=AgentOnboardingSignals
+    )
     observe_projects: int = 0
     traces: int = 0
     trace_reviews: int = 0
@@ -78,6 +106,26 @@ class OnboardingSignals:
             "prompt_sample_templates": self.prompt_sample_templates,
             "agents": self.agents,
             "agent_prototype_runs": self.agent_prototype_runs,
+            "agent_id": self.agent_id,
+            "agent_source": self.agent_source,
+            "agent_version_id": self.agent_version_id,
+            "agent_scenario_id": self.agent_scenario_id,
+            "agent_test_id": self.agent_test_id,
+            "agent_execution_id": self.agent_execution_id,
+            "agent_call_execution_id": self.agent_call_execution_id,
+            "agent_graph_execution_id": self.agent_graph_execution_id,
+            "agent_run_status": self.agent_run_status,
+            "agent_sample_count": self.agent_sample_count,
+            "agent_has_agent": self.agent_has_agent,
+            "agent_has_agent_version": self.agent_has_agent_version,
+            "agent_has_scenario": self.agent_has_scenario,
+            "agent_has_run": self.agent_has_run,
+            "agent_run_failed": self.agent_run_failed,
+            "agent_has_review": self.agent_has_review,
+            "agent_has_eval_coverage": self.agent_has_eval_coverage,
+            "agent_multiple_scenarios": self.agent_multiple_scenarios,
+            "agent_first_loop_completed": self.agent_first_loop_completed,
+            "agent_voice_feature_unavailable": self.agent_voice_feature_unavailable,
             "observe_projects": self.observe_projects,
             "traces": self.traces,
             "trace_reviews": self.trace_reviews,
@@ -229,6 +277,11 @@ def collect_onboarding_signals(*, user, organization, workspace):
         organization=organization,
         workspace=workspace,
     )
+    agent_signals = collect_agent_onboarding_signals(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+    )
 
     return OnboardingSignals(
         first_checks=first_checks,
@@ -250,6 +303,30 @@ def collect_onboarding_signals(*, user, organization, workspace):
         prompt_next_loop_action_exists=prompt_signals.has_next_loop_action,
         prompt_first_loop_completed=prompt_signals.first_loop_completed,
         prompt_signals=prompt_signals,
+        agents=agent_signals.agent_count,
+        agent_prototype_runs=agent_signals.run_count,
+        agent_id=agent_signals.agent_id,
+        agent_source=agent_signals.agent_source,
+        agent_version_id=agent_signals.agent_version_id,
+        agent_scenario_id=agent_signals.scenario_id,
+        agent_test_id=agent_signals.test_id,
+        agent_execution_id=agent_signals.execution_id,
+        agent_call_execution_id=agent_signals.call_execution_id,
+        agent_graph_execution_id=agent_signals.graph_execution_id,
+        agent_run_status=agent_signals.run_status,
+        agent_sample_count=agent_signals.sample_agent_count,
+        agent_has_agent=agent_signals.has_agent,
+        agent_has_agent_version=agent_signals.has_agent_version,
+        agent_has_scenario=agent_signals.has_scenario,
+        agent_has_run=agent_signals.has_run,
+        agent_run_failed=agent_signals.run_failed,
+        agent_has_review=agent_signals.has_review,
+        agent_has_eval_coverage=agent_signals.has_eval_coverage,
+        agent_multiple_scenarios=agent_signals.has_multiple_scenarios,
+        agent_first_loop_completed=agent_signals.first_loop_completed,
+        agent_voice_feature_unavailable=agent_signals.voice_feature_unavailable,
+        agent_permission_limited=agent_signals.permission_limited,
+        agent_signals=agent_signals,
         observe_projects=_as_count(bool(observe_project_ids)),
         traces=_as_count(first_trace is not None),
         trace_reviews=_as_count(trace_reviewed),

@@ -136,6 +136,31 @@ export const ONBOARDING_STAGE_COPY = {
     title: "Continue the prompt loop",
     description: "Turn the comparison into the next reusable quality check.",
   },
+  create_agent: {
+    eyebrow: "Agent",
+    title: "Create an agent",
+    description: "Create the first agent before running a scenario.",
+  },
+  run_agent_scenario: {
+    eyebrow: "Agent scenario",
+    title: "Run a scenario",
+    description: "Run one scenario and inspect what the agent did.",
+  },
+  review_agent_trace: {
+    eyebrow: "Agent trace",
+    title: "Review the agent trace",
+    description: "Inspect the trace and identify the first improvement.",
+  },
+  save_agent_eval: {
+    eyebrow: "Agent eval",
+    title: "Save an agent eval",
+    description: "Convert the observed behavior into a repeatable eval.",
+  },
+  agent_create_eval: {
+    eyebrow: "Agent quality",
+    title: "Create the first agent quality check",
+    description: "Create the check that keeps the agent behavior measurable.",
+  },
   connect_observability: {
     eyebrow: "Observe",
     title: "Connect observability",

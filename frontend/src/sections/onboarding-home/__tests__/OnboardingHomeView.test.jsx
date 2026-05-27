@@ -391,6 +391,28 @@ describe("OnboardingHomeView", () => {
     expect(screen.getByText("prompt")).toBeVisible();
   });
 
+  it("renders agent onboarding as one recommended agent action", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("agentCreatedNoRun"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    expect(screen.getByText("Run a scenario")).toBeVisible();
+    expect(screen.getByText("Run one scenario")).toBeVisible();
+    expect(screen.getByRole("link", { name: /run scenario/i })).toHaveAttribute(
+      "href",
+      "/dashboard/agents/playground/agent-1/build?onboarding=run-scenario",
+    );
+    expect(screen.getByText("Selected path")).toBeVisible();
+    expect(screen.getByText("agent")).toBeVisible();
+  });
+
   it("saves a selected goal through the goal mutation", async () => {
     const mutateAsync = vi
       .fn()

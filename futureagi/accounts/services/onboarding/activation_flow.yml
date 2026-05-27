@@ -69,7 +69,7 @@ paths:
   agent:
     label: Build an AI agent
     description: Create an agent and review its first scenario.
-    first_action_id:
+    first_action_id: create_agent
     requires_permission: agent:write
   observe:
     label: Monitor a production AI app
@@ -242,6 +242,83 @@ actions:
     cta_label: Open workbench
     priority: 20
     target_path: prompt
+    fallback_route_key: get_started
+  create_agent:
+    kind: setup
+    title: Create an agent
+    description: Create one agent before running a first scenario.
+    route_key: agent_create
+    cta_label: Create agent
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: agent:write
+    completion_event: agent_created
+    target_path: agent
+    fallback_route_key: agent_list
+  run_agent_scenario:
+    kind: send_signal
+    title: Run one scenario
+    description: Run the agent once before reviewing the execution.
+    route_key: agent_run_scenario
+    cta_label: Run scenario
+    priority: 100
+    estimated_minutes: 4
+    requires_permission: agent:write
+    completion_event: agent_prototype_run_completed
+    target_path: agent
+    fallback_route_key: agent_list
+  review_agent_trace:
+    kind: review
+    title: Review what happened
+    description: Inspect the agent run and identify the first useful signal.
+    route_key: agent_review_trace
+    cta_label: Review run
+    priority: 100
+    estimated_minutes: 3
+    completion_event: agent_trace_reviewed
+    target_path: agent
+    fallback_route_key: agent_list
+  save_agent_eval:
+    kind: improve
+    title: Save this as coverage
+    description: Turn the reviewed run into repeatable eval coverage.
+    route_key: agent_save_eval
+    cta_label: Save as eval
+    priority: 100
+    estimated_minutes: 4
+    requires_permission: agent:write
+    completion_event: agent_scenario_saved_as_eval
+    target_path: agent
+    fallback_route_key: agent_list
+  create_agent_eval:
+    kind: improve
+    title: Create eval coverage
+    description: Add an eval that keeps the agent behavior measurable.
+    route_key: agent_create_eval
+    cta_label: Create eval
+    priority: 95
+    estimated_minutes: 4
+    requires_permission: agent:write
+    completion_event: agent_eval_created
+    target_path: agent
+    fallback_route_key: agent_list
+  open_agent_quality:
+    kind: review
+    title: Open agent quality
+    description: Review agent executions and continue improving coverage.
+    route_key: agent_quality
+    cta_label: Open agent quality
+    priority: 80
+    target_path: agent
+    fallback_route_key: agent_list
+  open_agent_playground:
+    kind: fallback
+    title: Open agents
+    description: Open the agent workspace.
+    route_key: agent_list
+    cta_label: Open agents
+    priority: 20
+    target_path: agent
     fallback_route_key: get_started
   create_observe_project:
     kind: setup
@@ -639,6 +716,15 @@ stages:
       description: Turn the latest comparison into the next improvement.
     next: []
   create_agent:
+    progress:
+      build: selected
+      test: not_started
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: create_agent
+    fallback_action: open_agent_playground
+    requires_write: true
     copy:
       eyebrow: Agent
       title: Create an agent
@@ -646,6 +732,15 @@ stages:
     next:
       - run_agent_scenario
   run_agent_scenario:
+    progress:
+      build: complete
+      test: in_progress
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: run_agent_scenario
+    fallback_action: open_agent_playground
+    requires_write: true
     copy:
       eyebrow: Agent scenario
       title: Run a scenario
@@ -653,6 +748,14 @@ stages:
     next:
       - review_agent_trace
   review_agent_trace:
+    progress:
+      build: complete
+      test: complete
+      observe: in_progress
+      ship: available
+      improve: available
+    recommended_action: review_agent_trace
+    fallback_action: open_agent_playground
     copy:
       eyebrow: Agent trace
       title: Review the agent trace
@@ -660,6 +763,15 @@ stages:
     next:
       - save_agent_eval
   save_agent_eval:
+    progress:
+      build: complete
+      test: complete
+      observe: complete
+      ship: available
+      improve: in_progress
+    recommended_action: save_agent_eval
+    fallback_action: open_agent_playground
+    requires_write: true
     copy:
       eyebrow: Agent eval
       title: Save an agent eval
@@ -667,6 +779,15 @@ stages:
     next:
       - agent_create_eval
   agent_create_eval:
+    progress:
+      build: complete
+      test: complete
+      observe: complete
+      ship: available
+      improve: selected
+    recommended_action: create_agent_eval
+    fallback_action: open_agent_playground
+    requires_write: true
     copy:
       eyebrow: Agent quality
       title: Create the first agent quality check
@@ -830,10 +951,15 @@ stage_rules:
         - context_not_equals:
             primary_path: observe
         - not:
-            all:
-              - context_equals:
-                  primary_path: prompt
-              - flag_enabled: onboarding_prompt_path
+            any:
+              - all:
+                  - context_equals:
+                      primary_path: prompt
+                  - flag_enabled: onboarding_prompt_path
+              - all:
+                  - context_equals:
+                      primary_path: agent
+                  - flag_enabled: onboarding_agent_path
   - stage: daily_review
     when:
       all:
@@ -886,6 +1012,45 @@ stage_rules:
     when:
       context_equals:
         primary_path: prompt
+  - stage: activated
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_first_loop_completed
+  - stage: agent_create_eval
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_has_review
+        - signal_not: agent_has_eval_coverage
+        - signal: agent_multiple_scenarios
+  - stage: save_agent_eval
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_has_review
+        - signal_not: agent_has_eval_coverage
+  - stage: review_agent_trace
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_has_run
+        - signal_not: agent_has_review
+  - stage: run_agent_scenario
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_has_agent
+        - signal_not: agent_has_run
+  - stage: create_agent
+    when:
+      context_equals:
+        primary_path: agent
   - stage: connect_observability
     when:
       signal_not: observe_project_exists
@@ -974,6 +1139,13 @@ activation_events:
     - dataset_example_added
     - eval_scorer_created
     - prompt_version_promoted
+    - agent_created
+    - agent_scenario_created
+    - agent_prototype_run_completed
+    - agent_trace_reviewed
+    - agent_scenario_saved_as_eval
+    - agent_eval_created
+    - agent_live_trace_received
     - team_member_invited
     - trace_failure_detected
   aliases:
@@ -987,3 +1159,8 @@ activation_events:
     prompt_test_run: prompt_test_run_completed
     SDK_prompt_run_template: prompt_test_run_completed
     SDK_prompt_commit: prompt_version_created
+    agent_simulation_run: agent_prototype_run_completed
+    agent_tool_call_reviewed: agent_trace_reviewed
+    agent_scenario_saved: agent_scenario_saved_as_eval
+    run_test_executed: agent_prototype_run_completed
+    graph_execution_completed: agent_prototype_run_completed

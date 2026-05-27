@@ -122,6 +122,62 @@ class ActivationSignalsSerializer(serializers.Serializer):
     prompt_sample_templates = serializers.IntegerField(min_value=0, default=0)
     agents = serializers.IntegerField(min_value=0, default=0)
     agent_prototype_runs = serializers.IntegerField(min_value=0, default=0)
+    agent_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_source = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_version_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_scenario_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_test_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_execution_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_call_execution_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_graph_execution_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_run_status = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_sample_count = serializers.IntegerField(min_value=0, default=0)
+    agent_has_agent = serializers.BooleanField(default=False)
+    agent_has_agent_version = serializers.BooleanField(default=False)
+    agent_has_scenario = serializers.BooleanField(default=False)
+    agent_has_run = serializers.BooleanField(default=False)
+    agent_run_failed = serializers.BooleanField(default=False)
+    agent_has_review = serializers.BooleanField(default=False)
+    agent_has_eval_coverage = serializers.BooleanField(default=False)
+    agent_multiple_scenarios = serializers.BooleanField(default=False)
+    agent_first_loop_completed = serializers.BooleanField(default=False)
+    agent_voice_feature_unavailable = serializers.BooleanField(default=False)
     observe_projects = serializers.IntegerField(min_value=0, default=0)
     traces = serializers.IntegerField(min_value=0, default=0)
     trace_reviews = serializers.IntegerField(min_value=0, default=0)
@@ -291,6 +347,77 @@ class ActivationPromptStateSerializer(serializers.Serializer):
         if attrs["is_sample"] and attrs.get("has_real_prompt"):
             raise serializers.ValidationError(
                 "Sample prompt state cannot count as a real prompt."
+            )
+        return attrs
+
+
+class ActivationAgentStateSerializer(serializers.Serializer):
+    agent_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_source = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    agent_version_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    scenario_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    test_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    execution_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    call_execution_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    graph_execution_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    run_status = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    run_completed_at = serializers.DateTimeField(required=False, allow_null=True)
+    stage = serializers.ChoiceField(choices=choices(ACTIVATION_STAGES))
+    has_agent = serializers.BooleanField()
+    has_agent_version = serializers.BooleanField()
+    has_scenario = serializers.BooleanField()
+    has_run = serializers.BooleanField()
+    has_review = serializers.BooleanField()
+    has_eval_coverage = serializers.BooleanField()
+    is_sample = serializers.BooleanField(default=False)
+    sample_agent_count = serializers.IntegerField(min_value=0, default=0)
+    voice_feature_unavailable = serializers.BooleanField(default=False)
+    permission_limited = serializers.BooleanField(default=False)
+    diagnostics = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+    )
+
+    def validate(self, attrs):
+        if attrs["is_sample"] and attrs.get("has_agent"):
+            raise serializers.ValidationError(
+                "Sample agent state cannot count as a real agent."
             )
         return attrs
 
@@ -629,6 +756,7 @@ class ActivationStateResponseSerializer(serializers.Serializer):
     available_paths = AvailablePathSerializer(many=True)
     sample_project = SampleProjectStateSerializer()
     prompt = ActivationPromptStateSerializer(required=False, allow_null=True)
+    agent = ActivationAgentStateSerializer(required=False, allow_null=True)
     lifecycle = LifecyclePreviewSerializer(required=False, allow_null=True)
     daily_quality = DailyQualityStateSerializer(required=False, allow_null=True)
     email_eligibility = LifecycleEligibilitySerializer()
@@ -823,7 +951,16 @@ class ActivationEventRequestSerializer(serializers.Serializer):
     )
     source = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     artifact_type = serializers.ChoiceField(
-        choices=choices(("trace", "project")),
+        choices=choices(
+            (
+                "trace",
+                "project",
+                "agent",
+                "graph_execution",
+                "test_execution",
+                "call_execution",
+            )
+        ),
         required=False,
         allow_null=True,
     )
