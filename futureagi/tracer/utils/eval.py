@@ -68,6 +68,59 @@ def _walk_dotted_path(root, path):
     return current
 
 
+def _to_camel_case(s: str) -> str:
+    """``end_time`` → ``endTime``. No-op without underscores."""
+    if "_" not in s:
+        return s
+    head, *tail = s.split("_")
+    return head + "".join(p[:1].upper() + p[1:] for p in tail if p)
+
+
+def _to_snake_case(s: str) -> str:
+    """``endTime`` → ``end_time``. No-op without uppercase."""
+    import re
+    if s == s.lower():
+        return s
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", s).lower()
+
+
+def _walk_raw_log(raw_log: dict, path: str):
+    """Walk raw_log with snake_case ↔ camelCase coercion per segment.
+
+    Voice-only fallback in ``_process_mapping``. Bridges FE picker
+    snake_case paths (``messages.0.end_time``) to vapi/retell camelCase
+    keys (``endTime``). Returns ``_MISSING`` on miss — distinguishing
+    that from a legitimate ``None`` matters because voice transcripts
+    store real ``null`` for fields like ``duration``/``metadata``.
+    """
+    if not isinstance(path, str) or not path:
+        return _MISSING
+
+    current = raw_log
+    for part in path.split("."):
+        if isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return _MISSING
+            continue
+        if not isinstance(current, dict):
+            return _MISSING
+        if part in current:
+            current = current[part]
+            continue
+        camel = _to_camel_case(part)
+        if camel != part and camel in current:
+            current = current[camel]
+            continue
+        snake = _to_snake_case(part)
+        if snake != part and snake in current:
+            current = current[snake]
+            continue
+        return _MISSING
+    return current
+
+
 # Sentinel: ``None`` is a legitimate stored value, so we can't use it for "miss".
 _MISSING = object()
 
@@ -444,6 +497,17 @@ def _process_mapping(
             model_val = getattr(span, attribute, _MISSING)
             if model_val is not _MISSING:
                 resolved_value = model_val
+
+        # Voice raw_log fallback: paths the BE response builder normalizes
+        # from raw_log at API time (messages.<n>.*, started_at, …) but
+        # never persists as flat span_attributes. Gated on observation_type
+        # so non-voice spans are unaffected. See _walk_raw_log.
+        if resolved_value is _MISSING and span.observation_type == "conversation":
+            raw_log = span_attrs.get("raw_log")
+            if isinstance(raw_log, dict):
+                walked = _walk_raw_log(raw_log, attribute)
+                if walked is not _MISSING:
+                    resolved_value = walked
 
         if resolved_value is not _MISSING:
             if isinstance(resolved_value, str):
