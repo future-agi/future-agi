@@ -22858,6 +22858,10 @@ status?: string;
 search?: string;
 include_counts?: boolean;
 archived?: boolean;
+/**
+ * @minimum 1
+ */
+page_size?: number;
 };
 
 export type ModelHubAnnotationQueuesList200 = {

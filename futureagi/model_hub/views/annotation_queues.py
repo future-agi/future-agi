@@ -2826,10 +2826,22 @@ def _check_annotation_queue_create_limit(org, workspace=None):
         raise
 
 
+class AnnotationQueuePagination(ExtendedPageNumberPagination):
+    def get_page_size(self, request):
+        if self.page_size_query_param in request.query_params:
+            return super().get_page_size(request)
+
+        page_size = getattr(request, "validated_query_data", {}).get("page_size")
+        if page_size is not None:
+            return page_size
+
+        return super().get_page_size(request)
+
+
 class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     serializer_class = AnnotationQueueSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = ExtendedPageNumberPagination
+    pagination_class = AnnotationQueuePagination
     queryset = AnnotationQueue.objects.all()
     _gm = GeneralMethods()
 

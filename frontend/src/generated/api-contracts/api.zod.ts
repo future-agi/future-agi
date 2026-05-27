@@ -11556,7 +11556,8 @@ export const ModelHubAnnotationQueuesListQueryParams = zod.object({
   "status": zod.string().optional(),
   "search": zod.string().optional(),
   "include_counts": zod.boolean().optional(),
-  "archived": zod.boolean().default(modelHubAnnotationQueuesListQueryArchivedDefault)
+  "archived": zod.boolean().default(modelHubAnnotationQueuesListQueryArchivedDefault),
+  "page_size": zod.number().min(1).optional()
 })
 
 export const modelHubAnnotationQueuesListResponseResultsItemNameMax = 255;

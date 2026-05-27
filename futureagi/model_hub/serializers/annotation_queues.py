@@ -666,6 +666,7 @@ class AnnotationQueueListQuerySerializer(StrictInputSerializer):
     search = serializers.CharField(required=False, allow_blank=True)
     include_counts = serializers.BooleanField(required=False)
     archived = serializers.BooleanField(required=False, default=False)
+    page_size = serializers.IntegerField(required=False, min_value=1)
 
 
 class QueueHardDeleteRequestSerializer(StrictInputSerializer):

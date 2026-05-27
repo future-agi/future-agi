@@ -386,12 +386,16 @@ export const annotationQueueJourneys = [
         hardDeleteQueueIfPresent(client, baseQueue.id, baseQueueName),
       );
 
-      const invalidPageSizeStatus = await expectHttpStatus(
-        () =>
-          client.get(apiPath("/model-hub/annotation-queues/"), {
-            query: { page_size: 5 },
-          }),
-        400,
+      const pageSizeRows = asArray(
+        await client.get(apiPath("/model-hub/annotation-queues/"), {
+          query: { search: namePrefix, page_size: 1 },
+        }),
+      );
+      assert(
+        pageSizeRows.length === 1 && pageSizeRows[0]?.id === baseQueue.id,
+        `Queue list page_size alias did not return the base queue as a single-row page: ${JSON.stringify(
+          pageSizeRows,
+        )}.`,
       );
 
       const searchRows = asArray(
@@ -580,7 +584,7 @@ export const annotationQueueJourneys = [
         base_queue_id: baseQueue.id,
         duplicate_queue_id: duplicateQueue?.id || null,
         status_filter: baseStatus,
-        invalid_page_size_status: invalidPageSizeStatus,
+        page_size_alias_match_count: pageSizeRows.length,
         search_match_count: searchRows.length,
         archived_match_count: archivedRows.length,
         matching_total_count: dbAudit.matching_total_count,
