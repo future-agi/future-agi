@@ -361,9 +361,61 @@ export const observeFilterJourneys = [
           page_size: 10,
         }),
       );
-      const trace = asArray(traceList).find((row) => row?.trace_id);
+      let trace = asArray(traceList).find((row) => row?.trace_id);
+      let seededTraceProjectVersionId = null;
       if (!trace?.trace_id) {
-        skip("No trace row is available for trace tag mutation coverage.");
+        const suffix = journeySafeId(runId);
+        const projectVersion = await client.post(
+          apiPath("/tracer/project-version/"),
+          {
+            project: project.id,
+            name: `api journey tag fallback ${suffix}`,
+            metadata: { source: "api-journey", run_id: runId },
+          },
+        );
+        seededTraceProjectVersionId =
+          projectVersion.project_version_id || projectVersion.id;
+        assert(
+          isUuid(seededTraceProjectVersionId),
+          "Trace tag fallback project-version create returned no id.",
+        );
+        const createdTrace = await client.post(
+          apiPath("/tracer/trace/"),
+          traceWritePayload({
+            projectId: project.id,
+            projectVersionId: seededTraceProjectVersionId,
+            name: `api journey tag fallback trace ${suffix}`,
+            runId,
+            marker: "tag-fallback",
+          }),
+        );
+        const traceId = createdTrace.id || createdTrace.trace_id;
+        assert(isUuid(traceId), "Trace tag fallback create returned no id.");
+        trace = { ...createdTrace, trace_id: traceId };
+
+        cleanup.defer("hard delete OBS-API-005 trace fixture", async () => {
+          await client.delete(apiPath("/tracer/trace/{id}/", { id: traceId }), {
+            okStatuses: [200, 204, 400, 404],
+          });
+          await client.delete(
+            apiPath("/tracer/project-version/{id}/", {
+              id: seededTraceProjectVersionId,
+            }),
+            { okStatuses: [200, 204, 400, 404] },
+          );
+          const cleanupAudit = await hardDeleteObserveTagTraceFixture({
+            projectVersionId: seededTraceProjectVersionId,
+            traceId,
+          });
+          assert(
+            Number(cleanupAudit.remaining_trace_count) === 0 &&
+              Number(cleanupAudit.remaining_span_count) === 0 &&
+              Number(cleanupAudit.remaining_project_version_count) === 0,
+            `Trace tag fallback cleanup left rows behind: ${JSON.stringify(
+              cleanupAudit,
+            )}.`,
+          );
+        });
       }
       const originalTraceTags = normalizeTags(trace.tags);
       cleanup.defer("restore observe trace tags", () =>
@@ -445,7 +497,9 @@ export const observeFilterJourneys = [
 
       evidence.push({
         project_id: project.id,
+        project_version_id: seededTraceProjectVersionId,
         trace_id: trace.trace_id,
+        seeded_trace_fixture: Boolean(seededTraceProjectVersionId),
         temporary_tag: tag,
         project_tag_count_after_restore: normalizeTags(
           restoredProjectDb.project?.tags,
@@ -8153,6 +8207,94 @@ SELECT json_build_object(
     JOIN requested r ON project.organization_id = r.organization_id
     WHERE project.deleted = false
   ), 0)
+);
+`;
+  return runPostgresJson(sql);
+}
+
+async function hardDeleteObserveTagTraceFixture({ projectVersionId, traceId }) {
+  assert(
+    isUuid(projectVersionId),
+    "projectVersionId must be a UUID for cleanup.",
+  );
+  assert(isUuid(traceId), "traceId must be a UUID for cleanup.");
+  const sql = `
+WITH requested AS (
+  SELECT
+    ${sqlUuid(projectVersionId)} AS project_version_id,
+    ${sqlUuidArray([traceId])} AS trace_ids
+),
+deleted_eval_logs AS (
+  DELETE FROM tracer_eval_logger eval_log
+  USING requested r
+  WHERE eval_log.trace_id = ANY(r.trace_ids)
+  RETURNING eval_log.id
+),
+deleted_trace_annotations AS (
+  DELETE FROM trace_annotation annotation
+  USING requested r
+  WHERE annotation.trace_id = ANY(r.trace_ids)
+  RETURNING annotation.id
+),
+deleted_spans AS (
+  DELETE FROM tracer_observation_span span
+  USING requested r
+  WHERE span.trace_id = ANY(r.trace_ids)
+  RETURNING span.id
+),
+deleted_traces AS (
+  DELETE FROM tracer_trace trace
+  USING requested r
+  WHERE trace.id = ANY(r.trace_ids)
+  RETURNING trace.id
+),
+deleted_project_version_winners AS (
+  DELETE FROM tracer_project_version_winner winner
+  USING requested r
+  WHERE winner.winner_version_id = r.project_version_id
+  RETURNING winner.id
+),
+deleted_project_versions AS (
+  DELETE FROM tracer_project_version pv
+  USING requested r
+  WHERE pv.id = r.project_version_id
+  RETURNING pv.id
+)
+SELECT json_build_object(
+  'deleted_eval_log_count', (SELECT count(*) FROM deleted_eval_logs),
+  'deleted_trace_annotation_count', (SELECT count(*) FROM deleted_trace_annotations),
+  'deleted_span_count', (SELECT count(*) FROM deleted_spans),
+  'deleted_trace_count', (SELECT count(*) FROM deleted_traces),
+  'deleted_project_version_winner_count', (SELECT count(*) FROM deleted_project_version_winners),
+  'deleted_project_version_count', (SELECT count(*) FROM deleted_project_versions),
+  'remaining_span_count', CASE
+    WHEN (SELECT count(*) FROM deleted_spans) > 0 THEN 0
+    ELSE (
+      SELECT count(*) FROM tracer_observation_span span, requested r
+      WHERE span.trace_id = ANY(r.trace_ids)
+    )
+  END,
+  'remaining_trace_count', CASE
+    WHEN (SELECT count(*) FROM deleted_traces) > 0 THEN 0
+    ELSE (
+      SELECT count(*) FROM tracer_trace trace, requested r
+      WHERE trace.id = ANY(r.trace_ids)
+    )
+  END,
+  'remaining_project_version_winner_count', CASE
+    WHEN (SELECT count(*) FROM deleted_project_version_winners) > 0 THEN 0
+    ELSE (
+      SELECT count(*) FROM tracer_project_version_winner winner, requested r
+      WHERE winner.winner_version_id = r.project_version_id
+    )
+  END,
+  'remaining_project_version_count', CASE
+    WHEN (SELECT count(*) FROM deleted_project_versions) > 0 THEN 0
+    ELSE (
+      SELECT count(*) FROM tracer_project_version pv, requested r
+      WHERE pv.id = r.project_version_id
+    )
+  END
 );
 `;
   return runPostgresJson(sql);
