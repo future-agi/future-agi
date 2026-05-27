@@ -134,7 +134,8 @@ cd future-agi
 .\bin\install.ps1
 ```
 
-The installer pulls images and starts ~12 services. **First boot takes a few minutes** (image download + database migrations) and wants **~8 GB of free RAM**. When it's ready, open [http://localhost:3000](http://localhost:3000).
+The installer pulls images, starts ~12 services, and **prompts you to create your first admin account (email + password)**. **First boot takes a few minutes** (image download + database migrations) and wants **~8 GB of free RAM**. When it's ready, sign in with that account at [http://localhost:3000](http://localhost:3000).
+<sub>Not using the installer? Set `FAGI_ADMIN_EMAIL` and `FAGI_ADMIN_PASSWORD` in `.env` **before** `docker compose up` and the admin is created on first boot — there's no default login. See [INSTALLATION.md](INSTALLATION.md#create-your-first-account).</sub>
 <sub>For production, use `./deploy/setup.sh` to generate required secrets and pin the image version.</sub>
 
 </td>
