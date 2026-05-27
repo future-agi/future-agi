@@ -65,6 +65,13 @@ Diagnostics.propTypes = {
 const mutationPending = (mutation) =>
   Boolean(mutation?.isPending || mutation?.isLoading);
 
+const compactEventMetadata = (metadata = {}) =>
+  Object.fromEntries(
+    Object.entries(metadata).filter(
+      ([, value]) => value !== undefined && value !== null && value !== "",
+    ),
+  );
+
 const OBSERVE_PANEL_STAGES = new Set([
   "connect_observability",
   "waiting_for_first_trace",
@@ -368,6 +375,53 @@ export default function OnboardingHomeView() {
     });
   };
 
+  const handleDailyActionResolve = (dailyAction, resolution) => {
+    if (!dailyAction) return;
+    const isDismissed = resolution === "dismissed";
+    const eventName = isDismissed
+      ? "daily_quality_action_dismissed"
+      : "daily_quality_action_completed";
+    const analyticsEventName = isDismissed
+      ? OnboardingHomeEvents.dailyQualityActionDismissed
+      : OnboardingHomeEvents.dailyQualityActionCompleted;
+    const route = dailyAction.route || dailyAction.fallbackRoute;
+
+    trackOnboardingHomeEvent(analyticsEventName, {
+      ...dailyTrackContext,
+      recommended_action_id: dailyAction.id,
+      route,
+      source_type: dailyAction.sourceType,
+      source_id: dailyAction.sourceId,
+      resolution,
+    });
+    recordActivationEvent.mutate?.(
+      {
+        eventName,
+        primaryPath: renderedState.primaryPath,
+        stage: renderedState.stage,
+        source: "daily_quality_home",
+        artifactType: dailyAction.sourceType,
+        artifactId: dailyAction.sourceId,
+        projectId:
+          dailyAction.sourceType === "project"
+            ? dailyAction.sourceId
+            : undefined,
+        isSample: dailyAction.isSample,
+        metadata: compactEventMetadata({
+          action_id: dailyAction.id,
+          source_type: dailyAction.sourceType,
+          source_id: dailyAction.sourceId,
+          route,
+          daily_quality_mode: renderedState.dailyQuality?.mode,
+          resolution,
+        }),
+      },
+      {
+        onSuccess: () => refetch?.(),
+      },
+    );
+  };
+
   const handleWeeklyReviewOpen = (weeklyReview) => {
     trackOnboardingHomeEvent(OnboardingHomeEvents.weeklyQualityReviewOpened, {
       ...dailyTrackContext,
@@ -444,8 +498,10 @@ export default function OnboardingHomeView() {
         dailyQuality={renderedState.dailyQuality}
         recommendedAction={renderedState.recommendedAction}
         onActionClick={handleDailyActionClick}
+        onActionResolve={handleDailyActionResolve}
         onSignalReview={handleDailySignalReview}
         onWeeklyReviewOpen={handleWeeklyReviewOpen}
+        isResolvingAction={mutationPending(recordActivationEvent)}
         canAct={!renderedState.permissions?.permissionLimited}
       />
     ) : null;

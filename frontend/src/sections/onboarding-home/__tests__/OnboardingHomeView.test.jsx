@@ -322,6 +322,12 @@ describe("OnboardingHomeView", () => {
   });
 
   it("renders carried-forward daily quality actions", async () => {
+    const mutate = vi.fn();
+    mocks.useRecordActivationEvent.mockReturnValue({
+      mutate,
+      isLoading: false,
+      isPending: false,
+    });
     mocks.useActivationState.mockReturnValue({
       state: normalizedFixture("dailyQualityObserveOpenAction"),
       isLoading: false,
@@ -343,6 +349,65 @@ describe("OnboardingHomeView", () => {
     expect(actionCard).toBeVisible();
     expect(actionCard).toHaveTextContent("Assign trace owner");
     expect(screen.getByTestId("weekly-quality-review")).toBeVisible();
+
+    await userEvent.click(
+      within(actionCard).getByRole("button", { name: /done/i }),
+    );
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_action_completed",
+      expect.objectContaining({
+        recommended_action_id: "assign_trace_owner",
+        route: "/dashboard/observe/observe-1?mode=quality-actions",
+        resolution: "completed",
+      }),
+    );
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "daily_quality_action_completed",
+        primaryPath: "observe",
+        stage: "daily_review",
+        artifactType: "project",
+        artifactId: "observe-1",
+        projectId: "observe-1",
+        metadata: expect.objectContaining({
+          action_id: "assign_trace_owner",
+          source_type: "project",
+          source_id: "observe-1",
+          resolution: "completed",
+        }),
+      }),
+      expect.objectContaining({
+        onSuccess: expect.any(Function),
+      }),
+    );
+
+    await userEvent.click(
+      screen.getByTestId("daily-quality-primary-action-dismiss"),
+    );
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_action_dismissed",
+      expect.objectContaining({
+        recommended_action_id: "continue_trace_action",
+        route: "/dashboard/observe/observe-1",
+        resolution: "dismissed",
+      }),
+    );
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "daily_quality_action_dismissed",
+        artifactType: "project",
+        artifactId: "observe-1",
+        metadata: expect.objectContaining({
+          action_id: "continue_trace_action",
+          resolution: "dismissed",
+        }),
+      }),
+      expect.objectContaining({
+        onSuccess: expect.any(Function),
+      }),
+    );
 
     await userEvent.click(
       within(actionCard).getByRole("link", { name: /open/i }),

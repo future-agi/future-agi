@@ -62,6 +62,12 @@ describe("onboarding home events", () => {
     expect(OnboardingHomeEvents.dailyQualityActionOpened).toBe(
       "daily_quality_action_opened",
     );
+    expect(OnboardingHomeEvents.dailyQualityActionCompleted).toBe(
+      "daily_quality_action_completed",
+    );
+    expect(OnboardingHomeEvents.dailyQualityActionDismissed).toBe(
+      "daily_quality_action_dismissed",
+    );
     expect(OnboardingHomeEvents.dailyQualityItemReviewed).toBe(
       "daily_quality_item_reviewed",
     );

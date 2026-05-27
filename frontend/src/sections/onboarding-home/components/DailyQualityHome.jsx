@@ -66,14 +66,17 @@ export default function DailyQualityHome({
   recommendedAction,
   canAct = true,
   onActionClick,
+  onActionResolve,
   onSignalReview,
   onWeeklyReviewOpen,
+  isResolvingAction = false,
 }) {
   const topSignal = dailyQuality?.topSignal;
   const primaryAction = dailyQuality?.primaryAction;
   const weeklyReview = dailyQuality?.weeklyReview;
   const href = actionHref(primaryAction);
   const isWriteBlocked = !canAct && primaryAction?.requiresPermission;
+  const canResolveActions = dailyQuality?.mode === "open_action" && canAct;
 
   const handlePrimaryClick = () => {
     onActionClick?.(recommendedAction, primaryAction);
@@ -175,6 +178,31 @@ export default function DailyQualityHome({
             >
               {primaryAction.label}
             </Button>
+            {canResolveActions ? (
+              <Stack direction="row" spacing={1} flexWrap="wrap">
+                <Button
+                  data-testid="daily-quality-primary-action-complete"
+                  size="small"
+                  variant="outlined"
+                  disabled={isResolvingAction}
+                  onClick={() => onActionResolve?.(primaryAction, "completed")}
+                  startIcon={<Iconify icon="mdi:check" width={16} />}
+                >
+                  Done
+                </Button>
+                <Button
+                  data-testid="daily-quality-primary-action-dismiss"
+                  size="small"
+                  variant="text"
+                  color="inherit"
+                  disabled={isResolvingAction}
+                  onClick={() => onActionResolve?.(primaryAction, "dismissed")}
+                  startIcon={<Iconify icon="mdi:close" width={16} />}
+                >
+                  Dismiss
+                </Button>
+              </Stack>
+            ) : null}
           </Stack>
         </Box>
       ) : null}
@@ -208,16 +236,41 @@ export default function DailyQualityHome({
                       {action.body}
                     </Typography>
                   </Box>
-                  <Button
-                    size="small"
-                    component={actionRoute ? RouterLink : "button"}
-                    href={actionRoute || undefined}
-                    disabled={!actionRoute}
-                    onClick={() => onActionClick?.(recommendedAction, action)}
-                    endIcon={<Iconify icon="mdi:arrow-right" width={16} />}
-                  >
-                    Open
-                  </Button>
+                  <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                    <Button
+                      size="small"
+                      component={actionRoute ? RouterLink : "button"}
+                      href={actionRoute || undefined}
+                      disabled={!actionRoute}
+                      onClick={() => onActionClick?.(recommendedAction, action)}
+                      endIcon={<Iconify icon="mdi:arrow-right" width={16} />}
+                    >
+                      Open
+                    </Button>
+                    {canResolveActions ? (
+                      <>
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          disabled={isResolvingAction}
+                          onClick={() => onActionResolve?.(action, "completed")}
+                          startIcon={<Iconify icon="mdi:check" width={16} />}
+                        >
+                          Done
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="text"
+                          color="inherit"
+                          disabled={isResolvingAction}
+                          onClick={() => onActionResolve?.(action, "dismissed")}
+                          startIcon={<Iconify icon="mdi:close" width={16} />}
+                        >
+                          Dismiss
+                        </Button>
+                      </>
+                    ) : null}
+                  </Stack>
                 </Stack>
               );
             })}
@@ -294,7 +347,9 @@ export default function DailyQualityHome({
 DailyQualityHome.propTypes = {
   canAct: PropTypes.bool,
   dailyQuality: PropTypes.object,
+  isResolvingAction: PropTypes.bool,
   onActionClick: PropTypes.func,
+  onActionResolve: PropTypes.func,
   onSignalReview: PropTypes.func,
   onWeeklyReviewOpen: PropTypes.func,
   recommendedAction: PropTypes.object,

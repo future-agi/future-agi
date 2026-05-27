@@ -12,6 +12,8 @@ export const OnboardingHomeEvents = {
   dailyQualityHomeViewed: "daily_quality_home_viewed",
   dailyQualityTopSignalShown: "daily_quality_top_signal_shown",
   dailyQualityActionOpened: "daily_quality_action_opened",
+  dailyQualityActionCompleted: "daily_quality_action_completed",
+  dailyQualityActionDismissed: "daily_quality_action_dismissed",
   dailyQualityItemReviewed: "daily_quality_item_reviewed",
   dailyQualityEmptyStateViewed: "daily_quality_empty_state_viewed",
   dailyQualityDigestDestinationOpened:
