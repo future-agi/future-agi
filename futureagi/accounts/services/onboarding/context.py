@@ -2,22 +2,9 @@ from dataclasses import dataclass
 
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
-from accounts.services.onboarding.constants import (
-    ONBOARDING_GOALS,
-    canonical_goal,
-)
+from accounts.services.onboarding.goals import resolve_goal_for_context
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
-
-GOAL_PRIMARY_PATHS = {
-    "improve_prompts": "prompt",
-    "build_ai_agent": "agent",
-    "monitor_production_ai_app": "observe",
-    "control_model_traffic": "gateway",
-    "evaluate_quality": "evals",
-    "connect_voice_ai_agent": "voice",
-    "explore_sample_data": "sample",
-}
 
 
 @dataclass(frozen=True)
@@ -200,28 +187,6 @@ def _resolve_workspace(request, user, organization, organization_role, warnings)
     return None
 
 
-def _selected_goal(user):
-    config = getattr(user, "config", None) or {}
-    onboarding_config = config.get("onboarding", {}) or {}
-    candidates = []
-    goals = getattr(user, "goals", None)
-    if isinstance(goals, list):
-        candidates.extend(goals)
-    elif goals:
-        candidates.append(goals)
-    config_goals = onboarding_config.get("goals", [])
-    if isinstance(config_goals, list):
-        candidates.extend(config_goals)
-    elif config_goals:
-        candidates.append(config_goals)
-
-    for goal in candidates:
-        canonical = canonical_goal(goal)
-        if canonical in ONBOARDING_GOALS:
-            return canonical
-    return None
-
-
 def _persona(user):
     config = getattr(user, "config", None) or {}
     onboarding_config = config.get("onboarding", {}) or {}
@@ -312,7 +277,11 @@ def resolve_onboarding_context(request):
     elif organization_role:
         workspace_role = str(RoleMapping.get_workspace_role(organization_role))
     workspace_level = _workspace_level(workspace_role, ws_membership)
-    selected_goal = _selected_goal(user)
+    goal_context = resolve_goal_for_context(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+    )
 
     return OnboardingContext(
         user=user,
@@ -322,8 +291,8 @@ def resolve_onboarding_context(request):
         workspace_role=str(workspace_role) if workspace_role else None,
         organization_level=organization_level,
         workspace_level=workspace_level,
-        selected_goal=selected_goal,
-        primary_path=GOAL_PRIMARY_PATHS.get(selected_goal),
+        selected_goal=goal_context["goal"],
+        primary_path=goal_context["primary_path"],
         persona=_persona(user),
         source=request.query_params.get("source") or "direct",
         email_context=_email_context(request.query_params),

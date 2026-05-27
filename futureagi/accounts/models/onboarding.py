@@ -70,3 +70,59 @@ class OnboardingActivationEvent(BaseModel):
 
     def __str__(self):
         return f"{self.event_name} for {self.workspace_id} at {self.occurred_at}"
+
+
+class OnboardingGoal(BaseModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        "accounts.Organization",
+        on_delete=models.CASCADE,
+        related_name="onboarding_goals",
+    )
+    workspace = models.ForeignKey(
+        "accounts.Workspace",
+        on_delete=models.CASCADE,
+        related_name="onboarding_goals",
+    )
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="selected_onboarding_goals",
+    )
+    goal = models.CharField(max_length=64)
+    primary_path = models.CharField(max_length=32)
+    source = models.CharField(max_length=64, blank=True, default="")
+    reason = models.CharField(max_length=64, blank=True, default="")
+    is_active = models.BooleanField(default=True, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+    selected_at = models.DateTimeField(default=timezone.now, db_index=True)
+
+    class Meta:
+        db_table = "accounts_onboarding_goal"
+        ordering = ("-selected_at", "-created_at")
+        indexes = [
+            models.Index(
+                fields=["organization", "workspace", "is_active"],
+                name="onb_goal_org_ws_active",
+            ),
+            models.Index(
+                fields=["organization", "workspace", "primary_path"],
+                name="onb_goal_org_ws_path",
+            ),
+            models.Index(
+                fields=["user", "-selected_at"],
+                name="onb_goal_user_selected",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "workspace"],
+                condition=models.Q(is_active=True, deleted=False),
+                name="onb_goal_unique_active_workspace",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.goal} for {self.workspace_id}"

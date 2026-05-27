@@ -17,6 +17,7 @@ from accounts.services.onboarding.constants import (
     canonical_path,
     choices,
 )
+from accounts.services.onboarding.goals import goal_to_primary_path
 
 
 class ActivationAnalyticsSerializer(serializers.Serializer):
@@ -429,6 +430,11 @@ class ActivationStateQuerySerializer(serializers.Serializer):
 
 class ActivationGoalRequestSerializer(serializers.Serializer):
     goal = serializers.CharField()
+    primary_path = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
     persona = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     source = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     campaign_key = serializers.CharField(
@@ -448,12 +454,43 @@ class ActivationGoalRequestSerializer(serializers.Serializer):
         required=False,
         allow_null=True,
     )
+    expected_stage = serializers.ChoiceField(
+        choices=choices(ACTIVATION_STAGES),
+        required=False,
+        allow_null=True,
+    )
+    known_goal_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
 
     def validate_goal(self, value):
         canonical = canonical_goal(value)
         if canonical not in ONBOARDING_GOALS:
             raise serializers.ValidationError("Unsupported goal value.")
         return canonical
+
+    def validate_primary_path(self, value):
+        if value in {None, ""}:
+            return None
+        canonical = canonical_path(value)
+        if canonical not in PRODUCT_PATHS:
+            raise serializers.ValidationError("Unsupported primary path value.")
+        return canonical
+
+    def validate(self, attrs):
+        primary_path = attrs.get("primary_path")
+        if primary_path and primary_path != goal_to_primary_path(attrs["goal"]):
+            raise serializers.ValidationError(
+                {"primary_path": "Primary path does not match onboarding goal."}
+            )
+        return attrs
+
+
+class ActivationGoalResultSerializer(serializers.Serializer):
+    goal_id = serializers.CharField()
+    activation_state = ActivationStateResponseSerializer()
 
 
 class SampleProjectRequestSerializer(serializers.Serializer):
