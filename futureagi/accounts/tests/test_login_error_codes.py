@@ -178,7 +178,7 @@ class TestRecaptchaFailedErrorCode:
                 {
                     "email": external_user.email,
                     "password": "testpassword123",
-                    "recaptcha-response": "bad-token",
+                    "recaptcha_response": "bad-token",
                 },
                 format="json",
                 SERVER_NAME="example.com",
@@ -205,7 +205,7 @@ class TestRecaptchaFailedErrorCode:
                 {
                     "email": external_user.email,
                     "password": "testpassword123",
-                    "recaptcha-response": "bad-token",
+                    "recaptcha_response": "bad-token",
                 },
                 format="json",
                 SERVER_NAME="example.com",

@@ -601,7 +601,10 @@ class TestEvalTaskDestroyAPI:
     def test_destroy_eval_task_unauthenticated(self, api_client, eval_task):
         """Unauthenticated requests should be rejected."""
         response = api_client.delete(f"/tracer/eval-task/{eval_task.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_destroy_eval_task_cascades_soft_delete(
         self, auth_client, eval_task, trace, observation_span

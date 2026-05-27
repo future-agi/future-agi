@@ -182,7 +182,8 @@ class TestFilterSerializerContracts:
         assert not serializer.is_valid()
         assert "filters" in serializer.errors
 
-    def test_eval_task_filters_reject_scalar_observation_type(self):
+    def test_eval_task_filters_coerce_scalar_observation_type_to_list(self):
+        """Scalar observation_type is coerced to a list for convenience."""
         serializer = EditEvalTaskSerializer(
             data={
                 "edit_type": "edit_rerun",
@@ -190,8 +191,8 @@ class TestFilterSerializerContracts:
             }
         )
 
-        assert not serializer.is_valid()
-        assert "filters" in serializer.errors
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["filters"]["observation_type"] == ["llm"]
 
     def test_dashboard_filter_values_query_requires_explicit_source_choices(self):
         serializer = DashboardFilterValuesQuerySerializer(

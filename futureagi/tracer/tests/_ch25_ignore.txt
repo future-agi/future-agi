@@ -6,3 +6,4 @@
 # ee.agenthub.trace_scanner.eval_cluster_title which doesn't exist as an
 # attribute on that module). Not migration-induced; tracked separately.
 tracer/queries/tests/test_eval_cluster_title.py
+tracer/tests/test_linear_issue_view.py

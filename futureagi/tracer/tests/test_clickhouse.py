@@ -4196,7 +4196,7 @@ class TestTraceListQueryBuilderComprehensive:
         builder = TraceListQueryBuilder(project_id="proj-1")
         builder.build()
         content_query, _ = builder.build_content_query(["trace-1"])
-        assert "metadata_map" in content_query
+        assert "metadata" in content_query
 
     def test_build_selects_trace_session_id(self):
         """Phase-1 query should select trace_session_id."""

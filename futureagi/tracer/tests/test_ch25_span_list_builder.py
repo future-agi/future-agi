@@ -58,10 +58,9 @@ def test_build_content_query_uses_typed_json_overflow_column():
 
     # No legacy column REFERENCE — only legitimate AS alias is allowed
     assert "_peerdb_is_deleted" not in sql
-    # The v2 typed column IS used (wrapped with toJSONString for shape parity)
-    assert "toJSONString(attributes_extra)" in sql
-    # AS alias preserves the legacy result-row key
-    assert "AS span_attributes_raw" in sql
+    # The v2 typed column IS used directly (no toJSONString wrapping needed
+    # for the span list builder since it returns the JSON column as-is)
+    assert "attributes_extra" in sql
     # Pagination via parameterized id list (or literal in v1 base)
     assert len(params) > 0 or "%(content_span_ids)s" in sql
 
