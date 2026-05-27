@@ -3035,11 +3035,38 @@ class CompositeEvalCreateView(APIView):
             from model_hub.models.evals_metric import EvalTemplateVersion
 
             workspace = getattr(request, "workspace", None)
+            # Build the same config_snapshot that PATCH uses so V1
+            # captures children, weights, and aggregation settings.
+            links = list(
+                CompositeEvalChild.objects.filter(parent=parent, deleted=False)
+                .select_related("child")
+                .order_by("order")
+            )
+            config_snapshot = {
+                "aggregation_enabled": parent.aggregation_enabled,
+                "aggregation_function": parent.aggregation_function,
+                "composite_child_axis": parent.composite_child_axis or "",
+                "children": [
+                    {
+                        "child_id": str(link.child_id),
+                        "child_name": link.child.name,
+                        "order": link.order,
+                        "weight": link.weight,
+                        "config": link.config or {},
+                        "pinned_version_id": (
+                            str(link.pinned_version_id)
+                            if link.pinned_version_id
+                            else None
+                        ),
+                    }
+                    for link in links
+                ],
+            }
             try:
                 EvalTemplateVersion.objects.create_version(
                     eval_template=parent,
                     prompt_messages=[],
-                    config_snapshot={},
+                    config_snapshot=config_snapshot,
                     criteria=req.description or "",
                     model="",
                     user=request.user,
