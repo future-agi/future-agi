@@ -364,7 +364,7 @@ export const ActivationEventResultApiEventName = {
   weekly_quality_review_completed: 'weekly_quality_review_completed',
   reactivation_reason_clicked: 'reactivation_reason_clicked',
   observe_project_created: 'observe_project_created',
-  trace_ingested: 'trace_ingested',
+  trace_received: 'trace_received',
   trace_reviewed: 'trace_reviewed',
   trace_detail_opened: 'trace_detail_opened',
   team_member_invited: 'team_member_invited',

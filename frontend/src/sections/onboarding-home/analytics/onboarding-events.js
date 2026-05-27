@@ -1,11 +1,14 @@
 import { trackPostHogEvent } from "src/utils/PostHog";
 
 export const OnboardingHomeEvents = {
+  homeViewed: "onboarding_home_viewed",
   homeGoalSelected: "onboarding_home_goal_selected",
   homeGoalSaved: "onboarding_home_goal_saved",
   homeGoalSaveFailed: "onboarding_home_goal_save_failed",
   homeActionClicked: "onboarding_home_action_clicked",
   homePathClicked: "onboarding_home_path_clicked",
+  recommendedActionViewed: "onboarding_recommended_action_viewed",
+  recommendedActionClicked: "onboarding_recommended_action_clicked",
   sampleProjectOpenClicked: "sample_project_open_clicked",
   sampleProjectOpenFailed: "sample_project_open_failed",
   sampleProjectHideClicked: "sample_project_hide_clicked",

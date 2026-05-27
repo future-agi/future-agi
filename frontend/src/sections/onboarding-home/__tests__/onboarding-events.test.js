@@ -42,6 +42,16 @@ describe("onboarding home events", () => {
     );
   });
 
+  it("exposes canonical dashboard events for launch measurement", () => {
+    expect(OnboardingHomeEvents.homeViewed).toBe("onboarding_home_viewed");
+    expect(OnboardingHomeEvents.recommendedActionViewed).toBe(
+      "onboarding_recommended_action_viewed",
+    );
+    expect(OnboardingHomeEvents.recommendedActionClicked).toBe(
+      "onboarding_recommended_action_clicked",
+    );
+  });
+
   it("normalizes unsafe or empty properties", () => {
     expect(
       normalizeOnboardingEventProperties({

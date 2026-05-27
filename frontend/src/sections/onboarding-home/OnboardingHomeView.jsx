@@ -120,10 +120,60 @@ export default function OnboardingHomeView() {
     () => getGoalOptionsForState(renderedState),
     [renderedState],
   );
+  const trackContext = useMemo(() => {
+    if (!renderedState) return null;
+    const recommendedAction = renderedState.recommendedAction;
+    return {
+      request_id: renderedState.requestId,
+      stage: renderedState.stage,
+      activation_stage: renderedState.stage,
+      goal: renderedState.goal,
+      selected_goal: renderedState.goal,
+      primary_path: renderedState.primaryPath,
+      workspace_id: renderedState.workspaceId || workspaceId,
+      organization_id: renderedState.organizationId || organizationId,
+      user_id: renderedState.userId || user?.id,
+      source: searchContext.source,
+      recommended_action_id: recommendedAction?.id,
+      target_success_event: recommendedAction?.completionEvent,
+      feature_flag_variant:
+        renderedState.featureFlags?.onboarding_activation_state_api === false
+          ? "activation_api_off"
+          : "activation_api_on",
+      is_sample: false,
+      permission_limited: Boolean(renderedState.permissions?.permissionLimited),
+      route_available: recommendedAction?.routeAvailable,
+    };
+  }, [
+    organizationId,
+    renderedState,
+    searchContext.source,
+    user?.id,
+    workspaceId,
+  ]);
 
   useEffect(() => {
     setSelectedGoal(renderedState?.goal || null);
   }, [renderedState?.goal]);
+
+  useEffect(() => {
+    if (!trackContext || isError) return;
+    trackOnboardingHomeEvent(OnboardingHomeEvents.homeViewed, trackContext);
+  }, [isError, trackContext]);
+
+  useEffect(() => {
+    if (!trackContext || isError || !renderedState?.recommendedAction) return;
+    const action = renderedState.recommendedAction;
+    trackOnboardingHomeEvent(OnboardingHomeEvents.recommendedActionViewed, {
+      ...trackContext,
+      action_id: action.id,
+      action_kind: action.kind,
+      action_path: action.analytics?.targetPath,
+      is_sample: action.isSample,
+      completion_event: action.completionEvent,
+      route_available: action.routeAvailable,
+    });
+  }, [isError, renderedState?.recommendedAction, trackContext]);
 
   if (isLoading || waitingForWorkspace || (!renderedState && !isError)) {
     return <OnboardingHomeSkeleton />;
@@ -138,16 +188,6 @@ export default function OnboardingHomeView() {
     renderedState.stage === "choose_goal" &&
     renderedState.featureFlags?.onboarding_goal_picker !== false;
   const isSavingGoal = mutationPending(saveGoal);
-
-  const trackContext = {
-    request_id: renderedState.requestId,
-    stage: renderedState.stage,
-    goal: renderedState.goal,
-    primary_path: renderedState.primaryPath,
-    workspace_id: renderedState.workspaceId || workspaceId,
-    organization_id: renderedState.organizationId || organizationId,
-    source: searchContext.source,
-  };
 
   const handleSelectGoal = (option) => {
     setSelectedGoal(option.goal);
@@ -190,7 +230,7 @@ export default function OnboardingHomeView() {
   };
 
   const handleActionClick = (action) => {
-    trackOnboardingHomeEvent(OnboardingHomeEvents.homeActionClicked, {
+    trackOnboardingHomeEvent(OnboardingHomeEvents.recommendedActionClicked, {
       ...trackContext,
       action_id: action.id,
       action_kind: action.kind,

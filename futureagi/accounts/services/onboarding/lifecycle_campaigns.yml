@@ -69,7 +69,7 @@ campaigns:
     wait_window_minutes: 240
     priority: 70
     target_action_id: send_first_trace
-    target_success_event: trace_ingested
+    target_success_event: trace_received
     route_strategy: activation_recommendation
     dry_run_flag: onboarding_email_first_action_recovery_enabled
     send_flag: onboarding_lifecycle_send_enabled

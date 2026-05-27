@@ -332,7 +332,7 @@ export const activationStateFixtures = {
       description: "Send one production or test trace to unlock review.",
       href: "/dashboard/observe/observe-1",
       cta_label: "Send trace",
-      completion_event: "trace_ingested",
+      completion_event: "trace_received",
     }),
     progress: {
       build: "selected",
@@ -357,7 +357,7 @@ export const activationStateFixtures = {
       description: "Send one production or test trace to unlock review.",
       href: "/dashboard/observe/observe-1",
       cta_label: "Send trace",
-      completion_event: "trace_ingested",
+      completion_event: "trace_received",
     }),
     fallback_action: sampleAction(),
     progress: {
@@ -621,7 +621,7 @@ export const activationStateFixtures = {
       campaign_key: "observe_waiting_for_first_trace",
       email_key: "observe_waiting_for_first_trace_1",
       target_stage: "waiting_for_first_trace",
-      target_event: "trace_ingested",
+      target_event: "trace_received",
       target_route: "/dashboard/observe/observe-1",
       context_status: "stale",
       stale_reason: "stage_changed",

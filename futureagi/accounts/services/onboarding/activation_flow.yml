@@ -186,7 +186,7 @@ actions:
     priority: 100
     estimated_minutes: 5
     requires_permission: observe:write
-    completion_event: trace_ingested
+    completion_event: trace_received
     target_path: observe
     fallback_route_key: get_started
   review_first_trace:
@@ -779,7 +779,7 @@ activation_events:
     - weekly_quality_review_completed
     - reactivation_reason_clicked
     - observe_project_created
-    - trace_ingested
+    - trace_received
     - trace_reviewed
     - trace_detail_opened
     - team_member_invited
@@ -790,4 +790,5 @@ activation_events:
     sample_project_opened: onboarding_sample_project_opened
     sample_trace_detail_opened: sample_signal_viewed
     quality_dashboard_viewed: weekly_quality_review_opened
+    trace_ingested: trace_received
     trace_detail_opened: trace_reviewed

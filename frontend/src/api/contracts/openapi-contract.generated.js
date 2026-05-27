@@ -75016,7 +75016,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "weekly_quality_review_completed",
             "reactivation_reason_clicked",
             "observe_project_created",
-            "trace_ingested",
+            "trace_received",
             "trace_reviewed",
             "trace_detail_opened",
             "team_member_invited",

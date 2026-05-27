@@ -165,6 +165,42 @@ describe("OnboardingHomeView", () => {
     expect(screen.getByText("Connect one observe project")).toBeVisible();
   });
 
+  it("tracks canonical home and recommendation view events", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_home_viewed",
+        expect.objectContaining({
+          workspace_id: "wrk_onboarding",
+          organization_id: "org_onboarding",
+          user_id: "usr_onboarding",
+          activation_stage: "connect_observability",
+          primary_path: "observe",
+          is_sample: false,
+          permission_limited: false,
+        }),
+      ),
+    );
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "onboarding_recommended_action_viewed",
+      expect.objectContaining({
+        recommended_action_id: "create_observe_project",
+        target_success_event: "observe_project_created",
+        route_available: true,
+      }),
+    );
+  });
+
   it("checks again from the waiting-for-signal panel", async () => {
     const refetch = vi.fn();
     mocks.useActivationState.mockReturnValue({
