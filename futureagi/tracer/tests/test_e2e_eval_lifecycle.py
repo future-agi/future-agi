@@ -282,6 +282,21 @@ def _wait_for_eval_logger_row(
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture
+def observe_eval_config(db, observe_project, eval_template):
+    """CustomEvalConfig scoped to the observe project (not the experiment project)."""
+    from tracer.models.custom_eval_config import CustomEvalConfig
+
+    return CustomEvalConfig.objects.create(
+        name="E2E Observe Eval Config",
+        project=observe_project,
+        eval_template=eval_template,
+        config={"threshold": 0.5},
+        mapping={"input": "input", "output": "output"},
+        filters={},
+    )
+
+
 @pytest.mark.django_db(transaction=True)
 class TestE2EEvalLifecycle:
     """Full eval lifecycle: ingest -> eval task -> result in CH."""
@@ -292,7 +307,7 @@ class TestE2EEvalLifecycle:
         auth_client,
         observe_project,
         eval_template,
-        custom_eval_config,
+        observe_eval_config,
     ):
         """Verify a span can be ingested and an eval task created against it."""
         span_id, trace_id = _ingest_span(
@@ -310,12 +325,12 @@ class TestE2EEvalLifecycle:
             "/tracer/eval-task/",
             data=json.dumps(
                 {
-                    "project_id": str(observe_project.id),
+                    "project": str(observe_project.id),
                     "name": f"E2E Eval Task {uuid.uuid4().hex[:8]}",
-                    "evals": [str(custom_eval_config.id)],
+                    "evals": [str(observe_eval_config.id)],
                     "filters": {},
                     "sampling_rate": 1.0,
-                    "run_type": "one_off",
+                    "run_type": "continuous",
                     "spans_limit": 10,
                 }
             ),
@@ -383,7 +398,7 @@ class TestE2EEvalWithInlineExecution:
 
         # The eval_task fixture is already PENDING. Process it.
         # Import here to avoid circular imports at module level.
-        from tracer.utils.eval import process_eval_task
+        from tracer.utils.eval_tasks import process_eval_task
 
         # process_eval_task reads from CH, runs the eval (stubbed), writes
         # EvalLogger row. We just verify it completes without error.
