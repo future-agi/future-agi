@@ -5,6 +5,10 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+const DEFAULT_BACKEND_CONTAINERS = [
+  "futureagi-ws2-backend-1",
+  "ws2-backend-temp-api",
+];
 const DEFAULT_DB_CONTAINERS = ["ws2-postgres", "futureagi-ws2-postgres-1"];
 const DEFAULT_REDIS_CONTAINERS = ["ws2-redis", "futureagi-ws2-redis-1"];
 
@@ -19,6 +23,21 @@ const checks = [];
 try {
   checks.push(await checkApiReachability(apiBase));
   checks.push(await checkAuthentication(apiBase));
+  checks.push(
+    ...(await checkDockerContainers({
+      envName: "API_JOURNEY_BACKEND_CONTAINER",
+      fallbackNames: DEFAULT_BACKEND_CONTAINERS,
+      service: "backend",
+    })),
+  );
+  checks.push(
+    ...(await checkContainerDiskAvailability({
+      envName: "API_JOURNEY_BACKEND_CONTAINER",
+      fallbackNames: DEFAULT_BACKEND_CONTAINERS,
+      service: "backend",
+      paths: ["/", "/app", "/tmp"],
+    })),
+  );
   checks.push(
     ...(await checkDockerContainers({
       envName: "API_JOURNEY_DB_CONTAINER",
