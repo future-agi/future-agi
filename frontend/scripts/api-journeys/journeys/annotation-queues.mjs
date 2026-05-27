@@ -5739,7 +5739,7 @@ export const annotationQueueJourneys = [
     id: "AQ-API-008",
     title:
       "Download JSON export returns source, evals, annotations, and review metadata",
-    tags: ["annotation", "safe", "export"],
+    tags: ["annotation", "safe", "export", "db-audit"],
     async run({ client, evidence }) {
       const queue = await resolveQueue(client, evidence);
       const rows = await client.get(
@@ -5768,8 +5768,99 @@ export const annotationQueueJourneys = [
             `Queue JSON export row is missing ${key}.`,
           );
         }
+        const dbAudit = await loadQueueExportRowDbAudit({
+          queueId: queue.id,
+          itemId: row.item_id,
+        });
+        assert(
+          String(dbAudit.item?.id) === String(row.item_id) &&
+            String(dbAudit.item?.queue_id) === String(queue.id) &&
+            dbAudit.item?.source_type === row.source_type &&
+            String(dbAudit.item?.source_id || "") ===
+              String(row.source_id || "") &&
+            dbAudit.item?.status === row.status &&
+            Number(dbAudit.item?.order || 0) === Number(row.order || 0),
+          `Queue export JSON row did not match DB item state: ${JSON.stringify({
+            row,
+            dbAudit,
+          })}.`,
+        );
+        assert(
+          String(row.review?.status || "") ===
+            String(dbAudit.item?.review_status || "") &&
+            String(row.review?.reviewed_by_id || "") ===
+              String(dbAudit.item?.reviewed_by_id || "") &&
+            String(row.review?.notes || "") ===
+              String(dbAudit.item?.review_notes || ""),
+          `Queue export review metadata did not match DB item state: ${JSON.stringify(
+            { review: row.review, dbItem: dbAudit.item },
+          )}.`,
+        );
+        assert(
+          String(row.item_notes || "") ===
+            String(dbAudit.item_note?.notes || "") &&
+            asArray(row.annotations).length ===
+              Number(dbAudit.active_score_count || 0),
+          `Queue export annotation/note counts did not match DB state: ${JSON.stringify(
+            { row, dbAudit },
+          )}.`,
+        );
+        if (Number(dbAudit.active_score_count || 0) > 0) {
+          const exportedScore = asArray(row.annotations).find(
+            (score) =>
+              String(score.label_id) === String(dbAudit.first_score?.label_id),
+          );
+          assert(
+            exportedScore &&
+              exportedScore.label_name === dbAudit.first_score?.label_name &&
+              sameJsonValue(exportedScore.value, dbAudit.first_score?.value) &&
+              String(exportedScore.notes || "") ===
+                String(dbAudit.first_score?.notes || "") &&
+              String(exportedScore.score_source || "") ===
+                String(dbAudit.first_score?.score_source || ""),
+            `Queue export first score did not match DB state: ${JSON.stringify({
+              exportedScore,
+              dbAudit,
+            })}.`,
+          );
+        }
       }
-      evidence.push({ queue_id: queue.id, exported_rows: rows.length });
+
+      const csvExport = await client.get(
+        withQuery(
+          apiPath("/model-hub/annotation-queues/{id}/export/", {
+            id: queue.id,
+          }),
+          {
+            export_format: "csv",
+          },
+        ),
+      );
+      const csvText = String(csvExport || "");
+      for (const header of [
+        "item_id",
+        "source_type",
+        "review_status",
+        "reviewer_email",
+        "label_id",
+        "value",
+      ]) {
+        assert(
+          csvText.includes(header),
+          `Queue CSV export missing ${header} header.`,
+        );
+      }
+      if (rows.length) {
+        assert(
+          csvText.includes(String(rows[0].item_id)),
+          "Queue CSV export did not include the first exported item id.",
+        );
+      }
+      evidence.push({
+        queue_id: queue.id,
+        exported_rows: rows.length,
+        csv_export_bytes: csvText.length,
+      });
     },
   },
   {
@@ -10961,6 +11052,94 @@ SELECT json_build_object(
   assert(
     audit?.completed_item?.id && audit?.skipped_item?.id,
     `Queue navigation DB audit missed item rows: ${JSON.stringify(audit)}.`,
+  );
+  return audit;
+}
+
+async function loadQueueExportRowDbAudit({ queueId, itemId }) {
+  const sql = `
+WITH active_queue_labels AS (
+  SELECT label_id
+  FROM model_hub_annotationqueuelabel
+  WHERE queue_id = ${sqlUuid(queueId, "queueId")} AND deleted = false
+),
+item AS (
+  SELECT
+    qi.id::text,
+    qi.queue_id::text,
+    qi.organization_id::text,
+    qi.workspace_id::text,
+    qi.source_type,
+    CASE qi.source_type
+      WHEN 'dataset_row' THEN qi.dataset_row_id::text
+      WHEN 'trace' THEN qi.trace_id::text
+      WHEN 'observation_span' THEN qi.observation_span_id::text
+      WHEN 'prototype_run' THEN qi.prototype_run_id::text
+      WHEN 'call_execution' THEN qi.call_execution_id::text
+      WHEN 'trace_session' THEN qi.trace_session_id::text
+      ELSE ''
+    END AS source_id,
+    qi.status,
+    qi."order",
+    qi.review_status,
+    qi.review_notes,
+    qi.reviewed_by_id::text,
+    qi.reviewed_at,
+    qi.deleted
+  FROM model_hub_queueitem qi
+  WHERE
+    qi.id = ${sqlUuid(itemId, "itemId")}
+    AND qi.queue_id = ${sqlUuid(queueId, "queueId")}
+    AND qi.deleted = false
+),
+score_rows AS (
+  SELECT
+    s.id::text,
+    s.queue_item_id::text,
+    s.label_id::text,
+    label.name AS label_name,
+    s.value,
+    s.notes,
+    s.score_source,
+    s.annotator_id::text,
+    s.created_at,
+    s.updated_at,
+    s.deleted
+  FROM model_hub_score s
+  JOIN active_queue_labels ql ON ql.label_id = s.label_id
+  LEFT JOIN model_hub_annotationslabels label ON label.id = s.label_id
+  WHERE
+    s.queue_item_id = ${sqlUuid(itemId, "itemId")}
+    AND s.deleted = false
+  ORDER BY s.created_at, s.id
+),
+item_note AS (
+  SELECT
+    id::text,
+    queue_item_id::text,
+    annotator_id::text,
+    notes,
+    deleted
+  FROM model_hub_queueitemnote
+  WHERE queue_item_id = ${sqlUuid(itemId, "itemId")} AND deleted = false
+  ORDER BY updated_at DESC, created_at DESC
+  LIMIT 1
+)
+SELECT json_build_object(
+  'item', coalesce((SELECT row_to_json(item) FROM item), '{}'::json),
+  'first_score',
+    coalesce((SELECT row_to_json(score_rows) FROM score_rows LIMIT 1), '{}'::json),
+  'active_score_count', (SELECT count(*)::int FROM score_rows),
+  'active_score_label_ids',
+    coalesce((SELECT json_agg(label_id ORDER BY created_at, id) FROM score_rows), '[]'::json),
+  'item_note',
+    coalesce((SELECT row_to_json(item_note) FROM item_note), '{}'::json)
+)::text;
+`;
+  const audit = await runPostgresJson(sql);
+  assert(
+    audit?.item?.id,
+    `Queue export DB audit missed item ${itemId}: ${JSON.stringify(audit)}.`,
   );
   return audit;
 }
