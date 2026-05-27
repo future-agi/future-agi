@@ -19,6 +19,19 @@ choices:
 - anger
 - annoyance
 - confusion
+# 3-bucket valence aligned with the FE Pass/Neutral/Fail dropdown
+# (Pass=1.0, Neutral=0.5, Fail=0.0). Positive emotions are "Pass",
+# neutral/ambiguous are "Neutral", negative emotions are "Fail".
+choice_scores:
+  joy: 1.0
+  love: 1.0
+  surprise: 0.5
+  neutral: 0.5
+  confusion: 0.5
+  sadness: 0.0
+  fear: 0.0
+  annoyance: 0.0
+  anger: 0.0
 multi_choice: true
 output_type_normalized: deterministic
 config:

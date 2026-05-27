@@ -13,6 +13,28 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 
+def _clamp_unit_score(raw):
+    """Coerce a model-returned score to a float in [0, 1].
+
+    Weaker judges occasionally return values outside the requested range
+    (e.g. ``3.5`` for a 0-1 score). Clamping keeps the eval usable rather
+    than failing the whole run.
+    """
+    if raw is None:
+        return None
+    try:
+        v = float(raw)
+    except (TypeError, ValueError):
+        return raw
+    if v < 0.0 or v > 1.0:
+        logger.warning(
+            "eval_score_out_of_range_clamped",
+            raw_value=v,
+            clamped_to=max(0.0, min(1.0, v)),
+        )
+    return max(0.0, min(1.0, v))
+
+
 def format_eval_value(result_data, eval_template):
     """
     Convert raw eval result into the formatted output value.
@@ -65,12 +87,14 @@ def format_eval_value(result_data, eval_template):
             value = None
         else:
             # Take first metric's value
-            value = metrics[0].get("value") if metrics else None
+            raw = metrics[0].get("value") if metrics else None
+            value = _clamp_unit_score(raw)
 
     elif output_type == "numeric":
         metrics = result_data.get("metrics", [])
         if metrics:
-            value = metrics[0].get("value")
+            raw = metrics[0].get("value")
+            value = _clamp_unit_score(raw)
         else:
             value = None
 
@@ -89,7 +113,10 @@ def format_eval_value(result_data, eval_template):
             )
 
         # Map choice string to numeric score via choice_scores
-        from model_hub.utils.scoring import apply_choice_scores
+        from model_hub.utils.scoring import (
+            aggregate_choice_scores,
+            apply_choice_scores,
+        )
 
         if (
             eval_template
@@ -107,10 +134,16 @@ def format_eval_value(result_data, eval_template):
             and isinstance(choice_result, list)
             and choice_result
         ):
-            first = str(choice_result[0])
-            mapped = apply_choice_scores(first, eval_template.choice_scores)
+            if bool(getattr(eval_template, "multi_choice", False)):
+                mapped = aggregate_choice_scores(
+                    choice_result, eval_template.choice_scores
+                )
+            else:
+                mapped = apply_choice_scores(
+                    str(choice_result[0]), eval_template.choice_scores
+                )
             value = {
-                "score": mapped if mapped is not None else 0.0,
+                "score": float(mapped) if mapped is not None else 0.0,
                 "choices": choice_result,
             }
         else:

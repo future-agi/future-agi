@@ -22,6 +22,11 @@ DEFAULT_MAX_TOTAL_CHARS = 50000  # ~12K tokens for most LLMs
 DEFAULT_MAX_FIELD_CHARS = 10000  # Max per individual field
 DEFAULT_MAX_DEPTH = 5  # Max JSON nesting depth for expansion
 
+# Maximum chars of context that get injected into the eval prompt. Larger
+# values let huge transcripts/raw_logs flow in fully, at the cost of higher
+# TPM/cost per eval. Tuned for the 200K-window judge models. See TH-4905.
+MAX_EVAL_CONTEXT_CHARS = 200000
+
 
 def fit_to_context(
     data: Any,
