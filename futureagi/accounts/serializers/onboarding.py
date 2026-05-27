@@ -322,8 +322,10 @@ class LifecyclePreviewSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 "Suppressed lifecycle decisions must include suppression_reason."
             )
-        if attrs["send_enabled"]:
-            raise serializers.ValidationError("Lifecycle sends are not enabled.")
+        if attrs["send_enabled"] and not attrs["dry_run_enabled"]:
+            raise serializers.ValidationError(
+                "Lifecycle sends require dry-run evaluation."
+            )
         return attrs
 
 

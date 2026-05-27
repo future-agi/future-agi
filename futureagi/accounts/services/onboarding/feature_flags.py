@@ -15,6 +15,7 @@ ONBOARDING_FLAG_NAMES = (
     "onboarding_email_next_loop_enabled",
     "onboarding_email_sample_bridge_enabled",
     "onboarding_email_daily_digest_enabled",
+    "onboarding_lifecycle_send_enabled",
 )
 
 CONTRACT_FLAG_ALIASES = {
@@ -66,7 +67,9 @@ def get_onboarding_flags(*, user, organization, workspace):
 
     for alias, source_flag in CONTRACT_FLAG_ALIASES.items():
         flags[alias] = bool(flags.get(source_flag, False))
-    flags["onboarding_lifecycle_send_enabled"] = False
+    flags["onboarding_lifecycle_email_send"] = bool(
+        flags.get("onboarding_lifecycle_send_enabled", False)
+    )
     flags["activation_state_debug_enabled"] = bool(
         overrides.get("activation_state_debug_enabled", False)
     )

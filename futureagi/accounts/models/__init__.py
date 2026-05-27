@@ -5,6 +5,8 @@ from accounts.models.onboarding import (
     OnboardingGoal,
     OnboardingLifecycleEvaluationLog,
     OnboardingLifecyclePreference,
+    OnboardingLifecycleSendAllowlist,
+    OnboardingLifecycleSendLog,
     OnboardingSampleProject,
 )
 from accounts.models.organization import Organization

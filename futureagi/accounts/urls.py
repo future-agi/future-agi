@@ -16,6 +16,11 @@ from accounts.views.onboarding import (
     SampleProjectHideView,
     SampleProjectView,
 )
+from accounts.views.onboarding_lifecycle_clicks import OnboardingLifecycleClickView
+from accounts.views.onboarding_lifecycle_preferences import (
+    OnboardingLifecycleSnoozeView,
+    OnboardingLifecycleUnsubscribeView,
+)
 from accounts.views.organization_selection import (
     OrganizationSelectionView,
     SwitchOrganizationView,
@@ -153,6 +158,21 @@ user_urls = [
     ),
     path("onboarding/", user_onboarding, name="user-onboarding"),
     path("onboarding/goal/", OnboardingGoalView.as_view(), name="onboarding-goal"),
+    path(
+        "onboarding/lifecycle/click/",
+        OnboardingLifecycleClickView.as_view(),
+        name="onboarding-lifecycle-click",
+    ),
+    path(
+        "onboarding/lifecycle/unsubscribe/",
+        OnboardingLifecycleUnsubscribeView.as_view(),
+        name="onboarding-lifecycle-unsubscribe",
+    ),
+    path(
+        "onboarding/lifecycle/snooze/",
+        OnboardingLifecycleSnoozeView.as_view(),
+        name="onboarding-lifecycle-snooze",
+    ),
     path(
         "me/timezone/",
         __import__(

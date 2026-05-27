@@ -367,3 +367,166 @@ class OnboardingLifecycleEvaluationLog(BaseModel):
     def __str__(self):
         campaign = self.campaign_key or "none"
         return f"{campaign}:{self.status} for {self.workspace_id}"
+
+
+class OnboardingLifecycleSendAllowlist(BaseModel):
+    SCOPE_USER = "user"
+    SCOPE_WORKSPACE = "workspace"
+    SCOPE_ORGANIZATION = "organization"
+    SCOPE_DOMAIN = "domain"
+
+    SCOPE_CHOICES = (
+        (SCOPE_USER, SCOPE_USER),
+        (SCOPE_WORKSPACE, SCOPE_WORKSPACE),
+        (SCOPE_ORGANIZATION, SCOPE_ORGANIZATION),
+        (SCOPE_DOMAIN, SCOPE_DOMAIN),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scope_type = models.CharField(max_length=32, choices=SCOPE_CHOICES)
+    scope_value = models.CharField(max_length=255)
+    campaign_group = models.CharField(max_length=64, null=True, blank=True)
+    environment = models.CharField(max_length=32, default="local", db_index=True)
+    enabled = models.BooleanField(default=True, db_index=True)
+    reason = models.CharField(max_length=255, blank=True, default="")
+    created_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_onboarding_lifecycle_send_allowlists",
+    )
+
+    class Meta:
+        db_table = "accounts_onboarding_lifecycle_send_allowlist"
+        ordering = ("scope_type", "scope_value", "campaign_group")
+        indexes = [
+            models.Index(
+                fields=["environment", "enabled", "scope_type"],
+                name="onb_send_allow_env_scope",
+            ),
+            models.Index(
+                fields=["scope_type", "scope_value"],
+                name="onb_send_allow_scope_value",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    "scope_type",
+                    "scope_value",
+                    "campaign_group",
+                    "environment",
+                ],
+                condition=models.Q(campaign_group__isnull=False, deleted=False),
+                name="onb_send_allow_unique_group",
+            ),
+            models.UniqueConstraint(
+                fields=["scope_type", "scope_value", "environment"],
+                condition=models.Q(campaign_group__isnull=True, deleted=False),
+                name="onb_send_allow_unique_scope",
+            ),
+        ]
+
+    def __str__(self):
+        group = self.campaign_group or "all"
+        return f"{self.environment}:{self.scope_type}:{self.scope_value}:{group}"
+
+
+class OnboardingLifecycleSendLog(BaseModel):
+    STATUS_QUEUED = "queued"
+    STATUS_SENT = "sent"
+    STATUS_FAILED = "failed"
+    STATUS_CLICKED = "clicked"
+    STATUS_COMPLETED = "completed"
+    STATUS_SUPPRESSED = "suppressed"
+
+    STATUS_CHOICES = (
+        (STATUS_QUEUED, STATUS_QUEUED),
+        (STATUS_SENT, STATUS_SENT),
+        (STATUS_FAILED, STATUS_FAILED),
+        (STATUS_CLICKED, STATUS_CLICKED),
+        (STATUS_COMPLETED, STATUS_COMPLETED),
+        (STATUS_SUPPRESSED, STATUS_SUPPRESSED),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    evaluation_log = models.ForeignKey(
+        "accounts.OnboardingLifecycleEvaluationLog",
+        on_delete=models.CASCADE,
+        related_name="send_logs",
+    )
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="onboarding_lifecycle_send_logs",
+    )
+    organization = models.ForeignKey(
+        "accounts.Organization",
+        on_delete=models.CASCADE,
+        related_name="onboarding_lifecycle_send_logs",
+    )
+    workspace = models.ForeignKey(
+        "accounts.Workspace",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="onboarding_lifecycle_send_logs",
+    )
+    campaign_key = models.CharField(max_length=96, db_index=True)
+    campaign_group = models.CharField(max_length=64, db_index=True)
+    template_key = models.CharField(max_length=96)
+    template_version = models.CharField(max_length=32)
+    primary_path = models.CharField(max_length=32, null=True, blank=True)
+    activation_stage = models.CharField(max_length=96)
+    recommended_action_id = models.CharField(max_length=96, null=True, blank=True)
+    target_success_event = models.CharField(max_length=96, null=True, blank=True)
+    target_route = models.TextField()
+    click_url = models.TextField(blank=True, default="")
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_QUEUED,
+        db_index=True,
+    )
+    suppression_reason = models.CharField(max_length=64, null=True, blank=True)
+    provider_status = models.CharField(max_length=32, null=True, blank=True)
+    provider_message_id = models.CharField(max_length=255, null=True, blank=True)
+    failure_reason = models.TextField(null=True, blank=True)
+    queued_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    sent_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    clicked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    unsubscribed_at = models.DateTimeField(null=True, blank=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "accounts_onboarding_lifecycle_send_log"
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["user", "-created_at"], name="onb_send_user_ts"),
+            models.Index(
+                fields=["workspace", "campaign_key", "-created_at"],
+                name="onb_send_ws_campaign_ts",
+            ),
+            models.Index(
+                fields=["campaign_key", "status", "-created_at"],
+                name="onb_send_campaign_status",
+            ),
+            models.Index(
+                fields=["target_success_event", "status"],
+                name="onb_send_target_status",
+            ),
+            models.Index(fields=["sent_at"], name="onb_send_sent_at"),
+            models.Index(fields=["clicked_at"], name="onb_send_clicked_at"),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["evaluation_log", "campaign_key", "user", "workspace"],
+                condition=models.Q(deleted=False),
+                name="onb_send_unique_eval",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.campaign_key}:{self.status} for {self.user_id}"

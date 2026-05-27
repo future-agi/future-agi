@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>{% block title %}Continue your FutureAGI setup{% endblock %}</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f7f7f8;color:#111827;font-family:-apple-system,BlinkMacSystemFont,Inter,Segoe UI,sans-serif;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f7f7f8;padding:24px 0;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="560" cellspacing="0" cellpadding="0" style="width:560px;max-width:calc(100% - 32px);background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;">
+            <tr>
+              <td style="padding:28px 28px 8px;">
+                <p style="margin:0 0 12px;color:#6b7280;font-size:13px;">FutureAGI onboarding</p>
+                <h1 style="margin:0;color:#111827;font-size:22px;line-height:1.3;font-weight:650;">{% block heading %}Continue your setup{% endblock %}</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 28px 24px;color:#374151;font-size:15px;line-height:1.6;">
+                {% block body %}
+                  <p style="margin:0 0 16px;">Hi {{ user_name }}, your {{ workspace_name }} workspace has a next setup step ready.</p>
+                {% endblock %}
+                <p style="margin:24px 0;">
+                  <a href="{{ primary_action_url }}" style="background:#111827;color:#ffffff;text-decoration:none;border-radius:6px;padding:11px 16px;display:inline-block;font-weight:600;">{{ primary_action_label }}</a>
+                </p>
+                <p style="margin:16px 0 0;color:#6b7280;font-size:13px;">
+                  If this is not useful right now, you can
+                  <a href="{{ snooze_url }}" style="color:#374151;">snooze onboarding emails for 7 days</a>
+                  or
+                  <a href="{{ unsubscribe_url }}" style="color:#374151;">turn off onboarding lifecycle emails</a>.
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

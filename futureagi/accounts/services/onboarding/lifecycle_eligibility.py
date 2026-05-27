@@ -338,6 +338,7 @@ def apply_lifecycle_suppressions(
     flags,
     target_url,
     eligible_at,
+    skip_frequency=False,
 ):
     stage = activation_state.get("stage")
     if stage == "feature_disabled":
@@ -398,14 +399,15 @@ def apply_lifecycle_suppressions(
     if now < eligible_at:
         return "wait_window_open", {"eligible_at": eligible_at.isoformat()}
 
-    frequency_reason = frequency_cap_suppression(
-        user=user,
-        workspace=workspace,
-        campaign=campaign,
-        now=now,
-    )
-    if frequency_reason:
-        return frequency_reason, {}
+    if not skip_frequency:
+        frequency_reason = frequency_cap_suppression(
+            user=user,
+            workspace=workspace,
+            campaign=campaign,
+            now=now,
+        )
+        if frequency_reason:
+            return frequency_reason, {}
     return None, {}
 
 
@@ -420,6 +422,7 @@ def evaluate_lifecycle_decision(
     run_id=None,
     source="preview",
     campaign_key=None,
+    skip_frequency=False,
 ):
     now = now or timezone.now()
     run_id = run_id or uuid.uuid4()
@@ -455,6 +458,7 @@ def evaluate_lifecycle_decision(
         flags=flags,
         target_url=target_url,
         eligible_at=eligible_at,
+        skip_frequency=skip_frequency,
     )
     status = (
         OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE
@@ -476,7 +480,10 @@ def evaluate_lifecycle_decision(
         suppression_reason=reason,
         suppression_details=details,
         evaluated_at=now,
-        metadata={"source": source, "send_enabled": False},
+        metadata={
+            "source": source,
+            "send_enabled": bool(flags.get("onboarding_lifecycle_send_enabled")),
+        },
     )
 
 
@@ -513,7 +520,7 @@ def lifecycle_preview_from_decision(decision, *, flags):
     campaign = decision.campaign or {}
     return {
         "dry_run_enabled": bool(flags.get("onboarding_lifecycle_dry_run_enabled")),
-        "send_enabled": False,
+        "send_enabled": bool(flags.get("onboarding_lifecycle_send_enabled")),
         "status": decision.status,
         "next_campaign_key": campaign.get("campaign_key"),
         "template_key": campaign.get("template_key"),
@@ -524,5 +531,5 @@ def lifecycle_preview_from_decision(decision, *, flags):
         "target_success_event": campaign.get("target_success_event"),
         "target_action_id": campaign.get("target_action_id"),
         "target_url": decision.target_url,
-        "dry_run_only": True,
+        "dry_run_only": not bool(flags.get("onboarding_lifecycle_send_enabled")),
     }

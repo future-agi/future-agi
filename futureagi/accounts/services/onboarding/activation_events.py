@@ -143,12 +143,14 @@ def record_event(
         defaults["occurred_at"] = occurred_at
 
     if not normalized_idempotency_key:
-        return OnboardingActivationEvent.no_workspace_objects.create(
+        event = OnboardingActivationEvent.no_workspace_objects.create(
             organization=organization,
             workspace=workspace,
             idempotency_key=None,
             **defaults,
         )
+        _mark_lifecycle_completion(event)
+        return event
 
     try:
         with transaction.atomic():
@@ -160,13 +162,27 @@ def record_event(
                     defaults=defaults,
                 )
             )
+            _mark_lifecycle_completion(event)
             return event
     except IntegrityError:
-        return OnboardingActivationEvent.no_workspace_objects.get(
+        event = OnboardingActivationEvent.no_workspace_objects.get(
             organization=organization,
             workspace=workspace,
             idempotency_key=normalized_idempotency_key,
         )
+        _mark_lifecycle_completion(event)
+        return event
+
+
+def _mark_lifecycle_completion(event):
+    try:
+        from accounts.services.onboarding.lifecycle_sender import (
+            mark_lifecycle_send_completed_for_event,
+        )
+
+        mark_lifecycle_send_completed_for_event(event)
+    except Exception:
+        return None
 
 
 def _events_queryset(
