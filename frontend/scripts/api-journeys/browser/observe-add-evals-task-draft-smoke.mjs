@@ -1,16 +1,20 @@
 import { createRequire } from "node:module";
+import { execFile as execFileCallback } from "node:child_process";
 import process from "node:process";
+import { promisify } from "node:util";
 import {
   apiPath,
   asArray,
   assert,
   createAuthenticatedContext,
   isUuid,
+  requireMutations,
 } from "../lib/api-client.mjs";
 import { queryWithFilters } from "../lib/fixtures.mjs";
 
 const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
+const execFile = promisify(execFileCallback);
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
 const SCREENSHOT_PATH = "/tmp/observe-add-evals-task-draft-smoke.png";
@@ -18,11 +22,18 @@ const FAILURE_SCREENSHOT_PATH =
   "/tmp/observe-add-evals-task-draft-smoke-failure.png";
 
 async function main() {
+  requireMutations();
   const auth = await createAuthenticatedContext();
   const sample = await resolveTraceSample(auth.client, auth.workspaceId);
+  const taskName = `api journey browser linked trace task ${auth.runId}`;
   const traceListRequests = [];
   const apiFailures = [];
   const pageErrors = [];
+  const evidence = {};
+  let cleanupAudit = null;
+  let caughtError = null;
+  let cleanupError = null;
+  let createdTaskId = null;
   let requestPhase = "observe";
 
   const browser = await puppeteer.launch({
@@ -34,7 +45,7 @@ async function main() {
   const page = await browser.newPage();
 
   try {
-    await preparePage(page, auth, sample);
+    await preparePage(page, auth, sample, { taskName });
     page.on("request", (request) => {
       const url = request.url();
       if (isTraceListUrl(url)) {
@@ -77,7 +88,7 @@ async function main() {
     await expectVisibleText(page, "Add Evals", { exact: true });
 
     requestPhase = "task-create";
-    await clickVisibleText(page, "Add Evals");
+    await clickButtonWithText(page, "Add Evals");
     await page.waitForFunction(
       () => window.location.pathname === "/dashboard/tasks/create",
       { timeout: 30000 },
@@ -123,76 +134,193 @@ async function main() {
       previewRequest,
       "Task create page did not request trace preview with linked trace_id filter.",
     );
+
+    const createResponse = await waitForResponseDuring(
+      page,
+      "linked task browser create",
+      (response) =>
+        response.request().method() === "POST" &&
+        isEvalTaskCreateUrl(response.url()) &&
+        response.status() < 400,
+      () => clickButtonWithText(page, "Create Task"),
+    );
+    const createBody = await createResponse.json();
+    createdTaskId = createBody?.result?.id || createBody?.id;
+    assert(
+      isUuid(createdTaskId),
+      `Create Task did not return a task id: ${JSON.stringify(createBody)}`,
+    );
+    await page.waitForFunction(
+      (taskId) =>
+        window.location.pathname.endsWith(`/dashboard/tasks/${taskId}`),
+      { timeout: 30000 },
+      createdTaskId,
+    );
+    await expectVisibleText(page, taskName);
+    await expectVisibleText(page, "Open source", { exact: true });
+    await expectNoVisibleText(page, "Invalid Date");
+
+    const createdDetail = await auth.client.get(
+      apiPath("/tracer/eval-task/get_eval_details/"),
+      {
+        query: { eval_id: createdTaskId },
+      },
+    );
+    assert(
+      createdDetail?.id === createdTaskId,
+      "Created linked task detail id mismatch.",
+    );
+    assert(
+      createdDetail?.name === taskName,
+      "Created linked task detail name mismatch.",
+    );
+    assert(
+      asArray(createdDetail?.filters_applied?.trace_id).includes(
+        sample.traceId,
+      ),
+      "Created linked task detail did not preserve trace_id filter.",
+    );
+    assert(
+      asArray(createdDetail?.evals_applied).some(
+        (evalItem) => evalItem?.id === sample.seedEval.id,
+      ),
+      "Created linked task detail did not include the seeded eval config.",
+    );
+
+    await waitForResponseDuring(
+      page,
+      "task detail Open source trace load",
+      (response) =>
+        isTraceDetailUrl(response.url(), sample.traceId) &&
+        response.status() < 400,
+      () => clickButtonWithText(page, "Open source"),
+    );
+    await page.waitForFunction(
+      (projectId, traceId) =>
+        window.location.pathname ===
+        `/dashboard/observe/${projectId}/trace/${traceId}`,
+      { timeout: 30000 },
+      sample.project.id,
+      sample.traceId,
+    );
+    await expectVisibleText(page, "Trace ID");
+    await expectVisibleText(page, sample.traceId);
+    await expectNoVisibleText(page, "Invalid Date");
+
     assert(apiFailures.length === 0, `API failures: ${apiFailures.join("; ")}`);
     assert(pageErrors.length === 0, `Page errors: ${pageErrors.join("; ")}`);
 
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
 
-    console.log(
-      JSON.stringify(
-        {
-          status: "passed",
-          app_base: APP_BASE,
-          api_base: auth.apiBase,
-          organization_id: auth.organizationId,
-          workspace_id: auth.workspaceId,
-          evidence: {
-            project_id: sample.project.id,
-            project_name: sample.project.name || null,
-            trace_id: sample.traceId,
-            span_id: sample.spanId,
-            draft_id: draftEvidence.draftId,
-            draft_row_type: draftEvidence.rowType,
-            draft_trace_filter_value:
-              draftEvidence.traceFilter?.filterConfig?.filterValue,
-            task_preview_trace_request: previewRequest.url,
-            screenshot: SCREENSHOT_PATH,
-          },
-        },
-        null,
-        2,
-      ),
-    );
+    Object.assign(evidence, {
+      project_id: sample.project.id,
+      project_name: sample.project.name || null,
+      trace_id: sample.traceId,
+      span_id: sample.spanId,
+      seed_task_id: sample.seedTask?.id || null,
+      seed_eval_config_id: sample.seedEval.id,
+      created_task_id: createdTaskId,
+      task_name: taskName,
+      draft_id: draftEvidence.draftId,
+      draft_row_type: draftEvidence.rowType,
+      draft_trace_filter_value:
+        draftEvidence.traceFilter?.filterConfig?.filterValue,
+      task_preview_trace_request: previewRequest.url,
+      detail_source_path: `/dashboard/observe/${sample.project.id}/trace/${sample.traceId}`,
+      screenshot: SCREENSHOT_PATH,
+    });
   } catch (error) {
+    caughtError = error;
     await page
       .screenshot({ path: FAILURE_SCREENSHOT_PATH, fullPage: true })
       .catch(() => null);
-    throw error;
   } finally {
     await browser.close();
+    if (createdTaskId) {
+      try {
+        await auth.client.post(
+          apiPath("/tracer/eval-task/mark_eval_tasks_deleted/"),
+          {
+            eval_task_ids: [createdTaskId],
+          },
+        );
+        cleanupAudit = await deleteEvalTaskDbArtifacts({
+          taskId: createdTaskId,
+        });
+        assert(
+          Number(cleanupAudit.remaining_task_count) === 0,
+          `Linked task cleanup left task residue: ${JSON.stringify(cleanupAudit)}`,
+        );
+        evidence.cleanup = cleanupAudit;
+      } catch (error) {
+        cleanupError = error;
+      }
+    }
   }
+
+  if (caughtError || cleanupError) {
+    if (caughtError && cleanupError) {
+      caughtError.message = `${caughtError.message}; cleanup failed: ${cleanupError.message}`;
+      throw caughtError;
+    }
+    throw caughtError || cleanupError;
+  }
+
+  console.log(
+    JSON.stringify(
+      {
+        status: "passed",
+        app_base: APP_BASE,
+        api_base: auth.apiBase,
+        organization_id: auth.organizationId,
+        workspace_id: auth.workspaceId,
+        evidence,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 async function resolveTraceSample(client, workspaceId) {
   const preferredProjectId = process.env.OBSERVE_PROJECT_ID;
   const preferredTraceId = process.env.OBSERVE_TRACE_ID;
+  const preferredEvalConfigId = process.env.OBSERVE_EVAL_CONFIG_ID;
 
-  if (preferredProjectId && preferredTraceId) {
+  if (preferredProjectId && preferredTraceId && preferredEvalConfigId) {
+    const project = await loadProjectIfCurrentWorkspace(
+      client,
+      { id: preferredProjectId, name: "env observe project" },
+      workspaceId,
+      true,
+    );
+    assert(
+      project,
+      "OBSERVE_PROJECT_ID did not resolve to an observe project.",
+    );
     return sampleFromTraceDetail(client, {
-      project: { id: preferredProjectId, name: "env observe project" },
+      project,
       traceId: preferredTraceId,
+      seedEval: { id: preferredEvalConfigId, name: "env eval config" },
     });
   }
 
-  const projects = preferredProjectId
-    ? [{ id: preferredProjectId, name: "env observe project" }]
-    : asArray(
-        await client.get(apiPath("/tracer/project/list_projects/"), {
-          query: {
-            project_type: "observe",
-            page_number: 0,
-            page_size: 100,
-            sort_by: "updated_at",
-            sort_direction: "desc",
-          },
-        }),
-      );
+  const seeds = await loadEvalTaskSeeds(client, preferredProjectId);
+  for (const seed of seeds) {
+    const projectId = seed.project_id || seed.filters_applied?.project_id;
+    if (!isUuid(seed?.id) || !isUuid(projectId)) continue;
+    const seedDetail = await client.get(
+      apiPath("/tracer/eval-task/get_eval_details/"),
+      {
+        query: { eval_id: seed.id },
+      },
+    );
+    const seedEval = asArray(seedDetail?.evals_applied)[0];
+    if (!seedEval?.id) continue;
 
-  for (const projectRow of projects) {
-    if (!isUuid(projectRow?.id)) continue;
     const project = await loadProjectIfCurrentWorkspace(
       client,
-      projectRow,
+      { id: projectId, name: seed.project_name },
       workspaceId,
       Boolean(preferredProjectId),
     );
@@ -209,8 +337,14 @@ async function resolveTraceSample(client, workspaceId) {
       (row) => row?.trace_id || row?.id,
     )) {
       const traceId = trace.trace_id || trace.id;
+      if (preferredTraceId && traceId !== preferredTraceId) continue;
       try {
-        return await sampleFromTraceDetail(client, { project, traceId });
+        return await sampleFromTraceDetail(client, {
+          project,
+          traceId,
+          seedTask: seed,
+          seedEval,
+        });
       } catch {
         // Some legacy rows are missing span detail; keep looking for a full trace.
       }
@@ -218,8 +352,28 @@ async function resolveTraceSample(client, workspaceId) {
   }
 
   throw new Error(
-    "No current-workspace observe trace with span detail was found.",
+    "No current-workspace observe trace with span detail and eval config seed was found.",
   );
+}
+
+async function loadEvalTaskSeeds(client, preferredProjectId) {
+  const list = await client.get(
+    apiPath("/tracer/eval-task/list_eval_tasks_with_project_name/"),
+    {
+      query: {
+        page_number: 0,
+        page_size: 50,
+        sort_params: JSON.stringify([
+          { column_id: "created_at", direction: "desc" },
+        ]),
+      },
+    },
+  );
+  return asArray(list.table || list).filter((row) => {
+    const projectId = row?.project_id || row?.filters_applied?.project_id;
+    if (!row?.id || !isUuid(projectId)) return false;
+    return !preferredProjectId || projectId === preferredProjectId;
+  });
 }
 
 async function loadProjectIfCurrentWorkspace(
@@ -244,7 +398,10 @@ async function loadProjectIfCurrentWorkspace(
   return { id: projectRow.id, name: detail?.name || projectRow.name };
 }
 
-async function sampleFromTraceDetail(client, { project, traceId }) {
+async function sampleFromTraceDetail(
+  client,
+  { project, traceId, seedTask, seedEval },
+) {
   const detail = await client.get(
     apiPath("/tracer/trace/{id}/", { id: traceId }),
   );
@@ -261,6 +418,8 @@ async function sampleFromTraceDetail(client, { project, traceId }) {
     traceId,
     spanId: selected.span.id,
     spanCount: flatEntries.length,
+    seedTask,
+    seedEval,
   };
 }
 
@@ -276,7 +435,7 @@ function flattenTraceEntries(rootEntry) {
   return rows;
 }
 
-async function preparePage(page, auth, sample) {
+async function preparePage(page, auth, sample, { taskName }) {
   await page.setBypassServiceWorker(true);
   await installRuntimeConfig(page, auth);
   await page.evaluateOnNewDocument(() => {
@@ -296,7 +455,41 @@ async function preparePage(page, auth, sample) {
     };
   });
   await page.evaluateOnNewDocument(
-    ({ tokens, organizationId, workspaceId, user, projectId, traceId }) => {
+    ({
+      tokens,
+      organizationId,
+      workspaceId,
+      user,
+      projectId,
+      traceId,
+      seedEval,
+      taskName,
+    }) => {
+      const originalSetItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function patchedSetItem(key, value) {
+        if (
+          this === localStorage &&
+          typeof key === "string" &&
+          key.startsWith("task-draft-")
+        ) {
+          try {
+            const parsed = JSON.parse(value);
+            const values = parsed?.values || {};
+            value = JSON.stringify({
+              ...parsed,
+              values: {
+                ...values,
+                name: taskName,
+                samplingRate: 100,
+                evalsDetails: [seedEval],
+              },
+            });
+          } catch {
+            // Keep the original value if the app changes the draft shape.
+          }
+        }
+        return originalSetItem.call(this, key, value);
+      };
       localStorage.setItem("accessToken", tokens.access);
       localStorage.setItem("refreshToken", tokens.refresh || "");
       localStorage.setItem("rememberMe", "true");
@@ -333,6 +526,8 @@ async function preparePage(page, auth, sample) {
       user: auth.user,
       projectId: sample.project.id,
       traceId: sample.traceId,
+      seedEval: sample.seedEval,
+      taskName,
     },
   );
 }
@@ -372,6 +567,8 @@ async function readTaskDraft(page) {
       draftId: id,
       project: values.project,
       rowType: values.rowType,
+      name: values.name,
+      evalConfigIds: (values.evalsDetails || []).map((item) => item?.id),
       returnTo: new URL(window.location.href).searchParams.get("returnTo"),
       traceFilter,
     };
@@ -380,10 +577,11 @@ async function readTaskDraft(page) {
 
 async function waitForResponseDuring(page, label, predicate, action) {
   try {
-    await Promise.all([
+    const [response] = await Promise.all([
       page.waitForResponse(predicate, { timeout: 60000 }),
       action(),
     ]);
+    return response;
   } catch (error) {
     throw new Error(`${label} failed: ${error.message}`);
   }
@@ -425,35 +623,35 @@ async function expectNoVisibleText(page, text, { timeout = 30000 } = {}) {
   );
 }
 
-async function clickVisibleText(page, text) {
+async function clickButtonWithText(page, text) {
   await page.waitForFunction(
     (expectedText) =>
-      window
-        .__apiJourneyVisibleElements()
-        .some(
-          (element) =>
-            window.__apiJourneyNormalizeText(element.textContent) ===
-            expectedText,
-        ),
+      window.__apiJourneyVisibleElements().some((element) => {
+        const button = element.closest("button,[role='button'],a");
+        return (
+          button &&
+          window.__apiJourneyNormalizeText(button.textContent) === expectedText
+        );
+      }),
     { timeout: 30000 },
     text,
   );
   const clicked = await page.evaluate((expectedText) => {
-    const element = window
-      .__apiJourneyVisibleElements()
-      .find(
-        (candidate) =>
-          window.__apiJourneyNormalizeText(candidate.textContent) ===
-          expectedText,
+    const element = window.__apiJourneyVisibleElements().find((candidate) => {
+      const button = candidate.closest("button,[role='button'],a");
+      return (
+        button &&
+        window.__apiJourneyNormalizeText(button.textContent) === expectedText
       );
-    const clickable = element?.closest("button,[role='button'],a") || element;
-    if (!clickable) return false;
-    clickable.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    clickable.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    clickable.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    const button = element?.closest("button,[role='button'],a");
+    if (!button) return false;
+    button.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    button.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     return true;
   }, text);
-  assert(clicked, `Could not click visible text ${text}.`);
+  assert(clicked, `Could not click button ${text}.`);
 }
 
 function isRelevantApiUrl(url) {
@@ -466,6 +664,16 @@ function isRelevantApiUrl(url) {
 
 function isTraceListUrl(url) {
   return url.includes("/tracer/trace/list_traces_of_session/");
+}
+
+function isEvalTaskCreateUrl(url) {
+  const parsed = new URL(url);
+  return parsed.pathname === "/tracer/eval-task/";
+}
+
+function isTraceDetailUrl(url, traceId) {
+  const parsed = new URL(url);
+  return parsed.pathname === `/tracer/trace/${traceId}/`;
 }
 
 function hasTraceFilter(url, traceId) {
@@ -505,6 +713,81 @@ function browserExecutablePath() {
   }
   if (process.platform === "linux") return "/usr/bin/google-chrome";
   return undefined;
+}
+
+async function deleteEvalTaskDbArtifacts({ taskId }) {
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(taskId)} AS task_id
+),
+deleted_task_evals AS (
+  DELETE FROM tracer_eval_task_evals
+  WHERE evaltask_id = (SELECT task_id FROM requested)
+  RETURNING evaltask_id
+),
+deleted_task_loggers AS (
+  DELETE FROM tracer_eval_task_logger
+  WHERE eval_task_id = (SELECT task_id FROM requested)
+  RETURNING id
+),
+deleted_eval_logs AS (
+  DELETE FROM tracer_eval_logger
+  WHERE eval_task_id = (SELECT task_id::text FROM requested)
+  RETURNING id
+),
+deleted_tasks AS (
+  DELETE FROM tracer_eval_task
+  WHERE id = (SELECT task_id FROM requested)
+  RETURNING id
+)
+SELECT json_build_object(
+  'deleted_task_eval_rows', (SELECT count(*) FROM deleted_task_evals),
+  'deleted_task_logger_rows', (SELECT count(*) FROM deleted_task_loggers),
+  'deleted_eval_log_rows', (SELECT count(*) FROM deleted_eval_logs),
+  'deleted_task_rows', (SELECT count(*) FROM deleted_tasks)
+);
+`;
+  const cleanup = await runPostgresJson(sql);
+  const residueSql = `
+WITH requested AS (
+  SELECT ${sqlUuid(taskId)} AS task_id
+)
+SELECT json_build_object(
+  'remaining_task_count', (
+    SELECT count(*) FROM tracer_eval_task
+    WHERE id = (SELECT task_id FROM requested)
+  ),
+  'remaining_task_logger_count', (
+    SELECT count(*) FROM tracer_eval_task_logger
+    WHERE eval_task_id = (SELECT task_id FROM requested)
+  ),
+  'remaining_eval_log_count', (
+    SELECT count(*) FROM tracer_eval_logger
+    WHERE eval_task_id = (SELECT task_id::text FROM requested)
+  )
+);
+`;
+  const residue = await runPostgresJson(residueSql);
+  return { ...cleanup, ...residue };
+}
+
+async function runPostgresJson(sql) {
+  const container = process.env.API_JOURNEY_DB_CONTAINER || "ws2-postgres";
+  const user = process.env.API_JOURNEY_DB_USER || "user";
+  const database = process.env.API_JOURNEY_DB_NAME || "tfc";
+  const { stdout } = await execFile(
+    "docker",
+    ["exec", container, "psql", "-U", user, "-d", database, "-At", "-c", sql],
+    { maxBuffer: 10 * 1024 * 1024 },
+  );
+  const text = stdout.trim();
+  assert(text, "Postgres DB cleanup returned no JSON output.");
+  return JSON.parse(text);
+}
+
+function sqlUuid(value) {
+  assert(isUuid(value), `Expected UUID, got ${value}`);
+  return `'${String(value).replaceAll("'", "''")}'::uuid`;
 }
 
 main().catch((error) => {
