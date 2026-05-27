@@ -308,8 +308,15 @@ export const observeFilterJourneys = [
   {
     id: "OBS-API-005",
     title: "Observe project and trace tags update and revert cleanly",
-    tags: ["observe", "tags", "mutating", "data-roundtrip"],
-    async run({ client, cleanup, runId, evidence }) {
+    tags: ["observe", "tags", "mutating", "data-roundtrip", "db-audit"],
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
       requireMutations();
       const project = await resolveObserveProject(client, evidence);
       const tag = `api-journey-${runId}`;
@@ -331,6 +338,19 @@ export const observeFilterJourneys = [
       assert(
         normalizeTags(updatedProject.tags).includes(tag),
         "Project tag update did not return the new tag.",
+      );
+      const projectTagDb = await loadObserveTagDbAudit({
+        projectId: project.id,
+        traceId: null,
+      });
+      assert(
+        String(projectTagDb.project?.organization_id) ===
+          String(organizationId) &&
+          String(projectTagDb.project?.workspace_id) === String(workspaceId) &&
+          normalizeTags(projectTagDb.project?.tags).includes(tag),
+        `Project tag DB audit did not persist the new tag/scope: ${JSON.stringify(
+          projectTagDb,
+        )}.`,
       );
 
       const traceList = await client.get(
@@ -363,6 +383,20 @@ export const observeFilterJourneys = [
         normalizeTags(updatedTrace.tags).includes(tag),
         "Trace tag update did not return the new tag.",
       );
+      const traceTagDb = await loadObserveTagDbAudit({
+        projectId: project.id,
+        traceId: trace.trace_id,
+      });
+      assert(
+        normalizeTags(traceTagDb.trace?.tags).includes(tag) &&
+          String(traceTagDb.trace?.project_id) === String(project.id) &&
+          String(traceTagDb.trace?.organization_id) ===
+            String(organizationId) &&
+          String(traceTagDb.trace?.workspace_id) === String(workspaceId),
+        `Trace tag DB audit did not persist the new tag/scope: ${JSON.stringify(
+          traceTagDb,
+        )}.`,
+      );
 
       const restoredTrace = await client.patch(
         apiPath("/tracer/trace/{id}/tags/", { id: trace.trace_id }),
@@ -371,6 +405,19 @@ export const observeFilterJourneys = [
       assert(
         arraysEqual(normalizeTags(restoredTrace.tags), originalTraceTags),
         "Trace tag revert did not restore the original tags.",
+      );
+      const restoredTraceDb = await loadObserveTagDbAudit({
+        projectId: project.id,
+        traceId: trace.trace_id,
+      });
+      assert(
+        arraysEqual(
+          normalizeTags(restoredTraceDb.trace?.tags),
+          originalTraceTags,
+        ),
+        `Trace tag DB audit did not restore original tags: ${JSON.stringify(
+          restoredTraceDb,
+        )}.`,
       );
 
       const restoredProject = await client.patch(
@@ -381,11 +428,30 @@ export const observeFilterJourneys = [
         arraysEqual(normalizeTags(restoredProject.tags), originalProjectTags),
         "Project tag revert did not restore the original tags.",
       );
+      const restoredProjectDb = await loadObserveTagDbAudit({
+        projectId: project.id,
+        traceId: trace.trace_id,
+      });
+      assert(
+        arraysEqual(
+          normalizeTags(restoredProjectDb.project?.tags),
+          originalProjectTags,
+        ),
+        `Project tag DB audit did not restore original tags: ${JSON.stringify(
+          restoredProjectDb,
+        )}.`,
+      );
 
       evidence.push({
         project_id: project.id,
         trace_id: trace.trace_id,
         temporary_tag: tag,
+        project_tag_count_after_restore: normalizeTags(
+          restoredProjectDb.project?.tags,
+        ).length,
+        trace_tag_count_after_restore: normalizeTags(
+          restoredTraceDb.trace?.tags,
+        ).length,
       });
     },
   },
@@ -2175,7 +2241,14 @@ export const observeFilterJourneys = [
     id: "OBS-API-021",
     title: "Observe charts trace, session, span, and attribute filters",
     tags: ["observe", "charts", "mutating", "data-roundtrip", "db-audit"],
-    async run({ client, cleanup, runId, organizationId, workspaceId, evidence }) {
+    async run({
+      client,
+      cleanup,
+      runId,
+      organizationId,
+      workspaceId,
+      evidence,
+    }) {
       requireMutations();
       assert(
         isUuid(organizationId),
@@ -2331,7 +2404,9 @@ export const observeFilterJourneys = [
         apiPath("/tracer/observation-span/bulk_create/"),
         { observation_spans: observationSpanPayloads },
       );
-      const createdSpanIds = Array.isArray(bulkSpanResult?.["Observation Span IDs"])
+      const createdSpanIds = Array.isArray(
+        bulkSpanResult?.["Observation Span IDs"],
+      )
         ? bulkSpanResult["Observation Span IDs"]
         : [];
       for (const seed of spanSeeds) {
@@ -7939,10 +8014,7 @@ async function loadObserveChartsFilterDbAudit({
     "projectVersionId must be a UUID for chart audit.",
   );
   assert(isUuid(sessionId), "sessionId must be a UUID for chart audit.");
-  assert(
-    asArray(traceIds).length > 0,
-    "traceIds must be set for chart audit.",
-  );
+  assert(asArray(traceIds).length > 0, "traceIds must be set for chart audit.");
   assert(asArray(spanIds).length > 0, "spanIds must be set for chart audit.");
   const sql = `
 WITH requested AS (
@@ -8097,6 +8169,54 @@ SELECT json_build_object(
 );
 `;
   return runPostgresJson(sql);
+}
+
+async function loadObserveTagDbAudit({ projectId, traceId }) {
+  const traceSql = traceId ? sqlUuid(traceId) : "NULL::uuid";
+  const sql = `
+WITH requested AS (
+  SELECT ${sqlUuid(projectId)} AS project_id, ${traceSql} AS trace_id
+),
+project_row AS (
+  SELECT
+    project.id::text,
+    project.organization_id::text,
+    project.workspace_id::text,
+    project.trace_type,
+    project.tags,
+    project.deleted
+  FROM tracer_project project
+  JOIN requested r ON project.id = r.project_id
+),
+trace_row AS (
+  SELECT
+    trace.id::text,
+    trace.project_id::text,
+    project.organization_id::text,
+    project.workspace_id::text,
+    trace.tags,
+    trace.deleted
+  FROM tracer_trace trace
+  JOIN requested r ON trace.id = r.trace_id
+  JOIN tracer_project project ON project.id = trace.project_id
+)
+SELECT json_build_object(
+  'project', coalesce((SELECT row_to_json(project_row) FROM project_row), '{}'::json),
+  'trace', coalesce((SELECT row_to_json(trace_row) FROM trace_row), '{}'::json)
+);
+`;
+  const audit = await runPostgresJson(sql);
+  assert(
+    audit?.project?.id,
+    `Observe tag DB audit missed project ${projectId}: ${JSON.stringify(audit)}.`,
+  );
+  if (traceId) {
+    assert(
+      audit?.trace?.id,
+      `Observe tag DB audit missed trace ${traceId}: ${JSON.stringify(audit)}.`,
+    );
+  }
+  return audit;
 }
 
 async function runPostgresJson(sql) {
@@ -9944,7 +10064,12 @@ function observeChartsDateFilter(days) {
   };
 }
 
-function observeChartsSystemFilter(columnId, filterType, filterOp, filterValue) {
+function observeChartsSystemFilter(
+  columnId,
+  filterType,
+  filterOp,
+  filterValue,
+) {
   return {
     column_id: columnId,
     filter_config: {
