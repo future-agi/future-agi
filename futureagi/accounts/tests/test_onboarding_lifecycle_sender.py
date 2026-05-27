@@ -6,10 +6,12 @@ from django.test import override_settings
 from django.utils import timezone
 
 from accounts.models import (
+    OnboardingGoal,
     OnboardingLifecycleEvaluationLog,
     OnboardingLifecyclePreference,
     OnboardingLifecycleSendAllowlist,
     OnboardingLifecycleSendLog,
+    OnboardingQualityAction,
 )
 from accounts.models.workspace import Workspace
 from accounts.services.onboarding.activation_events import record_event
@@ -17,6 +19,11 @@ from accounts.services.onboarding.lifecycle_registry import lifecycle_campaign_b
 from accounts.services.onboarding.lifecycle_sender import (
     queue_onboarding_lifecycle_email,
     send_onboarding_lifecycle_email,
+)
+from accounts.tests.onboarding_model_factories import (
+    create_custom_eval,
+    create_observe_project,
+    create_trace,
 )
 
 
@@ -52,6 +59,46 @@ def _allow_user(user):
         environment="local",
         reason="test",
     )
+
+
+def _activated_observe_workspace(organization, workspace, user, *, now):
+    OnboardingGoal.no_workspace_objects.create(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        goal="monitor_production_ai_app",
+        primary_path="observe",
+        selected_at=now - timedelta(hours=4),
+    )
+    project = create_observe_project(
+        organization=organization,
+        workspace=workspace,
+        user=user,
+    )
+    trace = create_trace(project=project)
+    type(trace).no_workspace_objects.filter(id=trace.id).update(
+        created_at=now - timedelta(hours=3)
+    )
+    create_custom_eval(organization=organization, workspace=workspace, project=project)
+    record_event(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        event_name="trace_reviewed",
+        source="test",
+        product_path="observe",
+        occurred_at=now - timedelta(hours=2, minutes=30),
+    )
+    record_event(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        event_name="first_quality_loop_completed",
+        source="test",
+        product_path="observe",
+        occurred_at=now - timedelta(hours=2),
+    )
+    return project
 
 
 def _eligible_log(user, organization, workspace, *, now=None):
@@ -140,6 +187,88 @@ def test_helper_success_records_sent_log(
     assert sent_log.provider_status == "accepted"
     assert sent_log.click_url
     helper.assert_called_once()
+
+
+@pytest.mark.django_db
+@override_settings(
+    ONBOARDING_FEATURE_FLAGS=_flags(
+        onboarding_daily_quality_home=True,
+        onboarding_email_daily_digest_enabled=True,
+    )
+)
+def test_daily_quality_digest_send_log_carries_safe_preview(
+    organization,
+    workspace,
+    user,
+):
+    _allow_user(user)
+    now = timezone.now()
+    campaign = lifecycle_campaign_by_key("daily_quality_open_actions")
+    _activated_observe_workspace(organization, workspace, user, now=now)
+    OnboardingQualityAction.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        product_path="observe",
+        action_key="trace-action-1",
+        status=OnboardingQualityAction.STATUS_OPEN,
+        label="Assign trace owner",
+        route="/dashboard/home?mode=daily-quality",
+        fallback_route="/dashboard/get-started",
+        source_type="trace",
+        source_id="trace-123",
+        is_sample=False,
+        last_event_at=now - timedelta(minutes=30),
+        metadata={"api_token": "secret-value"},
+    )
+    log = OnboardingLifecycleEvaluationLog.no_workspace_objects.create(
+        run_id="00000000-0000-0000-0000-000000000015",
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        campaign_key=campaign["campaign_key"],
+        campaign_group=campaign["campaign_group"],
+        template_key=campaign["template_key"],
+        template_version=campaign["template_version"],
+        activation_stage="daily_review",
+        primary_path="observe",
+        recommendation_id="review_daily_quality",
+        target_action_id=campaign["target_action_id"],
+        target_success_event=campaign["target_success_event"],
+        target_url="/dashboard/home?mode=daily-quality",
+        status=OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE,
+        eligible_at=now - timedelta(minutes=15),
+        evaluated_at=now - timedelta(minutes=1),
+        registry_snapshot=campaign,
+        activation_state_snapshot={
+            "stage": "daily_review",
+            "primary_path": "observe",
+            "recommended_action_id": "review_daily_quality",
+        },
+        metadata={"source": "test", "send_enabled": False},
+    )
+
+    send_log = queue_onboarding_lifecycle_email(log, now=now)
+
+    assert send_log.status == OnboardingLifecycleSendLog.STATUS_QUEUED
+    preview = send_log.metadata["digest_preview"]
+    assert preview["campaign_key"] == "daily_quality_open_actions"
+    assert preview["actions"][0]["action_id"] == "trace-action-1"
+    assert preview["actions"][0]["route"] == "/dashboard/home?mode=daily-quality"
+    assert "api_token" not in str(preview)
+    assert "secret-value" not in str(preview)
+
+    with patch("accounts.services.onboarding.lifecycle_sender.email_helper") as helper:
+        sent_log = send_onboarding_lifecycle_email(send_log, now=now)
+
+    assert sent_log.status == OnboardingLifecycleSendLog.STATUS_SENT
+    assert helper.call_args.args[1] == (
+        "onboarding_lifecycle/daily_quality_open_actions_v1.html"
+    )
+    template_context = helper.call_args.args[2]
+    assert template_context["digest_preview"]["actions"][0]["action_id"] == (
+        "trace-action-1"
+    )
 
 
 @pytest.mark.django_db

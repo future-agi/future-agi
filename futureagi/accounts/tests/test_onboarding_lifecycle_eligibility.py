@@ -7,6 +7,7 @@ from accounts.models import (
     OnboardingGoal,
     OnboardingLifecycleEvaluationLog,
     OnboardingLifecyclePreference,
+    OnboardingQualityAction,
 )
 from accounts.models.workspace import Workspace
 from accounts.services.onboarding.activation_events import record_event
@@ -298,6 +299,136 @@ def test_daily_quality_open_action_digest_is_repeatable_after_prior_completion(
         "daily_quality_action_completed"
     )
     assert "campaign_key=daily_quality_open_actions" in decision.target_url
+
+
+@pytest.mark.django_db
+def test_daily_quality_open_action_digest_preview_uses_safe_action_snapshot(
+    organization,
+    workspace,
+    user,
+):
+    now = timezone.now()
+    OnboardingQualityAction.no_workspace_objects.create(
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        product_path="observe",
+        action_key="trace-action-1",
+        status=OnboardingQualityAction.STATUS_OPEN,
+        label="Assign trace owner",
+        body="Internal investigation text should stay out of the digest preview.",
+        route="https://example.invalid/private-trace",
+        fallback_route="https://example.invalid/fallback",
+        source_type="trace",
+        source_id="trace-123",
+        is_sample=False,
+        last_event_at=now - timedelta(minutes=75),
+        metadata={
+            "api_token": "secret-value",
+            "raw_payload": {"request": "private prompt text"},
+        },
+    )
+    flags = _flags()
+    activation_state = {
+        "stage": "daily_review",
+        "primary_path": "observe",
+        "is_activated": True,
+        "recommended_action": {
+            "id": "review_daily_quality",
+            "href": "/dashboard/home?mode=daily-quality",
+        },
+        "fallback_action": {"id": "open_get_started"},
+        "permissions": {
+            "can_write": True,
+            "permission_limited": False,
+        },
+        "sample_project": {},
+        "signals": {},
+        "daily_quality": {"mode": "open_action"},
+        "route_availability": {
+            "daily_quality_home": {
+                "href": "/dashboard/home?mode=daily-quality",
+                "is_available": True,
+                "reason": None,
+            }
+        },
+        "last_meaningful_event": {
+            "occurred_at": now - timedelta(hours=2),
+            "is_sample": False,
+        },
+    }
+
+    decision = evaluate_lifecycle_decision(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        activation_state=activation_state,
+        flags=flags,
+        now=now,
+    )
+
+    preview = decision.metadata["digest_preview"]
+    assert preview["kind"] == "daily_quality_open_actions"
+    assert preview["action_count"] == 1
+    assert preview["omitted_count"] == 0
+    assert preview["safe_fields"] == [
+        "action_id",
+        "label",
+        "route",
+        "fallback_route",
+        "source_type",
+        "source_id",
+        "primary_path",
+        "status",
+        "age_minutes",
+        "last_event_at",
+    ]
+    assert preview["actions"] == [
+        {
+            "action_id": "trace-action-1",
+            "label": "Assign trace owner",
+            "route": "/dashboard/home",
+            "fallback_route": "/dashboard/get-started",
+            "source_type": "trace",
+            "source_id": "trace-123",
+            "primary_path": "observe",
+            "status": OnboardingQualityAction.STATUS_OPEN,
+            "age_minutes": 75,
+            "last_event_at": (now - timedelta(minutes=75)).isoformat(),
+        }
+    ]
+    assert "body" not in preview["actions"][0]
+    assert "metadata" not in preview["actions"][0]
+    assert "secret-value" not in str(preview)
+    assert "private prompt text" not in str(preview)
+
+
+@pytest.mark.django_db
+def test_non_digest_campaign_does_not_include_digest_preview(
+    organization,
+    workspace,
+    user,
+):
+    now = timezone.now()
+    _set_workspace_created_at(workspace, now - timedelta(minutes=20))
+    flags = _flags()
+    activation_state = resolve_activation_state(
+        context=_context(user, organization, workspace, goal=None),
+        flags=flags,
+        signals=OnboardingSignals(first_checks={}),
+    )
+
+    decision = evaluate_lifecycle_decision(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        activation_state=activation_state,
+        flags=flags,
+        now=now,
+    )
+
+    assert decision.campaign["campaign_key"] == "welcome_choose_goal"
+    assert "digest_preview" not in decision.metadata
 
 
 @pytest.mark.django_db

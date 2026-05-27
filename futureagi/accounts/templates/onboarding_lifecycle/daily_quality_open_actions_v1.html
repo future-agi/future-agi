@@ -1,0 +1,14 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Review open FutureAGI quality actions{% endblock %}
+{% block heading %}Review open quality actions{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has open quality actions waiting for review.</p>
+  {% if digest_preview.actions %}
+    <ul style="margin:0 0 16px;padding-left:20px;">
+      {% for action in digest_preview.actions %}
+        <li style="margin:0 0 8px;"><strong>{{ action.label }}</strong></li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  <p style="margin:0;">Open the daily quality home to resolve, dismiss, or assign the next action.</p>
+{% endblock %}

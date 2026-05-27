@@ -97,6 +97,7 @@ def build_lifecycle_template_context(*, send_log, campaign, target_route, now=No
         "snooze_url": lifecycle_endpoint_path("snooze", snooze_token, {"days": 7}),
         "support_url": absolute_lifecycle_url(SUPPORT_URL),
         "target_route": target_route,
+        "digest_preview": (send_log.metadata or {}).get("digest_preview"),
     }
 
 

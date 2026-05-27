@@ -13,6 +13,9 @@ from accounts.models import (
 )
 from accounts.services.onboarding.activation_events import has_event
 from accounts.services.onboarding.flow_config import configured_action
+from accounts.services.onboarding.lifecycle_digest_preview import (
+    build_lifecycle_digest_preview,
+)
 from accounts.services.onboarding.lifecycle_frequency import frequency_cap_suppression
 from accounts.services.onboarding.lifecycle_registry import lifecycle_campaigns
 from tracer.models.project import Project
@@ -710,6 +713,20 @@ def evaluate_lifecycle_decision(
         if reason in {"no_matching_campaign", "workspace_inactive", "missing_email"}
         else OnboardingLifecycleEvaluationLog.STATUS_SUPPRESSED
     )
+    metadata = {
+        "source": source,
+        "send_enabled": bool(flags.get("onboarding_lifecycle_send_enabled")),
+    }
+    digest_preview = build_lifecycle_digest_preview(
+        organization=organization,
+        workspace=workspace,
+        activation_state=activation_state,
+        campaign=campaign,
+        now=now,
+    )
+    if digest_preview:
+        metadata["digest_preview"] = digest_preview
+
     return LifecycleDecision(
         run_id=run_id,
         user=user,
@@ -723,10 +740,7 @@ def evaluate_lifecycle_decision(
         suppression_reason=reason,
         suppression_details=details,
         evaluated_at=now,
-        metadata={
-            "source": source,
-            "send_enabled": bool(flags.get("onboarding_lifecycle_send_enabled")),
-        },
+        metadata=metadata,
     )
 
 
@@ -761,6 +775,7 @@ def write_lifecycle_evaluation(decision):
 
 def lifecycle_preview_from_decision(decision, *, flags):
     campaign = decision.campaign or {}
+    metadata = decision.metadata or {}
     return {
         "dry_run_enabled": bool(flags.get("onboarding_lifecycle_dry_run_enabled")),
         "send_enabled": bool(flags.get("onboarding_lifecycle_send_enabled")),
@@ -774,5 +789,6 @@ def lifecycle_preview_from_decision(decision, *, flags):
         "target_success_event": campaign.get("target_success_event"),
         "target_action_id": campaign.get("target_action_id"),
         "target_url": decision.target_url,
+        "digest_preview": metadata.get("digest_preview"),
         "dry_run_only": not bool(flags.get("onboarding_lifecycle_send_enabled")),
     }

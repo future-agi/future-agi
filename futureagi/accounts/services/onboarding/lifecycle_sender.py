@@ -396,6 +396,15 @@ def _send_log_defaults(evaluation_log, campaign, decision, now, cohort):
     campaign = campaign or {}
     snapshot = decision.activation_state or {}
     recommended_action = snapshot.get("recommended_action") or {}
+    metadata = {
+        "cohort": cohort,
+        "source_run_id": str(evaluation_log.run_id),
+    }
+    digest_preview = (decision.metadata or {}).get("digest_preview") or (
+        evaluation_log.metadata or {}
+    ).get("digest_preview")
+    if digest_preview:
+        metadata["digest_preview"] = digest_preview
     return {
         "user": evaluation_log.user,
         "organization": evaluation_log.organization,
@@ -414,10 +423,7 @@ def _send_log_defaults(evaluation_log, campaign, decision, now, cohort):
         or evaluation_log.target_success_event,
         "target_route": decision.target_url or evaluation_log.target_url or "",
         "queued_at": now,
-        "metadata": {
-            "cohort": cohort,
-            "source_run_id": str(evaluation_log.run_id),
-        },
+        "metadata": metadata,
     }
 
 
