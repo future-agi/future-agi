@@ -309,6 +309,39 @@ describe("OnboardingHomeView", () => {
     );
   });
 
+  it("renders daily quality home for activated non-observe paths", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("dailyQualityPromptNoSignal"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home?mode=daily-quality");
+
+    expect(screen.getByTestId("onboarding-daily-quality")).toBeVisible();
+    expect(screen.getByTestId("daily-quality-empty-state")).toBeVisible();
+    expect(screen.queryByText("Recommended action")).toBeNull();
+    expect(
+      screen.getByTestId("daily-quality-primary-action"),
+    ).toHaveTextContent("Review prompt metrics");
+    expect(
+      screen.getByTestId("daily-quality-product-card-prompt"),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "daily_quality_home_viewed",
+        expect.objectContaining({
+          daily_quality_mode: "no_new_signal",
+          primary_path: "prompt",
+          recommended_action_id: "open_prompt_metrics",
+        }),
+      ),
+    );
+  });
+
   it("checks again from the waiting-for-signal panel", async () => {
     const refetch = vi.fn();
     mocks.useActivationState.mockReturnValue({

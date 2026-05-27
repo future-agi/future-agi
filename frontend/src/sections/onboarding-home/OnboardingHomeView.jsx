@@ -428,6 +428,17 @@ export default function OnboardingHomeView() {
     });
   };
 
+  const dailyQualityPanel =
+    renderedState.homeMode === "daily_quality" && renderedState.dailyQuality ? (
+      <DailyQualityHome
+        dailyQuality={renderedState.dailyQuality}
+        recommendedAction={renderedState.recommendedAction}
+        onActionClick={handleDailyActionClick}
+        onSignalReview={handleDailySignalReview}
+        canAct={!renderedState.permissions?.permissionLimited}
+      />
+    ) : null;
+
   const observePanelProps = {
     action: renderedState.recommendedAction,
     fallbackAction: renderedState.fallbackAction,
@@ -462,23 +473,14 @@ export default function OnboardingHomeView() {
             stage={renderedState.stage}
           />
         ) : null}
-        {["activated", "daily_review"].includes(renderedState.stage) ? (
-          renderedState.homeMode === "daily_quality" &&
-          renderedState.dailyQuality ? (
-            <DailyQualityHome
-              dailyQuality={renderedState.dailyQuality}
-              recommendedAction={renderedState.recommendedAction}
-              onActionClick={handleDailyActionClick}
-              onSignalReview={handleDailySignalReview}
-              canAct={!renderedState.permissions?.permissionLimited}
-            />
-          ) : (
-            <FirstLoopCompletePanel
-              {...observePanelProps}
-              lastMeaningfulEvent={renderedState.lastMeaningfulEvent}
-            />
-          )
-        ) : null}
+        {["activated", "daily_review"].includes(renderedState.stage)
+          ? dailyQualityPanel || (
+              <FirstLoopCompletePanel
+                {...observePanelProps}
+                lastMeaningfulEvent={renderedState.lastMeaningfulEvent}
+              />
+            )
+          : null}
       </>
     ) : null;
 
@@ -578,6 +580,8 @@ export default function OnboardingHomeView() {
               />
             ) : null}
           </Stack>
+        ) : dailyQualityPanel ? (
+          <Stack spacing={2}>{dailyQualityPanel}</Stack>
         ) : (
           <Box
             sx={{
