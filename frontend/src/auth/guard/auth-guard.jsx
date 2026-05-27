@@ -14,6 +14,11 @@ import { trackRedditSignup } from "src/utils/redditAds";
 import { trackTwitterSignup } from "src/utils/twitterAds";
 import { ROLES } from "src/utils/rolePermissionMapping";
 import { usePostLoginPath } from "src/hooks/useDeploymentMode";
+import {
+  buildCurrentFlowContext,
+  CurrentFlowEvents,
+  trackCurrentFlow,
+} from "src/utils/analytics/currentFlow";
 
 // ----------------------------------------------------------------------
 
@@ -56,7 +61,6 @@ function Container({ children }) {
     const refreshToken = queryParams.get("refresh_token");
     const isNewOAuthUser = queryParams.get("is_new_user") === "true";
     const returnTo = localStorage.getItem("redirectUrl");
-
 
     if (!authenticated) {
       if (sso_token) {
@@ -112,6 +116,30 @@ function Container({ children }) {
     // Skip redirect logic for standalone pages (e.g. MCP OAuth consent)
     if (window.location.pathname.startsWith("/mcp/")) return;
     if (!user) return;
+    const trackPostLoginDecision = (decisionBranch, targetRoute) => {
+      trackCurrentFlow(
+        CurrentFlowEvents.currentFlowPostLoginDecisionResolved,
+        {
+          ...buildCurrentFlowContext({
+            user,
+            route: window.location.pathname,
+            postLoginPath,
+          }),
+          event_source: "auth_guard",
+          decision_branch: decisionBranch,
+          target_route: targetRoute,
+        },
+        {
+          onceKeyParts: [
+            "postLoginDecision",
+            user?.default_workspace_id,
+            user?.id,
+            decisionBranch,
+          ],
+        },
+      );
+    };
+
     const isNewOAuthSignup = localStorage.getItem("isNewOAuthSignup") === "1";
     if (isNewOAuthSignup) {
       const stampedAt = Number(localStorage.getItem("isNewOAuthSignupAt") || 0);
@@ -144,6 +172,7 @@ function Container({ children }) {
     // New user to platform (requires_org_setup) — redirect to org-setup
     // flow and, for OAuth/SSO paths, fire ad-platform signup conversions.
     if (user?.requires_org_setup) {
+      trackPostLoginDecision("requires_org_setup", paths.auth.jwt.org_removed);
       // Default to "oauth" so SSO / deep-link / unknown paths are still
       // counted. "email" is excluded because the register view fires it
       // directly at API-success time.
@@ -176,7 +205,10 @@ function Container({ children }) {
     }
 
     // Onboarding not finished — let the setup-org effect below handle routing.
-    if (!user?.onboarding_completed) return;
+    if (!user?.onboarding_completed) {
+      trackPostLoginDecision("onboarding_incomplete", window.location.pathname);
+      return;
+    }
 
     const initial = localStorage.getItem("initial-render");
 
@@ -184,8 +216,13 @@ function Container({ children }) {
       // If user has an organization_role, they're already part of an org (invited or owner)
       // Skip onboarding and go straight to dashboard
       if (user?.organization_role) {
+        trackPostLoginDecision("organization_role_post_login", postLoginPath);
         router.replace(postLoginPath);
       } else {
+        trackPostLoginDecision(
+          "no_org_role_get_started",
+          "/dashboard/get-started",
+        );
         router.replace("/dashboard/get-started");
       }
       localStorage.setItem("initial-render", "done");

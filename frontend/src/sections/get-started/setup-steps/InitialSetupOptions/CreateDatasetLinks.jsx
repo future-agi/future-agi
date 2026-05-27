@@ -2,18 +2,59 @@ import { Box, Button, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
 import GetStartedDemoVideo from "../../GetStartedDemoVideo";
+import { useAuthContext } from "src/auth/hooks";
+import {
+  buildCurrentFlowContext,
+  CurrentFlowEvents,
+  isProductRoute,
+  normalizeGetStartedStep,
+  trackCurrentFlow,
+} from "src/utils/analytics/currentFlow";
 
 const CreateDatasetLinks = ({
   links = [],
   heading,
   descriptions,
   buttonTitle,
+  targetRoute,
   buttonAction = () => {},
 }) => {
   const [showDemoModal, setShowDemoModal] = useState(null);
+  const { user } = useAuthContext();
 
   const handleClose = () => {
     setShowDemoModal(null);
+  };
+
+  const handlePrimaryClick = () => {
+    const context = buildCurrentFlowContext({ user });
+    trackCurrentFlow(CurrentFlowEvents.currentFlowGetStartedPrimaryClicked, {
+      ...context,
+      event_source: "get_started_dataset_links",
+      selected_step: normalizeGetStartedStep(heading),
+      button_text: buttonTitle,
+      target_route: targetRoute,
+    });
+    if (targetRoute && isProductRoute(targetRoute)) {
+      trackCurrentFlow(
+        CurrentFlowEvents.currentFlowFirstValueCandidate,
+        {
+          ...context,
+          event_source: "get_started_dataset_links",
+          selected_step: normalizeGetStartedStep(heading),
+          candidate_type: "get_started_primary_route",
+          target_route: targetRoute,
+        },
+        {
+          onceKeyParts: [
+            "firstValueCandidate",
+            user?.default_workspace_id,
+            user?.id,
+          ],
+        },
+      );
+    }
+    buttonAction();
   };
 
   return (
@@ -87,7 +128,7 @@ const CreateDatasetLinks = ({
           color="primary"
           variant="contained"
           sx={{ maxWidth: "max-content", height: "38px", padding: "8px 24px" }}
-          onClick={buttonAction}
+          onClick={handlePrimaryClick}
         >
           {buttonTitle}
         </Button>
@@ -136,5 +177,6 @@ CreateDatasetLinks.propTypes = {
   heading: PropTypes.string,
   descriptions: PropTypes.array,
   buttonTitle: PropTypes.string,
+  targetRoute: PropTypes.string,
   buttonAction: PropTypes.func,
 };

@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import Box from "@mui/material/Box";
+import { useAuthContext } from "src/auth/hooks";
+import {
+  buildCurrentFlowContext,
+  CurrentFlowEvents,
+  trackCurrentFlow,
+} from "src/utils/analytics/currentFlow";
 import useFalconStore from "./store/useFalconStore";
 import useFalconSocket from "./hooks/useFalconSocket";
 import { useFalconContext } from "./hooks/useFalconContext";
@@ -20,6 +26,7 @@ import CustomizePanel from "./components/CustomizePanel";
 export default function FalconAIFullPage() {
   const { conversationId: urlConversationId } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuthContext();
 
   const currentConversationId = useFalconStore((s) => s.currentConversationId);
   const setCurrentConversation = useFalconStore(
@@ -55,6 +62,21 @@ export default function FalconAIFullPage() {
   useEffect(() => {
     loadSkillsAndConnectors();
   }, [loadSkillsAndConnectors]);
+
+  useEffect(() => {
+    if (!user) return;
+    trackCurrentFlow(
+      CurrentFlowEvents.currentFlowFalconViewed,
+      {
+        ...buildCurrentFlowContext({ user }),
+        event_source: "falcon_full_page",
+        has_conversation_id: Boolean(urlConversationId),
+      },
+      {
+        onceKeyParts: ["falconViewed", user?.default_workspace_id, user?.id],
+      },
+    );
+  }, [urlConversationId, user]);
 
   // Sync URL ↔ store (one-way: URL wins on mount, store wins after)
   const initializedRef = useRef(false);
@@ -114,6 +136,41 @@ export default function FalconAIFullPage() {
       // Capture attached files before clearing
       const attachedFiles = useFalconStore.getState().attachedFiles;
       const fileIds = attachedFiles.map((f) => f.id);
+      const contextProperties = buildCurrentFlowContext({ user });
+
+      trackCurrentFlow(
+        CurrentFlowEvents.currentFlowFalconMessageSent,
+        {
+          ...contextProperties,
+          event_source: "falcon_full_page",
+          conversation_id: convId,
+          had_existing_conversation: Boolean(currentConversationId),
+          attached_file_count: fileIds.length,
+        },
+        {
+          onceKeyParts: [
+            "falconMessageSent",
+            user?.default_workspace_id,
+            user?.id,
+          ],
+        },
+      );
+      trackCurrentFlow(
+        CurrentFlowEvents.currentFlowFirstValueCandidate,
+        {
+          ...contextProperties,
+          event_source: "falcon_full_page",
+          candidate_type: "falcon_first_message",
+          conversation_id: convId,
+        },
+        {
+          onceKeyParts: [
+            "firstValueCandidate",
+            user?.default_workspace_id,
+            user?.id,
+          ],
+        },
+      );
 
       const userMsg = {
         id: `user-${Date.now()}`,
@@ -149,10 +206,12 @@ export default function FalconAIFullPage() {
     [
       currentConversationId,
       context,
+      user,
       setCurrentConversation,
       addMessage,
       setStreaming,
       sendChat,
+      navigate,
     ],
   );
 

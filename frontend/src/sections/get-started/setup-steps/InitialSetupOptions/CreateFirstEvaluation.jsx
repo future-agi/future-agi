@@ -77,6 +77,7 @@ const CreateFirstEvaluation = ({ setCurrentLabel }) => {
           heading="Set Up Your First Evaluation"
           descriptions={descriptions}
           buttonTitle="Create evaluation"
+          targetRoute="/dashboard/evaluations"
           buttonAction={() => navigate("/dashboard/evaluations")}
         />
       </Box>

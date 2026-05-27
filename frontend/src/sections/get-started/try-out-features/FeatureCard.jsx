@@ -9,7 +9,14 @@ import {
 import PropTypes from "prop-types";
 import React from "react";
 import { useNavigate } from "react-router";
+import { useAuthContext } from "src/auth/hooks";
 import Image from "src/components/image";
+import {
+  buildCurrentFlowContext,
+  CurrentFlowEvents,
+  getRouteFamily,
+  trackCurrentFlow,
+} from "src/utils/analytics/currentFlow";
 
 const FeatureCard = ({
   title = "",
@@ -21,8 +28,40 @@ const FeatureCard = ({
   actionLink,
 }) => {
   const navigate = useNavigate();
+  const { user } = useAuthContext();
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+
+  const handleFeatureClick = () => {
+    const context = buildCurrentFlowContext({ user });
+    trackCurrentFlow(CurrentFlowEvents.currentFlowTryFeatureClicked, {
+      ...context,
+      event_source: "get_started_feature_card",
+      feature_title: title,
+      button_text: buttonTitle,
+      target_route: actionLink,
+      target_route_family: getRouteFamily(actionLink),
+    });
+    trackCurrentFlow(
+      CurrentFlowEvents.currentFlowFirstValueCandidate,
+      {
+        ...context,
+        event_source: "get_started_feature_card",
+        candidate_type: "try_feature_card",
+        feature_title: title,
+        target_route: actionLink,
+        target_route_family: getRouteFamily(actionLink),
+      },
+      {
+        onceKeyParts: [
+          "firstValueCandidate",
+          user?.default_workspace_id,
+          user?.id,
+        ],
+      },
+    );
+    navigate(actionLink);
+  };
 
   return (
     <Box
@@ -105,7 +144,7 @@ const FeatureCard = ({
             <Button
               color="primary"
               variant="contained"
-              onClick={() => navigate(actionLink)}
+              onClick={handleFeatureClick}
               sx={{ height: "38px", padding: "8px 24px" }}
             >
               <Typography

@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 
 import { AuthGuard } from "src/auth/guard";
+import { useAuthContext } from "src/auth/hooks";
 import DashboardLayout from "src/layouts/dashboard";
 
 import { LoadingScreen } from "src/components/loading-screen";
@@ -13,6 +14,12 @@ import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
 import GatewayGuard from "src/sections/gateway/components/GatewayGuard";
 import lazyWithRetry from "src/utils/lazyWithRetry";
+import {
+  buildCurrentFlowContext,
+  CurrentFlowEvents,
+  isProductRoute,
+  trackCurrentFlow,
+} from "src/utils/analytics/currentFlow";
 // Lazy load all route components (with retry for chunk errors after deploys)
 const DevKeysPage = lazyWithRetry(
   () => import("src/pages/dashboard/keys/dev-keys"),
@@ -434,6 +441,7 @@ const ErrorBoundaryTest = () => {
 
 const DashboardRoutes = () => {
   const location = useLocation();
+  const { user } = useAuthContext();
 
   React.useEffect(() => {
     const { eventName, extras = {} } = getPageViewEvent(
@@ -441,7 +449,43 @@ const DashboardRoutes = () => {
       location.search,
     ) || { eventName: Events.pageView, extras: {} };
     trackEvent(eventName, { path: location.pathname, ...extras });
-  }, [location]);
+    if (!user) return;
+
+    const context = buildCurrentFlowContext({
+      user,
+      route: location.pathname,
+    });
+
+    trackCurrentFlow(
+      CurrentFlowEvents.currentFlowFirstLandingViewed,
+      {
+        ...context,
+        event_source: "dashboard_routes",
+        query_present: Boolean(location.search),
+      },
+      {
+        onceKeyParts: ["firstLanding", user?.default_workspace_id, user?.id],
+      },
+    );
+
+    if (isProductRoute(location.pathname)) {
+      trackCurrentFlow(
+        CurrentFlowEvents.currentFlowFirstProductRouteOpened,
+        {
+          ...context,
+          event_source: "dashboard_routes",
+          query_present: Boolean(location.search),
+        },
+        {
+          onceKeyParts: [
+            "firstProductRoute",
+            user?.default_workspace_id,
+            user?.id,
+          ],
+        },
+      );
+    }
+  }, [location, user]);
 
   return (
     <AuthGuard>
