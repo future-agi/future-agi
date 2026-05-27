@@ -177,6 +177,7 @@ export default function UsageChart({
   return (
     <Box>
       <ApexChart
+        key={`${dimension}-${displayUnit}`}
         type="area"
         series={chartSeries}
         options={apexOptions}
