@@ -132,6 +132,7 @@ class CustomModelsAPITestCase(APITestCase):
         user=None,
         workspace=None,
         deleted=False,
+        key_config=None,
     ):
         """Helper method to create a custom model."""
         org = organization or self.organization
@@ -146,7 +147,7 @@ class CustomModelsAPITestCase(APITestCase):
             organization=org,
             workspace=ws,
             user=user or self.user,
-            key_config={"key": "test-api-key"},
+            key_config=key_config or {"key": "test-api-key"},
             deleted=deleted,
         )
 
@@ -189,6 +190,20 @@ class TestCustomModelsListView(CustomModelsAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["id"], str(model1.id))
+
+    def test_list_custom_models_defaults_volume_when_clickhouse_unavailable(
+        self, mock_volume
+    ):
+        """Test model listing still succeeds if volume lookup is unavailable."""
+        self.create_custom_model(user_model_id="my-model")
+        mock_volume.side_effect = RuntimeError("clickhouse unavailable")
+
+        response = self.client.get(f"{BASE_URL}/custom-models/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["volume"], 0)
+        self.assertEqual(response.data["results"][0]["total_count"], 0)
 
     def test_list_custom_models_excludes_deleted(self, mock_volume):
         """Test that deleted models are not returned."""
@@ -963,6 +978,76 @@ class TestEditCustomModelView(CustomModelsAPITestCase):
         model.refresh_from_db()
         self.assertEqual(model.user_model_id, "new-name")
         self.assertEqual(model.input_token_cost, 0.02)
+
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_patch_edit_model_partial_cost_update_preserves_existing_fields(
+        self, mock_validate
+    ):
+        """Test patching one cost does not clear the other cost or key config."""
+        model = self.create_custom_model(
+            user_model_id="cost-only",
+            input_token_cost=0.01,
+            output_token_cost=0.02,
+        )
+        original_key_config = model.key_config.copy()
+
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {
+                "id": str(model.id),
+                "input_token_cost": 0.05,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        mock_validate.assert_not_called()
+        model.refresh_from_db()
+        self.assertEqual(model.input_token_cost, 0.05)
+        self.assertEqual(model.output_token_cost, 0.02)
+        saved_model = CustomAIModel.objects.get(id=model.id)
+        self.assertEqual(saved_model.key_config, original_key_config)
+
+    @patch("model_hub.views.custom_model.validate_model_working")
+    def test_patch_edit_model_preserves_custom_config_after_validation(
+        self, mock_validate
+    ):
+        """Test custom provider validation cannot mutate the config that is saved."""
+
+        def mutate_validation_config(model_name, api_key, provider):
+            del model_name, provider
+            api_key["config_json"].pop("api_base")
+            api_key["config_json"].pop("headers")
+            return "ok"
+
+        mock_validate.side_effect = mutate_validation_config
+        model = self.create_custom_model(
+            user_model_id="custom-model",
+            provider="custom",
+            key_config={
+                "api_base": "https://old.example.test/chat",
+                "headers": {"x_api_key": "old-key"},
+                "custom_provider": True,
+            },
+        )
+        config_json = {
+            "api_base": "https://new.example.test/chat",
+            "headers": {"x_api_key": "new-key"},
+            "custom_provider": True,
+        }
+
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {
+                "id": str(model.id),
+                "config_json": config_json,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        saved_model = CustomAIModel.objects.get(id=model.id)
+        self.assertEqual(saved_model.actual_json, config_json)
 
     def test_patch_edit_model_rejects_unknown_request_fields(self):
         response = self.client.patch(

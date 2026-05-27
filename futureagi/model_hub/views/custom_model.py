@@ -44,12 +44,29 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 logger = structlog.get_logger(__name__)
 
 
+def _restore_plain_key_config_for_save(ai_model):
+    if ai_model.key_config:
+        ai_model.key_config = ai_model.actual_json
+
+
 class CustomAIModelView(APIView):
     """Return all the models that belongs to a user organization"""
 
     serializer_class = CustomAIModelSerializer
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
+
+    @staticmethod
+    def _get_model_volume_or_default(model_id):
+        try:
+            return get_model_volume(model_ids=[model_id])
+        except Exception as exc:
+            logger.warning(
+                "Error fetching custom model volume",
+                model_id=str(model_id),
+                error=str(exc),
+            )
+            return 0, 0
 
     @swagger_auto_schema(
         responses={200: ModelHubPaginatedResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
@@ -86,7 +103,9 @@ class CustomAIModelView(APIView):
         )
         provider_key_map = {res.provider: res for res in api_keys_all}
         for res in result_page:
-            res["volume"], res["total_count"] = get_model_volume(model_ids=[res["id"]])
+            res["volume"], res["total_count"] = self._get_model_volume_or_default(
+                res["id"]
+            )
             if not res.get("config_json"):
                 try:
                     api_key = provider_key_map.get(res.get("provider"))
@@ -305,6 +324,7 @@ class CustomAIModelDetailsView(APIView):
                 ai_model.output_token_cost = output_token_cost
             if new_model_name:
                 ai_model.user_model_id = new_model_name
+            _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
 
             ai_model_serializer = CustomAIModelSerializer(ai_model)
@@ -340,6 +360,7 @@ class UpdateMetricCustomAIModelView(APIView):
             )
             new_metrics = Metric.objects.get(id=new_metrics_id, model_id=ai_model_id)
             ai_model.default_metric = new_metrics
+            _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
 
             return Response(
@@ -378,6 +399,7 @@ class UpdateBaselineDatasetCustomAIModelView(APIView):
             )
             ai_model.baseline_model_environment = environment
             ai_model.baseline_model_version = version
+            _restore_plain_key_config_for_save(ai_model)
             ai_model.save()
 
             return Response(
@@ -519,43 +541,48 @@ class EditCustomModel(APIView):
             )
             if not model_name:
                 model_name = model.user_model_id
-            try:
-                if key:
-                    res = validate_model_working(
-                        model_name=model_name,
-                        api_key={"api_key": key},
-                        provider=model.provider,
-                    )
-                elif config_json:
-                    res = validate_model_working(
-                        model_name=model_name,
-                        api_key=(
-                            {"config_json": config_json}
-                            if model.provider in ["vertex_ai", "custom"]
+            if key or config_json:
+                try:
+                    if key:
+                        res = validate_model_working(
+                            model_name=model_name,
+                            api_key={"api_key": key},
+                            provider=model.provider,
+                        )
+                    else:
+                        validation_config = (
+                            config_json.copy()
+                            if isinstance(config_json, dict)
                             else config_json
-                        ),
-                        provider=model.provider,
-                    )
+                        )
+                        res = validate_model_working(
+                            model_name=model_name,
+                            api_key=(
+                                {"config_json": validation_config}
+                                if model.provider in ["vertex_ai", "custom"]
+                                else validation_config
+                            ),
+                            provider=model.provider,
+                        )
 
-                if isinstance(res, Exception):
-                    return self._gm.bad_request(
-                        "Model_validation Failed. Please enter correct details."
-                    )
-            except Exception:
-                return self._gm.bad_request("Model Validation failed.")
+                    if isinstance(res, Exception):
+                        return self._gm.bad_request(
+                            "Model_validation Failed. Please enter correct details."
+                        )
+                except Exception:
+                    return self._gm.bad_request("Model Validation failed.")
 
             model.user_model_id = model_name if model_name else model.user_model_id
-            model.input_token_cost = (
-                input_token_cost if input_token_cost else model.input_token_cost
-            )
-            model.output_token_cost = (
-                output_token_cost if output_token_cost else output_token_cost
-            )
-            model.key_config = (
-                config_json
-                if config_json
-                else {"key": key} if key else model.key_config
-            )
+            if input_token_cost is not None:
+                model.input_token_cost = input_token_cost
+            if output_token_cost is not None:
+                model.output_token_cost = output_token_cost
+            if config_json:
+                model.key_config = config_json
+            elif key:
+                model.key_config = {"key": key}
+            else:
+                _restore_plain_key_config_for_save(model)
             model.save()
 
             return self._gm.success_response("Model updated Successfully")
