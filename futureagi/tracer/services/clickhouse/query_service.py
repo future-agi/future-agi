@@ -124,43 +124,43 @@ class AnalyticsQueryService:
         #     can skip partitions and granules.
         #   * `LIMIT 10000` inside each per-map subquery before the
         #     ARRAY JOIN — without this, projects with millions of spans
-        #     and wide `span_attr_*` maps hit Code: 307 (max_bytes_to_read)
+        #     and wide `attrs_*` maps hit Code: 307 (max_bytes_to_read)
         #     because every row's Map gets exploded.
         # Trade-off: `argMax(type, cnt)` type resolution is now on capped
         # counts, and brand-new attribute keys added in the last hour on a
         # high-volume project may not appear until older rows drop out of
         # the LIMIT window.
         # Use argMax(type, cnt) to pick the type with the highest row count.
-        # When a key exists in both span_attr_str and span_attr_num,
+        # When a key exists in both attrs_string and attrs_number,
         # the map with more rows wins (avoids phone numbers being typed as
-        # number when they appear in span_attr_num for only a few rows).
+        # number when they appear in attrs_number for only a few rows).
         query = """
             SELECT key, argMax(type, cnt) AS type FROM (
                 SELECT key, 'text' AS type, count() AS cnt FROM (
-                    SELECT span_attr_str FROM spans
+                    SELECT attrs_string FROM spans
                     WHERE project_id = %(project_id)s
                       AND is_deleted = 0
                       AND created_at >= now() - INTERVAL 7 DAY
                     LIMIT 10000
-                ) ARRAY JOIN mapKeys(span_attr_str) AS key
+                ) ARRAY JOIN mapKeys(attrs_string) AS key
                 GROUP BY key
                 UNION ALL
                 SELECT key, 'number' AS type, count() AS cnt FROM (
-                    SELECT span_attr_num FROM spans
+                    SELECT attrs_number FROM spans
                     WHERE project_id = %(project_id)s
                       AND is_deleted = 0
                       AND created_at >= now() - INTERVAL 7 DAY
                     LIMIT 10000
-                ) ARRAY JOIN mapKeys(span_attr_num) AS key
+                ) ARRAY JOIN mapKeys(attrs_number) AS key
                 GROUP BY key
                 UNION ALL
                 SELECT key, 'boolean' AS type, count() AS cnt FROM (
-                    SELECT span_attr_bool FROM spans
+                    SELECT attrs_bool FROM spans
                     WHERE project_id = %(project_id)s
                       AND is_deleted = 0
                       AND created_at >= now() - INTERVAL 7 DAY
                     LIMIT 10000
-                ) ARRAY JOIN mapKeys(span_attr_bool) AS key
+                ) ARRAY JOIN mapKeys(attrs_bool) AS key
                 GROUP BY key
             )
             GROUP BY key

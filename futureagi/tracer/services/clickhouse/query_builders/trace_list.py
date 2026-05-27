@@ -183,7 +183,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             trace_session_id,
             project_id"""
 
-        # Phase 1: light columns only (no input/output/span_attr/metadata).
+        # Phase 1: light columns only (no input/output/attrs/metadata).
         # Heavy columns are fetched in build_content_query() for just the
         # returned trace_ids — avoids OOM on large tables.
         #
@@ -242,9 +242,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             trace_id,
             input,
             output,
-            span_attr_str,
-            span_attr_num,
-            metadata_map,
+            attrs_string,
+            attrs_number,
+            toJSONString(metadata) AS metadata,
             trace_tags
         FROM {self.TABLE}
         PREWHERE trace_id IN %(content_trace_ids)s
@@ -270,13 +270,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         query = f"""
         SELECT
             trace_id,
-            span_attributes_raw
+            attributes_extra
         FROM {self.TABLE}
         PREWHERE trace_id IN %(attr_trace_ids)s
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
-          AND span_attributes_raw != '{{}}'
-          AND span_attributes_raw != ''
+          AND attributes_extra != '{{}}'
+          AND attributes_extra != ''
         """
         return query, params
 

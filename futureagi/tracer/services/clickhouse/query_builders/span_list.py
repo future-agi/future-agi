@@ -156,7 +156,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             return "", {}
         params = {**self.params, "content_span_ids": tuple(span_ids)}
         query = f"""
-        SELECT id, input, output, span_attributes_raw
+        SELECT id, input, output, attributes_extra
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
         WHERE project_id = %(project_id)s AND is_deleted = 0

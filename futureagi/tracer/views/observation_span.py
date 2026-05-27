@@ -1318,7 +1318,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         if has_more:
             result.data = result.data[:page_size]
 
-        # Phase 1b: Fetch input/output/span_attributes_raw for the page
+        # Phase 1b: Fetch input/output/attributes_extra for the page
         span_ids = [str(row.get("id", "")) for row in result.data]
         if span_ids:
             content_query, content_params = builder.build_content_query(span_ids)
@@ -1331,7 +1331,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     c = content_map.get(str(row.get("id", "")), {})
                     row["input"] = c.get("input", "")
                     row["output"] = c.get("output", "")
-                    row["span_attributes_raw"] = c.get("span_attributes_raw", "{}")
+                    row["attributes_extra"] = c.get("attributes_extra", "{}")
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -1495,7 +1495,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     entry[label_id] = span_annotations[label_id]
 
             # Include span attributes for custom columns
-            raw_attrs = row.get("span_attributes_raw", "{}")
+            raw_attrs = row.get("attributes_extra", "{}")
             try:
                 attrs = (
                     json.loads(raw_attrs)

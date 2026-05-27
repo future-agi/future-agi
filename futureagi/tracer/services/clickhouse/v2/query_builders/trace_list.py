@@ -9,8 +9,8 @@ unchanged.
 
 Methods overridden:
   - `build()` — Phase 1: light trace+root-span page (no input/output)
-  - `build_content_query()` — Phase 2: heavy span_attr maps + metadata_map
-  - `build_span_attributes_query()` — Phase 3: span_attributes_raw fetch
+  - `build_content_query()` — Phase 2: heavy attrs maps + metadata
+  - `build_span_attributes_query()` — Phase 3: attributes_extra fetch
   - `build_count_query()` — pagination count
   - `build_span_count_query()` — per-trace span tally
 """

@@ -13,7 +13,7 @@ Mirrors the architecture of v2/query_builders/filters.py:
 Methods overridden:
   - `build()` — the main query (paginated spans page)
   - `build_content_query()` — the per-span input/output/overflow fetch
-    (also rewrites `span_attributes_raw` → `attributes_extra`)
+    (attributes_extra is the v2 column name for overflow attributes)
   - `build_count_query()` — the COUNT for pagination
 
 The eval and annotation queries (`build_eval_query`, `build_annotation_query`)

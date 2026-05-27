@@ -185,6 +185,18 @@ def _safe_float(value, default=0.0):
     return parsed
 
 
+def _safe_parse_metadata(raw):
+    """Parse a metadata JSON string from CH, returning {} on failure."""
+    if isinstance(raw, dict):
+        return raw
+    if not raw or not isinstance(raw, str):
+        return {}
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+
+
 def _build_agent_graph_pg(project_id, filters, builder):
     """Build a small PostgreSQL-backed agent graph when ClickHouse is unavailable."""
     spans_qs = (
@@ -1187,10 +1199,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 '' AS model_parameters, latency_ms, prompt_tokens,
                 completion_tokens, total_tokens, cost, status,
                 status_message, tags, span_events,
-                provider, span_attributes_raw AS span_attributes,
+                provider, attributes_extra AS span_attributes,
                 project_version_id, custom_eval_config_id,
-                metadata_map,
-                span_attr_str, span_attr_num, span_attr_bool
+                toJSONString(metadata) AS metadata_json,
+                attrs_string, attrs_number, attrs_bool
             FROM spans
             WHERE project_id = %(project_id)s
               AND trace_id = %(trace_id)s
@@ -1240,11 +1252,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 span_attrs = {}
             if not span_attrs:
                 span_attrs = {}
-                for k, v in (row.get("span_attr_str") or {}).items():
+                for k, v in (row.get("attrs_string") or {}).items():
                     span_attrs[k] = v
-                for k, v in (row.get("span_attr_num") or {}).items():
+                for k, v in (row.get("attrs_number") or {}).items():
                     span_attrs[k] = v
-                for k, v in (row.get("span_attr_bool") or {}).items():
+                for k, v in (row.get("attrs_bool") or {}).items():
                     span_attrs[k] = bool(v)
             # Fallback: if CH has no span_attributes, try PG
             if not span_attrs:
@@ -1258,9 +1270,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 except ObservationSpan.DoesNotExist:
                     pass
 
-            # Build metadata from metadata_map
-            metadata_map = row.get("metadata_map") or {}
-            metadata = dict(metadata_map) if metadata_map else {}
+            # Build metadata from CH JSON column
+            metadata_raw = row.get("metadata_json") or "{}"
+            metadata = _parse_json(metadata_raw, default={})
 
             span_data = {
                 "id": span_id,
@@ -2980,7 +2992,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             end_time,
             latency_ms,
             provider,
-            span_attributes_raw,
+            attributes_extra,
             -- `eval_attributes` lives on the LANDING table `tracer_observation_span`,
             -- not on the denormalized `spans` table the dashboard reads. The
             -- original query referenced it and CH errored with
@@ -2988,9 +3000,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             -- output comes from the EvalLogger rows we already load further
             -- down — eval_attrs here was only used by simulation_context as a
             -- fallback, and that fallback resolves to {} on this path.
-            span_attr_str,
-            span_attr_num,
-            metadata_map
+            attrs_string,
+            attrs_number,
+            toJSONString(metadata) AS metadata_json
         FROM spans
         WHERE project_id = toUUID(%(project_id)s)
           AND trace_id = %(trace_id)s
@@ -3010,8 +3022,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         row = root_result.data[0]
         provider = row.get("provider") or "vapi"
 
-        # Parse span_attributes_raw to get raw_log
-        span_attrs_raw = row.get("span_attributes_raw", "{}")
+        # Parse attributes_extra to get raw_log
+        span_attrs_raw = row.get("attributes_extra", "{}")
         try:
             span_attrs = (
                 json.loads(span_attrs_raw)
@@ -3026,10 +3038,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_attrs = {}
 
         raw_log = span_attrs.get("raw_log") or {}
-        metadata = {}
-        metadata_map = row.get("metadata_map")
-        if isinstance(metadata_map, dict):
-            metadata = metadata_map
+        metadata_raw = row.get("metadata_json") or "{}"
+        try:
+            metadata = json.loads(metadata_raw) if isinstance(metadata_raw, str) else (metadata_raw or {})
+        except (json.JSONDecodeError, TypeError):
+            metadata = {}
 
         processed_log = ObservabilityService.process_raw_logs(
             raw_log, provider, span_attributes=span_attrs
@@ -3044,7 +3057,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         )
         voice_metrics = self._extract_voice_turn_and_talk_metrics(span_attrs, raw_log)
 
-        attr_str = row.get("span_attr_str") or {}
+        attr_str = row.get("attrs_string") or {}
         recording = self._build_recording_dict(attr_str)
 
         # 2. Fetch child spans
@@ -3067,11 +3080,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             input,
             output,
             parent_span_id,
-            span_attributes_raw,
-            span_attr_str,
-            span_attr_num,
-            span_attr_bool,
-            metadata_map,
+            attributes_extra,
+            attrs_string,
+            attrs_number,
+            attrs_bool,
+            toJSONString(metadata) AS metadata_json,
             status_message,
             tags
         FROM spans
@@ -3111,7 +3124,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         ]
 
         for child in child_result.data:
-            child_attrs_raw = child.get("span_attributes_raw", "{}")
+            child_attrs_raw = child.get("attributes_extra", "{}")
             try:
                 child_span_attrs = (
                     json.loads(child_attrs_raw)
@@ -3121,9 +3134,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             except (json.JSONDecodeError, TypeError):
                 child_span_attrs = {}
 
-            child_attr_str = child.get("span_attr_str") or {}
-            child_attr_num = child.get("span_attr_num") or {}
-            child_attr_bool = child.get("span_attr_bool") or {}
+            child_attr_str = child.get("attrs_string") or {}
+            child_attr_num = child.get("attrs_number") or {}
+            child_attr_bool = child.get("attrs_bool") or {}
             for k, v in child_attr_str.items():
                 child_span_attrs.setdefault(k, v)
             for k, v in child_attr_num.items():
@@ -3164,7 +3177,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         else None
                     ),
                     "span_attributes": child_span_attrs,
-                    "metadata": child.get("metadata_map") or {},
+                    "metadata": _safe_parse_metadata(child.get("metadata_json")),
                     "tags": child.get("tags") or [],
                 }
             )
@@ -3264,8 +3277,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_outputs[config_id] = metric_entry
 
         # Duration from span attributes
-        span_attr_num = row.get("span_attr_num") or {}
-        stored_duration = span_attr_num.get(CallAttributes.DURATION)
+        attrs_num = row.get("attrs_number") or {}
+        stored_duration = attrs_num.get(CallAttributes.DURATION)
 
         # See PG path for rationale — do not set customer_latency_metrics /
         # customer_cost_breakdown; they flow in via the list merge or fall
@@ -3285,15 +3298,15 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "talk_ratio": voice_metrics.get("talk_ratio"),
             "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
             "avg_agent_latency_ms": span_attrs.get("avg_agent_latency_ms")
-            or span_attr_num.get("avg_agent_latency_ms"),
+            or attrs_num.get("avg_agent_latency_ms"),
             "user_wpm": span_attrs.get(CallAttributes.USER_WPM)
-            or span_attr_num.get(CallAttributes.USER_WPM),
+            or attrs_num.get(CallAttributes.USER_WPM),
             "bot_wpm": span_attrs.get(CallAttributes.BOT_WPM)
-            or span_attr_num.get(CallAttributes.BOT_WPM),
+            or attrs_num.get(CallAttributes.BOT_WPM),
             "user_interruption_count": span_attrs.get("user_interruption_count")
-            or span_attr_num.get("user_interruption_count"),
+            or attrs_num.get("user_interruption_count"),
             "ai_interruption_count": span_attrs.get("ai_interruption_count")
-            or span_attr_num.get("ai_interruption_count"),
+            or attrs_num.get("ai_interruption_count"),
         }
         if stored_duration is not None:
             result["duration_seconds"] = int(stored_duration)
@@ -3849,9 +3862,16 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             content = content_map.get(tid, {})
             row["input"] = content.get("input", "")
             row["output"] = content.get("output", "")
-            row["span_attr_str"] = content.get("span_attr_str", {})
-            row["span_attr_num"] = content.get("span_attr_num", {})
-            row["metadata_map"] = content.get("metadata_map", {})
+            row["attrs_string"] = content.get("attrs_string", {})
+            row["attrs_number"] = content.get("attrs_number", {})
+            raw_meta = content.get("metadata", "{}")
+            if isinstance(raw_meta, str):
+                try:
+                    row["metadata"] = json.loads(raw_meta)
+                except (json.JSONDecodeError, TypeError):
+                    row["metadata"] = {}
+            else:
+                row["metadata"] = raw_meta or {}
             row["trace_tags"] = content.get("trace_tags", [])
 
         # Resolve user_id for this page of traces via PG
@@ -3903,7 +3923,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     )
                     for attr_row in attr_result.data:
                         tid = str(attr_row.get("trace_id", ""))
-                        raw = attr_row.get("span_attributes_raw", "{}")
+                        raw = attr_row.get("attributes_extra", "{}")
                         try:
                             attrs = (
                                 json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -3912,8 +3932,8 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             attrs = {}
                         # Fallback: merge from typed Map columns when raw is empty
                         if not attrs:
-                            str_map = attr_row.get("span_attr_str") or {}
-                            num_map = attr_row.get("span_attr_num") or {}
+                            str_map = attr_row.get("attrs_string") or {}
+                            num_map = attr_row.get("attrs_number") or {}
                             if isinstance(str_map, dict):
                                 attrs.update(str_map)
                             if isinstance(num_map, dict):
@@ -4025,7 +4045,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     entry[label_id] = trace_annotations[label_id]
 
             # Include metadata for custom columns
-            metadata = row.get("metadata_map") or {}
+            metadata = row.get("metadata") or {}
             if isinstance(metadata, dict):
                 for key, value in metadata.items():
                     if key not in entry:
@@ -4122,7 +4142,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 1b: Fetch span_attributes from the CH CDC table for the
         # paginated spans.  The denormalized `spans` table has empty
-        # span_attributes_raw (MV wasn't in place during initial sync),
+        # attributes_extra (MV wasn't in place during initial sync),
         # but the CDC source `tracer_observation_span` has full data.
         page_rows = result.data[:page_size]
         span_ids = [
@@ -4661,17 +4681,17 @@ class UsersView(APIView):
                     attr_query = f"""
                     SELECT
                         end_user_id,
-                        span_attributes_raw,
-                        span_attr_str,
-                        span_attr_num
+                        attributes_extra,
+                        attrs_string,
+                        attrs_number
                     FROM spans
                     PREWHERE end_user_id IN %(eu_ids)s
                     WHERE is_deleted = 0
                       {project_clause}
                       AND (
-                        (span_attributes_raw != '{{}}' AND span_attributes_raw != '')
-                        OR length(mapKeys(span_attr_str)) > 0
-                        OR length(mapKeys(span_attr_num)) > 0
+                        (attributes_extra != '{{}}' AND attributes_extra != '')
+                        OR length(mapKeys(attrs_string)) > 0
+                        OR length(mapKeys(attrs_number)) > 0
                       )
                     """
                     attr_result = analytics.execute_ch_query(
@@ -4681,7 +4701,7 @@ class UsersView(APIView):
                     user_attrs: dict = {}
                     for attr_row in attr_result.data:
                         uid = str(attr_row.get("end_user_id", ""))
-                        raw = attr_row.get("span_attributes_raw", "{}")
+                        raw = attr_row.get("attributes_extra", "{}")
                         try:
                             attrs = (
                                 json.loads(raw) if isinstance(raw, str) else (raw or {})
@@ -4690,8 +4710,8 @@ class UsersView(APIView):
                             attrs = {}
                         # Fallback: merge from typed Map columns when raw is empty
                         if not attrs:
-                            str_map = attr_row.get("span_attr_str") or {}
-                            num_map = attr_row.get("span_attr_num") or {}
+                            str_map = attr_row.get("attrs_string") or {}
+                            num_map = attr_row.get("attrs_number") or {}
                             if isinstance(str_map, dict):
                                 attrs.update(str_map)
                             if isinstance(num_map, dict):
