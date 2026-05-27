@@ -33,7 +33,11 @@ export default function UsageChart({
     queryKey: ["v2-usage-time-series", dimension, period, periodEnd],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageTimeSeries, {
-        params: { dimension, period, ...(periodEnd ? { period_end: periodEnd } : {}) },
+        params: {
+          dimension,
+          period,
+          ...(periodEnd ? { period_end: periodEnd } : {}),
+        },
       }),
     select: (res) => res.data?.result?.series || [],
     enabled: !!dimension,

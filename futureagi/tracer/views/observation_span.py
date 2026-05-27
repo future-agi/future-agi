@@ -2,6 +2,7 @@ import concurrent.futures
 import io
 import json
 import traceback
+import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -28,10 +29,12 @@ from django.db.models import (
     When,
 )
 from django.db.models.fields.json import KeyTextTransform
-from django.db.models.functions import Cast, JSONObject, Round
+from django.db.models.functions import Cast, Coalesce, JSONObject, Round
 from django.http import FileResponse
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from litellm import cost_per_token
+from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -60,6 +63,7 @@ from model_hub.views.scores import (
     _auto_complete_queue_items,
     _auto_create_queue_items_for_default_queues,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -70,13 +74,28 @@ from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.serializers.filters import (
+    ObserveGraphDataRequestSerializer,
+    ObserveGraphDataResponseSerializer,
+)
 from tracer.serializers.observation_span import (
+    ObservationAttributeListResponseSerializer,
+    ObservationAttributeListQuerySerializer,
     ObservationSpanSerializer,
-    SpanExportSerializer,
+    SpanExportQuerySerializer,
+    SpanIndexQuerySerializer,
+    SpanListQuerySerializer,
+    SpanObserveIndexQuerySerializer,
+    SpanObserveListQuerySerializer,
     SubmitFeedbackActionTypeSerializer,
     SubmitFeedbackSerializer,
 )
 from tracer.serializers.trace import TraceSerializer
+from tracer.services.clickhouse.graph_dispatch import (
+    fetch_annotation_graph_ch,
+    fetch_eval_graph_ch,
+    fetch_system_metric_graph_ch,
+)
 from tracer.services.clickhouse.query_service import (
     AnalyticsQueryService,
     QueryType,
@@ -108,6 +127,20 @@ from tracer.utils.otel import (
     calculate_cost_from_tokens,
 )
 from tracer.utils.sql_queries import SQL_query_handler
+
+
+class AddObservationSpanAnnotationsSerializer(serializers.Serializer):
+    observation_span_id = serializers.CharField(required=False, allow_blank=True)
+    trace_id = serializers.UUIDField(required=False)
+    annotation_values = serializers.DictField(child=serializers.JSONField())
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        if not attrs.get("observation_span_id") and not attrs.get("trace_id"):
+            raise serializers.ValidationError(
+                "observation_span_id or trace_id is required."
+            )
+        return attrs
 
 
 def _validate_add_annotation_value(
@@ -237,6 +270,41 @@ def _build_eval_metric_entry(
     return None, None
 
 
+def _get_request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _project_workspace_scope_q(request, project_prefix="project__"):
+    workspace = getattr(request, "workspace", None)
+    if not workspace:
+        return Q()
+
+    workspace_field = f"{project_prefix}workspace"
+    organization_field = f"{project_prefix}organization_id"
+    organization_id = getattr(workspace, "organization_id", None) or getattr(
+        _get_request_organization(request), "id", None
+    )
+
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{workspace_field: workspace})
+            | Q(
+                **{
+                    f"{workspace_field}__is_default": True,
+                    f"{workspace_field}__organization_id": organization_id,
+                }
+            )
+            | Q(
+                **{
+                    f"{workspace_field}__isnull": True,
+                    organization_field: organization_id,
+                }
+            )
+        )
+
+    return Q(**{workspace_field: workspace})
+
+
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -245,7 +313,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     def get_queryset(self):
         observation_span_id = self.kwargs.get("pk")
         # Get base queryset with automatic filtering from mixin
-        query_Set = super().get_queryset()
+        query_Set = super().get_queryset().filter(
+            project__organization=_get_request_organization(self.request)
+        )
 
         if observation_span_id:
             return query_Set.filter(id=observation_span_id)
@@ -274,6 +344,20 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         try:
             observation_span_id = kwargs.get("pk")
 
+            try:
+                ObservationSpan.objects.only("id").get(
+                    _project_workspace_scope_q(request),
+                    id=observation_span_id,
+                    project__organization=_get_request_organization(request),
+                )
+            except ObservationSpan.DoesNotExist:
+                logger.exception(
+                    f"Observation span with id {observation_span_id} does not exist for this organization."
+                )
+                return self._gm.bad_request(
+                    get_error_message("OBSERVATION_SPAN_NOT_FOUND")
+                )
+
             # ClickHouse dispatch for span detail
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
@@ -293,9 +377,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             try:
                 observation_span_obj = ObservationSpan.objects.get(
+                    _project_workspace_scope_q(request),
                     id=observation_span_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    project__organization=_get_request_organization(request),
                 )
             except ObservationSpan.DoesNotExist:
                 logger.exception(
@@ -720,9 +804,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             try:
                 observation_span_obj = ObservationSpan.objects.get(
+                    _project_workspace_scope_q(request),
                     id=observation_span_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    project__organization=_get_request_organization(request),
                 )
             except ObservationSpan.DoesNotExist:
                 logger.exception(
@@ -753,6 +837,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             # Get all relevant observation spans
             observation_spans = ObservationSpan.objects.filter(id__in=children_span_ids)
+            observation_spans = observation_spans.filter(
+                _project_workspace_scope_q(request),
+                project__organization=_get_request_organization(request),
+            )
             eval_tags = observation_span_obj.project_version.eval_tags
 
             eval_config_mapping = {
@@ -852,8 +940,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not trace_ids:
                 return self._gm.bad_request("trace_ids is required")
 
-            org = getattr(request, "organization", None) or request.user.organization
+            org = _get_request_organization(request)
             spans = ObservationSpan.objects.filter(
+                _project_workspace_scope_q(request),
                 trace_id__in=trace_ids,
                 parent_span_id__isnull=True,
                 project__organization=org,
@@ -867,39 +956,37 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     @action(detail=False, methods=["post"])
     def bulk_create(self, request, *args, **kwargs):
         try:
-            observation_span_data = self.request.data.get("observation_spans", [])
+            observation_span_data = self.request.data.get("observation_spans")
+            if observation_span_data is None:
+                observation_span_data = self.request.data.get("spans", [])
+            if not observation_span_data:
+                return self._gm.bad_request("observation_spans is required")
+
             for observation_span in observation_span_data:
+                if not observation_span.get("id"):
+                    observation_span["id"] = f"span_{uuid.uuid4().hex[:16]}"
                 observation_span["project"] = Project.objects.get(
+                    _project_workspace_scope_q(self.request, project_prefix=""),
                     id=observation_span["project"],
-                    organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
+                    organization=_get_request_organization(self.request),
                 )
-                observation_span["project_version"] = ProjectVersion.objects.get(
-                    id=observation_span["project_version"],
-                    project__organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
-                )
+                if observation_span.get("project_version"):
+                    observation_span["project_version"] = ProjectVersion.objects.get(
+                        _project_workspace_scope_q(self.request),
+                        id=observation_span["project_version"],
+                        project=observation_span["project"],
+                        project__organization=_get_request_organization(self.request),
+                    )
                 observation_span["trace"] = Trace.objects.get(
+                    _project_workspace_scope_q(self.request),
                     id=observation_span["trace"],
-                    project__organization=getattr(self.request, "organization", None)
-                    or self.request.user.organization,
+                    project=observation_span["project"],
+                    project__organization=_get_request_organization(self.request),
                 )
 
-                prompt_tokens = (
-                    observation_span["prompt_tokens"]
-                    if observation_span["prompt_tokens"] is not None
-                    else 0
-                )
-                completion_tokens = (
-                    observation_span["completion_tokens"]
-                    if observation_span["completion_tokens"] is not None
-                    else 0
-                )
-                model = (
-                    observation_span["model"]
-                    if observation_span["model"] is not None
-                    else None
-                )
+                prompt_tokens = observation_span.get("prompt_tokens") or 0
+                completion_tokens = observation_span.get("completion_tokens") or 0
+                model = observation_span.get("model")
                 cost = calculate_cost_from_tokens(
                     prompt_tokens=prompt_tokens,
                     completion_tokens=completion_tokens,
@@ -925,7 +1012,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     def create(self, request, *args, **kwargs):
         try:
             if "id" in self.request.data:
-                serializer = ObservationSpanSerializer(data=request.data)
+                serializer = self.get_serializer(data=request.data)
                 if serializer.is_valid():
                     observation_span = serializer.save(id=request.data["id"])
 
@@ -933,7 +1020,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         {"id": observation_span.id}, status=201
                     )
             else:
-                serializer = ObservationSpanSerializer(data=request.data)
+                serializer = self.get_serializer(data=request.data)
                 if serializer.is_valid():
                     observation_span = serializer.save()
 
@@ -988,6 +1075,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Resource limit error in creating observation span: {str(e)}"
             )
             return self._gm.bad_request(str(e))
+        except ValueError as e:
+            logger.warning(f"Invalid OTEL observation span payload: {str(e)}")
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in creating observation span: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -1000,16 +1090,16 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         List spans filtered by project ID and project version ID with optimized queries.
         """
         try:
-            project_version_id = self.request.query_params.get(
-                "project_version_id"
-            ) or self.request.query_params.get("projectVersionId")
-            if not project_version_id:
-                raise Exception("Project version id is required")
+            serializer = SpanListQuerySerializer(data=request.query_params)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
+            validated_data = serializer.validated_data
+            project_version_id = str(validated_data["project_version_id"])
 
             project_version = ProjectVersion.objects.get(
+                _project_workspace_scope_q(request),
                 id=project_version_id,
-                project__organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                project__organization=_get_request_organization(request),
             )
 
             # ClickHouse dispatch
@@ -1022,18 +1112,24 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if analytics.should_use_clickhouse(QueryType.SPAN_LIST):
                 try:
                     return self._list_spans_non_observe_clickhouse(
-                        request, project_version_id, project_version, analytics
+                        request,
+                        project_version_id,
+                        project_version,
+                        analytics,
+                        validated_data,
                     )
                 except Exception as e:
-                    logger.warning(
-                        "CH list_spans failed, falling back to PG", error=str(e)
+                    logger.exception(
+                        "CH list_spans failed",
+                        error=str(e),
                     )
+                    logger.warning("Falling back to Postgres span list")
 
             # Base query with annotations
             base_query = ObservationSpan.objects.filter(
+                _project_workspace_scope_q(request),
                 project_version_id=project_version_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+                project__organization=_get_request_organization(request),
             ).annotate(
                 children_count=Subquery(
                     ObservationSpan.objects.filter(parent_span_id=OuterRef("id"))
@@ -1069,10 +1165,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     EvalLogger.objects.filter(
                         observation_span_id=OuterRef("id"),
                         custom_eval_config_id=config.id,
-                        observation_span__project__organization=getattr(
-                            request, "organization", None
-                        )
-                        or request.user.organization,
+                        observation_span__project__organization=_get_request_organization(
+                            request
+                        ),
                     )
                     .exclude(Q(output_str="ERROR") | Q(error=True))
                     .values("custom_eval_config_id")
@@ -1172,11 +1267,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             # Apply filters - combine all filter conditions for better performance
-            filters = self.request.query_params.get(
-                "filters", []
-            ) or self.request.query_params.get("filters", [])
-            if filters:
-                filters = json.loads(filters)
+            filters = validated_data.get("filters", [])
             if filters:
                 # Combine all filter conditions into a single Q object
                 combined_filter_conditions = Q()
@@ -1195,9 +1286,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Get eval metric filters (excluding annotation filters)
@@ -1255,12 +1346,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             total_count = base_query.count()
 
             # Apply pagination
-            page_number = int(self.request.query_params.get("page_number", 0)) or int(
-                self.request.query_params.get("pageNumber", 0)
-            )
-            page_size = int(self.request.query_params.get("page_size", 30)) or int(
-                self.request.query_params.get("pageSize", 30)
-            )
+            page_number = validated_data.get("page_number", 0)
+            page_size = validated_data.get("page_size", 30)
             start = page_number * page_size
             base_query = base_query[start : start + page_size]
 
@@ -1333,18 +1420,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             try:
                 observation_span = ObservationSpan.objects.get(
+                    _project_workspace_scope_q(request),
                     id=observation_span_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    project__organization=_get_request_organization(request),
                 )
             except ObservationSpan.DoesNotExist:
                 raise Exception("Observation span not found")  # noqa: B904
 
             try:
                 custom_eval_config = CustomEvalConfig.objects.get(
+                    _project_workspace_scope_q(request),
                     id=custom_eval_config_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    project__organization=_get_request_organization(request),
                 )
             except CustomEvalConfig.DoesNotExist:
                 raise Exception("Custom eval config not found")  # noqa: B904
@@ -1411,9 +1498,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not span_id:
                 return self._gm.bad_request("span_id is required")
             span = ObservationSpan.objects.get(
+                _project_workspace_scope_q(request),
                 id=span_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+                project__organization=_get_request_organization(request),
             )
             tags = request.data.get("tags")
             if tags is None:
@@ -1452,18 +1539,18 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             try:
                 observation_span = ObservationSpan.objects.get(
+                    _project_workspace_scope_q(request),
                     id=observation_span_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    project__organization=_get_request_organization(request),
                 )
             except ObservationSpan.DoesNotExist:
                 raise Exception("Observation span not found")  # noqa: B904
 
             try:
                 custom_eval_config = CustomEvalConfig.objects.get(
+                    _project_workspace_scope_q(request),
                     id=custom_eval_config_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    project__organization=_get_request_organization(request),
                 )
             except CustomEvalConfig.DoesNotExist:
                 raise Exception("Custom eval config not found")  # noqa: B904
@@ -1537,31 +1624,20 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error submitting feedback action type: {str(e)}"
             )
 
+    @validated_request(query_serializer=SpanObserveListQuerySerializer)
     @action(detail=False, methods=["get"])
     def list_spans_observe(self, request, *args, **kwargs):
         try:
-            query_data = {"filters": request.query_params.get("filters", "[]")}
-            if query_data["filters"]:
-                query_data["filters"] = json.loads(query_data["filters"])
-            serializer = SpanExportSerializer(data=query_data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-            validated_data = serializer.validated_data
+            validated_data = request.validated_query_data
             export = kwargs.get("export", False) if kwargs else False
 
-            project_id = self.request.query_params.get(
-                "project_id"
-            ) or self.request.query_params.get("projectId")
-            user_id = request.query_params.get("user_id") or request.query_params.get(
-                "userId"
-            )
-            if not project_id:
-                raise Exception("Project id is required")
+            project_id = str(validated_data["project_id"])
+            user_id = validated_data.get("user_id") or None
 
             project = Project.objects.get(
+                _project_workspace_scope_q(self.request, project_prefix=""),
                 id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                organization=_get_request_organization(request),
             )
 
             # ClickHouse dispatch
@@ -1577,17 +1653,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         request, project_id, validated_data, analytics
                     )
                 except Exception as e:
-                    logger.warning(
-                        "CH span list failed, falling back to PG", error=str(e)
+                    logger.exception(
+                        "CH span list failed",
+                        error=str(e),
                     )
+                    logger.warning("Falling back to Postgres observe span list")
 
             # Get pagination parameters
-            page_number = int(self.request.query_params.get("page_number", 0)) or int(
-                self.request.query_params.get("pageNumber", 0)
-            )
-            page_size = int(self.request.query_params.get("page_size", 30)) or int(
-                self.request.query_params.get("pageSize", 30)
-            )
+            page_number = validated_data["page_number"]
+            page_size = validated_data["page_size"]
 
             end_user_id = None
             if user_id:
@@ -1595,8 +1669,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     end_user_id = str(
                         EndUser.objects.get(
                             user_id=user_id,
-                            organization=getattr(request, "organization", None)
-                            or request.user.organization,
+                            organization=_get_request_organization(request),
                             project=project,
                         ).id
                     )
@@ -1605,9 +1678,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             # Base query with annotations
             base_query = ObservationSpan.objects.filter(
+                _project_workspace_scope_q(request),
                 project_id=project_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+                project__organization=_get_request_organization(request),
             ).select_related("trace")
 
             if end_user_id:
@@ -1620,16 +1693,25 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 user_id=F("end_user__user_id"),
                 user_id_type=F("end_user__user_id_type"),
                 user_id_hash=F("end_user__user_id_hash"),
+                row_avg_latency_ms=Coalesce(
+                    "latency_ms", 0, output_field=IntegerField()
+                ),
+                row_avg_cost=Coalesce("cost", 0.0, output_field=FloatField()),
+                avg_input_tokens=Coalesce(
+                    "prompt_tokens", 0, output_field=IntegerField()
+                ),
+                avg_output_tokens=Coalesce(
+                    "completion_tokens", 0, output_field=IntegerField()
+                ),
             )
 
             # Get all eval configs for the project
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=EvalLogger.objects.filter(
                     observation_span__project_id=project_id,
-                    observation_span__project__organization=getattr(
-                        request, "organization", None
-                    )
-                    or request.user.organization,
+                    observation_span__project__organization=_get_request_organization(
+                        request
+                    ),
                 )
                 .values("custom_eval_config_id")
                 .distinct(),
@@ -1648,10 +1730,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     EvalLogger.objects.filter(
                         observation_span_id=OuterRef("id"),
                         custom_eval_config_id=config.id,
-                        observation_span__project__organization=getattr(
-                            request, "organization", None
-                        )
-                        or request.user.organization,
+                        observation_span__project__organization=_get_request_organization(
+                            request
+                        ),
                     )
                     .exclude(Q(output_str="ERROR") | Q(error=True))
                     .values("custom_eval_config_id")
@@ -1771,9 +1852,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 # Get eval metric filters (excluding annotation filters)
@@ -1974,16 +2055,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
 
         filters = validated_data.get("filters", [])
-        page_number = int(request.query_params.get("page_number", 0)) or int(
-            request.query_params.get("pageNumber", 0)
-        )
-        page_size = int(request.query_params.get("page_size", 30)) or int(
-            request.query_params.get("pageSize", 30)
-        )
+        page_number = validated_data["page_number"]
+        page_size = validated_data["page_size"]
 
-        user_id = request.query_params.get("user_id") or request.query_params.get(
-            "userId"
-        )
+        user_id = validated_data.get("user_id")
         end_user_id = None
         if user_id:
             try:
@@ -1996,47 +2071,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 )
             except EndUser.DoesNotExist:
                 raise Exception("User not found for the given user_id")
-
-        # Resolve in-filter user_id (string) → end_user_id UUIDs. Spans table
-        # keys end-users by UUID; a raw `user_id = 'customer_001'` clause
-        # references a non-existent CH column and crashes the query. Rewrite
-        # the filter to `end_user_id` scoped to this project + organization.
-        _resolved: List[Dict] = []
-        for _f in filters:
-            _col, _cfg = FilterEngine._normalize_filter_params(_f)
-            _col_type = _cfg.get("col_type", "NORMAL")
-            if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value")
-                _vals = _val if isinstance(_val, list) else [_val]
-                _vals = [v for v in _vals if v]
-                if not _vals:
-                    _resolved.append(_f)
-                    continue
-                _ids = [
-                    str(u)
-                    for u in EndUser.objects.filter(
-                        user_id__in=_vals,
-                        organization=request.user.organization,
-                        project_id=project_id,
-                        deleted=False,
-                    ).values_list("id", flat=True)
-                ]
-                if not _ids:
-                    _ids = ["00000000-0000-0000-0000-000000000000"]
-                _resolved.append(
-                    {
-                        "column_id": "end_user_id",
-                        "filter_config": {
-                            "col_type": "NORMAL",
-                            "filter_type": "text",
-                            "filter_op": "in",
-                            "filter_value": _ids,
-                        },
-                    }
-                )
-                continue
-            _resolved.append(_f)
-        filters = _resolved
 
         # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
         eval_config_ids = []
@@ -2059,10 +2093,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         else:
             eval_configs = []
 
-        # Get annotation labels from PG (small config table)
-        annotation_labels = AnnotationsLabels.objects.filter(
-            project__id=project_id, project__organization=request.user.organization
-        )
+        # Labels can be project-local or org/shared labels that are referenced
+        # by span scores. Use the score-backed helper so span columns and
+        # annotation filters match the actual data returned from ClickHouse.
+        annotation_labels = get_annotation_labels_for_project(project_id)
         annotation_label_ids = [str(l.id) for l in annotation_labels]
         label_types = {str(l.id): l.type for l in annotation_labels}
 
@@ -2103,7 +2137,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=10000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -2226,6 +2260,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "status": row.get("status"),
                 "latency_ms": row.get("latency_ms"),
                 "total_tokens": row.get("total_tokens"),
+                "prompt_tokens": row.get("prompt_tokens"),
+                "completion_tokens": row.get("completion_tokens"),
+                "model": row.get("model"),
+                "provider": row.get("provider"),
                 "cost": round(cost, 6) if cost else 0,
             }
 
@@ -2245,10 +2283,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                         entry[f"{config_id}**{choice}"] = pct
                 else:
                     entry[config_id] = val
-                    if isinstance(value, dict):
-                        entry[config_id] = value.get("score")
+                    if isinstance(val, dict):
+                        entry[config_id] = val.get("score")
                     else:
-                        entry[config_id] = value
+                        entry[config_id] = val
 
             # Add annotations
             span_annotations = annotation_map.get(span_id, {})
@@ -2292,26 +2330,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         return self._gm.success_response(response)
 
     def _list_spans_non_observe_clickhouse(
-        self, request, project_version_id, project_version, analytics
+        self, request, project_version_id, project_version, analytics, validated_data
     ):
         """List spans (non-observe, prompt version/eval task views) using ClickHouse backend."""
         from tracer.services.clickhouse.query_builders import SpanListQueryBuilder
 
-        filters_raw = self.request.query_params.get(
-            "filters", []
-        ) or self.request.query_params.get("filters", [])
-        filters = (
-            json.loads(filters_raw)
-            if isinstance(filters_raw, str) and filters_raw
-            else []
-        )
-
-        page_number = int(self.request.query_params.get("page_number", 0)) or int(
-            self.request.query_params.get("pageNumber", 0)
-        )
-        page_size = int(self.request.query_params.get("page_size", 30)) or int(
-            self.request.query_params.get("pageSize", 30)
-        )
+        filters = validated_data.get("filters", [])
+        page_number = validated_data.get("page_number", 0)
+        page_size = validated_data.get("page_size", 30)
 
         project_id = str(project_version.project_id)
 
@@ -2326,8 +2352,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         ).select_related("eval_template")
         eval_config_ids = [str(c.id) for c in eval_configs]
 
-        # Get annotation labels from PG (small config table)
-        annotation_labels = AnnotationsLabels.objects.filter(project__id=project_id)
+        # Labels can be project-local or org/shared labels that are referenced
+        # by span scores. Use the score-backed helper so span columns and
+        # annotation filters match the actual data returned from ClickHouse.
+        annotation_labels = get_annotation_labels_for_project(project_id)
         annotation_label_ids = [str(l.id) for l in annotation_labels]
         label_types = {str(l.id): l.type for l in annotation_labels}
 
@@ -2367,7 +2395,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # Count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
-            count_query, count_params, timeout_ms=5000
+            count_query, count_params, timeout_ms=10000
         )
         total_count = count_result.data[0].get("total", 0) if count_result.data else 0
 
@@ -2454,30 +2482,99 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response(response)
 
+    @validated_request(
+        request_serializer=ObserveGraphDataRequestSerializer,
+        responses={200: ObserveGraphDataResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def get_graph_methods(self, request, *args, **kwargs):
         """
         Fetch data for the observe graph with optimized queries
         """
         try:
-            project_id = self.request.data.get("project_id", None)
-            if not project_id:
-                raise Exception("Project id is required")
+            body = request.validated_data
+            project_id = str(body["project_id"])
 
             project = Project.objects.get(
+                _project_workspace_scope_q(self.request, project_prefix=""),
                 id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                organization=_get_request_organization(request),
             )
             if project.trace_type != "observe":
                 raise Exception("Project should be of type observe")
 
+            filters = body["filters"]
+            property = body["property"]
+            interval = body["interval"]
+            req_data_config = body["req_data_config"]
+
+            type = req_data_config.get("type", None)
+            if type not in ["EVAL", "ANNOTATION", "SYSTEM_METRIC"]:
+                return self._gm.bad_request("Filter property type is not valid")
+
+            analytics = AnalyticsQueryService()
+            if type == "SYSTEM_METRIC":
+                if analytics.should_use_clickhouse(QueryType.SPAN_GRAPH):
+                    try:
+                        return self._gm.success_response(
+                            fetch_system_metric_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=filters,
+                                interval=interval,
+                                metric_id=req_data_config.get("id", "latency"),
+                            )
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "ClickHouse span time-series graph failed",
+                            error=str(e),
+                        )
+                        logger.warning("Falling back to Postgres span graph")
+            elif type == "EVAL":
+                if analytics.should_use_clickhouse(QueryType.SPAN_GRAPH):
+                    try:
+                        return self._gm.success_response(
+                            fetch_eval_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                            )
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "ClickHouse span eval graph failed",
+                            error=str(e),
+                        )
+                        logger.warning("Falling back to Postgres span graph")
+            elif type == "ANNOTATION":
+                if analytics.should_use_clickhouse(QueryType.SPAN_GRAPH):
+                    try:
+                        return self._gm.success_response(
+                            fetch_annotation_graph_ch(
+                                analytics=analytics,
+                                project_id=project_id,
+                                filters=filters,
+                                interval=interval,
+                                req_data_config=req_data_config,
+                                observe_type="span",
+                            )
+                        )
+                    except Exception as e:
+                        logger.exception(
+                            "ClickHouse span annotation graph failed",
+                            error=str(e),
+                        )
+                        logger.warning("Falling back to Postgres span graph")
+
             # Base query with annotations
             base_query = (
                 ObservationSpan.objects.filter(
+                    _project_workspace_scope_q(request),
                     project_id=project_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    project__organization=_get_request_organization(request),
                 )
                 .select_related("trace")
                 .annotate(
@@ -2485,13 +2582,26 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     span_id=F("id"),
                     span_name=F("name"),
                     user_id=F("end_user__user_id"),
+                    row_avg_latency_ms=Coalesce(
+                        "latency_ms", 0, output_field=IntegerField()
+                    ),
+                    row_avg_cost=Coalesce("cost", 0.0, output_field=FloatField()),
+                    avg_input_tokens=Coalesce(
+                        "prompt_tokens", 0, output_field=IntegerField()
+                    ),
+                    avg_output_tokens=Coalesce(
+                        "completion_tokens", 0, output_field=IntegerField()
+                    ),
                 )
             )
 
             # Get all eval configs for the project
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=EvalLogger.objects.filter(
-                    observation_span__project_id=project_id
+                    observation_span__project_id=project_id,
+                    observation_span__project__organization=_get_request_organization(
+                        request
+                    ),
                 )
                 .values("custom_eval_config_id")
                 .distinct(),
@@ -2510,10 +2620,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     EvalLogger.objects.filter(
                         observation_span_id=OuterRef("id"),
                         custom_eval_config_id=config.id,
-                        observation_span__project__organization=getattr(
-                            request, "organization", None
-                        )
-                        or request.user.organization,
+                        observation_span__project__organization=_get_request_organization(
+                            request
+                        ),
                     )
                     .exclude(Q(output_str="ERROR") | Q(error=True))
                     .values("custom_eval_config_id")
@@ -2633,7 +2742,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             # Apply filters - combine all filter conditions for better performance
-            filters = self.request.data.get("filters", [])
             if filters:
                 # Combine all filter conditions into a single Q object
                 combined_filter_conditions = Q()
@@ -2683,95 +2791,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             base_query = base_query.order_by("-created_at")
 
             total_final_span_queryset = base_query
-
-            # Get parameters
-            property = self.request.data.get("property", "count")
-            interval = self.request.data.get("interval", "hour")
-
-            req_data_config = self.request.data.get("req_data_config", None)
-
-            if not req_data_config:
-                return self._gm.bad_request("Req data config property is required")
-
-            type = req_data_config.get("type", None)
-            if type not in ["EVAL", "ANNOTATION", "SYSTEM_METRIC"]:
-                return self._gm.bad_request("Filter property type is not valid")
-
-            # ClickHouse dispatch for span graphs
-            from tracer.services.clickhouse.query_builders import (
-                EvalMetricsQueryBuilder,
-                TimeSeriesQueryBuilder,
-            )
-            from tracer.services.clickhouse.query_service import (
-                AnalyticsQueryService,
-                QueryType,
-            )
-
-            analytics = AnalyticsQueryService()
-
-            if type == "SYSTEM_METRIC" and analytics.should_use_clickhouse(
-                QueryType.SPAN_GRAPH
-            ):
-                try:
-                    metric_id = req_data_config.get("id", "latency")
-                    builder = TimeSeriesQueryBuilder(
-                        project_id=str(project_id),
-                        filters=filters,
-                        interval=interval,
-                        metric_name=metric_id,
-                    )
-                    query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-                    ch_data = builder.format_result(result.data, result.columns or [])
-                    metric_key = metric_id if metric_id in ch_data else "latency"
-                    metric_points = ch_data.get(metric_key, [])
-                    traffic_points = ch_data.get("traffic", [])
-                    traffic_by_ts = {
-                        t.get("timestamp"): t.get("traffic", 0) for t in traffic_points
-                    }
-                    graph_data = {
-                        "metric_name": metric_id,
-                        "data": [
-                            {
-                                "timestamp": p.get("timestamp"),
-                                "value": p.get("value", 0),
-                                "primary_traffic": traffic_by_ts.get(
-                                    p.get("timestamp"), 0
-                                ),
-                            }
-                            for p in metric_points
-                        ],
-                    }
-                    return self._gm.success_response(graph_data)
-                except Exception as e:
-                    logger.warning(
-                        "CH span system-metric graph failed, falling back to PG",
-                        error=str(e),
-                    )
-
-            if type == "EVAL" and analytics.should_use_clickhouse(QueryType.SPAN_GRAPH):
-                try:
-                    eval_config_id = req_data_config.get("id")
-                    eval_output_type = req_data_config.get("eval_output_type", "SCORE")
-                    choices = req_data_config.get("choices", [])
-                    builder = EvalMetricsQueryBuilder(
-                        project_id=str(project_id),
-                        custom_eval_config_id=str(eval_config_id),
-                        filters=filters,
-                        interval=interval,
-                        eval_output_type=eval_output_type,
-                        choices=choices,
-                    )
-                    query, params = builder.build()
-                    result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-                    graph_data = builder.format_result(
-                        result.data, result.columns or []
-                    )
-                    return self._gm.success_response(graph_data)
-                except Exception as e:
-                    logger.warning(
-                        "CH span eval graph failed, falling back to PG", error=str(e)
-                    )
 
             if type == "EVAL":
                 graph_data = get_eval_graph_data(
@@ -2826,6 +2845,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error in fetching graph data: {str(e)}")
             return self._gm.bad_request(f"Error fetching graph data: {str(e)}")
 
+    @validated_request(
+        query_serializer=ObservationAttributeListQuerySerializer,
+        responses={200: ObservationAttributeListResponseSerializer},
+    )
     @action(detail=False, methods=["get"])
     def get_span_attributes_list(self, request, *args, **kwargs):
         """Distinct span_attributes keys for a project (spans surface).
@@ -2837,13 +2860,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             List of attribute key strings.
         """
         try:
-            filters = self.request.query_params.get("filters", "{}")
-            if filters:
-                filters = json.loads(filters)
-
-            project_id = filters.get("project_id")
-            if not project_id:
-                return self._gm.bad_request("project_id is required")
+            project_id = request.validated_query_data["filters"]["project_id"]
 
             result = self._get_span_attribute_keys(project_id)
             return self._gm.success_response(result)
@@ -2854,6 +2871,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the span attributes list {str(e)}"
             )
 
+    @validated_request(
+        query_serializer=ObservationAttributeListQuerySerializer,
+        responses={200: ObservationAttributeListResponseSerializer},
+    )
     @action(detail=False, methods=["get"])
     def get_eval_attributes_list(self, request, *args, **kwargs):
         """Attribute paths the EvalPicker exposes per row_type.
@@ -2874,15 +2895,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         resolve time (see ``_resolve_session_path`` / ``_resolve_trace_path``).
         """
         try:
-            filters = self.request.query_params.get("filters", "{}")
-            if filters:
-                filters = json.loads(filters)
-
-            project_id = filters.get("project_id")
-            if not project_id:
-                return self._gm.bad_request("project_id is required")
-
-            row_type = self.request.query_params.get("row_type", "spans")
+            project_id = request.validated_query_data["filters"]["project_id"]
+            row_type = request.validated_query_data["row_type"]
 
             if row_type == "spans" or row_type == "voiceCalls":
                 # voiceCalls share the spans surface for the picker; they
@@ -3274,18 +3288,21 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     @action(detail=False, methods=["get"])
     def get_spans_export_data(self, request, *args, **kwargs):
         try:
+            serializer = SpanExportQuerySerializer(data=request.query_params)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
+            validated_data = serializer.validated_data
+
             response = self.list_spans_observe(request, export=True)
 
             if response.status_code != 200:
                 return response
 
-            project_id = self.request.query_params.get(
-                "project_id"
-            ) or self.request.query_params.get("projectId")
+            project_id = str(validated_data["project_id"])
             project = Project.objects.get(
+                _project_workspace_scope_q(self.request, project_prefix=""),
                 id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
+                organization=_get_request_organization(request),
             )
 
             result = response.data.get("result")
@@ -3310,13 +3327,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error in exporting the spans list of observe: {str(e)}")
             return self._gm.bad_request(get_error_message(""))
 
+    @validated_request(request_serializer=AddObservationSpanAnnotationsSerializer)
     @action(detail=False, methods=["post"])
     def add_annotations(self, request, *args, **kwargs):
         try:
-            observation_span_id = self.request.data.get("observation_span_id")
-            annotation_values = self.request.data.get("annotation_values")
-            trace_id = self.request.data.get("trace_id")
-            notes = self.request.data.get("notes")
+            data = request.validated_data
+            observation_span_id = data.get("observation_span_id")
+            annotation_values = data.get("annotation_values")
+            trace_id = data.get("trace_id")
+            notes = data.get("notes")
 
             if (not observation_span_id and not trace_id) or not annotation_values:
                 raise Exception(
@@ -3326,15 +3345,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             try:
                 if observation_span_id:
                     observation_span = ObservationSpan.objects.get(
+                        _project_workspace_scope_q(request),
                         id=observation_span_id,
-                        project__organization=getattr(request, "organization", None)
-                        or request.user.organization,
+                        project__organization=_get_request_organization(request),
                     )
                 elif trace_id:
                     observation_span = ObservationSpan.objects.get(
+                        _project_workspace_scope_q(request),
                         trace_id=trace_id,
-                        project__organization=getattr(request, "organization", None)
-                        or request.user.organization,
+                        project__organization=_get_request_organization(request),
                         parent_span_id__isnull=True,
                     )
             except ObservationSpan.DoesNotExist:
@@ -3379,10 +3398,43 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     # LEFT JOIN on nullable workspace FK that triggers
                     # PostgreSQL's "FOR UPDATE cannot be applied to the
                     # nullable side of an outer join".
+                    #
+                    # Resolve a default queue item up-front so the upsert
+                    # lookup keys on queue_item — the per-queue Score
+                    # uniqueness ``(source, label, annotator, queue_item)``
+                    # would otherwise produce duplicate orphan rows on
+                    # repeated writes from this legacy endpoint. Falls
+                    # back to NULL if the source has no resolvable scope
+                    # (rare, e.g. orphaned span).
+                    from model_hub.utils.annotation_queue_helpers import (
+                        resolve_default_queue_item_for_source,
+                    )
+
+                    default_item = resolve_default_queue_item_for_source(
+                        "observation_span",
+                        observation_span,
+                        request.user.organization,
+                        request.user,
+                    )
+                    if default_item is None:
+                        # Per-queue Score uniqueness requires a queue_item.
+                        # Skip rather than insert with queue_item=NULL —
+                        # NULL ≠ NULL in Postgres, so a silent orphan
+                        # insert could accumulate duplicates the on_commit
+                        # auto-attach hook can no longer migrate safely.
+                        failed_labels.append(label_id)
+                        logger.warning(
+                            "score_skip_no_default_queue_scope",
+                            source_type="observation_span",
+                            source_id=str(observation_span.pk),
+                            label_id=str(annotation_label.pk),
+                        )
+                        continue
                     score, _ = Score.no_workspace_objects.update_or_create(
                         observation_span_id=observation_span.pk,
                         label_id=annotation_label.pk,
                         annotator_id=request.user.pk,
+                        queue_item=default_item,
                         deleted=False,
                         defaults={
                             "source_type": "observation_span",
@@ -3392,6 +3444,27 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             "organization": request.user.organization,
                         },
                     )
+                    if notes is not None:
+                        from model_hub.models.annotation_queues import QueueItemNote
+
+                        if notes:
+                            QueueItemNote.no_workspace_objects.update_or_create(
+                                queue_item=default_item,
+                                annotator=request.user,
+                                deleted=False,
+                                defaults={
+                                    "notes": notes,
+                                    "organization": request.user.organization,
+                                    "workspace": getattr(request, "workspace", None)
+                                    or default_item.workspace,
+                                },
+                            )
+                        else:
+                            QueueItemNote.no_workspace_objects.filter(
+                                queue_item=default_item,
+                                annotator=request.user,
+                                deleted=False,
+                            ).update(deleted=True, deleted_at=timezone.now())
 
                     success_labels.append(label_id)
 
@@ -3467,9 +3540,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not label_id:
                 return self._gm.bad_request("label_id query parameter is required")
             label = AnnotationsLabels.objects.get(
+                _project_workspace_scope_q(request, project_prefix=""),
                 id=label_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_get_request_organization(request),
             )
             # Check if label is in use by active annotation tasks
             if Annotations.objects.filter(labels=label_id, deleted=False).exists():
@@ -3477,7 +3550,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     "Cannot delete label: it is in use by active annotation tasks"
                 )
             label.delete()
-            Score.objects.filter(label_id=label_id).update(deleted=True)
+            Score.objects.filter(
+                label_id=label_id, organization=_get_request_organization(request)
+            ).update(deleted=True)
 
             return self._gm.success_response(
                 {"message": "Annotation label deleted successfully"}
@@ -3487,6 +3562,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         except Exception as e:
             return self._gm.bad_request(f"error deleting the annotation label {str(e)}")
 
+    @validated_request(query_serializer=SpanIndexQuerySerializer)
     @action(detail=False, methods=["get"])
     def get_trace_id_by_index_spans_as_base(self, request, *args, **kwargs):
         """
@@ -3494,28 +3570,20 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Mirrors the query/filter logic of list_spans.
         """
         try:
-            span_id = request.query_params.get("span_id") or request.query_params.get(
-                "spanId"
-            )
-            if not span_id:
-                raise Exception("Span id is required")
-
-            project_version_id = request.query_params.get(
-                "project_version_id"
-            ) or request.query_params.get("projectVersionId")
-            if not project_version_id:
-                raise Exception("Project version id is required")
+            query = request.validated_query_data
+            span_id = query["span_id"]
+            project_version_id = str(query["project_version_id"])
 
             project_version = ProjectVersion.objects.get(
+                _project_workspace_scope_q(request),
                 id=project_version_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+                project__organization=_get_request_organization(request),
             )
 
             base_query = ObservationSpan.objects.filter(
+                _project_workspace_scope_q(request),
                 project_version_id=project_version_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+                project__organization=_get_request_organization(request),
             ).annotate(
                 node_type=F("observation_type"),
                 span_id=F("id"),
@@ -3541,10 +3609,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     EvalLogger.objects.filter(
                         observation_span_id=OuterRef("id"),
                         custom_eval_config_id=config.id,
-                        observation_span__project__organization=getattr(
-                            request, "organization", None
-                        )
-                        or request.user.organization,
+                        observation_span__project__organization=_get_request_organization(
+                            request
+                        ),
                     )
                     .exclude(Q(output_str="ERROR") | Q(error=True))
                     .values("custom_eval_config_id")
@@ -3642,15 +3709,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 span_filter_kwargs={"observation_span_id": OuterRef("id")},
             )
 
-            filters = request.query_params.get("filters", [])
+            filters = query["filters"]
             if filters:
-                try:
-                    filters = json.loads(filters)
-                except json.JSONDecodeError as e:
-                    return self._gm.bad_request(
-                        f"Invalid JSON format in filters parameter: {str(e)}"
-                    )
-
                 combined_filter_conditions = Q()
 
                 system_filter_conditions = (
@@ -3664,9 +3724,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 eval_filter_conditions = (
@@ -3732,6 +3792,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error fetching span id by index: {str(e)}")
             return self._gm.bad_request(f"error fetching the span id by index {str(e)}")
 
+    @validated_request(query_serializer=SpanObserveIndexQuerySerializer)
     @action(detail=False, methods=["get"])
     def get_trace_id_by_index_spans_as_observe(self, request, *args, **kwargs):
         """
@@ -3739,15 +3800,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Mirrors the query/filter logic of list_spans_as_observe.
         """
         try:
-            span_id = request.query_params.get("span_id") or request.query_params.get(
-                "spanId"
-            )
-            if not span_id:
-                raise Exception("Span id is required")
-
-            user_id = request.query_params.get("user_id") or request.query_params.get(
-                "userId"
-            )
+            query = request.validated_query_data
+            span_id = query["span_id"]
+            project_id = str(query["project_id"])
+            user_id = query.get("user_id") or None
 
             end_user_id = None
             if user_id:
@@ -3755,32 +3811,25 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     end_user_id = str(
                         EndUser.objects.get(
                             user_id=user_id,
-                            organization=getattr(request, "organization", None)
-                            or request.user.organization,
-                            project=project,
+                            organization=_get_request_organization(request),
+                            project_id=project_id,
                         ).id
                     )
                 except EndUser.DoesNotExist as e:
                     raise Exception("User not found for the given user_id") from e
 
-            project_id = request.query_params.get(
-                "project_id"
-            ) or request.query_params.get("projectId")
-            if not project_id:
-                raise Exception("Project id is required")
-
             project = Project.objects.get(
+                _project_workspace_scope_q(request, project_prefix=""),
                 id=project_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
+                organization=_get_request_organization(request),
             )
             if project.trace_type not in ("observe", "experiment"):
                 raise Exception("Project should be of type observe or experiment")
 
             base_query = ObservationSpan.objects.filter(
+                _project_workspace_scope_q(request),
                 project_id=project_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+                project__organization=_get_request_organization(request),
             ).annotate(
                 node_type=F("observation_type"),
                 span_id=F("id"),
@@ -3796,10 +3845,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=EvalLogger.objects.filter(
                     observation_span__project_id=project_id,
-                    observation_span__project__organization=getattr(
-                        request, "organization", None
-                    )
-                    or request.user.organization,
+                    observation_span__project__organization=_get_request_organization(
+                        request
+                    ),
                 )
                 .values("custom_eval_config_id")
                 .distinct(),
@@ -3816,10 +3864,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     EvalLogger.objects.filter(
                         observation_span_id=OuterRef("id"),
                         custom_eval_config_id=config.id,
-                        observation_span__project__organization=getattr(
-                            request, "organization", None
-                        )
-                        or request.user.organization,
+                        observation_span__project__organization=_get_request_organization(
+                            request
+                        ),
                     )
                     .exclude(Q(output_str="ERROR") | Q(error=True))
                     .values("custom_eval_config_id")
@@ -3907,11 +3954,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-            annotation_labels = AnnotationsLabels.objects.filter(
-                project__id=project_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            annotation_labels = get_annotation_labels_for_project(project_id)
             base_query = build_annotation_subqueries(
                 base_query,
                 annotation_labels,
@@ -3919,14 +3962,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 span_filter_kwargs={"observation_span_id": OuterRef("id")},
             )
 
-            filters = request.query_params.get("filters", "[]")
-            try:
-                if filters:
-                    filters = json.loads(filters)
-            except json.JSONDecodeError as e:
-                return self._gm.bad_request(
-                    f"Invalid JSON format in filters parameter: {str(e)}"
-                )
+            filters = query["filters"]
 
             if filters:
                 combined_filter_conditions = Q()
@@ -3942,9 +3978,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 non_annotation_filters = [
                     f
                     for f in filters
-                    if f.get("col_type") not in annotation_col_types
-                    and (f.get("column_id") or f.get("columnId"))
-                    not in annotation_column_ids
+                    if (f.get("filter_config") or {}).get("col_type")
+                    not in annotation_col_types
+                    and f.get("column_id") not in annotation_column_ids
                 ]
 
                 eval_filter_conditions = (

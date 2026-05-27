@@ -37,6 +37,18 @@ class TestValidateFiltersHelper:
                 [{"column_id": "k", "filter_config": {"filter_type": "text"}}]
             )
 
+    def test_unknown_top_level_filter_keys_raise(self):
+        payload = _filter("k", filter_type="text", filter_op="equals", filter_value="v")
+        payload["columnId"] = "k"
+        with pytest.raises(serializers.ValidationError):
+            validate_filters_helper([payload])
+
+    def test_unknown_filter_config_keys_raise(self):
+        payload = _filter("k", filter_type="text", filter_op="equals", filter_value="v")
+        payload["filter_config"]["filterOp"] = "equals"
+        with pytest.raises(serializers.ValidationError):
+            validate_filters_helper([payload])
+
     # SPAN_ATTRIBUTE — happy paths
     def test_span_attr_text_equals_valid(self):
         out = validate_filters_helper(

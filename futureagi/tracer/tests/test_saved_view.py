@@ -11,6 +11,18 @@ from tracer.models.saved_view import SavedView
 BASE_URL = "/tracer/saved-views"
 
 
+def _filter(column_id="status", filter_type="text", filter_op="equals", value="ERROR"):
+    return {
+        "column_id": column_id,
+        "filter_config": {
+            "col_type": "SYSTEM_METRIC",
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": value,
+        },
+    }
+
+
 def _view_url(view, action=""):
     return f"{BASE_URL}/{view.id}/{action}?project_id={view.project_id}"
 
@@ -27,7 +39,7 @@ def saved_view(db, project, workspace, user):
         visibility="personal",
         position=0,
         config={
-            "filters": [{"field": "status", "operator": "=", "value": "ERROR"}],
+            "filters": [_filter()],
             "columns": [{"key": "name", "width": 300}],
             "sort": {"field": "start_time", "direction": "desc"},
         },
@@ -148,7 +160,12 @@ class TestSavedViewCreate:
                 "visibility": "personal",
                 "config": {
                     "filters": [
-                        {"field": "latency_ms", "operator": ">", "value": 5000}
+                        _filter(
+                            "latency_ms",
+                            filter_type="number",
+                            filter_op="greater_than",
+                            value=5000,
+                        )
                     ],
                 },
             },
@@ -159,7 +176,7 @@ class TestSavedViewCreate:
         assert data["name"] == "Slow Traces"
         assert data["tab_type"] == "traces"
         assert data["visibility"] == "personal"
-        assert data["config"]["filters"][0]["field"] == "latency_ms"
+        assert data["config"]["filters"][0]["column_id"] == "latency_ms"
         assert data["project"] == str(project.id)
 
     @pytest.mark.django_db
@@ -254,7 +271,7 @@ class TestSavedViewCreate:
                 "name": "Full Config",
                 "tab_type": "traces",
                 "config": {
-                    "filters": [{"field": "status", "operator": "=", "value": "OK"}],
+                    "filters": [_filter(value="OK")],
                     "columns": [{"key": "name", "width": 200}],
                     "sort": {"field": "cost", "direction": "asc"},
                     "display": {"density": "compact"},
@@ -268,6 +285,117 @@ class TestSavedViewCreate:
         assert "columns" in config
         assert "sort" in config
         assert "display" in config
+
+    @pytest.mark.django_db
+    def test_create_rejects_legacy_filter_shape(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Legacy Filter Shape",
+                "tab_type": "traces",
+                "config": {
+                    "filters": [
+                        {
+                            "columnId": "status",
+                            "filterConfig": {
+                                "colType": "SYSTEM_METRIC",
+                                "filterType": "text",
+                                "filterOp": "equals",
+                                "filterValue": "ERROR",
+                            },
+                        }
+                    ],
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "config" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_create_accepts_canonical_compare_filter_keys(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Compare View",
+                "tab_type": "traces",
+                "config": {
+                    "extra_filters": [_filter("status")],
+                    "compare_filters": [
+                        _filter("latency_ms", "number", "greater_than", 1)
+                    ],
+                    "compare_date_filter": {"start": "2026-01-01", "end": "2026-01-02"},
+                    "compare_extra_filters": [],
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        config = response.json()["result"]["config"]
+        assert config["extra_filters"][0]["column_id"] == "status"
+        assert "extraFilters" not in config
+
+    @pytest.mark.django_db
+    def test_create_rejects_legacy_saved_view_config_keys(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Legacy Config",
+                "tab_type": "traces",
+                "config": {"extraFilters": [_filter("status")]},
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "extraFilters" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_create_rejects_legacy_user_view_filters_object(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Legacy User View",
+                "tab_type": "users",
+                "config": {
+                    "filters": {
+                        "extraFilters": [_filter("status")],
+                        "dateFilter": {"dateOption": "Last 7 days"},
+                    }
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "Filters must be a list" in str(response.json())
+
+    @pytest.mark.django_db
+    def test_create_accepts_canonical_user_view_config(self, auth_client, project):
+        response = auth_client.post(
+            f"{BASE_URL}/",
+            {
+                "project_id": str(project.id),
+                "name": "Users View",
+                "tab_type": "users",
+                "config": {
+                    "display": {"dateFilter": {"dateOption": "Last 7 days"}},
+                    "extra_filters": [_filter("status")],
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        config = response.json()["result"]["config"]
+        assert config["extra_filters"][0]["column_id"] == "status"
+        assert config["display"]["dateFilter"]["dateOption"] == "Last 7 days"
 
 
 class TestSavedViewRetrieve:
@@ -296,8 +424,13 @@ class TestSavedViewUpdate:
                 "name": "Critical Errors",
                 "config": {
                     "filters": [
-                        {"field": "status", "operator": "=", "value": "ERROR"},
-                        {"field": "latency_ms", "operator": ">", "value": 10000},
+                        _filter(),
+                        _filter(
+                            "latency_ms",
+                            filter_type="number",
+                            filter_op="greater_than",
+                            value=10000,
+                        ),
                     ],
                 },
             },
@@ -327,6 +460,21 @@ class TestSavedViewUpdate:
         )
         assert response.status_code == 200
         assert response.json()["result"]["visibility"] == "project"
+
+    @pytest.mark.django_db
+    def test_update_rejects_create_only_fields(self, auth_client, saved_view):
+        response = auth_client.put(
+            _view_url(saved_view),
+            {
+                "name": "Critical Errors",
+                "tab_type": "spans",
+                "project_id": str(saved_view.project_id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "tab_type" in str(response.json())
 
 
 class TestSavedViewDelete:

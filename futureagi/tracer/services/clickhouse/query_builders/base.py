@@ -6,7 +6,7 @@ query builders inherit from.
 """
 
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
 # ClickHouse zero-value for UUID columns. dictGetOrDefault on Nullable(UUID)
@@ -179,7 +179,7 @@ class BaseQueryBuilder(ABC):
 
         for f in filters:
             col_id = f.get("column_id") or f.get("columnId")
-            config = f.get("filter_config") or f.get("filterConfig", {})
+            config = f.get("filter_config") or f.get("filterConfig") or {}
             if col_id not in ("created_at", "start_time"):
                 continue
 
@@ -205,12 +205,14 @@ class BaseQueryBuilder(ABC):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_timestamp(ts: datetime, interval: str) -> datetime:
+    def _normalize_timestamp(ts: date | datetime, interval: str) -> datetime:
         """Normalize *ts* to the start of its time bucket.
 
         Strips timezone info and truncates to the start of the given
         interval bucket.
         """
+        if isinstance(ts, date) and not isinstance(ts, datetime):
+            ts = datetime(ts.year, ts.month, ts.day)
         if ts.tzinfo:
             ts = ts.replace(tzinfo=None)
 

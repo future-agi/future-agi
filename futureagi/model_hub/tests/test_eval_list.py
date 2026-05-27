@@ -604,6 +604,7 @@ class TestEvalTemplateBulkDeleteAPI:
         # Verify template is soft-deleted
         user_eval_template.refresh_from_db()
         assert user_eval_template.deleted is True
+        assert user_eval_template.deleted_at is not None
 
     def test_delete_system_templates_rejected(self, auth_client, system_eval_template):
         """System templates should not be deleted."""
@@ -629,6 +630,21 @@ class TestEvalTemplateBulkDeleteAPI:
         )
         assert response.status_code == 400
 
+    def test_delete_rejects_unknown_fields(self, auth_client, user_eval_template):
+        response = auth_client.post(
+            self.url,
+            {
+                "template_ids": [str(user_eval_template.id)],
+                "templateIds": [str(user_eval_template.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert response.data["message"] == "templateIds: Unknown field."
+        user_eval_template.refresh_from_db()
+        assert user_eval_template.deleted is False
+
     def test_delete_mixed_templates(
         self, auth_client, system_eval_template, user_eval_template
     ):
@@ -651,6 +667,7 @@ class TestEvalTemplateBulkDeleteAPI:
 
         user_eval_template.refresh_from_db()
         assert user_eval_template.deleted is True
+        assert user_eval_template.deleted_at is not None
 
 
 # =============================================================================

@@ -90,6 +90,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -149,6 +151,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         params = dict(self.params)

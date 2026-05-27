@@ -107,7 +107,7 @@ const AllActionForm = ({
   const isOwner =
     actorOrgLevel != null
       ? actorOrgLevel >= LEVELS.OWNER
-      : (user?.organization_role ?? user?.organizationRole) === "Owner";
+      : user?.organization_role === "Owner";
   const isAdmin = actorOrgLevel != null ? actorOrgLevel >= LEVELS.ADMIN : false;
 
   // Filter org role options based on actor's level
@@ -150,8 +150,8 @@ const AllActionForm = ({
   // Edit role form
   const editForm = useForm({
     defaultValues: {
-      orgLevel: userData?.org_level ?? userData?.orgLevel ?? null,
-      wsLevel: userData?.ws_level ?? userData?.wsLevel ?? null,
+      orgLevel: userData?.org_level ?? null,
+      wsLevel: userData?.ws_level ?? null,
       workspaceIds: [],
       wsLevel_edit: LEVELS.WORKSPACE_MEMBER,
     },
@@ -162,7 +162,7 @@ const AllActionForm = ({
   // Resend invite form (allows role change before resending)
   const resendForm = useForm({
     defaultValues: {
-      orgLevel: userData?.org_level ?? userData?.orgLevel ?? LEVELS.VIEWER,
+      orgLevel: userData?.org_level ?? LEVELS.VIEWER,
     },
     mode: "onChange",
   });
@@ -170,7 +170,7 @@ const AllActionForm = ({
   // Workspace role edit form
   const wsEditForm = useForm({
     defaultValues: {
-      wsLevel: userData?.ws_level ?? userData?.wsLevel ?? null,
+      wsLevel: userData?.ws_level ?? null,
     },
     mode: "onChange",
   });
@@ -182,8 +182,8 @@ const AllActionForm = ({
   useEffect(() => {
     if (userData && openActionForm?.action === "edit-role") {
       editForm.reset({
-        orgLevel: userData?.org_level ?? userData?.orgLevel ?? null,
-        wsLevel: userData?.ws_level ?? userData?.wsLevel ?? null,
+        orgLevel: userData?.org_level ?? null,
+        wsLevel: userData?.ws_level ?? null,
         workspaceIds: [],
         wsLevel_edit: LEVELS.WORKSPACE_MEMBER,
       });
@@ -194,7 +194,7 @@ const AllActionForm = ({
   useEffect(() => {
     if (userData && openActionForm?.action === "edit-ws-role") {
       wsEditForm.reset({
-        wsLevel: userData?.ws_level ?? userData?.wsLevel ?? null,
+        wsLevel: userData?.ws_level ?? null,
       });
     }
   }, [userData, openActionForm?.action, wsEditForm]);
@@ -203,7 +203,7 @@ const AllActionForm = ({
   useEffect(() => {
     if (userData && openActionForm?.action === "resend-invite") {
       resendForm.reset({
-        orgLevel: userData?.org_level ?? userData?.orgLevel ?? LEVELS.VIEWER,
+        orgLevel: userData?.org_level ?? LEVELS.VIEWER,
       });
     }
   }, [userData, openActionForm?.action, resendForm]);
@@ -757,8 +757,8 @@ const AllActionForm = ({
                   size="small"
                   fullWidth
                   disabled={
-                    (userData?.org_level ?? userData?.orgLevel) != null &&
-                    (userData?.org_level ?? userData?.orgLevel) >= LEVELS.ADMIN
+                    userData?.org_level != null &&
+                    userData.org_level >= LEVELS.ADMIN
                   }
                 />
               )}
@@ -979,12 +979,12 @@ const AllActionForm = ({
                 size="small"
                 fullWidth
                 disabled={
-                  (userData?.org_level ?? userData?.orgLevel) != null &&
-                  (userData?.org_level ?? userData?.orgLevel) >= LEVELS.ADMIN
+                  userData?.org_level != null &&
+                  userData.org_level >= LEVELS.ADMIN
                 }
               />
-              {(userData?.org_level ?? userData?.orgLevel) != null &&
-                (userData?.org_level ?? userData?.orgLevel) >= LEVELS.ADMIN && (
+              {userData?.org_level != null &&
+                userData.org_level >= LEVELS.ADMIN && (
                   <Typography variant="body2" color="text.secondary">
                     This user is an org Admin or above and automatically has
                     Workspace Admin access.
@@ -1000,8 +1000,8 @@ const AllActionForm = ({
               color="primary"
               loading={isWsRolePending}
               disabled={
-                (userData?.org_level ?? userData?.orgLevel) != null &&
-                (userData?.org_level ?? userData?.orgLevel) >= LEVELS.ADMIN
+                userData?.org_level != null &&
+                userData.org_level >= LEVELS.ADMIN
               }
             >
               Update

@@ -143,6 +143,13 @@ def parsing_evaltask_filters(filters: dict) -> Q:
     if filters is None:
         return combined_q
 
+    def _as_list(value):
+        if value is None or value == "":
+            return []
+        if isinstance(value, list):
+            return [item for item in value if item not in (None, "")]
+        return [value]
+
     for key, value in filters.items():
         if (
             key == "span_attributes_filters"
@@ -162,8 +169,17 @@ def parsing_evaltask_filters(filters: dict) -> Q:
                     "Invalid value for observation_type filter; expected list or string"
                 )
         elif key == "session_id":
-            traces = Trace.objects.filter(session_id=value).values_list("id", flat=True)
+            session_ids = _as_list(value)
+            traces = Trace.objects.filter(session_id__in=session_ids).values_list(
+                "id", flat=True
+            )
             combined_q &= Q(trace_id__in=list(traces))
+        elif key == "trace_id":
+            trace_ids = _as_list(value)
+            combined_q &= Q(trace_id__in=trace_ids)
+        elif key == "span_id":
+            span_ids = _as_list(value)
+            combined_q &= Q(id__in=span_ids)
         elif key == "date_range":
             if isinstance(value, list) and len(value) == 2:
                 start_date, end_date = value

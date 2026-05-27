@@ -138,20 +138,24 @@ class TestExecutor:
     """
 
     def __init__(
-        self, monitor_interval: int = 30, system_voice_provider=ProviderChoices.VAPI
+        self,
+        monitor_interval: int = 30,
+        system_voice_provider=ProviderChoices.VAPI,
+        initialize_voice_service: bool = True,
     ):
         """
         Initialize the test executor
 
         Args:
             monitor_interval: How often to check test progress (seconds)
+            initialize_voice_service: Whether to initialize voice-provider services.
         """
         self.monitor_interval = monitor_interval
         self.running = False
         self.monitor_thread = None
         self.voice_service_manager = (
             VoiceServiceManager(system_voice_provider=system_voice_provider)
-            if VoiceServiceManager
+            if initialize_voice_service and VoiceServiceManager
             else None
         )
         self.system_voice_provider = system_voice_provider

@@ -49,7 +49,6 @@ const CallDetailLogGrid = forwardRef(
         resizable: true,
         suppressHeaderMenuButton: true,
         suppressHeaderContextMenu: true,
-        suppressMultiSort: true,
         cellStyle: {
           lineHeight: 1,
           padding: "8px",
@@ -233,7 +232,6 @@ const CallDetailLogGrid = forwardRef(
           ref={ref}
           columnDefs={CallDetailLogColumnDefs}
           defaultColDef={defaultColDef}
-          suppressRowClickSelection={true}
           paginationPageSizeSelector={false}
           {...(useClientSide
             ? {

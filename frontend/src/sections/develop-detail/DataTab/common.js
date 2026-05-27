@@ -616,7 +616,7 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
   }
 
   const columnId = params?.column?.colId;
-  const rowId = params?.data?.rowId;
+  const rowId = params?.data?.row_id ?? params?.data?.rowId;
   const newValue = params?.newValue;
   const oldValue = params?.oldValue;
   const dataType = params?.column?.colDef?.dataType;
@@ -964,10 +964,8 @@ export const DATASET_TYPES = {
 export const enhanceCol = (col, averageMetaData) => {
   const columnConfig = averageMetaData?.find((d) => d.id === col.id);
   if (!columnConfig) return col;
-  // Spread only copies enumerable own properties; the non-enumerable
-  // camelCase aliases installed by the axios response interceptor are
-  // lost. Explicitly re-add them so downstream code reading camelCase
-  // fields (like `eachCol?.dataType`) still works.
+  // Local table column state still reads a few camelCase fields. Keep this
+  // adapter explicit here instead of mutating every API response globally.
   return {
     ...col,
     metadata: columnConfig?.metadata,

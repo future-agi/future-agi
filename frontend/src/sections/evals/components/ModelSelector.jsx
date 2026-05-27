@@ -707,7 +707,11 @@ const ModelSelector = ({
     queryKey: ["eval-model-list", debouncedModelSearch],
     queryFn: ({ pageParam }) =>
       axios.get(endpoints.develop.modelList, {
-        params: { page: pageParam, search: debouncedModelSearch, model_type: "llm" },
+        params: {
+          page: pageParam,
+          search: debouncedModelSearch,
+          model_type: "llm",
+        },
       }),
     getNextPageParam: (o) => (o.data.next ? o.data.current_page + 1 : null),
     initialPageParam: 1,

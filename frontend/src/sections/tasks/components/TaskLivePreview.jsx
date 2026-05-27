@@ -560,8 +560,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
         });
         return;
       }
-      // canonicalEntries drops the camelCase aliases the axios interceptor
-      // layers on — otherwise `span_attributes.*` and `spanAttributes.*`
+      // canonicalEntries drops legacy camelCase aliases that may exist on cached or pre-normalized objects — otherwise `span_attributes.*` and `spanAttributes.*`
       // both end up in valueMap and only the snake side gets stripped.
       for (const [k, v] of canonicalEntries(node)) {
         if (k.startsWith("_")) continue;
@@ -752,7 +751,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                   bgcolor: "background.neutral",
                   color: "text.secondary",
                   "& .MuiChip-label": { px: 0.75 },
-                    "&:hover": { bgcolor: "background.neutral" },
+                  "&:hover": { bgcolor: "background.neutral" },
                 }}
               />
             )}
@@ -914,9 +913,7 @@ const RowDetailTable = ({
   // `gen_ai.span.kind` row would also have a duplicate `genAi.span.kind`
   // sibling rendered next to it.
   const entries = useMemo(() => {
-    const raw = canonicalEntries(spanDetail).filter(
-      ([key]) => key !== "spans",
-    );
+    const raw = canonicalEntries(spanDetail).filter(([key]) => key !== "spans");
     const spanAttrs = spanDetail?.span_attributes;
     if (
       !spanAttrs ||

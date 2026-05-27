@@ -122,7 +122,11 @@ const RequestBody = ({
       jsonSchemas?.[column?.field]?.keys?.forEach((path) => {
         const fullPath = `${name}.${path}`;
         if (fullPath.toLowerCase().startsWith(lower)) {
-          options.push({ label: fullPath, value: `{{${fullPath}}}`, isJsonPath: true });
+          options.push({
+            label: fullPath,
+            value: `{{${fullPath}}}`,
+            isJsonPath: true,
+          });
         }
       });
     });
@@ -436,9 +440,7 @@ const RequestBody = ({
                   mx: 0.5,
                   color: variable.isJsonPath ? "primary.main" : "text.primary",
                   backgroundColor:
-                    index === selectedIndex
-                      ? "action.selected"
-                      : "inherit",
+                    index === selectedIndex ? "action.selected" : "inherit",
                   "&:hover": { backgroundColor: "action.hover" },
                   "&:focus": { outline: "none" },
                 }}

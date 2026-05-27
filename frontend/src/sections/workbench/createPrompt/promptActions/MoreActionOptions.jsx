@@ -146,7 +146,7 @@ const MoreActionOptionsChild = (
   );
 };
 
-MoreActionOptionsChild.propTypes = {
+const moreActionOptionsPropTypes = {
   open: PropTypes.bool,
   id: PropTypes.string,
   onClose: PropTypes.func,
@@ -158,6 +158,7 @@ MoreActionOptionsChild.propTypes = {
 
 // @ts-ignore
 export const MoreActionOptions = forwardRef(MoreActionOptionsChild);
+MoreActionOptions.propTypes = moreActionOptionsPropTypes;
 
 const modifier = [
   {

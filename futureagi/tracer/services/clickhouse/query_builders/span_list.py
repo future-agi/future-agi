@@ -88,6 +88,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             table=self.TABLE,
             query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -99,7 +101,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             order_clause = "ORDER BY start_time DESC"
 
         offset = self.page_number * self.page_size
-        self.params["limit"] = self.page_size + 1  # +1 for has_more detection
+        self.params["limit"] = self.page_size
         self.params["offset"] = offset
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
@@ -127,6 +129,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             latency_ms,
             cost,
             total_tokens,
+            prompt_tokens,
+            completion_tokens,
             model,
             provider,
             end_user_id,
@@ -165,6 +169,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             table=self.TABLE,
             query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         params = dict(self.params)

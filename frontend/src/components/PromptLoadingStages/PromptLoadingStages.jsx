@@ -29,28 +29,31 @@ export default function PromptLoadingStages({ stage, stages, onFinish }) {
     let currentIndex = mode === "deleting" ? displayedText.length : 0;
     setIsTypingDone(false);
 
-    intervalRef.current = setInterval(() => {
-      setDisplayedText((prev) => {
-        if (mode === "deleting") {
-          const updated = prev.slice(0, -1);
-          if (updated.length === 0) {
-            clearInterval(intervalRef.current);
-          }
-          return updated;
-        } else {
-          const nextChar = text[currentIndex];
-          currentIndex++;
-          const updated = prev + (nextChar || "");
+    intervalRef.current = setInterval(
+      () => {
+        setDisplayedText((prev) => {
+          if (mode === "deleting") {
+            const updated = prev.slice(0, -1);
+            if (updated.length === 0) {
+              clearInterval(intervalRef.current);
+            }
+            return updated;
+          } else {
+            const nextChar = text[currentIndex];
+            currentIndex++;
+            const updated = prev + (nextChar || "");
 
-          if (currentIndex >= text.length) {
-            clearInterval(intervalRef.current);
-            setIsTypingDone(true);
-          }
+            if (currentIndex >= text.length) {
+              clearInterval(intervalRef.current);
+              setIsTypingDone(true);
+            }
 
-          return updated;
-        }
-      });
-    }, mode === "deleting" ? 7 : 40);
+            return updated;
+          }
+        });
+      },
+      mode === "deleting" ? 7 : 40,
+    );
 
     return () => clearInterval(intervalRef.current);
   }, [text, mode]);
@@ -116,7 +119,7 @@ PromptLoadingStages.propTypes = {
     PropTypes.shape({
       icon: PropTypes.string.isRequired,
       text: PropTypes.string.isRequired,
-    })
+    }),
   ).isRequired,
   onFinish: PropTypes.func,
 };

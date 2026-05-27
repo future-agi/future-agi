@@ -129,7 +129,7 @@ export default function JwtRegisterView() {
         email: data?.email,
         full_name: data?.fullName,
         company_name: "",
-        "recaptcha-response": token,
+        recaptcha_response: token,
         allow_email: true,
       };
       let response;
@@ -203,7 +203,7 @@ export default function JwtRegisterView() {
       const response = await axios.post(endpoints.auth.login, {
         email: data.email,
         password: data.password,
-        "recaptcha-response": token,
+        recaptcha_response: token,
       });
       if (response.status === 200) {
         await login(response);

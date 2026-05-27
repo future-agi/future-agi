@@ -20,6 +20,8 @@ from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from model_hub.services.bulk_selection import (
     ResolveResult,
+    _validate_user_scoped_filters,
+    _resolve_trace_ids_clickhouse,
     resolve_filtered_trace_ids,
 )
 from tracer.models.project import Project
@@ -173,8 +175,12 @@ class TestCap:
             organization=organization,
             cap=10,
         )
+        # When the filter would return more than ``cap``, the resolver no
+        # longer runs a precise COUNT(*) — it returns ``cap`` ids plus a
+        # ``total_matching`` of ``cap + 1`` to signal "≥ cap+1". The exact
+        # match count on huge filters was the dominant /preview timeout.
         assert len(result.ids) == 10
-        assert result.total_matching == 25
+        assert result.total_matching == 11
         assert result.truncated is True
 
     def test_cap_above_total_is_not_truncated(
@@ -200,6 +206,52 @@ class TestCap:
         )
         # Last-created trace is newest → first in latest-first ordering.
         assert result.ids == [t.id for t in seeded_traces[-1:-4:-1]]
+
+    def test_clickhouse_cap_sentinel_survives_exclusion(self, monkeypatch):
+        """CH applies exclude_ids after cap+1 fetch; keep truncation truthy.
+
+        If the sentinel row itself is excluded, the returned list length drops
+        to ``cap``. We still need ``truncated=True`` because there may be more
+        non-excluded rows beyond the fetched window.
+        """
+
+        class FakeBuilder:
+            def __init__(self, **_kwargs):
+                pass
+
+            def build(self):
+                return "SELECT trace_id", {}
+
+        class FakeResult:
+            data = [{"trace_id": f"trace-{i}"} for i in range(11)]
+
+        class FakeAnalytics:
+            def should_use_clickhouse(self, _query_type):
+                return True
+
+            def execute_ch_query(self, *_args, **_kwargs):
+                return FakeResult()
+
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_builders.trace_list.TraceListQueryBuilder",
+            FakeBuilder,
+        )
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+            FakeAnalytics,
+        )
+
+        result = _resolve_trace_ids_clickhouse(
+            project_id="project-1",
+            filters=[],
+            exclude_ids={"trace-0"},
+            cap=10,
+            annotation_label_ids=[],
+        )
+
+        assert result.ids == [f"trace-{i}" for i in range(1, 11)]
+        assert result.total_matching == 11
+        assert result.truncated is True
 
 
 # --------------------------------------------------------------------------
@@ -335,26 +387,21 @@ class TestUserScopedFilters:
                 user=None,
             )
 
-    def test_user_scoped_accepts_camelcase_column_id(
-        self, observe_project, organization
-    ):
-        """camelCase form of the column_id must also trip the guard."""
-        with pytest.raises(ValueError, match="user-scoped"):
-            resolve_filtered_trace_ids(
-                project_id=observe_project.id,
-                filters=[
-                    {
-                        "columnId": "my_annotations",
-                        "filter_config": {
-                            "filter_type": "boolean",
-                            "filter_op": "equals",
-                            "filter_value": True,
-                        },
-                    }
-                ],
-                organization=organization,
-                user=None,
-            )
+    def test_user_scoped_requires_canonical_column_id(self):
+        """Backend user-scoped guard reads the canonical snake_case filter contract."""
+        _validate_user_scoped_filters(
+            [
+                {
+                    "columnId": "my_annotations",
+                    "filter_config": {
+                        "filter_type": "boolean",
+                        "filter_op": "equals",
+                        "filter_value": True,
+                    },
+                }
+            ],
+            user=None,
+        )
 
     def test_validator_silent_when_user_provided(self, user):
         """Validator does not raise when user is provided for user-scoped cols."""

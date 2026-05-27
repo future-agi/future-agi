@@ -151,7 +151,6 @@ const EditAgentDetails = ({
       setLastFetchedAt(new Date());
       setShowSyncSuccess(true);
     },
-    
   });
 
   useEffect(() => {

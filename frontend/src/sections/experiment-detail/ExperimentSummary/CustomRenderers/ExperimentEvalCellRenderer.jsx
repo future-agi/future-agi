@@ -35,7 +35,7 @@ const ExperimentEvalCellRenderer = ({ value, eGridCell, ...rest }) => {
     if (eGridCell?.style) {
       eGridCell.style.backgroundColor = backgroundColor || "";
     }
-  }, [eGridCell.style, backgroundColor]);
+  }, [eGridCell?.style, backgroundColor]);
 
   if (isNumeric) {
     return (

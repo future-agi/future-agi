@@ -11,6 +11,7 @@ import structlog
 # from ee.agenthub.feedback_agent_updated.utils import RAG
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import close_old_connections, models, transaction
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -49,8 +50,18 @@ from model_hub.models.develop_dataset import (
     KnowledgeBaseFile,
     Row,
 )
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.evals_metric import (
+    EvalTemplate,
+    EvalTemplateVersion,
+    UserEvalMetric,
+)
 from model_hub.models.run_prompt import RunPrompter
+from model_hub.serializers.contracts import (
+    CustomEvalTemplateCreateResponseSerializer,
+    DatasetEvalStatsResponseSerializer,
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubStringResultResponseSerializer,
+)
 from model_hub.serializers.develop_optimisation import UserEvalMetricSerializer
 from model_hub.serializers.eval_runner import (
     CustomEvalTemplateCreateSerializer,
@@ -64,11 +75,13 @@ from model_hub.utils.json_path_resolver import (  # noqa: E402
     resolve_json_path,
 )
 from sdk.utils.helpers import _get_api_call_type
+from tfc.middleware.workspace_context import get_current_workspace
 from tfc.utils.error_codes import (
     get_error_for_api_status,
     get_error_message,
     get_specific_error_message,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -79,6 +92,64 @@ except ImportError:
     count_tiktoken_tokens = None
     log_and_deduct_cost_for_api_request = None
     refund_cost_for_api_call = None
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    workspace = getattr(request, "workspace", None) or get_current_workspace()
+    if not workspace:
+        return models.Q()
+
+    if getattr(workspace, "is_default", False):
+        return (
+            models.Q(**{field_name: workspace})
+            | models.Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization_id": workspace.organization_id,
+                }
+            )
+            | models.Q(**{f"{field_name}__isnull": True})
+        )
+
+    return models.Q(**{field_name: workspace})
+
+
+def _request_dataset_queryset(request):
+    return Dataset.objects.filter(
+        _request_workspace_filter(request),
+        organization=_request_organization(request),
+        deleted=False,
+    )
+
+
+def _request_eval_template_queryset(request):
+    organization = _request_organization(request)
+    return EvalTemplate.no_workspace_objects.filter(deleted=False).filter(
+        models.Q(owner=OwnerChoices.SYSTEM.value)
+        | (
+            models.Q(owner=OwnerChoices.USER.value, organization=organization)
+            & _request_workspace_filter(request)
+        )
+    )
+
+
+def _mapped_column_ids(config):
+    mapping = config.get("mapping") if isinstance(config, dict) else None
+    if not isinstance(mapping, dict):
+        return set()
+
+    column_ids = set()
+    for value in mapping.values():
+        if not isinstance(value, str):
+            continue
+        column_id_or_name, _json_path = _extract_column_id_and_path(value)
+        if is_uuid(str(column_id_or_name)):
+            column_ids.add(str(column_id_or_name))
+    return column_ids
 
 
 def _format_messages_to_prompt_chain(messages):
@@ -3172,79 +3243,83 @@ class CustomEvalTemplateCreateView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=CustomEvalTemplateCreateSerializer,
+        responses={
+            200: CustomEvalTemplateCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            serializer = CustomEvalTemplateCreateSerializer(data=request.data)
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
-                if (
-                    EvalTemplate.objects.filter(
-                        name=validated_data.get("name"),
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                        deleted=False,
-                    ).exists()
-                    or EvalTemplate.no_workspace_objects.filter(
-                        name=request.data.get("name"),
-                        owner=OwnerChoices.SYSTEM.value,
-                        deleted=False,
-                    ).exists()
-                ):
-                    return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
-
-                validated_data = prepare_user_eval_config(validated_data, bypass=False)
-                logger.debug(f"Prepared eval config: {validated_data}")
-                eval_template = EvalTemplate.objects.create(
+            validated_data = request.validated_data
+            if (
+                EvalTemplate.objects.filter(
                     name=validated_data.get("name"),
-                    organization=organization,
-                    owner=OwnerChoices.USER.value,
-                    eval_tags=validated_data.get("eval_tags"),
-                    config=(
-                        validated_data.get("configuration")
-                        if validated_data.get("configuration", None)
-                        else validated_data.get("config")
-                    ),
-                    choices=validated_data.get("choices"),
-                    description=validated_data.get("description"),
-                    criteria=validated_data.get("criteria"),
-                    multi_choice=validated_data.get("multi_choice"),
-                    proxy_agi=validated_data.get("config", {}).get("proxy_agi", True),
-                    visible_ui=validated_data.get("config", {}).get("visible_ui", True),
-                    model=validated_data.get("config", {}).get("model", "turing_large"),
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    deleted=False,
+                ).exists()
+                or EvalTemplate.no_workspace_objects.filter(
+                    name=validated_data.get("name"),
+                    owner=OwnerChoices.SYSTEM.value,
+                    deleted=False,
+                ).exists()
+            ):
+                return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
+
+            validated_data = prepare_user_eval_config(validated_data, bypass=False)
+            logger.debug(f"Prepared eval config: {validated_data}")
+            eval_template = EvalTemplate.objects.create(
+                name=validated_data.get("name"),
+                organization=organization,
+                owner=OwnerChoices.USER.value,
+                eval_tags=validated_data.get("eval_tags"),
+                config=(
+                    validated_data.get("configuration")
+                    if validated_data.get("configuration", None)
+                    else validated_data.get("config")
+                ),
+                choices=validated_data.get("choices"),
+                description=validated_data.get("description"),
+                criteria=validated_data.get("criteria"),
+                multi_choice=validated_data.get("multi_choice"),
+                proxy_agi=validated_data.get("config", {}).get("proxy_agi", True),
+                visible_ui=validated_data.get("config", {}).get("visible_ui", True),
+                model=validated_data.get("config", {}).get("model", "turing_large"),
+            )
+
+            # Create v0 version for the new template
+            try:
+                from model_hub.models.evals_metric import EvalTemplateVersion
+                from model_hub.utils.prompt_migration import (
+                    config_to_prompt_messages,
                 )
 
-                # Create v0 version for the new template
-                try:
-                    from model_hub.models.evals_metric import EvalTemplateVersion
-                    from model_hub.utils.prompt_migration import (
-                        config_to_prompt_messages,
+                template_config = eval_template.config or {}
+                prompt_messages = validated_data.get("prompt_messages")
+                if not prompt_messages:
+                    prompt_messages = config_to_prompt_messages(
+                        template_config,
+                        eval_template.criteria,
+                        template_config.get("eval_type_id"),
                     )
-
-                    template_config = eval_template.config or {}
-                    prompt_messages = validated_data.get("prompt_messages")
-                    if not prompt_messages:
-                        prompt_messages = config_to_prompt_messages(
-                            template_config,
-                            eval_template.criteria,
-                            template_config.get("eval_type_id"),
-                        )
-                    EvalTemplateVersion.objects.create_version(
-                        eval_template=eval_template,
-                        prompt_messages=prompt_messages,
-                        config_snapshot=template_config,
-                        criteria=eval_template.criteria,
-                        model=eval_template.model,
-                        user=request.user,
-                        organization=organization,
-                        workspace=getattr(eval_template, "workspace", None),
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to create v0 for custom eval: {e}")
-            else:
-                return self._gm.bad_request(parse_serialized_errors(serializer))
+                EvalTemplateVersion.objects.create_version(
+                    eval_template=eval_template,
+                    prompt_messages=prompt_messages,
+                    config_snapshot=template_config,
+                    criteria=eval_template.criteria,
+                    model=eval_template.model,
+                    user=request.user,
+                    organization=organization,
+                    workspace=getattr(eval_template, "workspace", None),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create v0 for custom eval: {e}")
 
             return self._gm.success_response({"eval_template_id": eval_template.id})
         except Exception as e:
@@ -3258,25 +3333,45 @@ class EvalTemplateCreateView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=EvalTemplateSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            serializer = EvalTemplateSerializer(data=request.data)
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
-
-                EvalTemplate.objects.create(
-                    name=validated_data.get("name"),
-                    organization=organization,
-                    owner=validated_data.get("owner"),
-                    eval_tags=validated_data.get("eval_tags"),
-                    config=validated_data.get("config"),
+            workspace = getattr(request, "workspace", None)
+            validated_data = request.validated_data
+            owner = validated_data.get("owner", OwnerChoices.USER.value)
+            if owner != OwnerChoices.USER.value:
+                return self._gm.bad_request(
+                    "Only user-owned eval templates can be created through this endpoint."
                 )
 
-                return self._gm.success_response("success")
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+            eval_template = EvalTemplate.objects.create(
+                name=validated_data.get("name"),
+                organization=organization,
+                workspace=workspace,
+                owner=owner,
+                eval_tags=validated_data.get("eval_tags"),
+                config=validated_data.get("config"),
+            )
+            EvalTemplateVersion.objects.create_version(
+                eval_template=eval_template,
+                config_snapshot=eval_template.config,
+                user=request.user,
+                organization=organization,
+                workspace=workspace,
+                eval_tags=eval_template.eval_tags,
+            )
+
+            return self._gm.success_response("success")
         except Exception as e:
             logger.exception(f"Error in creation of eval template: {str(e)}")
             return self._gm.bad_request(
@@ -3288,27 +3383,73 @@ class EvalUserTemplateCreateView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=EvalUserTemplateSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
+            organization = _request_organization(request)
+            workspace = getattr(request, "workspace", None) or get_current_workspace()
+            validated_data = request.validated_data
+
+            dataset = (
+                _request_dataset_queryset(request)
+                .filter(id=validated_data.get("dataset_id"))
+                .first()
             )
-            serializer = EvalUserTemplateSerializer(data=request.data)
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
+            if not dataset:
+                return self._gm.not_found("Dataset not found")
 
-                UserEvalMetric.objects.create(
-                    name=validated_data.get("name"),
-                    organization=organization,
-                    dataset_id=validated_data.get("dataset_id"),
-                    template_id=validated_data.get("template_id"),
-                    config=validated_data.get("config"),
-                    user=request.user,
-                    model=validated_data.get("model", ModelChoices.TURING_LARGE.value),
+            template = (
+                _request_eval_template_queryset(request)
+                .filter(id=validated_data.get("template_id"))
+                .first()
+            )
+            if not template:
+                return self._gm.not_found("Eval template not found")
+
+            if UserEvalMetric.objects.filter(
+                _request_workspace_filter(request),
+                organization=organization,
+                dataset=dataset,
+                name=validated_data.get("name"),
+                deleted=False,
+            ).exists():
+                return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
+
+            mapped_column_ids = _mapped_column_ids(validated_data.get("config") or {})
+            if mapped_column_ids:
+                existing_column_ids = set(
+                    Column.objects.filter(
+                        id__in=mapped_column_ids,
+                        dataset=dataset,
+                        deleted=False,
+                    ).values_list("id", flat=True)
                 )
+                if {str(column_id) for column_id in existing_column_ids} != set(
+                    mapped_column_ids
+                ):
+                    return self._gm.bad_request(
+                        "Eval mapping contains columns outside the selected dataset."
+                    )
 
-                return self._gm.success_response("success")
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+            UserEvalMetric.objects.create(
+                name=validated_data.get("name"),
+                organization=organization,
+                workspace=workspace,
+                dataset=dataset,
+                template=template,
+                config=validated_data.get("config"),
+                user=request.user,
+                model=validated_data.get("model", ModelChoices.TURING_LARGE.value),
+            )
+
+            return self._gm.success_response("success")
         except Exception as e:
             logger.exception(f"Error in creation of user eval template: {str(e)}")
             return self._gm.bad_request(
@@ -3377,6 +3518,9 @@ class DatasetEvalStatsView(APIView):
             )
         ]
 
+    @swagger_auto_schema(
+        responses={200: DatasetEvalStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, dataset_id):
         try:
             # Get all evaluation columns for this dataset

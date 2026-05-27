@@ -39,6 +39,7 @@ import AddToQueueDialog from "src/sections/annotations/queues/components/add-to-
 import AddDataset from "src/components/traceDetailDrawer/addToDataset/add-dataset";
 import AnnotationSidebarContent from "src/components/traceDetailDrawer/AnnotationSidebarContent";
 import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
+import { buildTraceAnnotationSources } from "src/components/voiceAnnotationSources";
 import AddTagsPopover from "./AddTagsPopover";
 import SaveViewPopover from "./SaveViewDialog";
 import { useNavigate } from "react-router";
@@ -1431,12 +1432,11 @@ const TraceDetailDrawerV2 = ({
         }}
       >
         <AnnotationSidebarContent
-          sources={[
-            {
-              sourceType: "observation_span",
-              sourceId: annotateDrawerOpen?.spanId || rootSpanId,
-            },
-          ]}
+          sources={buildTraceAnnotationSources({
+            traceId,
+            spanId: annotateDrawerOpen?.spanId || rootSpanId,
+            sessionId: data?.trace?.session,
+          })}
           onClose={() => setAnnotateDrawerOpen(null)}
           onAddLabel={() => setAddLabelDrawerOpen(true)}
           onScoresChanged={() => {

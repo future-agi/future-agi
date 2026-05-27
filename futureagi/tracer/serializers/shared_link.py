@@ -1,5 +1,6 @@
 from rest_framework import serializers
 
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tracer.models.shared_link import (
     AccessType,
     ResourceType,
@@ -99,3 +100,40 @@ class SharedLinkDetailSerializer(serializers.ModelSerializer):
         if request:
             return request.build_absolute_uri(f"/shared/{obj.token}")
         return f"/shared/{obj.token}"
+
+
+class SharedLinkResolvedTraceSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    project_id = serializers.CharField()
+    input = serializers.JSONField(required=False, allow_null=True)
+    output = serializers.JSONField(required=False, allow_null=True)
+    metadata = serializers.JSONField(required=False, allow_null=True)
+    tags = serializers.JSONField(required=False, allow_null=True)
+    created_at = serializers.CharField(required=False, allow_null=True)
+
+
+class SharedLinkResolvedSummarySerializer(serializers.Serializer):
+    total_spans = serializers.IntegerField(required=False)
+
+
+class SharedLinkResolvedDataSerializer(serializers.Serializer):
+    trace = SharedLinkResolvedTraceSerializer(required=False)
+    observation_spans = serializers.ListField(
+        child=serializers.JSONField(), required=False
+    )
+    summary = SharedLinkResolvedSummarySerializer(required=False)
+    id = serializers.CharField(required=False)
+    name = serializers.CharField(required=False)
+    config = serializers.JSONField(required=False)
+
+
+class SharedLinkResolveResponseSerializer(serializers.Serializer):
+    resource_type = serializers.ChoiceField(choices=ResourceType.choices)
+    resource_id = serializers.CharField()
+    access_type = serializers.ChoiceField(choices=AccessType.choices)
+    data = SharedLinkResolvedDataSerializer()
+
+
+class SharedLinkResolveErrorSerializer(ApiTextErrorResponseSerializer):
+    pass

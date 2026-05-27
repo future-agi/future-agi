@@ -1,5 +1,9 @@
-export function buildCompositeRuntimeConfig({ config = {}, codeParams = {} } = {}) {
-  const runtimeConfig = config && typeof config === "object" ? { ...config } : {};
+export function buildCompositeRuntimeConfig({
+  config = {},
+  codeParams = {},
+} = {}) {
+  const runtimeConfig =
+    config && typeof config === "object" ? { ...config } : {};
   const existingParams =
     runtimeConfig.params && typeof runtimeConfig.params === "object"
       ? runtimeConfig.params

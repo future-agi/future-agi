@@ -43,6 +43,12 @@ function formatScoreValue(labelType, value) {
   return JSON.stringify(value);
 }
 
+function normalizeEntityId(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value.id || value.pk || null;
+  return value;
+}
+
 /**
  * Displays a table of existing scores/annotations for a given source.
  * Supports an optional secondary source to merge scores from two levels
@@ -111,15 +117,22 @@ export default function ScoresListSection({
           labelId: s.labelId || s.label_id,
           sourceType: s.sourceType || s.source_type,
           sourceId: s.sourceId || s.source_id,
-          labelName: s.labelName,
-          labelType: s.labelType,
+          labelName: s.labelName || s.label_name || s.label?.name || "—",
+          labelType: s.labelType || s.label_type || s.label?.type,
           value: s.value,
-          annotatorName: s.annotatorName || s.annotatorEmail || "System",
-          scoreSource: s.scoreSource,
+          annotatorName:
+            s.annotatorName ||
+            s.annotator_name ||
+            s.annotatorEmail ||
+            s.annotator_email ||
+            "System",
+          scoreSource: s.scoreSource || s.score_source,
           notes: s.notes,
-          updatedAt: s.updated_at,
-          queueId: s.queueId || s.queue_id,
-          queueItemId: s.queueItem || s.queue_item,
+          updatedAt: s.updatedAt || s.updated_at,
+          queueId: normalizeEntityId(s.queueId || s.queue_id || s.queue),
+          queueItemId: normalizeEntityId(
+            s.queueItemId || s.queue_item_id || s.queueItem || s.queue_item,
+          ),
         });
       }
     }

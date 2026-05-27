@@ -117,7 +117,7 @@ export default function DataTable({
   }, [columnVisibility]);
 
   return (
-    <Box sx={{ flex: 1, minHeight: 0 }}>
+    <Box sx={{ flex: 1, minWidth: 0, minHeight: 0 }}>
       <DataGrid
         rows={data || []}
         columns={muiColumns}

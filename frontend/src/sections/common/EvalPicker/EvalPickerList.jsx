@@ -629,12 +629,12 @@ const EvalPickerList = ({ onSelectEval }) => {
             >
               Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
             </Button>
-  
+
         </Box>
       </Box>
 
       {/* Quick tag filters */}
-    
+
         <Box
           sx={{
             display: "flex",

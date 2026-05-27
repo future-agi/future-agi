@@ -16,8 +16,6 @@ def run_post_registration_activity(user_id: str, generated_password: str):
     - Sends signup email
     - Sends HubSpot notification
     - Sends Slack notification
-    - Uploads demo dataset
-    - Creates demo traces and spans
     """
     from accounts.utils import _run_post_registration
 

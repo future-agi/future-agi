@@ -64,15 +64,23 @@ describe("Scores API", () => {
       });
 
       await waitFor(() => {
-        expect(axios.post).toHaveBeenCalledWith("/model-hub/scores/bulk/", {
-          source_type: "trace",
-          source_id: "trace-1",
-          scores: [{ label_id: "label-1", value: { value: "up" } }],
-          notes: "",
-          score_source: "human",
-          span_notes: "whole item note",
-          span_notes_source_id: "span-1",
-        });
+        expect(axios.post).toHaveBeenCalledWith(
+          "/model-hub/scores/bulk/",
+          {
+            source_type: "trace",
+            source_id: "trace-1",
+            scores: [{ label_id: "label-1", value: { value: "up" } }],
+            notes: "",
+            score_source: "human",
+            span_notes: "whole item note",
+            span_notes_source_id: "span-1",
+          },
+          {
+            headers: {
+              "Content-Type": "application/json",
+            },
+          },
+        );
       });
     });
   });

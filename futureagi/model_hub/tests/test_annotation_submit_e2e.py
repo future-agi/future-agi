@@ -315,7 +315,16 @@ def test_datetime_between_rule_roundtrip_and_evaluate(
     queue, _ = _create_trace_queue(organization, workspace, user, trace, label)
     start = (timezone.now() - timedelta(days=1)).isoformat()
     end = (timezone.now() + timedelta(days=1)).isoformat()
-    rules = [{"field": "created_at", "op": "between", "value": [start, end]}]
+    filters = [
+        {
+            "column_id": "created_at",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "between",
+                "filter_value": [start, end],
+            },
+        }
+    ]
 
     with patch(
         "ee.usage.services.entitlements.Entitlements.can_create",
@@ -326,16 +335,16 @@ def test_datetime_between_rule_roundtrip_and_evaluate(
             {
                 "name": "Created between",
                 "source_type": QueueItemSourceType.TRACE.value,
-                "conditions": {"operator": "and", "rules": rules},
+                "conditions": {"operator": "and", "filter": filters},
                 "enabled": True,
             },
             format="json",
         )
     assert create_resp.status_code == status.HTTP_201_CREATED, create_resp.data
-    assert create_resp.data["conditions"]["rules"] == rules
+    assert create_resp.data["conditions"]["filter"] == filters
 
     rule = AutomationRule.objects.get(pk=create_resp.data["id"])
-    assert rule.conditions["rules"] == rules
+    assert rule.conditions["filter"] == filters
 
     evaluate_resp = auth_client.post(
         f"{_rule_detail_url(queue.id, rule.id)}evaluate/",

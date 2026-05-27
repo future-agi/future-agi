@@ -137,6 +137,7 @@ class SyntheticDatasetConfigSerializer(serializers.Serializer):
     columns = serializers.ListField()
     dataset = serializers.JSONField()
     kb_id = serializers.UUIDField(required=False, allow_null=True)
+    regenerate = serializers.BooleanField(required=False, default=False)
 
     def validate_dataset(self, value):
         if not isinstance(value, dict):

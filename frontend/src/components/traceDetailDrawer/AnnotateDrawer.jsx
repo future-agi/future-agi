@@ -289,7 +289,7 @@ const AnnotateDrawer = ({
             >
               <Typography variant="h6">
                 Annotate{" "}
-                <ShowComponent condition={runName}>
+                <ShowComponent condition={Boolean(runName)}>
                   {`- ${runName}`}
                 </ShowComponent>
               </Typography>
@@ -308,7 +308,7 @@ const AnnotateDrawer = ({
               {observationType} - {observationName}
             </Typography>
           </ShowComponent>
-          <ShowComponent condition={voiceObserveSpanId}>
+          <ShowComponent condition={Boolean(voiceObserveSpanId)}>
             <Box
               sx={{
                 display: "flex",

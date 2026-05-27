@@ -1,5 +1,5 @@
 import structlog
-from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -16,10 +16,13 @@ from tracer.serializers.shared_link import (
     SharedLinkCreateSerializer,
     SharedLinkDetailSerializer,
     SharedLinkListSerializer,
+    SharedLinkResolveErrorSerializer,
+    SharedLinkResolveResponseSerializer,
     SharedLinkUpdateSerializer,
 )
 
 logger = structlog.get_logger(__name__)
+_gm = GeneralMethods()
 
 
 class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -84,7 +87,7 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response(
             SharedLinkDetailSerializer(link, context={"request": request}).data,
-            status_code=status.HTTP_201_CREATED,
+            status=status.HTTP_201_CREATED,
         )
 
     def partial_update(self, request, *args, **kwargs):
@@ -124,7 +127,7 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
             if was_created:
                 created.append(SharedLinkAccessSerializer(obj).data)
 
-        return self._gm.success_response(created, status_code=status.HTTP_201_CREATED)
+        return self._gm.success_response(created, status=status.HTTP_201_CREATED)
 
     @action(
         detail=True,
@@ -138,9 +141,7 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
             entry = link.access_list.get(id=access_id, deleted=False)
             entry.delete()
         except SharedLinkAccess.DoesNotExist:
-            return self._gm.error_response(
-                "Access entry not found", status_code=status.HTTP_404_NOT_FOUND
-            )
+            return self._gm.not_found("Access entry not found")
         return self._gm.success_response({"message": "Access removed"})
 
 
@@ -149,6 +150,16 @@ class SharedLinkViewSet(BaseModelViewSetMixin, ModelViewSet):
 # --------------------------------------------------------------------------
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={
+        200: SharedLinkResolveResponseSerializer,
+        401: SharedLinkResolveErrorSerializer,
+        403: SharedLinkResolveErrorSerializer,
+        404: SharedLinkResolveErrorSerializer,
+        410: SharedLinkResolveErrorSerializer,
+    },
+)
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def resolve_shared_link(request, token):
@@ -160,42 +171,37 @@ def resolve_shared_link(request, token):
     try:
         link = SharedLink.objects.get(token=token, deleted=False)
     except SharedLink.DoesNotExist:
-        return Response(
-            {"error": "Shared link not found"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+        return _gm.not_found("Shared link not found")
 
     if not link.is_accessible:
         reason = "expired" if link.is_expired else "revoked"
-        return Response(
-            {"error": f"This shared link has been {reason}"},
-            status=status.HTTP_410_GONE,
+        return _gm.custom_error_response(
+            status.HTTP_410_GONE,
+            f"This shared link has been {reason}",
+            code="gone",
         )
 
     # Check access for restricted links
     if link.access_type == AccessType.RESTRICTED:
         if not request.user or not request.user.is_authenticated:
-            return Response(
-                {"error": "Authentication required to access this link"},
-                status=status.HTTP_401_UNAUTHORIZED,
+            return _gm.custom_error_response(
+                status.HTTP_401_UNAUTHORIZED,
+                "Authentication required to access this link",
+                code="not_authenticated",
             )
         has_access = link.access_list.filter(
             email=request.user.email, deleted=False
         ).exists()
         # Also allow the creator
         if not has_access and request.user != link.created_by:
-            return Response(
-                {"error": "You don't have access to this shared resource"},
-                status=status.HTTP_403_FORBIDDEN,
+            return _gm.forbidden_response(
+                "You don't have access to this shared resource"
             )
 
     # Resolve the resource
     resource_data = _resolve_resource(link)
     if resource_data is None:
-        return Response(
-            {"error": "The shared resource no longer exists"},
-            status=status.HTTP_404_NOT_FOUND,
-        )
+        return _gm.not_found("The shared resource no longer exists")
 
     return Response(
         {

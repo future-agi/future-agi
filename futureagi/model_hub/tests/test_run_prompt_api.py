@@ -23,8 +23,10 @@ from rest_framework.test import APIClient
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import (
+    CellStatus,
     DatasetSourceChoices,
     DataTypeChoices,
+    EvalExplanationSummaryStatus,
     SourceChoices,
     StatusType,
 )
@@ -107,6 +109,112 @@ def cell(db, dataset, input_column, row):
     )
 
 
+class TestDatasetUtilityResponseContracts:
+    def test_get_base_columns_returns_typed_result(
+        self, auth_client, organization, workspace, dataset, input_column
+    ):
+        other_dataset = Dataset.objects.create(
+            name="Other Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        Column.objects.create(
+            name=input_column.name,
+            dataset=other_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+        Column.objects.create(
+            name="Eval Score",
+            dataset=other_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+        )
+
+        response = auth_client.get(
+            "/model-hub/datasets/get-base-columns/",
+            {
+                "dataset_ids": [str(dataset.id), str(other_dataset.id)],
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["base_columns"] == [input_column.name]
+
+    def test_explanation_summary_returns_typed_insufficient_data_result(
+        self, auth_client, dataset
+    ):
+        response = auth_client.get(
+            f"/model-hub/datasets/explanation-summary/{dataset.id}/",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["response"] == []
+        assert result["last_updated"] is None
+        assert result["status"] == EvalExplanationSummaryStatus.INSUFFICIENT_DATA.value
+        assert result["row_count"] == 0
+        assert result["min_rows_required"] == 15
+
+    def test_refresh_explanation_summary_returns_typed_insufficient_data_result(
+        self, auth_client, dataset
+    ):
+        response = auth_client.post(
+            f"/model-hub/datasets/explanation-summary/{dataset.id}/refresh/",
+            {},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["status"] == EvalExplanationSummaryStatus.INSUFFICIENT_DATA.value
+        assert result["row_count"] == 0
+        assert result["min_rows_required"] == 15
+
+    def test_explanation_summary_rejects_other_workspace_before_mutation(
+        self, auth_client, organization, user, monkeypatch
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Explanation Workspace",
+            organization=organization,
+            created_by=user,
+        )
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="Other Explanation Dataset",
+            organization=organization,
+            workspace=other_workspace,
+            source=DatasetSourceChoices.BUILD.value,
+            eval_reason_status=EvalExplanationSummaryStatus.COMPLETED.value,
+            eval_reasons=[{"reason": "keep"}],
+        )
+        queued_tasks = []
+        monkeypatch.setattr(
+            "model_hub.views.develop_dataset.get_explanation_summary.delay",
+            lambda *args, **kwargs: queued_tasks.append((args, kwargs)),
+        )
+
+        read_response = auth_client.get(
+            f"/model-hub/datasets/explanation-summary/{other_dataset.id}/",
+        )
+        refresh_response = auth_client.post(
+            f"/model-hub/datasets/explanation-summary/{other_dataset.id}/refresh/",
+            {},
+            format="json",
+        )
+
+        assert read_response.status_code == status.HTTP_404_NOT_FOUND
+        assert refresh_response.status_code == status.HTTP_404_NOT_FOUND
+        other_dataset.refresh_from_db()
+        assert (
+            other_dataset.eval_reason_status
+            == EvalExplanationSummaryStatus.COMPLETED.value
+        )
+        assert other_dataset.eval_reasons == [{"reason": "keep"}]
+        assert queued_tasks == []
+
+
 @pytest.fixture
 def run_prompt_column(db, dataset):
     col = Column.objects.create(
@@ -118,6 +226,51 @@ def run_prompt_column(db, dataset):
     dataset.column_order.append(str(col.id))
     dataset.save()
     return col
+
+
+@pytest.mark.django_db
+class TestGetColumnDetailView:
+    """Tests for GET /model-hub/dataset/columns/{dataset_id}/."""
+
+    def test_get_column_details_excludes_prompt_columns_by_default(
+        self, auth_client, dataset, input_column, run_prompt_column
+    ):
+        response = auth_client.get(f"/model-hub/dataset/columns/{dataset.id}/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+
+        assert result["columns"] == [
+            {
+                "id": str(input_column.id),
+                "name": input_column.name,
+                "data_type": input_column.data_type,
+            }
+        ]
+
+    def test_get_column_details_can_include_prompt_columns(
+        self, auth_client, dataset, input_column, run_prompt_column
+    ):
+        response = auth_client.get(
+            f"/model-hub/dataset/columns/{dataset.id}/",
+            {"include_prompt": "true"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+
+        assert result["columns"] == [
+            {
+                "id": str(input_column.id),
+                "name": input_column.name,
+                "data_type": input_column.data_type,
+            },
+            {
+                "id": str(run_prompt_column.id),
+                "name": run_prompt_column.name,
+                "data_type": run_prompt_column.data_type,
+            },
+        ]
 
 
 @pytest.fixture
@@ -384,6 +537,150 @@ class TestEditRunPromptColumnView:
 
         # API returns 404 for non-existent column
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_edit_and_config_reject_other_workspace_before_mutation(
+        self, auth_client, organization, user, valid_run_prompt_config, monkeypatch
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Run Prompt Workspace",
+            organization=organization,
+            created_by=user,
+        )
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="Other Run Prompt Dataset",
+            organization=organization,
+            workspace=other_workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_run_prompter = RunPrompter.objects.create(
+            name="Other Run Prompter",
+            dataset=other_dataset,
+            organization=organization,
+            workspace=other_workspace,
+            status=StatusType.COMPLETED.value,
+            model="gpt-4",
+            messages=[{"role": "user", "content": "Keep"}],
+            run_prompt_config={},
+        )
+        other_column = Column.no_workspace_objects.create(
+            name="Other Run Prompt Output",
+            dataset=other_dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.RUN_PROMPT.value,
+            source_id=str(other_run_prompter.id),
+        )
+        other_row = Row.no_workspace_objects.create(dataset=other_dataset, order=0)
+        other_cell = Cell.no_workspace_objects.create(
+            dataset=other_dataset,
+            column=other_column,
+            row=other_row,
+            value="keep",
+            status=CellStatus.PASS.value,
+        )
+        queued_tasks = []
+        monkeypatch.setattr(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async",
+            lambda *args, **kwargs: queued_tasks.append((args, kwargs)),
+        )
+
+        edit_response = auth_client.post(
+            "/model-hub/develops/edit_run_prompt_column/",
+            {
+                "dataset_id": str(other_dataset.id),
+                "column_id": str(other_column.id),
+                "name": "Should Not Update",
+                "config": valid_run_prompt_config,
+            },
+            format="json",
+        )
+        config_response = auth_client.get(
+            f"/model-hub/develops/retrieve_run_prompt_column_config/?column_id={other_column.id}",
+        )
+
+        assert edit_response.status_code == status.HTTP_404_NOT_FOUND
+        assert config_response.status_code == status.HTTP_404_NOT_FOUND
+        assert queued_tasks == []
+        other_run_prompter.refresh_from_db()
+        other_column.refresh_from_db()
+        other_cell.refresh_from_db()
+        assert other_run_prompter.name == "Other Run Prompter"
+        assert other_run_prompter.status == StatusType.COMPLETED.value
+        assert other_column.name == "Other Run Prompt Output"
+        assert other_cell.value == "keep"
+        assert other_cell.status == CellStatus.PASS.value
+
+    def test_edit_and_config_reject_out_of_scope_source_run_prompter(
+        self,
+        auth_client,
+        organization,
+        user,
+        dataset,
+        row,
+        run_prompt_column,
+        valid_run_prompt_config,
+        monkeypatch,
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Source Run Prompt Workspace",
+            organization=organization,
+            created_by=user,
+        )
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="Other Source Run Prompt Dataset",
+            organization=organization,
+            workspace=other_workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_run_prompter = RunPrompter.no_workspace_objects.create(
+            name="Other Source Run Prompter",
+            dataset=other_dataset,
+            organization=organization,
+            workspace=other_workspace,
+            status=StatusType.COMPLETED.value,
+            model="gpt-4",
+            messages=[{"role": "user", "content": "Keep"}],
+            run_prompt_config={},
+        )
+        run_prompt_column.source_id = str(other_run_prompter.id)
+        run_prompt_column.save()
+        output_cell = Cell.objects.create(
+            dataset=dataset,
+            column=run_prompt_column,
+            row=row,
+            value="keep output",
+            status=CellStatus.PASS.value,
+        )
+        queued_tasks = []
+        monkeypatch.setattr(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async",
+            lambda *args, **kwargs: queued_tasks.append((args, kwargs)),
+        )
+
+        edit_response = auth_client.post(
+            "/model-hub/develops/edit_run_prompt_column/",
+            {
+                "dataset_id": str(dataset.id),
+                "column_id": str(run_prompt_column.id),
+                "name": "Should Not Update",
+                "config": valid_run_prompt_config,
+            },
+            format="json",
+        )
+        config_response = auth_client.get(
+            f"/model-hub/develops/retrieve_run_prompt_column_config/?column_id={run_prompt_column.id}",
+        )
+
+        assert edit_response.status_code == status.HTTP_404_NOT_FOUND
+        assert config_response.status_code == status.HTTP_404_NOT_FOUND
+        assert queued_tasks == []
+        run_prompt_column.refresh_from_db()
+        output_cell.refresh_from_db()
+        other_run_prompter.refresh_from_db()
+        assert run_prompt_column.name == "Run Prompt Output"
+        assert output_cell.value == "keep output"
+        assert output_cell.status == CellStatus.PASS.value
+        assert other_run_prompter.name == "Other Source Run Prompter"
+        assert other_run_prompter.status == StatusType.COMPLETED.value
 
     def test_edit_run_prompt_column_unauthenticated(self):
         """Test that unauthenticated users cannot edit columns."""
@@ -822,6 +1119,95 @@ class TestRunPromptOrganizationIsolation:
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_cannot_direct_run_prompt_on_other_org_dataset(
+        self, auth_client, other_org_dataset
+    ):
+        """Test that direct run prompt cannot bind to another org's dataset."""
+        payload = {
+            "dataset_id": str(other_org_dataset.id),
+            "name": "Cross Org Direct Run Prompt",
+            "model": "gpt-4",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+
+        with patch(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+        ) as mock_task:
+            response = auth_client.post(
+                "/model-hub/run-prompt/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_task.assert_not_called()
+        assert not RunPrompter.objects.filter(name=payload["name"]).exists()
+
+    def test_run_prompt_for_rows_rejects_row_from_other_dataset(
+        self, auth_client, organization, workspace, run_prompter
+    ):
+        """Test row reruns only accept rows from the run prompt's dataset."""
+        other_dataset = Dataset.objects.create(
+            name="Same Org Other Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_row = Row.objects.create(dataset=other_dataset, order=0)
+        payload = {
+            "run_prompt_ids": [str(run_prompter.id)],
+            "row_ids": [str(other_row.id)],
+        }
+
+        with patch(
+            "model_hub.views.run_prompt.run_all_prompts_task.apply_async"
+        ) as mock_task:
+            response = auth_client.post(
+                "/model-hub/run-prompt-for-rows/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        mock_task.assert_not_called()
+
+    def test_run_prompt_for_rows_rejects_mixed_run_prompt_datasets(
+        self, auth_client, organization, workspace, dataset, row, run_prompter
+    ):
+        """Test bulk row rerun does not mix run prompts from different datasets."""
+        other_dataset = Dataset.objects.create(
+            name="Second Prompt Dataset",
+            organization=organization,
+            workspace=workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        other_run_prompter = RunPrompter.objects.create(
+            name="Other Dataset Run Prompter",
+            dataset=other_dataset,
+            organization=organization,
+            workspace=workspace,
+            status=StatusType.NOT_STARTED.value,
+            model="gpt-4",
+            messages=[{"role": "user", "content": "Test prompt"}],
+            run_prompt_config={},
+        )
+        payload = {
+            "run_prompt_ids": [str(run_prompter.id), str(other_run_prompter.id)],
+            "row_ids": [str(row.id)],
+        }
+
+        with patch(
+            "model_hub.views.run_prompt.run_all_prompts_task.apply_async"
+        ) as mock_task:
+            response = auth_client.post(
+                "/model-hub/run-prompt-for-rows/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        mock_task.assert_not_called()
 
 
 # ==================== Config Variations Tests ====================

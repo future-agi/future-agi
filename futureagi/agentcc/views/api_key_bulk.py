@@ -1,9 +1,14 @@
 import structlog
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.renderers import JSONRenderer
 from rest_framework.views import APIView
 
 from agentcc.models import AgentccAPIKey
 from agentcc.permissions import IsAdminToken
+from agentcc.serializers.contracts import (
+    AgentccErrorResponseSerializer,
+    APIKeyBulkResponseSerializer,
+)
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -23,6 +28,12 @@ class APIKeyBulkView(APIView):
     renderer_classes = [JSONRenderer]  # bypass camelCase — Go expects snake_case
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: APIKeyBulkResponseSerializer,
+            400: AgentccErrorResponseSerializer,
+        }
+    )
     def get(self, request):
         try:
             keys = AgentccAPIKey.no_workspace_objects.filter(

@@ -990,6 +990,20 @@ def get_system_metric_data(
             created_at__lte=end_date,
         )
 
+    elif observe_type == "charts":
+        project_id = system_metric_filters.get("project_id")
+        if project_id is None:
+            return {
+                "metric_name": metric_name,
+                "data": [],
+            }
+
+        base_queryset = ObservationSpan.objects.filter(
+            project_id=project_id,
+            created_at__gte=start_date,
+            created_at__lte=end_date,
+        )
+
     else:
         raise ValueError(f"Unsupported observe_type: {observe_type}")
 

@@ -319,7 +319,7 @@ DevelopBar.propTypes = {
   setCurrentTab: PropTypes.func,
   rowSelected: PropTypes.array.isRequired,
   setRowSelected: PropTypes.func.isRequired,
-  rightSection: PropTypes.func.isRequired,
+  rightSection: PropTypes.node,
   tabRef: PropTypes.object.isRequired,
   hideScenarioFeatures: PropTypes.bool,
 };

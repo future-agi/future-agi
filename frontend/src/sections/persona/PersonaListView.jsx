@@ -24,6 +24,7 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { AGENT_TYPES } from "src/sections/agents/constants";
 import PersonaCreateEditDrawer from "./PersonaCreateEdit/PersonaCreateEditDrawer";
+import DuplicatePersonas from "./PersonaCreateEdit/DuplicatePersonas";
 import PersonaInfoDrawer from "./PersonaInfo/PersonaInfoDrawer";
 import PersonasBulkActionsBar from "./components/PersonasBulkActionsBar";
 import PersonasBulkDeleteDialog from "./components/PersonasBulkDeleteDialog";
@@ -105,6 +106,10 @@ const PersonaListView = ({
     mode: null,
     persona: null,
     personaCreateEditType: null,
+  });
+  const [duplicateDialog, setDuplicateDialog] = useState({
+    open: false,
+    persona: null,
   });
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
@@ -376,27 +381,45 @@ const PersonaListView = ({
               id: "actions",
               accessorKey: "id",
               header: "",
-              size: 56,
+              size: 88,
               enableSorting: false,
               cell: ({ row }) => {
                 const persona = row.original;
                 const canEdit = !persona?.isDefault && canCreate;
-                if (!canEdit) return null;
+                if (!canCreate) return null;
                 return (
-                  <IconButton
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setEditDrawer({
-                        mode: "edit",
-                        persona,
-                        personaCreateEditType: persona?.simulationType,
-                      });
-                    }}
-                    sx={{ color: "text.secondary" }}
+                  <Box
+                    sx={{ display: "flex", alignItems: "center", gap: 0.25 }}
                   >
-                    <Iconify icon="solar:pen-linear" width={16} />
-                  </IconButton>
+                    <IconButton
+                      size="small"
+                      aria-label={`Duplicate persona ${persona?.name || ""}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDuplicateDialog({ open: true, persona });
+                      }}
+                      sx={{ color: "text.secondary" }}
+                    >
+                      <Iconify icon="solar:copy-linear" width={16} />
+                    </IconButton>
+                    {canEdit && (
+                      <IconButton
+                        size="small"
+                        aria-label={`Edit persona ${persona?.name || ""}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setEditDrawer({
+                            mode: "edit",
+                            persona,
+                            personaCreateEditType: persona?.simulationType,
+                          });
+                        }}
+                        sx={{ color: "text.secondary" }}
+                      >
+                        <Iconify icon="solar:pen-linear" width={16} />
+                      </IconButton>
+                    )}
+                  </Box>
                 );
               },
             },
@@ -738,6 +761,11 @@ const PersonaListView = ({
         }
         editPersona={editDrawer.persona}
         personaCreateEditType={editDrawer.personaCreateEditType}
+      />
+      <DuplicatePersonas
+        open={duplicateDialog.open}
+        personaId={duplicateDialog.persona?.id}
+        onClose={() => setDuplicateDialog({ open: false, persona: null })}
       />
       <PersonaInfoDrawer
         open={infoDrawer.open}

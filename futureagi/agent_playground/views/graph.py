@@ -11,6 +11,8 @@ from django.db.models import (
     Value,
     When,
 )
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -20,6 +22,7 @@ from agent_playground.models.graph import Graph
 from agent_playground.models.graph_dataset import GraphDataset
 from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.node import Node
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.graph import (
     BulkDeleteSerializer,
     GraphCreateResponseSerializer,
@@ -56,7 +59,25 @@ from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
+agent_playground_errors = swagger_auto_schema(
+    responses=AGENT_PLAYGROUND_ERROR_RESPONSES
+)
 
+
+@method_decorator(name="list", decorator=agent_playground_errors)
+@method_decorator(name="create", decorator=agent_playground_errors)
+@method_decorator(name="retrieve", decorator=agent_playground_errors)
+@method_decorator(name="update", decorator=agent_playground_errors)
+@method_decorator(name="partial_update", decorator=agent_playground_errors)
+@method_decorator(name="destroy", decorator=agent_playground_errors)
+@method_decorator(name="bulk_delete", decorator=agent_playground_errors)
+@method_decorator(name="list_versions", decorator=agent_playground_errors)
+@method_decorator(name="create_version", decorator=agent_playground_errors)
+@method_decorator(name="retrieve_version", decorator=agent_playground_errors)
+@method_decorator(name="update_version", decorator=agent_playground_errors)
+@method_decorator(name="delete_version", decorator=agent_playground_errors)
+@method_decorator(name="activate_version", decorator=agent_playground_errors)
+@method_decorator(name="referenceable_graphs", decorator=agent_playground_errors)
 class GraphViewSet(ModelViewSet):
     """
     ViewSet for Graph CRUD and version management.
@@ -80,7 +101,6 @@ class GraphViewSet(ModelViewSet):
 
         # Templates are system-wide, no org/workspace filter
         if is_template_bool:
-
             return Graph.no_workspace_objects.filter(is_template=True)
 
         organization = self.request.organization

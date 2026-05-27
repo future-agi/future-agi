@@ -19,7 +19,7 @@ from django.utils import timezone
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
-from simulate.models import AgentDefinition, Scenarios
+from simulate.models import AgentDefinition, AgentVersion, Scenarios
 from simulate.models.chat_message import ChatMessageModel
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
@@ -151,6 +151,64 @@ def ongoing_call_execution(db, test_execution, scenario):
         },
         assistant_id="asst-123",
     )
+
+
+# ============================================================================
+# Tests for TestExecutionChatBatchView
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+def test_chat_batch_creates_text_calls_without_voice_provider_config(
+    auth_client,
+    monkeypatch,
+    agent_definition,
+    simulator_agent,
+    run_test,
+    test_execution,
+    scenario,
+):
+    """Chat batching should not require voice-provider credentials."""
+    monkeypatch.delenv("VAPI_API_KEY", raising=False)
+    agent_version = agent_definition.create_version(
+        description="Active text chat version",
+        commit_message="Initial chat version",
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    run_test.agent_version = agent_version
+    run_test.save(update_fields=["agent_version"])
+    test_execution.agent_definition = agent_definition
+    test_execution.agent_version = agent_version
+    test_execution.simulator_agent = simulator_agent
+    test_execution.scenario_ids = [str(scenario.id)]
+    test_execution.save(
+        update_fields=[
+            "agent_definition",
+            "agent_version",
+            "simulator_agent",
+            "scenario_ids",
+        ]
+    )
+
+    response = auth_client.post(
+        f"/simulate/test-executions/{test_execution.id}/chat/call-executions/batch/",
+        {},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    result = response.data["result"]
+    assert len(result["call_execution_ids"]) == 1
+    call_execution = CallExecution.objects.get(id=result["call_execution_ids"][0])
+    assert call_execution.test_execution == test_execution
+    assert call_execution.scenario == scenario
+    assert (
+        call_execution.simulation_call_type
+        == CallExecution.SimulationCallType.TEXT
+    )
+    assert call_execution.call_metadata["call_channel"] == "chat"
+    assert call_execution.call_metadata["call_direction"] == "inbound"
 
 
 # ============================================================================

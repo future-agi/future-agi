@@ -140,7 +140,11 @@ const PromptActions = () => {
   //   filledPlaceholderLabels.includes(label),
   // );
 
-  const isVariablesDefined = useIsVariablesDefined(prompts, variableData, templateFormat);
+  const isVariablesDefined = useIsVariablesDefined(
+    prompts,
+    variableData,
+    templateFormat,
+  );
 
   const isSingleVersion = selectedVersions.length === 1;
 

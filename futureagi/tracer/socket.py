@@ -51,10 +51,10 @@ class GraphDataConsumer(DataConsumer):
         # Determine the start and end range based on filters
         start_time, end_time = None, None
         for filter_item in self.filters:
-            filter_config = filter_item.get("filterConfig", {})
-            filter_type = filter_config.get("filterType")
-            filter_op = filter_config.get("filterOp")
-            filter_value = filter_config.get("filterValue")
+            filter_config = filter_item.get("filter_config", {})
+            filter_type = filter_config.get("filter_type")
+            filter_op = filter_config.get("filter_op")
+            filter_value = filter_config.get("filter_value")
 
             if (
                 filter_type == "datetime"
@@ -484,9 +484,9 @@ class GraphDataConsumer(DataConsumer):
         created_at_condition = ""
         if self.filters:
             for filter in self.filters:
-                if filter.get("columnId") == "trace_id":
-                    filter_config = filter.get("filterConfig", {})
-                    trace_id = filter_config.get("filterValue")
+                if filter.get("column_id") == "trace_id":
+                    filter_config = filter.get("filter_config", {})
+                    trace_id = filter_config.get("filter_value")
                     if trace_id:
                         try:
                             str(uuid.UUID(trace_id))
@@ -495,10 +495,10 @@ class GraphDataConsumer(DataConsumer):
                         # Use parameterized query instead of string interpolation
                         condition = "WHERE tracer_eval_logger.trace_id = %s"
                         params.append(trace_id)
-                elif filter.get("columnId") == "created_at":
-                    filter_config = filter.get("filterConfig", {})
-                    start_date = filter_config.get("startDate")
-                    end_date = filter_config.get("endDate")
+                elif filter.get("column_id") == "created_at":
+                    filter_config = filter.get("filter_config", {})
+                    start_date = filter_config.get("start_date")
+                    end_date = filter_config.get("end_date")
                     if start_date and end_date:
                         # Use parameterized query instead of string interpolation
                         created_at_condition = (

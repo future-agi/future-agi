@@ -90,6 +90,18 @@ class User(AbstractBaseUser, PermissionsMixin):
         help_text="List of user's goals for using the platform",
     )
 
+    # IANA timezone name (e.g. "America/Los_Angeles"). Captured from the
+    # browser via ``Intl.DateTimeFormat().resolvedOptions().timeZone`` on
+    # login and refreshed on each session. Used to fire the annotation
+    # daily digest at the user's local morning (9am by default) instead of
+    # waking everyone up at 9am UTC.
+    last_timezone = models.CharField(
+        max_length=64,
+        default="UTC",
+        blank=True,
+        help_text="Last known IANA timezone (from browser Intl API)",
+    )
+
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = [
         "name"

@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "src/utils/test-utils";
+import { render, screen, waitFor, userEvent } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import ContentPanel from "../annotate/content-panel";
+
+const traceDetailDrawerMock = vi.hoisted(() => vi.fn());
 
 vi.mock("src/components/iconify", () => ({
   default: ({ icon, ...props }) => (
@@ -28,6 +30,9 @@ vi.mock("src/utils/axios", () => ({
     ),
   },
   endpoints: {
+    project: {
+      traceSession: "/tracer/trace-session/",
+    },
     testExecutions: {
       callDetail: (id) => `/simulate/call-executions/${id}/`,
     },
@@ -41,13 +46,31 @@ vi.mock("src/components/VoiceDetailDrawerV2/ScenarioView", () => ({
 }));
 
 vi.mock("src/components/VoiceDetailDrawerV2", () => ({
-  default: ({ data, embedded, hideAnnotationTab }) => (
+  default: ({ data, embedded, hiddenActionIds = [], hideAnnotationTab }) => (
     <div
       data-testid="voice-drawer"
       data-scenario={data?.scenario}
       data-embedded={String(embedded)}
+      data-hidden-actions={hiddenActionIds.join(",")}
       data-hide-annotation={String(hideAnnotationTab)}
     />
+  ),
+}));
+
+vi.mock("src/sections/projects/TracesDrawer/SessionHistory", () => ({
+  default: ({ traceDetail = [], onTraceClick }) => (
+    <div data-testid="session-history">
+      {traceDetail.map((trace) => (
+        <button
+          type="button"
+          key={trace.trace_id}
+          data-testid={`session-trace-${trace.trace_id}`}
+          onClick={() => onTraceClick?.(trace.trace_id)}
+        >
+          {trace.input}
+        </button>
+      ))}
+    </div>
   ),
 }));
 
@@ -71,7 +94,16 @@ vi.mock("src/components/CallLogsDetailDrawer/RightSection", () => ({
 }));
 
 vi.mock("src/components/traceDetailDrawer/trace-detail-drawer", () => ({
-  default: () => <div data-testid="trace-detail-drawer" />,
+  default: (props) => {
+    traceDetailDrawerMock(props);
+    return (
+      <div
+        data-testid="trace-detail-drawer"
+        data-trace-id={props.traceData?.trace_id || ""}
+        data-camel-trace-id={props.traceData?.traceId || ""}
+      />
+    );
+  },
 }));
 
 vi.mock("src/components/traceDetail/SpanTreeTimeline", () => ({
@@ -117,7 +149,15 @@ vi.mock("src/components/imagine/useImagineStore", () => ({
 }));
 
 describe("Annotation queue ContentPanel", () => {
+  const clipboardWriteText = vi.fn(() => Promise.resolve());
+
   beforeEach(() => {
+    traceDetailDrawerMock.mockClear();
+    clipboardWriteText.mockClear();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: clipboardWriteText },
+      configurable: true,
+    });
     axios.get.mockResolvedValue({
       data: {
         status: "completed",
@@ -164,6 +204,10 @@ describe("Annotation queue ContentPanel", () => {
       "data-hide-annotation",
       "true",
     );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-hidden-actions",
+      "queue,tags",
+    );
     expect(screen.queryByTestId("new-scenario-view")).not.toBeInTheDocument();
   });
 
@@ -202,5 +246,104 @@ describe("Annotation queue ContentPanel", () => {
       );
     });
     expect(screen.queryByTestId("voice-drawer")).not.toBeInTheDocument();
+  });
+
+  it("copies every dataset field including JSON objects and booleans", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ContentPanel
+        item={{
+          source_type: "dataset_row",
+          source_content: {
+            fields: {
+              approved: false,
+              options: {
+                expected: false,
+                alternatives: ["passed", "failed"],
+              },
+            },
+            field_types: {
+              approved: "boolean",
+              options: "json",
+            },
+          },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy approved" }));
+    await waitFor(async () => {
+      await expect(navigator.clipboard.readText()).resolves.toBe("False");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Copy options" }));
+    await waitFor(async () => {
+      await expect(navigator.clipboard.readText()).resolves.toBe(
+        JSON.stringify(
+          {
+            expected: false,
+            alternatives: ["passed", "failed"],
+          },
+          null,
+          2,
+        ),
+      );
+    });
+  });
+
+  it("opens session traces with the backend trace_id contract key", async () => {
+    const user = userEvent.setup();
+    axios.get.mockResolvedValueOnce({
+      data: {
+        result: {
+          session_metadata: { total_traces: 1 },
+          response: [
+            {
+              trace_id: "trace-123",
+              input: "customer asks for help",
+              output: "assistant responds",
+              system_metrics: {},
+              evals_metrics: {},
+            },
+          ],
+          next: null,
+        },
+      },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContentPanel
+          item={{
+            source_type: "trace_session",
+            source_content: { session_id: "session-123" },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByText("customer asks for help"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("trace-detail-drawer")).toHaveAttribute(
+        "data-trace-id",
+        "trace-123",
+      );
+    });
+    expect(screen.getByTestId("trace-detail-drawer")).toHaveAttribute(
+      "data-camel-trace-id",
+      "",
+    );
+    expect(traceDetailDrawerMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        traceData: expect.objectContaining({ trace_id: "trace-123" }),
+      }),
+    );
   });
 });

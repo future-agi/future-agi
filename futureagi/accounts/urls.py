@@ -133,6 +133,29 @@ user_urls = [
     path("user-info/", get_user_info, name="user-info"),
     path("first-checks/", FirstChecksView.as_view(), name="first-checks"),
     path("onboarding/", user_onboarding, name="user-onboarding"),
+    path(
+        "me/timezone/",
+        __import__(
+            "accounts.views.annotation_notifications", fromlist=["UserTimezoneView"]
+        ).UserTimezoneView.as_view(),
+        name="user-timezone",
+    ),
+    path(
+        "notifications/unsubscribe/",
+        __import__(
+            "accounts.views.annotation_notifications",
+            fromlist=["UnsubscribeAnnotationDigestView"],
+        ).UnsubscribeAnnotationDigestView.as_view(),
+        name="annotation-digest-unsubscribe",
+    ),
+    path(
+        "notifications/snooze/",
+        __import__(
+            "accounts.views.annotation_notifications",
+            fromlist=["SnoozeAnnotationDigestView"],
+        ).SnoozeAnnotationDigestView.as_view(),
+        name="annotation-digest-snooze",
+    ),
 ]
 
 team_urls = [

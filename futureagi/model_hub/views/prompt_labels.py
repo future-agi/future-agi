@@ -2,14 +2,24 @@ import uuid
 
 from django.db import transaction
 from django.db.models import Q
+from django.http import Http404
 from django.shortcuts import get_object_or_404
-from rest_framework import status, viewsets
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import (
+    NotAuthenticated,
+    PermissionDenied,
+)
+from rest_framework.exceptions import (
+    ValidationError as DRFValidationError,
+)
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 
 from model_hub.models.prompt_label import LabelTypeChoices, PromptLabel
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+from model_hub.serializers.contracts import MODEL_HUB_TEXT_ERROR_RESPONSES
 from model_hub.serializers.prompt_label import PromptLabelSerializer
 from model_hub.serializers.prompt_template import (
     PromptTemplateSerializer,
@@ -18,7 +28,36 @@ from model_hub.services.prompt_label import assign_labels_to_version
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 
+prompt_label_errors = swagger_auto_schema(responses=MODEL_HUB_TEXT_ERROR_RESPONSES)
 
+
+def _exception_detail_to_text(detail) -> str:
+    if isinstance(detail, dict):
+        messages = []
+        for field, field_errors in detail.items():
+            if isinstance(field_errors, (list, tuple)):
+                messages.extend(f"{field}: {error}" for error in field_errors)
+            else:
+                messages.append(f"{field}: {field_errors}")
+        return "; ".join(messages) or "Invalid request"
+    if isinstance(detail, (list, tuple)):
+        return "; ".join(str(item) for item in detail)
+    return str(detail)
+
+
+@method_decorator(name="list", decorator=prompt_label_errors)
+@method_decorator(name="create", decorator=prompt_label_errors)
+@method_decorator(name="retrieve", decorator=prompt_label_errors)
+@method_decorator(name="update", decorator=prompt_label_errors)
+@method_decorator(name="partial_update", decorator=prompt_label_errors)
+@method_decorator(name="destroy", decorator=prompt_label_errors)
+@method_decorator(name="remove_label_from_version", decorator=prompt_label_errors)
+@method_decorator(name="create_system_labels", decorator=prompt_label_errors)
+@method_decorator(name="get_by_name", decorator=prompt_label_errors)
+@method_decorator(name="assign_label_by_id", decorator=prompt_label_errors)
+@method_decorator(name="set_default", decorator=prompt_label_errors)
+@method_decorator(name="template_labels", decorator=prompt_label_errors)
+@method_decorator(name="assign_multiple_labels", decorator=prompt_label_errors)
 class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     serializer_class = PromptLabelSerializer
     permission_classes = [IsAuthenticated]
@@ -42,6 +81,15 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
     def get_serializer_class(self):
         return self.serializer_class
+
+    def handle_exception(self, exc):
+        if isinstance(exc, DRFValidationError):
+            return self.gm.bad_request(_exception_detail_to_text(exc.detail))
+        if isinstance(exc, (NotAuthenticated, PermissionDenied)):
+            return self.gm.forbidden_response(_exception_detail_to_text(exc.detail))
+        if isinstance(exc, Http404):
+            return self.gm.not_found("Prompt label resource not found")
+        return super().handle_exception(exc)
 
     def perform_create(self, serializer):
         # Create custom label in caller's org
@@ -358,7 +406,6 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     def assign_multiple_labels(self, request):
 
         try:
-
             template_version_id = request.data.get("template_version_id")
             label_ids = request.data.get("label_ids", [])
 

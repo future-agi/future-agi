@@ -10,6 +10,7 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from model_hub.models.choices import QueueItemSourceType
 
 
 class CreateTraceAnnotationInput(PydanticBaseModel):
@@ -148,14 +149,35 @@ class CreateTraceAnnotationTool(BaseTool):
                 updated_by=updated_by,
             )
 
-        # Write to unified Score model (same as UI's add_annotations endpoint)
+        # Write to unified Score model. Resolve a default queue item so
+        # the upsert is scoped by queue_item — see create_score.py for the
+        # rationale; per-queue Score uniqueness needs every write to land
+        # in a queue context.
+        from model_hub.utils.annotation_queue_helpers import (
+            resolve_default_queue_item_for_source,
+        )
+
+        default_item = resolve_default_queue_item_for_source(
+            QueueItemSourceType.OBSERVATION_SPAN.value,
+            span,
+            context.organization,
+            context.user,
+        )
+        if default_item is None:
+            return ToolResult.error(
+                "Cannot resolve a default annotation queue for this span. "
+                "Per-queue Score uniqueness requires every score to live "
+                "in a queue context.",
+                error_code="NO_DEFAULT_QUEUE_SCOPE",
+            )
         Score.no_workspace_objects.update_or_create(
             observation_span_id=span.pk,
             label_id=label.pk,
             annotator_id=context.user.pk,
+            queue_item=default_item,
             deleted=False,
             defaults={
-                "source_type": "observation_span",
+                "source_type": QueueItemSourceType.OBSERVATION_SPAN.value,
                 "value": score_value,
                 "score_source": "human",
                 "notes": "",

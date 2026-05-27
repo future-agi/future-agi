@@ -5,10 +5,8 @@ import pytest
 from django.http import HttpResponse
 from django.test import RequestFactory
 from django.utils import timezone
-from rest_framework.test import APIClient
 
 from accounts.middleware.require_2fa import Require2FAMiddleware
-from accounts.models.organization import Organization
 from accounts.services.totp_service import confirm_totp_device, create_totp_device
 
 
@@ -45,6 +43,40 @@ class TestOrgTwoFactorEnforcement:
         assert data["require_2fa"] is True
         assert data["require_2fa_grace_period_days"] == 14
         assert data["require_2fa_enforced_at"] is not None
+
+    def test_enable_2fa_policy_requires_actor_2fa_envelope(self, auth_client):
+        response = auth_client.put(
+            "/accounts/organization/2fa-policy/",
+            {"require_2fa": True, "require_2fa_grace_period_days": 14},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert data["status"] is False
+        assert data["type"] == "validation_error"
+        assert data["code"] == "invalid"
+        assert (
+            data["detail"]
+            == "You must enable two-factor authentication on your own account before requiring it for the organization."
+        )
+        assert data["message"] == data["detail"]
+        assert data["error"] == data["detail"]
+        assert data["result"] == data["detail"]
+
+    def test_2fa_policy_rejects_camel_case_request_fields(self, auth_client):
+        response = auth_client.put(
+            "/accounts/organization/2fa-policy/",
+            {"require2fa": True, "gracePeriodDays": 14},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 400
+        assert response.json()["details"] == {
+            "require_2fa": ["This field is required."],
+            "gracePeriodDays": ["Unknown field."],
+            "require2fa": ["Unknown field."],
+        }
 
     def test_2fa_policy_grace_period(self, user, organization):
         """Access allowed during grace period with headers."""

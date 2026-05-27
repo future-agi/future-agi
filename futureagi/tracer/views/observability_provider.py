@@ -1,9 +1,9 @@
 import json
 import math
-import os
 from typing import Any
 
 import structlog
+from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
@@ -11,9 +11,10 @@ from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 from retell import Retell
 
-logger = structlog.get_logger(__name__)
 from accounts.utils import get_request_organization
 from simulate.models import AgentDefinition
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
@@ -24,7 +25,25 @@ from tracer.services.observability_providers import ObservabilityService
 from tracer.utils.observability_provider import normalize_and_store_logs
 from tracer.utils.otel import get_or_create_project
 
+logger = structlog.get_logger(__name__)
+
 # Provider packages
+
+
+class WebhookRequestSerializer(serializers.Serializer):
+    call = serializers.JSONField()
+
+    def validate_call(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("call must be an object.")
+        if not value.get("agent_id"):
+            raise serializers.ValidationError("call.agent_id is required.")
+        return value
+
+
+class WebhookResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.CharField()
 
 
 class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
@@ -236,6 +255,14 @@ class WebhookHandlerView(APIView):
             logger.exception(f"Error getting webhook secret: {e}")
             return None
 
+    @validated_request(
+        request_serializer=WebhookRequestSerializer,
+        responses={
+            200: WebhookResponseSerializer,
+            400: ApiErrorResponseSerializer,
+            500: ApiErrorResponseSerializer,
+        },
+    )
     def post(self, request):
         try:
             post_data = request.data
@@ -244,8 +271,8 @@ class WebhookHandlerView(APIView):
             processed_count = 0
             failed_count = 0
 
-            call = post_data.get("call")
-            agent_id = call.get("agent_id")
+            call = request.validated_data["call"]
+            agent_id = call["agent_id"]
 
             agent_definition_qs = AgentDefinition.objects.select_related(
                 "observability_provider"
@@ -291,4 +318,4 @@ class WebhookHandlerView(APIView):
 
         except Exception as e:
             logger.exception(f"Error in webhook handler: {e}")
-            return self._gm.bad_request(f"Error processing webhook")
+            return self._gm.bad_request("Error processing webhook")

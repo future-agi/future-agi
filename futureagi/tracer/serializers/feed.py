@@ -16,7 +16,13 @@ from tracer.models.trace_error_analysis import ClusterSource, FeedIssueStatus
 # ---------------------------------------------------------------------------
 
 SEVERITY_CHOICES = ("critical", "high", "medium", "low")
-SORT_BY_CHOICES = ("last_seen", "first_seen", "error_count", "unique_traces")
+SORT_BY_CHOICES = (
+    "last_seen",
+    "first_seen",
+    "error_count",
+    "unique_traces",
+    "severity",
+)
 SORT_DIR_CHOICES = ("asc", "desc")
 
 
@@ -31,6 +37,7 @@ class FeedListQuerySerializer(serializers.Serializer):
     project_id = serializers.UUIDField(required=False)
     search = serializers.CharField(required=False, allow_blank=True)
     status = serializers.ChoiceField(choices=FeedIssueStatus.choices, required=False)
+    severity = serializers.ChoiceField(choices=SEVERITY_CHOICES, required=False)
     fix_layer = serializers.CharField(required=False, allow_blank=True)
     source = serializers.ChoiceField(choices=ClusterSource.choices, required=False)
     issue_group = serializers.CharField(required=False, allow_blank=True)
@@ -118,6 +125,11 @@ class FeedListResponseSerializer(serializers.Serializer):
     offset = serializers.IntegerField()
 
 
+class FeedListApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = FeedListResponseSerializer()
+
+
 class FeedStatsSerializer(serializers.Serializer):
     total_errors = serializers.IntegerField()
     escalating = serializers.IntegerField()
@@ -125,6 +137,11 @@ class FeedStatsSerializer(serializers.Serializer):
     acknowledged = serializers.IntegerField()
     resolved = serializers.IntegerField()
     affected_users = serializers.IntegerField()
+
+
+class FeedStatsApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = FeedStatsSerializer()
 
 
 class TracePreviewSerializer(serializers.Serializer):
@@ -138,6 +155,11 @@ class FeedDetailCoreSerializer(serializers.Serializer):
     description = serializers.CharField(allow_null=True)
     success_trace = TracePreviewSerializer(allow_null=True)
     representative_trace = TracePreviewSerializer(allow_null=True)
+
+
+class FeedDetailApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = FeedDetailCoreSerializer()
 
 
 # ---------------------------------------------------------------------------
@@ -206,6 +228,11 @@ class OverviewResponseSerializer(serializers.Serializer):
     representative_traces = RepresentativeTraceSerializer(many=True)
 
 
+class OverviewApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = OverviewResponseSerializer()
+
+
 # ---------------------------------------------------------------------------
 # Traces tab
 # ---------------------------------------------------------------------------
@@ -236,6 +263,11 @@ class TracesTabResponseSerializer(serializers.Serializer):
     aggregates = TracesAggregatesSerializer()
     traces = TracesListRowSerializer(many=True)
     total = serializers.IntegerField()
+
+
+class TracesTabApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = TracesTabResponseSerializer()
 
 
 class TracesTabQuerySerializer(serializers.Serializer):
@@ -279,6 +311,11 @@ class TrendsTabResponseSerializer(serializers.Serializer):
     activity_heatmap = serializers.ListField(
         child=HeatmapCellSerializer(many=True),
     )
+
+
+class TrendsTabApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = TrendsTabResponseSerializer()
 
 
 class TrendsTabQuerySerializer(serializers.Serializer):
@@ -332,6 +369,11 @@ class FeedSidebarSerializer(serializers.Serializer):
     co_occurring_issues = CoOccurringIssueSerializer(many=True)
 
 
+class FeedSidebarApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = FeedSidebarSerializer()
+
+
 class FeedSidebarQuerySerializer(serializers.Serializer):
     """Query params for GET /tracer/feed/issues/{cluster_id}/sidebar/."""
 
@@ -368,9 +410,19 @@ class DeepAnalysisResponseSerializer(serializers.Serializer):
     immediate_fix = serializers.CharField(allow_null=True)
 
 
+class DeepAnalysisApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DeepAnalysisResponseSerializer()
+
+
 class DeepAnalysisDispatchResponseSerializer(serializers.Serializer):
     status = serializers.CharField()
     trace_id = serializers.CharField()
+
+
+class DeepAnalysisDispatchApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DeepAnalysisDispatchResponseSerializer()
 
 
 class DeepAnalysisQuerySerializer(serializers.Serializer):

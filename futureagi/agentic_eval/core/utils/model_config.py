@@ -66,7 +66,15 @@ class ModelConfigs:
     )
     INTERNET_SEARCH: Final[ModelConfig] = ModelConfig(
         provider=LiteLlmProvider.PERPLEXITY.value,
-        model_name="perplexity/llama-3.1-sonar-large-128k-online",
+        model_name="perplexity/sonar-pro",
+        temperature=0.2,
+        max_tokens=16000,
+    )
+    # Perplexity Agent API (third-party LLM orchestration with built-in search/tools).
+    # Backed by https://api.perplexity.ai/v1/agent; default model is gpt-5.1.
+    PERPLEXITY_AGENT_GPT_5_1: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.PERPLEXITY.value,
+        model_name="perplexity/gpt-5.1",
         temperature=0.2,
         max_tokens=16000,
     )

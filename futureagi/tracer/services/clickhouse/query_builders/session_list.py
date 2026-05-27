@@ -15,7 +15,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
-from tracer.utils.filter_operators import normalize_filter_op
 
 
 class SessionListQueryBuilder(BaseQueryBuilder):
@@ -92,7 +91,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         # Translate span-level filters (exclude session-level aggregate filters)
         span_filters = self._extract_span_filters()
-        fb = ClickHouseFilterBuilder(table=self.TABLE)
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
         extra_where, extra_params = fb.translate(span_filters)
         self.params.update(extra_params)
 
@@ -192,7 +195,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     def _build_simple_count_query(self) -> Tuple[str, Dict[str, Any]]:
         """Fast count using count(DISTINCT ...) — no GROUP BY needed."""
         span_filters = self._extract_span_filters()
-        fb = ClickHouseFilterBuilder(table=self.TABLE)
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
         extra_where, extra_params = fb.translate(span_filters)
 
         params = dict(self.params)
@@ -222,7 +229,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     def _build_aggregated_count_query(self) -> Tuple[str, Dict[str, Any]]:
         """Full aggregation count — required when HAVING clauses exist."""
         span_filters = self._extract_span_filters()
-        fb = ClickHouseFilterBuilder(table=self.TABLE)
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
         extra_where, extra_params = fb.translate(span_filters)
 
         params = dict(self.params)
@@ -390,10 +401,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             if col_id not in self.SESSION_FILTER_MAP:
                 continue
 
-            config = f.get("filter_config") or f.get("filterConfig", {})
-            filter_op = normalize_filter_op(
-                config.get("filter_op") or config.get("filterOp")
-            )
+            config = f.get("filter_config") or f.get("filterConfig") or {}
+            filter_op = config.get("filter_op") or config.get("filterOp")
             filter_value = config.get("filter_value", config.get("filterValue"))
             ch_col = self.SESSION_FILTER_MAP[col_id]
 

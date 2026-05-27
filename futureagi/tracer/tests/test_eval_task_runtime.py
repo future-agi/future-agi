@@ -83,6 +83,29 @@ class TestProcessEvalTaskSpans:
         span_ids = {s.id for s in populated_observe_project["spans"]}
         assert {r.observation_span_id for r in rows} == span_ids
 
+    def test_span_id_filter_limits_dispatch_to_linked_span(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Linked-source span filters dispatch only the selected span."""
+        task = observe_eval_task["task"]
+        target_span = populated_observe_project["spans"][0]
+        task.filters = {
+            "project_id": str(populated_observe_project["project"].id),
+            "span_id": [target_span.id],
+        }
+        task.save(update_fields=["filters"])
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 1
+        assert rows.first().observation_span_id == target_span.id
+
     def test_respects_sampling_rate(
         self,
         populated_observe_project,
@@ -461,6 +484,29 @@ class TestProcessEvalTaskTraces:
         assert all(r.observation_span_id is not None for r in rows)
         assert all(r.trace_session_id is None for r in rows)
 
+    def test_trace_id_filter_limits_dispatch_to_linked_trace(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Linked-source trace filters dispatch only the selected trace."""
+        task = observe_trace_task["task"]
+        target_trace = populated_observe_project["traces"][0]
+        task.filters = {
+            "project_id": str(populated_observe_project["project"].id),
+            "trace_id": [str(target_trace.id)],
+        }
+        task.save(update_fields=["filters"])
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 1
+        assert str(rows.first().trace_id) == str(target_trace.id)
+
     def test_anchors_to_root_span(
         self,
         populated_observe_project,
@@ -664,6 +710,29 @@ class TestProcessEvalTaskSessions:
             assert row.observation_span_id is None
             assert row.trace_id is None
             assert row.trace_session_id is not None
+
+    def test_session_id_filter_accepts_ui_list_shape(
+        self,
+        populated_observe_project,
+        observe_session_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Task forms send session_id as a list; dispatcher honors that shape."""
+        task = observe_session_task["task"]
+        target_session = populated_observe_project["sessions"][0]
+        task.filters = {
+            "project_id": str(populated_observe_project["project"].id),
+            "session_id": [str(target_session.id)],
+        }
+        task.save(update_fields=["filters"])
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 1
+        assert str(rows.first().trace_session_id) == str(target_session.id)
 
     def test_dedup_on_second_tick(
         self,

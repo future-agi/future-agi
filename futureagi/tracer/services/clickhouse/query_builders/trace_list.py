@@ -118,6 +118,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -131,7 +133,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
         # Pagination
         offset = self.page_number * self.page_size
-        self.params["limit"] = self.page_size + 1  # +1 for has_more detection
+        self.params["limit"] = self.page_size
         self.params["offset"] = offset
 
         # Build optional filter fragment
@@ -287,6 +289,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         # Merge params -- reuse the same start/end dates

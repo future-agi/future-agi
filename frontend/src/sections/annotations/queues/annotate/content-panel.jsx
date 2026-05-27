@@ -87,6 +87,8 @@ const SOURCE_LABELS = {
   trace_session: "Session",
 };
 
+const ANNOTATION_WORKSPACE_HIDDEN_VOICE_ACTION_IDS = ["queue", "tags"];
+
 function neutralChipSx(theme, height = 22) {
   return {
     height,
@@ -614,6 +616,8 @@ function VoiceCallContent({ traceId }) {
     module: "simulate",
     id: traceId,
     trace_id: traceId,
+    call_execution_id: callData.call_execution_id,
+    test_execution_id: callData.test_execution_id,
     // Needed by VoiceDetailDrawerV2 to fetch saved views (Imagine tabs) —
     // the annotate route has no `observeId` URL param, so the drawer falls
     // back to data.project_id.
@@ -625,6 +629,9 @@ function VoiceCallContent({ traceId }) {
     duration: callData.duration_seconds,
     scenario: callData.scenario_name,
     scenarioId: callData.scenario_id,
+    scenario_id: callData.scenario_id,
+    scenario_graph: callData.scenario_graph || {},
+    scenario_graph_id: callData.scenario_graph_id,
     scenarioColumns: callData.scenario_columns || {},
     customerName: callData.customer_name || callData.phone_number,
     phoneNumber: callData.phone_number,
@@ -690,6 +697,7 @@ function VoiceCallContent({ traceId }) {
         onClose={() => {}}
         hasPrev={false}
         hideAnnotationTab={true}
+        hiddenActionIds={ANNOTATION_WORKSPACE_HIDDEN_VOICE_ACTION_IDS}
         hasNext={false}
         scenarioId={drawerData.scenarioId}
         embedded
@@ -984,16 +992,46 @@ JsonValue.propTypes = {
 // ---------------------------------------------------------------------------
 // ContentSection — wraps a field with title and styled box
 // ---------------------------------------------------------------------------
+function copyTextForContentValue(value, dataType) {
+  const type = (dataType || "").toLowerCase();
+
+  if (type === "boolean") {
+    return value === true || value === "true" ? "True" : "False";
+  }
+
+  if (value === null || value === undefined) return "";
+
+  if (type === "json" || type === "array") {
+    const parsed =
+      typeof value === "string"
+        ? (() => {
+            try {
+              return JSON.parse(value);
+            } catch {
+              return value;
+            }
+          })()
+        : value;
+    if (typeof parsed === "object" && parsed !== null) {
+      return JSON.stringify(parsed, null, 2);
+    }
+    return String(parsed);
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value, null, 2);
+  }
+
+  return String(value);
+}
+
 function ContentSection({ title, children, dataType, copyValue }) {
   const [copied, setCopied] = useState(false);
-  const showCopy = copyValue !== undefined && dataType !== "json";
+  const showCopy = copyValue !== undefined;
 
   const handleCopy = (e) => {
     e.stopPropagation();
-    const text =
-      typeof copyValue === "object"
-        ? JSON.stringify(copyValue, null, 2)
-        : String(copyValue ?? "");
+    const text = copyTextForContentValue(copyValue, dataType);
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
@@ -1022,7 +1060,12 @@ function ContentSection({ title, children, dataType, copyValue }) {
         <Box sx={{ flex: 1 }} />
         {showCopy && (
           <Tooltip title={copied ? "Copied!" : "Copy"} placement="top">
-            <IconButton size="small" onClick={handleCopy} sx={{ p: 0.25 }}>
+            <IconButton
+              size="small"
+              aria-label={`Copy ${title || "content"}`}
+              onClick={handleCopy}
+              sx={{ p: 0.25 }}
+            >
               <Iconify
                 icon={copied ? "eva:checkmark-fill" : "eva:copy-fill"}
                 width={14}
@@ -1065,7 +1108,7 @@ function DatasetRowContent({ content }) {
   const fieldTypes = content?.field_types || {};
   const datasetName = content?.dataset_name;
   const rowOrder = content?.row_order;
-  // canonicalKeys strips the camelCase aliases the axios interceptor
+  // canonicalKeys strips legacy camelCase aliases
   // adds next to any user-authored snake_case column names so a column
   // like `user_email` doesn't render twice in the annotation panel.
   const keys = canonicalKeys(fields);
@@ -1249,6 +1292,8 @@ function SimulationContent({ content, hideAnnotationTab = false }) {
   const drawerData = {
     module: "simulate",
     id: callId,
+    call_execution_id: callId,
+    test_execution_id: callData.test_execution_id,
     trace_id: callData.trace_id || callData.trace_details?.trace_id,
     project_id: callData.project_id || content?.project_id,
     status: callData.status || callData.overall_status,
@@ -1262,6 +1307,8 @@ function SimulationContent({ content, hideAnnotationTab = false }) {
     scenario: callData.scenario || callData.scenario_name,
     scenarioId: callData.scenario_id,
     scenario_id: callData.scenario_id,
+    scenario_graph: callData.scenario_graph || {},
+    scenario_graph_id: callData.scenario_graph_id,
     scenario_columns: callData.scenario_columns || {},
     scenarioColumns: callData.scenario_columns || {},
     customerName: callData.customer_name,
@@ -1332,6 +1379,7 @@ function SimulationContent({ content, hideAnnotationTab = false }) {
           hasPrev={false}
           hasNext={false}
           scenarioId={drawerData.scenarioId}
+          hiddenActionIds={ANNOTATION_WORKSPACE_HIDDEN_VOICE_ACTION_IDS}
           hideAnnotationTab={hideAnnotationTab}
           embedded
         />
@@ -1590,7 +1638,7 @@ function SessionContent({ content }) {
   }, [isFetchingNextPage, isLoading]);
 
   const handleTraceClick = useCallback((traceId) => {
-    setOpenTraceData({ traceId });
+    setOpenTraceData({ trace_id: traceId });
   }, []);
 
   const sessionMetadata = tracePages?.pages[0]?.data?.result?.session_metadata;
@@ -1660,7 +1708,7 @@ function SessionContent({ content }) {
           traceData={openTraceData}
           setTraceDetailDrawerOpen={null}
           setSelectedTraceId={(newTraceId) =>
-            setOpenTraceData((prev) => ({ ...prev, traceId: newTraceId }))
+            setOpenTraceData((prev) => ({ ...prev, trace_id: newTraceId }))
           }
           viewOptions={{ showAnnotation: true, showNavigation: false }}
         />

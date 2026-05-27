@@ -72,9 +72,7 @@ export default function JwtLoginView() {
 
   const { mutate: acceptInvitation } = useMutation({
     mutationFn: () =>
-      axiosInstance.get(
-        `${endpoints.invite.accept_invitation}${uuid}/${token}/`,
-      ),
+      axiosInstance.get(endpoints.invite.accept_invitation(uuid, token)),
     onSuccess: (response) => {
       navigate(`/auth/jwt/invitation/set-password/${uuid}/${token}`, {
         state: {
@@ -212,7 +210,7 @@ export default function JwtLoginView() {
         email: data.email,
         password: data.password,
         remember_me: data.rememberMe,
-        "recaptcha-response": token,
+        recaptcha_response: token,
       });
       // trackEvent(Events.loginCompleted);
 
@@ -386,7 +384,7 @@ export default function JwtLoginView() {
   };
 
   const handleSsoLogin = () => {
-    persistReturnTo();  
+    persistReturnTo();
     // Navigate to SSO login page
     navigate(paths.auth.jwt.sso);
   };

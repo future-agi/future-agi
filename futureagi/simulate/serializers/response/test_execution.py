@@ -1,10 +1,10 @@
 from rest_framework import serializers
 
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 
-class ErrorResponseSerializer(serializers.Serializer):
+
+class ErrorResponseSerializer(ApiTextErrorResponseSerializer):
     """Docs-only. Used in @swagger_auto_schema error responses."""
-
-    error = serializers.CharField()
 
 
 class CancelTestExecutionResponseSerializer(serializers.Serializer):

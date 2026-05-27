@@ -19,8 +19,15 @@ def create_single_otel_span(data, organization_id, user_id, workspace_id=None):
         data, organization_id, user_id, workspace_id
     )
 
+    trace_manager = getattr(Trace, "no_workspace_objects", Trace.objects)
+    existing_trace = trace_manager.filter(id=parsed_data["trace"]).first()
+    if existing_trace and existing_trace.project_id != parsed_data["project"].id:
+        raise ValueError("Trace does not belong to the resolved project")
+
     try:
-        trace = Trace.objects.get(id=parsed_data["trace"])
+        trace = Trace.objects.get(
+            id=parsed_data["trace"], project=parsed_data["project"]
+        )
     except Trace.DoesNotExist:
         try:
             trace, created = Trace.objects.get_or_create(

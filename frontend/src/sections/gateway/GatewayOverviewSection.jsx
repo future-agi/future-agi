@@ -215,7 +215,10 @@ const GatewayOverviewSection = () => {
             width: "105px",
           }}
           onClick={() => {
-            window.open("https://docs.futureagi.com/docs/command-center", "_blank");
+            window.open(
+              "https://docs.futureagi.com/docs/command-center",
+              "_blank",
+            );
           }}
         >
           <SvgColor

@@ -1300,7 +1300,7 @@ def get_or_create_project_version(
 
         if project_version_id:
             existing_version = ProjectVersion.objects.filter(
-                id=project_version_id
+                id=project_version_id, project_id=project_id
             ).first()
             if existing_version:
                 return existing_version
@@ -1317,7 +1317,7 @@ def get_or_create_project_version(
 
             if project_version_id:
                 existing_version = ProjectVersion.objects.filter(
-                    id=project_version_id
+                    id=project_version_id, project_id=project_id
                 ).first()
                 if existing_version:
                     return existing_version

@@ -18,6 +18,8 @@ def _escape_csv_cell(value):
     return s
 from django.db.models import Case, Prefetch, When
 from django.http import HttpResponse
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -28,6 +30,15 @@ from model_hub.models import DatasetProperties
 from model_hub.models.ai_model import AIModel
 from model_hub.models.conversations import Conversation, Message, Node
 from model_hub.models.metric import Metric
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    PerformanceDetailsRequestSerializer,
+    PerformanceDetailsResponseSerializer,
+    PerformanceExportRequestSerializer,
+    PerformanceOptionsResponseSerializer,
+    PerformanceQueryRequestSerializer,
+    PerformanceTagDistributionRequestSerializer,
+)
 from model_hub.serializers.dataset_properties import (
     DatasetPropertiesDetailsSerializer,
 )
@@ -38,16 +49,59 @@ from model_hub.utils.performance_ch import (
     get_performance_details_query,
     get_top_tags_distribution,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+PERFORMANCE_CHART_ROW_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_ARRAY,
+    items=openapi.Schema(type=openapi.TYPE_STRING),
+    description="Chart row returned by ClickHouse, for example [timestamp, value].",
+)
+PERFORMANCE_CHART_SERIES_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_ARRAY,
+    items=PERFORMANCE_CHART_ROW_SCHEMA,
+)
+PERFORMANCE_GRAPH_RESPONSE_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    additional_properties=PERFORMANCE_CHART_SERIES_SCHEMA,
+    description="Map of dataset or breakdown label to chart rows.",
+)
+PERFORMANCE_TAG_DISTRIBUTION_RESPONSE_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        "status": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+        "result": openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                "good": PERFORMANCE_CHART_SERIES_SCHEMA,
+                "bad": PERFORMANCE_CHART_SERIES_SCHEMA,
+            },
+            additional_properties=PERFORMANCE_CHART_SERIES_SCHEMA,
+            description=(
+                "Tag distribution chart data. `all` returns `good` and `bad`; "
+                "single-tag views return the selected distribution series."
+            ),
+        ),
+    },
+    required=["status", "result"],
+)
 
 
 class PerformanceView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=PerformanceQueryRequestSerializer,
+        responses={
+            200: PERFORMANCE_GRAPH_RESPONSE_SCHEMA,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, id, *args, **kwargs):
         user = request.user
         user_organization = user.organization
@@ -57,12 +111,14 @@ class PerformanceView(APIView):
         if not model:
             return self._gm.not_found(get_error_message("AI_MODEL_NOT_FOUND"))
 
-        datasets = request.data.get("datasets")
-        filters = request.data.get("filters")
-        breakdown = request.data.get("breakdown")
-        agg_by = request.data.get("agg_by")
-        start_date = request.data.get("start_date")
-        end_date = request.data.get("end_date")
+        query_data = request.validated_data
+
+        datasets = query_data["datasets"]
+        filters = query_data.get("filters", [])
+        breakdown = query_data.get("breakdown", [])
+        agg_by = query_data["agg_by"]
+        start_date = query_data["start_date"]
+        end_date = query_data["end_date"]
 
         data = {}
 
@@ -128,6 +184,7 @@ class PerformanceView(APIView):
 
 class PerformanceDetailsView(APIView):
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
     def extract_content_from_msg(self, content):
         result = []
@@ -147,19 +204,28 @@ class PerformanceDetailsView(APIView):
 
         return result
 
+    @validated_request(
+        request_serializer=PerformanceDetailsRequestSerializer,
+        responses={
+            200: PerformanceDetailsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, id, *args, **kwargs):
         user = request.user
         organization = user.organization
 
         limit = 30
-        page = int(request.data.get("page")) or 1
+        query_data = request.validated_data
+
+        page = query_data["page"]
         offset = (int(page) - 1) * limit
 
-        dataset = request.data.get("dataset")
-        filters = request.data.get("filters")
-        request.data.get("breakdown")
-        start_date = request.data.get("start_date")
-        end_date = request.data.get("end_date")
+        dataset = query_data["dataset"]
+        filters = query_data.get("filters", [])
+        start_date = query_data["start_date"]
+        end_date = query_data["end_date"]
 
         metric_id = dataset["metric_id"]
 
@@ -354,28 +420,39 @@ class PerformanceDetailsView(APIView):
 
 class PerformanceDetailsExport(APIView):
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=PerformanceExportRequestSerializer,
+        responses={
+            200: openapi.Schema(
+                type=openapi.TYPE_STRING,
+                description="CSV export payload.",
+            ),
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, id, *args, **kwargs):
         user = request.user
         organization = user.organization
 
-        dataset = request.data.get("dataset")
+        query_data = request.validated_data
 
-        metric = request.data.get("metric")
+        dataset = query_data["dataset"]
+        filters = query_data.get("filters", [])
+        start_date = query_data["start_date"]
+        end_date = query_data["end_date"]
 
-        if metric and "id" in metric:
-            metric_model = Metric.objects.get(id=metric["id"])
-        else:
-            model = AIModel.objects.get(id=id)
-            if model.default_metric:
-                metric_model = model.default_metric.id
-
+        metric_model = Metric.objects.filter(id=dataset["metric_id"]).first()
         if metric_model:
             performance = calculate_performance_details(
                 organization.id,
                 id,
                 dataset,
-                metric_model,
+                filters,
+                start_date,
+                end_date,
                 unpaginated=True,
             )
 
@@ -426,16 +503,19 @@ class PerformanceDetailsExport(APIView):
 
             return response
         else:
-            return Response(
-                data={},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            return self._gm.not_found("Metric not found")
 
 
 class GetPerformanceOptionsView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: PerformanceOptionsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, model_id, *args, **kwargs):
         user_organization = get_request_organization(self.request)
         search_query = request.query_params.get("search_query")
@@ -519,14 +599,24 @@ class GetPerformanceTagDistributionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=PerformanceTagDistributionRequestSerializer,
+        responses={
+            200: PERFORMANCE_TAG_DISTRIBUTION_RESPONSE_SCHEMA,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, model_id, *args, **kwargs):
         user_organization = get_request_organization(self.request)
-        datasets = request.data.get("dataset")
-        filters = request.data.get("filters")
-        agg_by = request.data.get("agg_by")
-        start_date = request.data.get("start_date")
-        end_date = request.data.get("end_date")
-        graph_type = request.data.get("graph_type")
+        query_data = request.validated_data
+
+        datasets = query_data["dataset"]
+        filters = query_data.get("filters", [])
+        agg_by = query_data["agg_by"]
+        start_date = query_data["start_date"]
+        end_date = query_data["end_date"]
+        graph_type = query_data["graph_type"]
 
         if graph_type == "all":
             good_tags_distribution = get_all_tags_distribution(

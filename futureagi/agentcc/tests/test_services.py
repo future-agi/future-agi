@@ -10,13 +10,14 @@ import pytest
 
 from accounts.models import Organization
 from accounts.models.workspace import Workspace
-from agentcc.models import AgentccAPIKey, AgentccRequestLog
+from agentcc.models import AgentccAPIKey
 from agentcc.models.webhook import AgentccWebhook, AgentccWebhookEvent
 from agentcc.services import auth_bridge
 from agentcc.services.gateway_client import (
     GatewayClient,
     GatewayClientError,
     get_gateway_client,
+    resolve_gateway_internal_url,
 )
 from agentcc.services.log_ingestion import ingest_request_logs
 from agentcc.services.webhook_delivery import deliver_webhook_events
@@ -39,6 +40,12 @@ class TestGatewayClient:
     def test_base_url_trailing_slash_stripped(self):
         client = GatewayClient("http://localhost:8080/")
         assert client.base_url == "http://localhost:8080"
+
+    def test_internal_url_supports_legacy_env_name(self, monkeypatch):
+        monkeypatch.delenv("AGENTCC_GATEWAY_INTERNAL_URL", raising=False)
+        monkeypatch.setenv("AGENTCC_INTERNAL_URL", "http://agentcc-gateway:8090")
+
+        assert resolve_gateway_internal_url() == "http://agentcc-gateway:8090"
 
     @patch("agentcc.services.gateway_client.httpx.Client")
     def test_health_check(self, mock_client_cls):
@@ -71,6 +78,54 @@ class TestGatewayClient:
         with pytest.raises(GatewayClientError) as exc_info:
             client.health_check()
         assert exc_info.value.status_code == 500
+
+    @patch("agentcc.services.gateway_client.httpx.Client")
+    def test_create_key_stringifies_metadata_for_gateway(self, mock_client_cls):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = b'{"id":"key_1"}'
+        mock_resp.json.return_value = {"id": "key_1"}
+        mock_client_instance = MagicMock()
+        mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+        mock_client_instance.__exit__ = MagicMock(return_value=False)
+        mock_client_instance.request.return_value = mock_resp
+        mock_client_cls.return_value = mock_client_instance
+
+        client = GatewayClient("http://localhost:8080", "token")
+        client.create_key(
+            "test-key",
+            metadata={
+                "updated": True,
+                "attempt": 2,
+                "labels": ["alpha", "beta"],
+                "none": None,
+            },
+        )
+
+        request_json = mock_client_instance.request.call_args.kwargs["json"]
+        assert request_json["metadata"] == {
+            "updated": "true",
+            "attempt": "2",
+            "labels": '["alpha","beta"]',
+        }
+
+    @patch("agentcc.services.gateway_client.httpx.Client")
+    def test_update_key_stringifies_metadata_for_gateway(self, mock_client_cls):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = b'{"id":"key_1"}'
+        mock_resp.json.return_value = {"id": "key_1"}
+        mock_client_instance = MagicMock()
+        mock_client_instance.__enter__ = MagicMock(return_value=mock_client_instance)
+        mock_client_instance.__exit__ = MagicMock(return_value=False)
+        mock_client_instance.request.return_value = mock_resp
+        mock_client_cls.return_value = mock_client_instance
+
+        client = GatewayClient("http://localhost:8080", "token")
+        client.update_key("key_1", metadata={"updated": True})
+
+        request_json = mock_client_instance.request.call_args.kwargs["json"]
+        assert request_json["metadata"] == {"updated": "true"}
 
     @patch(
         "agentcc.services.gateway_client.AGENTCC_GATEWAY_URL",

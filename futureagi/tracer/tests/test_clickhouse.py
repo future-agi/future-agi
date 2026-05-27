@@ -362,6 +362,47 @@ class TestClickHouseFilterBuilder:
         assert "toUUID(%(uid_1)s), toUUID(%(uid_2)s)" in where
         assert params == {"uid_1": user_ids[0], "uid_2": user_ids[1]}
 
+    @pytest.mark.django_db
+    def test_global_annotator_filter_ignores_stale_annotation_col_type(
+        self, custom_eval_config
+    ):
+        """Global annotator must not be parsed as an annotation-label UUID."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        user_id = "11111111-1111-1111-1111-111111111111"
+        builder = ClickHouseFilterBuilder()
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": str(custom_eval_config.id),
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than",
+                        "filter_value": 70,
+                        "col_type": "EVAL_METRIC",
+                    },
+                },
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "annotator",
+                        "filter_op": "equals",
+                        "filter_value": [user_id],
+                        "col_type": "ANNOTATION",
+                    },
+                },
+            ]
+        )
+
+        assert "tracer_eval_logger" in where
+        assert "model_hub_score AS s FINAL" in where
+        assert "s.annotator_id IN (toUUID(%(uid_" in where
+        assert "s.label_id = toUUID(%(ann_label" not in where
+        assert "annotator" not in params.values()
+        assert user_id in params.values()
+
     def test_span_mode_global_annotator_filter_targets_span_id(self):
         """The spans tab annotator filter should not widen to whole traces."""
         from tracer.services.clickhouse.query_builders.filters import (
@@ -388,9 +429,163 @@ class TestClickHouseFilterBuilder:
 
         assert where.strip().startswith("id IN")
         assert "trace_id IN" not in where
-        assert "s.annotator_id = toUUID(%(uid_1)s)" in where
-        assert "LEFT JOIN spans AS root_sp" in where
+        assert "s.annotator_id IN (toUUID(%(uid_1)s))" in where
+        assert "FROM spans WHERE" in where
         assert params == {"uid_1": user_id}
+
+    def test_scoped_spans_subquery_org_mode_uses_project_ids(self):
+        """Org-scoped mode (project_ids set) must emit ``project_id IN
+        %(project_ids)s``, even for a single-element list. Earlier the
+        single-element case fell through to ``project_id = %(project_id)s``
+        which fails at execution because the outer query only binds
+        ``project_ids``. Regression guard for the Codex P1 finding.
+        """
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        # Single-element list — the buggy branch.
+        single = ClickHouseFilterBuilder(
+            project_ids=["11111111-1111-1111-1111-111111111111"]
+        )
+        where_single, _ = single.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id IN %(project_ids)s" in where_single
+        assert "project_id = %(project_id)s" not in where_single
+
+        # Two-element list — same shape.
+        multi = ClickHouseFilterBuilder(
+            project_ids=[
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+            ]
+        )
+        where_multi, _ = multi.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id IN %(project_ids)s" in where_multi
+
+        # Single-project mode — should still emit the single-project shape.
+        single_pid = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111"
+        )
+        where_pid, _ = single_pid.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id = %(project_id)s" in where_pid
+        assert "project_id IN %(project_ids)s" not in where_pid
+
+    def test_score_date_scope_can_be_disabled_for_monitor_builders(self):
+        """Monitor queries bind start_time/end_time, not start_date/end_date."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111",
+            score_date_scope=False,
+        )
+        where, _ = builder.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+
+        assert "model_hub_score" in where
+        assert "%(start_date)s" not in where
+        assert "project_id = %(project_id)s" in where
+
+    def test_span_attribute_org_mode_uses_project_ids(self):
+        """Trace-mode span attribute filters must mirror org-scoped params."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_ids=["11111111-1111-1111-1111-111111111111"]
+        )
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": "metadata.provider",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "openai",
+                        "col_type": "SPAN_ATTRIBUTE",
+                    },
+                }
+            ]
+        )
+
+        assert "project_id IN %(project_ids)s" in where
+        assert "project_id = %(project_id)s" not in where
+        assert params == {"attr_1": "openai"}
+
+    def test_has_eval_org_mode_uses_project_ids(self):
+        """has_eval joins spans for project scope and must support org mode."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_ids=["11111111-1111-1111-1111-111111111111"]
+        )
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": "has_eval",
+                    "filter_config": {
+                        "filter_type": "boolean",
+                        "filter_op": "equals",
+                        "filter_value": True,
+                    },
+                }
+            ]
+        )
+
+        assert "sp.project_id IN %(project_ids)s" in where
+        assert "sp.project_id = %(project_id)s" not in where
+        assert params == {}
 
     def test_span_mode_my_annotations_filter_targets_span_id(self):
         """my_annotations uses span ids in span mode and trace ids elsewhere."""
@@ -551,6 +746,31 @@ class TestClickHouseFilterBuilder:
         assert "name IN" in where
         assert "parent_span_id IS NULL OR parent_span_id = ''" in where
         assert tuple(params.values()) == (("root trace",),)
+
+    def test_voice_duration_system_metric_uses_call_duration_attribute(self):
+        """Voice Duration filters should route to the stored call.duration metric."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder()
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "less_than_or_equal",
+                        "filter_value": 20,
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+
+        assert "span_attr_num['call.duration']" in where
+        assert "span_attr_num['duration']" not in where
+        assert 20 in params.values()
 
     @pytest.mark.parametrize(
         ("frontend_column", "clickhouse_column"),
@@ -1227,7 +1447,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
 
         assert "model_hub_score AS s FINAL" in where
-        assert "LEFT JOIN spans AS sp" in where
+        assert "FROM spans WHERE" in where
         assert "sp.id = s.observation_span_id" in where
         assert "sp.trace_id" in where
         assert "toString(s.trace_id)" in where
@@ -1261,8 +1481,8 @@ class TestClickHouseFilterBuilder:
         assert "trace_id IN" not in where
         assert "model_hub_score AS s FINAL" in where
         assert "s.observation_span_id" in where
-        assert "LEFT JOIN spans AS root_sp" in where
-        assert "root_sp.parent_span_id" in where
+        assert "FROM spans WHERE" in where
+        assert "parent_span_id" in where
         assert params["ann_label_1"] == "00000000-0000-0000-0000-000000000044"
 
     def test_span_mode_annotation_text_in_filter_targets_span_id(self):
@@ -1430,8 +1650,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
         assert where == ""
 
-    def test_translate_has_eval_camel_case(self):
-        """has_eval filter should work with camelCase keys."""
+    def test_translate_has_eval_accepts_camelcase_filter_keys(self):
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -1475,7 +1694,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
         assert "trace_id IN" in where
         assert "model_hub_score" in where
-        assert "LEFT JOIN spans AS sp" in where
+        assert "FROM spans WHERE" in where
         assert "sp.id = s.observation_span_id" in where
         assert "_peerdb_is_deleted = 0" in where
         assert params == {}
@@ -1510,7 +1729,7 @@ class TestClickHouseFilterBuilder:
         assert "trace_id IN" not in where
         assert "GROUP BY entity_id" in where
         assert "uniq(s.label_id) >= 2" in where
-        assert "root_sp.parent_span_id" in where
+        assert "parent_span_id" in where
         assert params["lbl_1"] == "00000000-0000-0000-0000-000000000011"
         assert params["lbl_2"] == "00000000-0000-0000-0000-000000000022"
 
@@ -1748,6 +1967,7 @@ class TestTraceListQueryBuilder:
         assert "LIMIT" in query
         assert "OFFSET" in query
         assert "parent_span_id IS NULL" in query
+        assert params["limit"] == 10
 
     def test_build_query_selects_expected_columns(self):
         """Phase-1 query should select trace metadata columns."""
@@ -1957,8 +2177,8 @@ class TestSessionListQueryBuilder:
         assert "GROUP BY trace_session_id" in query
         assert "HAVING" in query
 
-    def test_having_filter_normalizes_operator_alias(self):
-        """Session aggregate filters should accept saved UI operator aliases."""
+    def test_having_filter_accepts_canonical_operator(self):
+        """Session aggregate filters use the canonical filter operator contract."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
         builder = SessionListQueryBuilder(
@@ -1967,7 +2187,7 @@ class TestSessionListQueryBuilder:
                 {
                     "column_id": "duration",
                     "filter_config": {
-                        "filter_op": "equal_to",
+                        "filter_op": "equals",
                         "filter_value": 60,
                     },
                 }
@@ -2032,6 +2252,35 @@ class TestSessionListQueryBuilder:
         )
         query, params = builder.build()
         assert "trace_session_id IS NOT NULL" in query
+
+    def test_session_id_filter_casts_uuid_column_to_string(self):
+        """Session picker values are strings; ClickHouse stores session ids as UUIDs."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        session_id = "003b76f1-2b4a-4af5-b0dc-224d687374d4"
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "session_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": [session_id],
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+
+        query, params = builder.build()
+
+        assert "toString(trace_session_id) IN %(col_" in query
+        assert session_id in next(
+            value for key, value in params.items() if key.startswith("col_")
+        )
 
     def test_build_uses_uniq_not_uniqExact(self):
         """build() should use approximate uniq() instead of expensive uniqExact()."""
@@ -3023,6 +3272,15 @@ class TestBaseQueryBuilder:
         result = BaseQueryBuilder._normalize_timestamp(dt, "month")
         assert result == datetime(2024, 6, 1, 0, 0, 0)
 
+    def test_normalize_timestamp_accepts_clickhouse_date_bucket(self):
+        """ClickHouse monthly buckets may arrive as date objects, not datetimes."""
+        from datetime import date, datetime
+
+        from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+
+        result = BaseQueryBuilder._normalize_timestamp(date(2024, 6, 1), "month")
+        assert result == datetime(2024, 6, 1, 0, 0, 0)
+
     def test_generate_timestamp_range_hourly(self):
         """_generate_timestamp_range should yield hourly buckets."""
         from datetime import datetime
@@ -3706,7 +3964,7 @@ class TestTraceListQueryBuilderComprehensive:
         )
         assert "model_hub_score" in query
         assert "label_id" in query
-        assert "LEFT JOIN spans AS sp" in query
+        assert "LEFT JOIN" in query
         assert "sp.id = s.observation_span_id" in query
         assert "s.deleted = false" in query
         assert "GROUP BY" in query
@@ -4033,6 +4291,7 @@ class TestSpanListQueryBuilderComprehensive:
         assert "spans" in query
         assert "LIMIT" in query
         assert "OFFSET" in query
+        assert params["limit"] == 50
         # Unlike trace list, span list shows ALL spans (no parent_span_id filter)
         assert "parent_span_id IS NULL" not in query
 
@@ -4814,8 +5073,7 @@ class TestFilterBuilderEdgeCases:
         assert "BETWEEN" in where
         assert "span_attr_num" in where
 
-    def test_camelcase_filter_keys(self):
-        """Should accept camelCase filter keys (columnId, filterConfig)."""
+    def test_camelcase_filter_keys_are_supported_defensively(self):
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -4825,16 +5083,16 @@ class TestFilterBuilderEdgeCases:
             {
                 "columnId": "model",
                 "filterConfig": {
-                    "filter_type": "text",
-                    "filter_op": "equals",
-                    "filter_value": "gpt-4",
+                    "filterType": "text",
+                    "filterOp": "equals",
+                    "filterValue": "gpt-4",
                     "col_type": "SYSTEM_METRIC",
                 },
             }
         ]
         where, params = builder.translate(filters)
-        assert "model" in where
-        assert "gpt-4" in params.values()
+        assert "model = %(col_1)s" in where
+        assert params == {"col_1": "gpt-4"}
 
     def test_eval_metric_filter_subquery_structure(self):
         """EVAL_METRIC filter should have correct subquery structure."""
@@ -4883,8 +5141,8 @@ class TestFilterBuilderEdgeCases:
         assert "label_id" in where
         assert "_peerdb_is_deleted = 0" in where
 
-    def test_annotation_number_not_equal_to_alias(self):
-        """Frontend number op not_equal_to should translate to SQL !=."""
+    def test_annotation_number_not_equals(self):
+        """Canonical number op not_equals should translate to SQL !=."""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -4895,7 +5153,7 @@ class TestFilterBuilderEdgeCases:
                 "column_id": "00000000-0000-0000-0000-000000000066",
                 "filter_config": {
                     "filter_type": "number",
-                    "filter_op": "not_equal_to",
+                    "filter_op": "not_equals",
                     "filter_value": 45,
                     "col_type": "ANNOTATION",
                 },
@@ -4933,18 +5191,18 @@ class TestFilterBuilderEdgeCases:
         assert 10 in params.values()
         assert 50 in params.values()
 
-    def test_annotation_positive_operator_aliases(self):
-        """Frontend positive op aliases should translate to canonical SQL."""
+    def test_annotation_positive_canonical_operators(self):
+        """Canonical annotation ops should translate to SQL."""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
 
         label_id = "00000000-0000-0000-0000-000000000066"
         cases = [
-            ("number", "equal_to", 45, ") = %(ann_", {45}),
-            ("number", "inBetween", [10, 50], " BETWEEN ", {10, 50}),
-            ("text", "is", "good", ") = lower(%(ann_", {"good"}),
-            ("text", "is_not", "bad", ") != lower(%(ann_", {"bad"}),
+            ("number", "equals", 45, ") = %(ann_", {45}),
+            ("number", "between", [10, 50], " BETWEEN ", {10, 50}),
+            ("text", "equals", "good", ") = lower(%(ann_", {"good"}),
+            ("text", "not_equals", "bad", ") != lower(%(ann_", {"bad"}),
         ]
 
         for filter_type, filter_op, value, sql_fragment, expected_values in cases:
@@ -5512,6 +5770,56 @@ class TestVoiceCallListQueryBuilder:
         )
         query, params = builder.build()
         assert "lower(status) =" in query
+
+    def test_voice_numeric_filter_without_col_type_uses_metric_expression(self):
+        """API callers may omit col_type; voice metrics should still translate."""
+        from tracer.services.clickhouse.query_builders.voice_call_list import (
+            VoiceCallListQueryBuilder,
+        )
+
+        builder = VoiceCallListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "turn_count",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than_or_equal",
+                        "filter_value": 0,
+                    },
+                }
+            ],
+        )
+
+        query, _ = builder.build()
+
+        assert "span_attr_num['call.total_turns']" in query
+        assert "turn_count >=" not in query
+
+    def test_voice_string_filter_without_col_type_uses_attribute_map(self):
+        """Voice string metrics should not be emitted as unknown CH columns."""
+        from tracer.services.clickhouse.query_builders.voice_call_list import (
+            VoiceCallListQueryBuilder,
+        )
+
+        builder = VoiceCallListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "ended_reason",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "contains",
+                        "filter_value": "customer",
+                    },
+                }
+            ],
+        )
+
+        query, _ = builder.build()
+
+        assert "mapContains(span_attr_str, 'ended_reason')" in query
+        assert "span_attr_str['ended_reason'] LIKE" in query
 
 
 @pytest.mark.unit
@@ -6091,7 +6399,7 @@ class TestVoiceCallListQueryBuilderComprehensive:
         query, _ = builder.build_annotation_query(["trace-1"], ["label-1"])
         assert "model_hub_score" in query
         assert "trace_id" in query
-        assert "LEFT JOIN spans AS sp" in query
+        assert "LEFT JOIN" in query
         assert "sp.id = s.observation_span_id" in query
         assert "toString(s.trace_id)" in query
         assert "s.deleted = false" in query
@@ -6305,6 +6613,50 @@ class TestAnnotationGraphQueryBuilder:
         assert "FINAL" in query
         assert "_peerdb_is_deleted = 0" in query
         assert params["label_id"] == self.LABEL_ID
+
+    def test_fetch_annotation_graph_uses_score_backed_label_lookup(self):
+        """Annotation graph labels should resolve through the project score union."""
+        from model_hub.models.choices import AnnotationTypeChoices
+        from tracer.services.clickhouse import graph_dispatch
+
+        class LabelQuery:
+            def get(self, **kwargs):
+                assert kwargs == {"id": self_label_id}
+                label = mock.Mock()
+                label.id = self_label_id
+                label.name = "Score-backed label"
+                label.type = AnnotationTypeChoices.NUMERIC.value
+                return label
+
+        class Result:
+            data = []
+            columns = []
+
+        class Analytics:
+            def execute_ch_query(self, query, params, timeout_ms):
+                self.query = query
+                self.params = params
+                return Result()
+
+        self_label_id = self.LABEL_ID
+        analytics = Analytics()
+        with mock.patch.object(
+            graph_dispatch,
+            "get_annotation_labels_for_project",
+            return_value=LabelQuery(),
+        ) as lookup:
+            result = graph_dispatch.fetch_annotation_graph_ch(
+                analytics=analytics,
+                project_id="project-with-shared-label",
+                filters=[],
+                interval="month",
+                req_data_config={"id": self.LABEL_ID, "type": "ANNOTATION"},
+                observe_type="span",
+            )
+
+        lookup.assert_called_once_with("project-with-shared-label")
+        assert analytics.params["label_id"] == self.LABEL_ID
+        assert result["name"] == "Score-backed label"
 
     def test_build_bool_query(self):
         """Bool output type should produce CASE WHEN on JSON-extracted value."""
@@ -6964,7 +7316,44 @@ class TestMonitorMetricsQueryBuilder:
 
 
 # ============================================================================
-# 23. Session Analytics Query Builder Tests
+# 23. Session Time-Series Query Builder Tests
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestSessionTimeSeriesQueryBuilder:
+    """Test session graph query generation."""
+
+    def test_session_aggregate_filter_uses_inner_having(self):
+        from tracer.services.clickhouse.query_builders.session_time_series import (
+            SessionTimeSeriesQueryBuilder,
+        )
+
+        builder = SessionTimeSeriesQueryBuilder(
+            project_id="project-1",
+            interval="month",
+            filters=[
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than",
+                        "filter_value": 50,
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+        )
+
+        query, params = builder.build()
+
+        assert "HAVING session_duration > %(having_901)s" in query
+        assert "span_attr_num" not in query
+        assert params["having_901"] == 50
+
+
+# ============================================================================
+# 24. Session Analytics Query Builder Tests
 # ============================================================================
 
 

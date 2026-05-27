@@ -7,8 +7,18 @@ import pytest
 from django.urls import reverse
 from rest_framework import status
 
-from agent_playground.models.choices import NodeType, PortDirection
+from accounts.models.organization import Organization
+from accounts.models.organization_membership import OrganizationMembership
+from accounts.models.user import User
+from accounts.models.workspace import Workspace
+from agent_playground.models.choices import (
+    GraphVersionStatus,
+    NodeType,
+    PortDirection,
+)
 from agent_playground.models.edge import Edge
+from agent_playground.models.graph import Graph
+from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.node import Node
 from agent_playground.models.node_connection import NodeConnection
 from agent_playground.models.port import Port
@@ -973,6 +983,145 @@ class TestCreateSubgraphWithoutRefAPI:
         result = response.data["result"]
         assert result["type"] == "subgraph"
         assert result["ref_graph_version_id"] is None
+
+
+@pytest.mark.unit
+class TestSubgraphReferenceScopeAPI:
+    def test_create_rejects_other_workspace_ref_version(
+        self, authenticated_client, graph, graph_version, user
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=graph.organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_graph = Graph.no_workspace_objects.create(
+            organization=graph.organization,
+            workspace=other_workspace,
+            name="Other Workspace Graph",
+            created_by=user,
+        )
+        other_version = GraphVersion.no_workspace_objects.create(
+            graph=other_graph,
+            version_number=1,
+            status=GraphVersionStatus.ACTIVE,
+        )
+
+        node_id = str(uuid.uuid4())
+        response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {
+                "id": node_id,
+                "type": "subgraph",
+                "name": "Cross Workspace Ref",
+                "ref_graph_version_id": str(other_version.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert not Node.no_workspace_objects.filter(id=node_id).exists()
+
+    def test_patch_rejects_other_workspace_ref_version(
+        self, authenticated_client, graph, graph_version, user
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=graph.organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_graph = Graph.no_workspace_objects.create(
+            organization=graph.organization,
+            workspace=other_workspace,
+            name="Other Workspace Graph",
+            created_by=user,
+        )
+        other_version = GraphVersion.no_workspace_objects.create(
+            graph=other_graph,
+            version_number=1,
+            status=GraphVersionStatus.ACTIVE,
+        )
+        node_id = str(uuid.uuid4())
+        create_response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {"id": node_id, "type": "subgraph", "name": "Scoped Ref"},
+            format="json",
+        )
+        assert create_response.status_code == status.HTTP_201_CREATED
+
+        response = authenticated_client.patch(
+            _node_detail_url(graph, graph_version, node_id),
+            {"ref_graph_version_id": str(other_version.id)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        node = Node.no_workspace_objects.get(id=node_id)
+        assert node.ref_graph_version_id is None
+
+    def test_create_rejects_other_org_ref_version(
+        self, authenticated_client, graph, graph_version
+    ):
+        other_org = Organization.objects.create(name="Other Org")
+        other_user = User.objects.create_user(
+            email="other-agent-ref@example.com",
+            password="testpass",
+            name="Other User",
+            organization=other_org,
+        )
+        OrganizationMembership.no_workspace_objects.get_or_create(
+            user=other_user,
+            organization=other_org,
+            defaults={"is_active": True},
+        )
+        other_workspace = Workspace.objects.create(
+            name="Other Org Workspace",
+            organization=other_org,
+            is_active=True,
+            created_by=other_user,
+        )
+        other_graph = Graph.no_workspace_objects.create(
+            organization=other_org,
+            workspace=other_workspace,
+            name="Other Org Graph",
+            created_by=other_user,
+        )
+        other_version = GraphVersion.no_workspace_objects.create(
+            graph=other_graph,
+            version_number=1,
+            status=GraphVersionStatus.ACTIVE,
+        )
+
+        response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {
+                "id": str(uuid.uuid4()),
+                "type": "subgraph",
+                "name": "Cross Org Ref",
+                "ref_graph_version_id": str(other_version.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_create_rejects_draft_ref_version(
+        self, authenticated_client, graph, graph_version, referenced_graph_version
+    ):
+        response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {
+                "id": str(uuid.uuid4()),
+                "type": "subgraph",
+                "name": "Draft Ref",
+                "ref_graph_version_id": str(referenced_graph_version.id),
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.unit

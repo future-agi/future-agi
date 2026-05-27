@@ -20,8 +20,6 @@ import { getSessionListColumnDef } from "./common";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { useSessionsGridStoreShallow } from "./ReplaySessions/store";
 import { APP_CONSTANTS } from "src/utils/constants";
 
@@ -160,21 +158,31 @@ const SessionGrid = React.forwardRef(
         }
       }
 
-      const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-        if (cols.length === 1) {
-          const c = cols[0];
-          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-          return getSessionListColumnDef(c);
-        } else {
-          return {
-            headerName: group,
-            children: cols.map((c) => {
-              bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
+      const columnDefsResult = Object.entries(grouping).flatMap(
+        ([group, cols]) => {
+          if (group === "Annotation Metrics") {
+            return cols.map((c) => {
+              bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
               return getSessionListColumnDef(c);
-            }),
-          };
-        }
-      });
+            });
+          }
+          if (cols.length === 1) {
+            const c = cols[0];
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getSessionListColumnDef(c);
+          } else {
+            return {
+              headerName: group,
+              children: cols.map((c) => {
+                bottomRowObj[c?.id] = c?.average
+                  ? `Average ${c?.average}`
+                  : null;
+                return getSessionListColumnDef(c);
+              }),
+            };
+          }
+        },
+      );
 
       return {
         columnDefs: columnDefsResult,
@@ -220,9 +228,7 @@ const SessionGrid = React.forwardRef(
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
-                ),
+                filters: JSON.stringify(filters),
                 ...(dateInterval && { interval: dateInterval }),
               });
 
@@ -436,7 +442,7 @@ const SessionGrid = React.forwardRef(
                   userTraceRowHeightMapping.Short.height
                 }
                 statusBar={statusBar}
-                rowSelection={{ mode: "multiRow" }}
+                rowSelection={{ mode: "multiRow", enableClickSelection: false }}
                 className="clean-data-table"
                 theme={agTheme}
                 rowModelType="serverSide"
@@ -448,7 +454,6 @@ const SessionGrid = React.forwardRef(
                 suppressServerSideFullWidthLoadingRow={true}
                 serverSideInitialRowCount={DATASET_ROWS_LIMIT}
                 defaultColDef={defaultColDef}
-                suppressRowClickSelection={true}
                 rowStyle={{ cursor: "pointer" }}
                 onRowClicked={onRowClicked}
                 onColumnMoved={onColumnMoved}

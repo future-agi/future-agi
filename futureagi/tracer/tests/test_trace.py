@@ -221,6 +221,14 @@ class TestVoiceCallListAPI:
         assert payload["count"] >= 1
         assert payload["results"][0]["trace_id"] == str(trace.id)
 
+    def test_list_voice_calls_rejects_legacy_project_alias(self, auth_client, project):
+        response = auth_client.get(
+            "/tracer/trace/list_voice_calls/",
+            {"projectId": str(project.id), "filters": "[]"},
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -511,6 +519,108 @@ class TestTraceGraphMethodsAPI:
         )
         # Accept 200 or 400
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
+
+    def test_get_graph_methods_trace_system_metric_filter_success(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        """Trace graph filters can apply trace-level system metric annotations."""
+        from tracer.models.observation_span import ObservationSpan
+
+        monkeypatch.setattr(
+            "tracer.views.trace.AnalyticsQueryService.should_use_clickhouse",
+            lambda self, query_type: False,
+        )
+        trace = Trace.objects.create(
+            project=observe_project,
+            name="Latency Filter Trace",
+        )
+        ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=trace,
+            name="Root Span",
+            observation_type="llm",
+            start_time=timezone.now(),
+            latency_ms=500,
+            total_tokens=15,
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost=0.001,
+            status="OK",
+        )
+
+        response = auth_client.post(
+            "/tracer/trace/get_graph_methods/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+                "filters": [
+                    {
+                        "column_id": "latency",
+                        "filter_config": {
+                            "filter_type": "number",
+                            "filter_op": "greater_than",
+                            "filter_value": 1,
+                            "col_type": "SYSTEM_METRIC",
+                        },
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+
+    def test_get_graph_methods_falls_back_to_postgres_when_clickhouse_fails(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        """Trace graph returns PG data when the ClickHouse graph helper fails."""
+        from tracer.models.observation_span import ObservationSpan
+
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService.should_use_clickhouse",
+            lambda self, query_type: True,
+        )
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService.execute_ch_query",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ch down")),
+        )
+
+        trace = Trace.objects.create(
+            project=observe_project,
+            name="Fallback Trace",
+        )
+        ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=trace,
+            name="Root Span",
+            observation_type="llm",
+            start_time=timezone.now(),
+            latency_ms=500,
+            total_tokens=15,
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost=0.001,
+            status="OK",
+        )
+
+        response = auth_client.post(
+            "/tracer/trace/get_graph_methods/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+                "filters": [],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert isinstance(get_result(response).get("data"), list)
 
 
 @pytest.mark.integration

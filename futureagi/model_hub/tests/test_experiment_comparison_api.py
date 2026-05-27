@@ -142,9 +142,11 @@ def experiment_dataset_column(db, experiment_dataset, dataset):
 def comparison_weights():
     """Default weights payload for compare-experiments endpoint."""
     return {
-        "response_time": 1,
-        "completion_tokens": 1,
-        "total_tokens": 1,
+        "weights": {
+            "response_time": 1,
+            "completion_tokens": 1,
+            "total_tokens": 1,
+        },
     }
 
 
@@ -492,7 +494,7 @@ class TestExperimentDatasetComparisonView:
         }
         response_1 = auth_client.post(
             f"/model-hub/experiments/{experiment.id}/compare-experiments/",
-            weights_1,
+            {"weights": weights_1},
             format="json",
         )
         assert response_1.status_code == status.HTTP_200_OK
@@ -505,7 +507,7 @@ class TestExperimentDatasetComparisonView:
         }
         response_2 = auth_client.post(
             f"/model-hub/experiments/{experiment.id}/compare-experiments/",
-            weights_2,
+            {"weights": weights_2},
             format="json",
         )
         assert response_2.status_code == status.HTTP_200_OK
@@ -566,7 +568,7 @@ class TestComparisonConfigPersistence:
         # POST to create comparisons
         post_response = auth_client.post(
             f"/model-hub/experiments/{experiment.id}/compare-experiments/",
-            weights,
+            {"weights": weights},
             format="json",
         )
         assert post_response.status_code == status.HTTP_200_OK
@@ -605,7 +607,7 @@ class TestComparisonConfigPersistence:
         }
         auth_client.post(
             f"/model-hub/experiments/{experiment.id}/compare-experiments/",
-            initial_weights,
+            {"weights": initial_weights},
             format="json",
         )
 
@@ -617,7 +619,7 @@ class TestComparisonConfigPersistence:
         }
         auth_client.post(
             f"/model-hub/experiments/{experiment.id}/compare-experiments/",
-            updated_weights,
+            {"weights": updated_weights},
             format="json",
         )
 

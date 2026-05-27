@@ -2340,9 +2340,7 @@ const RunPrompt = () => {
   // Otherwise the drawer opens empty whenever the run-prompt config
   // doesn't expose model/provider/modelType.
   const showPromptForm = isEditMode
-    ? isSuccess &&
-      !isPending &&
-      (!modelParamsEnabled || !isModelParamsPending)
+    ? isSuccess && !isPending && (!modelParamsEnabled || !isModelParamsPending)
     : true;
 
   const handleClose = () => {
@@ -2357,7 +2355,7 @@ const RunPrompt = () => {
   return (
     <Drawer
       anchor="right"
-      open={openRunPrompt}
+      open={Boolean(openRunPrompt)}
       onClose={handleClose}
       PaperProps={{
         sx: {

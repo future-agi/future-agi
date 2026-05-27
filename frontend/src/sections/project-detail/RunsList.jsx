@@ -8,7 +8,6 @@ import { useNavigate, useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
-import { objectCamelToSnake } from "src/utils/utils";
 import TotalRowsStatusBar from "../develop-detail/Common/TotalRowsStatusBar";
 import { APP_CONSTANTS } from "src/utils/constants";
 
@@ -16,6 +15,8 @@ import {
   AllowedGroups,
   applyQuickFilters,
   getRunListColumnDefs,
+  normalizeRunListColumnConfig,
+  serializeRunListFilters,
 } from "./common";
 
 const RunsList = React.forwardRef(
@@ -113,7 +114,10 @@ const RunsList = React.forwardRef(
       }
 
       const columnDefsResult = Object.entries(grouping)
-        .map(([group, cols]) => {
+        .flatMap(([group, cols]) => {
+          if (group === "Annotation Metrics") {
+            return cols.map((c) => getRunListColumnDefs(c));
+          }
           if (!AllowedGroups.includes(group) && cols.length === 1) {
             const c = cols[0];
             // bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
@@ -160,15 +164,15 @@ const RunsList = React.forwardRef(
             // request has startRow and endRow get next page number and each page has 10 rows
             const pageNumber = Math.floor(request.startRow / 10);
 
-            const fil = [...filters];
+            const fil = serializeRunListFilters(filters);
 
             if (search && search?.length) {
               fil.push({
-                columnId: "run_name",
-                filterConfig: {
-                  filterOp: "contains",
-                  filterType: "text",
-                  filterValue: search,
+                column_id: "run_name",
+                filter_config: {
+                  filter_op: "contains",
+                  filter_type: "text",
+                  filter_value: search,
                 },
               });
             }
@@ -186,26 +190,16 @@ const RunsList = React.forwardRef(
                       direction: sort,
                     })),
                   ),
-                  filters: JSON.stringify(objectCamelToSnake(fil)),
+                  filters: JSON.stringify(fil),
                 },
               },
             );
-            const res = results?.data?.result;
+            const res = results?.data?.result || results?.data;
 
             const winnerConfig = res?.project_version_winnner_config || {};
-            const columns = res?.column_config?.map((o) => {
-              if (o.id === "avg_latency") {
-                return {
-                  ...o,
-                  value: winnerConfig["avg_latency_ms"] ?? null,
-                };
-              }
-
-              return {
-                ...o,
-                value: winnerConfig[o.id] ?? null,
-              };
-            });
+            const columns = res?.column_config?.map((column) =>
+              normalizeRunListColumnConfig(column, winnerConfig),
+            );
 
             setColumns(columns);
 

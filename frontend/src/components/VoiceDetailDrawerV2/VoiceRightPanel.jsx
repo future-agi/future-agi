@@ -49,6 +49,7 @@ const VoiceRightPanel = ({
   data,
   onCompareBaseline,
   onAction,
+  hiddenActionIds = [],
   hideAnnotationTab,
 }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
@@ -317,7 +318,11 @@ const VoiceRightPanel = ({
       {/* Call details — chips + tags + Actions button live at the top of
           the right panel, matching the trace drawer's span-detail-pane
           layout. */}
-      <CallDetailsBar data={data} onAction={onAction} />
+      <CallDetailsBar
+        data={data}
+        onAction={onAction}
+        hiddenActionIds={hiddenActionIds}
+      />
 
       <Stack
         direction="row"
@@ -501,6 +506,7 @@ VoiceRightPanel.propTypes = {
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,
+  hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
 };
 

@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import json
+import re
 import time
 import traceback
 from datetime import datetime, timedelta
@@ -27,6 +28,11 @@ from accounts.models.auth_token import (
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace, WorkspaceMembership
 from tfc.constants.roles import OrganizationRoles
+from tfc.utils.api_errors import (
+    build_error_envelope,
+    error_details,
+    exception_code,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -34,8 +40,42 @@ logger = structlog.get_logger(__name__)
 MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOUR", 10)
 IP_BLOCK_DURATION: int = getattr(settings, "IP_BLOCK_DURATION", 3600)
 
+ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS = (
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/"
+        r"(?:assign|bulk-review)/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"(?:annotations/submit|complete|skip|release|review)/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"discussion/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"discussion/comments/[^/]+(?:/reaction)?/?$"
+    ),
+    re.compile(
+        r"/model-hub/annotation-queues/[^/]+/items/[^/]+/"
+        r"discussion/[^/]+/(?:resolve|reopen)/?$"
+    ),
+)
+
+
+def _is_annotation_queue_role_scoped_write_path(path):
+    """Allow queue-role checks in the annotation views to own these writes."""
+    return any(
+        pattern.search(path or "")
+        for pattern in ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS
+    )
+
 
 class APIKeyAuthentication(BaseAuthentication):
+    def authenticate_header(self, request):
+        return "ApiKey"
+
     def _bind_user_context(self, user):
         """Bind user context to structlog for all subsequent logs in this request."""
         structlog.contextvars.bind_contextvars(user_id=str(user.id))
@@ -87,7 +127,12 @@ class APIKeyAuthentication(BaseAuthentication):
         try:
             org_api_key = OrgApiKey.objects.select_related(
                 "organization", "workspace"
-            ).get(api_key=api_key, secret_key=secret_key, enabled=True)
+            ).get(
+                api_key=api_key,
+                secret_key=secret_key,
+                enabled=True,
+                deleted=False,
+            )
 
             # Validate that the API key has a valid organization
             if not org_api_key.organization:
@@ -161,7 +206,7 @@ class APIKeyAuthentication(BaseAuthentication):
 
         should_skip_write_check = any(
             excluded_path in request.path for excluded_path in excluded_paths
-        )
+        ) or _is_annotation_queue_role_scoped_write_path(request.path)
 
         if (
             request.method in ["POST", "PUT", "PATCH", "DELETE"]
@@ -488,7 +533,12 @@ class LangfuseBasicAuthentication(APIKeyAuthentication):
         try:
             org_api_key = OrgApiKey.objects.select_related(
                 "organization", "workspace"
-            ).get(api_key=public_key, secret_key=secret_key, enabled=True)
+            ).get(
+                api_key=public_key,
+                secret_key=secret_key,
+                enabled=True,
+                deleted=False,
+            )
         except OrgApiKey.DoesNotExist as e:
             raise AuthenticationFailed("Invalid API key or secret key") from e
 
@@ -815,22 +865,29 @@ def decode_token(token: str):
         raise AuthenticationFailed(f"Invalid Token parsed: {e}") from e
 
 
+def _pydantic_error_response(exc):
+    errors = exc.errors()
+    details = {}
+    for err in errors[:10]:
+        attr = ".".join(str(loc) for loc in err.get("loc", []))
+        key = attr or "non_field_errors"
+        details.setdefault(key, []).append(err.get("msg", str(exc)))
+    code = errors[0].get("type", "invalid_input") if errors else "invalid_input"
+    return build_error_envelope(
+        details or str(exc),
+        status_code=status.HTTP_400_BAD_REQUEST,
+        code=code,
+        error_type="validation_error",
+        details=details,
+    )
+
+
 def custom_exception_handler(exc, context):
     """
     Global DRF exception handler.
 
-    Handles:
-    - AuthenticationFailed → 401
-    - Pydantic ValidationError → 400 with structured error response
-    - Everything else → default DRF handler
-
-    Error format:
-    {
-        "type": "validation_error",
-        "code": "invalid_input",
-        "detail": "filters.tags: Input should be a valid list",
-        "attr": "filters.tags"
-    }
+    API errors return the same public envelope:
+    {status: false, type, code, detail, message, result, attr?, details?}.
     """
     from rest_framework.views import exception_handler
 
@@ -838,17 +895,22 @@ def custom_exception_handler(exc, context):
 
     response = exception_handler(exc, context)
 
-    if isinstance(exc, AuthenticationFailed):
-        return Response({"detail": str(exc)}, status=status.HTTP_401_UNAUTHORIZED)
-
     if isinstance(exc, FeatureUnavailable):
         detail = {"feature": exc.feature}
         detail.update(getattr(exc, "metadata", {}) or {})
+        code = getattr(exc, "error_code", exc.default_code)
+        message = str(exc.detail)
         body = {
-            "status": False,
+            **build_error_envelope(
+                message,
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                error_type="entitlement_error",
+                code=code,
+                details={"feature": [exc.feature], **error_details(detail)},
+            ),
             "error": {
-                "code": getattr(exc, "error_code", exc.default_code),
-                "message": str(exc.detail),
+                "code": code,
+                "message": message,
                 "detail": detail,
             },
             "upgrade_required": True,
@@ -863,41 +925,19 @@ def custom_exception_handler(exc, context):
             from pydantic import ValidationError as PydanticValidationError
 
             if isinstance(exc, PydanticValidationError):
-                errors = exc.errors()
-                if len(errors) == 1:
-                    err = errors[0]
-                    attr = ".".join(str(loc) for loc in err.get("loc", []))
-                    return Response(
-                        {
-                            "type": "validation_error",
-                            "code": err.get("type", "invalid_input"),
-                            "detail": err.get("msg", str(exc)),
-                            "attr": attr or None,
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-                else:
-                    items = []
-                    for err in errors[:5]:
-                        attr = ".".join(str(loc) for loc in err.get("loc", []))
-                        items.append(
-                            {
-                                "type": "validation_error",
-                                "code": err.get("type", "invalid_input"),
-                                "detail": err.get("msg", ""),
-                                "attr": attr or None,
-                            }
-                        )
-                    return Response(
-                        {
-                            "type": "validation_error",
-                            "code": "invalid_input",
-                            "detail": f"{len(errors)} validation error(s)",
-                            "errors": items,
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                return Response(
+                    _pydantic_error_response(exc),
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         except ImportError:
             pass
+
+    if response is not None:
+        response.data = build_error_envelope(
+            response.data,
+            status_code=response.status_code,
+            code=exception_code(exc),
+            details=error_details(response.data),
+        )
 
     return response

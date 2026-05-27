@@ -162,7 +162,7 @@ const MonitorsView = () => {
       try {
         const ids = selectedRowsData.map((row) => row.id);
 
-        await axiosInstance.delete(endpoints.project.getMonitorMetricList(), {
+        await axiosInstance.delete(endpoints.project.createMonitor, {
           data: { ids: ids },
         });
         const filesLength = ids.length;

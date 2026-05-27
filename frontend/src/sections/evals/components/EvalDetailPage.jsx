@@ -87,13 +87,21 @@ const resolve_context_options = (data_injection) => {
     return ["variables_only"];
   }
   const opts = [];
-  if (data_injection.full_row || data_injection.fullRow) opts.push("dataset_row");
-  if (data_injection.span_context || data_injection.spanContext) opts.push("span_context");
-  if (data_injection.trace_context || data_injection.traceContext) opts.push("trace_context");
-  if (data_injection.session_context || data_injection.sessionContext) opts.push("session_context");
-  if (data_injection.call_context || data_injection.callContext) opts.push("call_context");
+  if (data_injection.full_row || data_injection.fullRow)
+    opts.push("dataset_row");
+  if (data_injection.span_context || data_injection.spanContext)
+    opts.push("span_context");
+  if (data_injection.trace_context || data_injection.traceContext)
+    opts.push("trace_context");
+  if (data_injection.session_context || data_injection.sessionContext)
+    opts.push("session_context");
+  if (data_injection.call_context || data_injection.callContext)
+    opts.push("call_context");
   if (opts.length > 0) return opts;
-  if (data_injection.variables_only === false || data_injection.variablesOnly === false) {
+  if (
+    data_injection.variables_only === false ||
+    data_injection.variablesOnly === false
+  ) {
     return ["full_row"];
   }
   return ["variables_only"];
@@ -232,9 +240,7 @@ const EvalDetailPage = () => {
       viewingVersion.is_default ?? viewingVersion.isDefault ?? false;
     if (freshFlag !== localFlag) {
       setViewingVersion((prev) =>
-        prev
-          ? { ...prev, is_default: freshFlag, isDefault: freshFlag }
-          : prev,
+        prev ? { ...prev, is_default: freshFlag, isDefault: freshFlag } : prev,
       );
     }
   }, [versionsData, viewingVersion]);
@@ -291,7 +297,7 @@ const EvalDetailPage = () => {
             setCode("");
           }
           setCodeLanguage(config.language || "python");
-          setModel(config.model || evalData.model || ("turing_large"));
+          setModel(config.model || evalData.model || "turing_large");
           setOutputType(
             evalData.output_type ||
               evalData.output_type_normalized ||
@@ -417,7 +423,7 @@ const EvalDetailPage = () => {
         setCode("");
       }
       setCodeLanguage(config.language || "python");
-      setModel(config.model || versionToLoad.model || ("turing_large"));
+      setModel(config.model || versionToLoad.model || "turing_large");
       {
         const outputMap = {
           "Pass/Fail": "pass_fail",
@@ -521,7 +527,7 @@ const EvalDetailPage = () => {
             evalData.code_language ||
             "python",
         );
-        setModel(config.model || evalData.model || ("turing_large"));
+        setModel(config.model || evalData.model || "turing_large");
         setOutputType(
           evalData.output_type ||
             evalData.output_type_normalized ||
@@ -820,9 +826,11 @@ const EvalDetailPage = () => {
     try {
       // Only send weights for children currently in the list
       const weights = {};
+      const pinnedVersions = {};
       compositeChildren.forEach((c) => {
         const w = compositeChildWeights[c.child_id];
         if (w != null) weights[c.child_id] = w;
+        if (c.pinned_version_id) pinnedVersions[c.child_id] = c.pinned_version_id;
       });
       const payload = {
         name: compositeName?.trim() || undefined,
@@ -833,6 +841,8 @@ const EvalDetailPage = () => {
         child_template_ids: compositeChildren.map((c) => c.child_id),
         child_configs: buildCompositeChildConfigs(compositeChildren),
         child_weights: Object.keys(weights).length > 0 ? weights : null,
+        child_pinned_versions:
+          Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
       };
       const result = await updateComposite.mutateAsync(payload);
       const vNum = result?.version_number;
@@ -906,9 +916,13 @@ const EvalDetailPage = () => {
       // before testing so the execute endpoint picks up the latest state.
       if (isComposite && !isSystemEval) {
         const weights = {};
+        const pinnedVersions = {};
         compositeChildren.forEach((c) => {
           const w = compositeChildWeights[c.child_id];
           if (w != null) weights[c.child_id] = w;
+          if (c.pinned_version_id) {
+            pinnedVersions[c.child_id] = c.pinned_version_id;
+          }
         });
         await updateComposite.mutateAsync({
           name: compositeName?.trim() || undefined,
@@ -919,6 +933,8 @@ const EvalDetailPage = () => {
           child_template_ids: compositeChildren.map((c) => c.child_id),
           child_configs: buildCompositeChildConfigs(compositeChildren),
           child_weights: Object.keys(weights).length > 0 ? weights : null,
+          child_pinned_versions:
+            Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
         });
       }
       testPlaygroundRef.current?.runTest?.(evalId);

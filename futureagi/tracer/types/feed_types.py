@@ -9,7 +9,6 @@ No raw dicts cross layer boundaries.
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
 
 # ---------------------------------------------------------------------------
 # Common / shared
@@ -49,29 +48,29 @@ class FeedListRow:
     severity: str  # critical | high | medium | low (mapped from Priority)
     occurrences: int  # error_count
     trace_count: int  # unique_traces
-    fix_layer: Optional[str]
+    fix_layer: str | None
     users_affected: int
     sessions: int
-    first_seen: Optional[datetime]
-    last_seen: Optional[datetime]
-    trends: List[TrendPoint] = field(default_factory=list)
-    assignees: List[str] = field(default_factory=list)
-    model: Optional[str] = None
-    model_version: Optional[str] = None
-    project: Optional[str] = None
-    project_id: Optional[str] = None
-    environment: Optional[str] = None
-    eval_score: Optional[float] = None
-    trace_id: Optional[str] = None
-    external_issue_url: Optional[str] = None
-    external_issue_id: Optional[str] = None
+    first_seen: datetime | None
+    last_seen: datetime | None
+    trends: list[TrendPoint] = field(default_factory=list)
+    assignees: list[str] = field(default_factory=list)
+    model: str | None = None
+    model_version: str | None = None
+    project: str | None = None
+    project_id: str | None = None
+    environment: str | None = None
+    eval_score: float | None = None
+    trace_id: str | None = None
+    external_issue_url: str | None = None
+    external_issue_id: str | None = None
 
 
 @dataclass
 class FeedListResponse:
     """Paginated list response."""
 
-    data: List[FeedListRow]
+    data: list[FeedListRow]
     total: int
     limit: int
     offset: int
@@ -104,8 +103,8 @@ class TracePreview:
     """Short trace summary used in detail core (success/representative)."""
 
     trace_id: str
-    input: Optional[str] = None
-    output: Optional[str] = None
+    input: str | None = None
+    output: str | None = None
 
 
 @dataclass
@@ -113,9 +112,9 @@ class FeedDetailCore:
     """Detail view core payload — extends list row with trace previews."""
 
     row: FeedListRow
-    description: Optional[str] = None
-    success_trace: Optional[TracePreview] = None
-    representative_trace: Optional[TracePreview] = None
+    description: str | None = None
+    success_trace: TracePreview | None = None
+    representative_trace: TracePreview | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -127,9 +126,10 @@ class FeedDetailCore:
 class FeedUpdatePayload:
     """Fields allowed on PATCH /tracer/feed/issues/{cluster_id}/"""
 
-    status: Optional[str] = None
-    severity: Optional[str] = None
-    assignee: Optional[str] = None
+    status: str | None = None
+    severity: str | None = None
+    assignee: str | None = None
+    assignee_provided: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -171,38 +171,38 @@ class PatternInsight:
 class PatternSummary:
     """Aggregate signal across the cluster's traces — adaptive insights."""
 
-    insights: List[PatternInsight] = field(default_factory=list)
-    key_moments: List[KeyMoment] = field(default_factory=list)
+    insights: list[PatternInsight] = field(default_factory=list)
+    key_moments: list[KeyMoment] = field(default_factory=list)
 
 
 @dataclass
 class TraceSummary:
     """Per-trace summary stats shown in the Overview tab trace list."""
 
-    eval_score: Optional[float] = None
-    latency_ms: Optional[int] = None
-    turns: Optional[int] = None
-    model: Optional[str] = None
-    input_tokens: Optional[int] = None
-    output_tokens: Optional[int] = None
+    eval_score: float | None = None
+    latency_ms: int | None = None
+    turns: int | None = None
+    model: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 @dataclass
 class TraceEvidence:
     """Raw input/output + optional breadcrumb reels (populated later phases)."""
 
-    input: Optional[str] = None
-    output: Optional[str] = None
-    fail_reel: List[dict] = field(default_factory=list)
-    pass_reel: List[dict] = field(default_factory=list)
+    input: str | None = None
+    output: str | None = None
+    fail_reel: list[dict] = field(default_factory=list)
+    pass_reel: list[dict] = field(default_factory=list)
 
 
 @dataclass
 class AgentFlowGraph:
     """Placeholder for the state-graph diagram (nodes + edges filled later)."""
 
-    nodes: List[dict] = field(default_factory=list)
-    edges: List[dict] = field(default_factory=list)
+    nodes: list[dict] = field(default_factory=list)
+    edges: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -211,24 +211,24 @@ class RepresentativeTrace:
 
     id: str
     status: str  # "fail" | "pass"
-    timestamp: Optional[datetime]
+    timestamp: datetime | None
     summary: TraceSummary
     evidence: TraceEvidence
     # Frontend-crash-safe defaults; populated in later phases (Phase 4 deep
     # analysis + state graph later).
     agent_flow: AgentFlowGraph = field(default_factory=AgentFlowGraph)
-    root_causes: List[dict] = field(default_factory=list)
-    recommendations: List[dict] = field(default_factory=list)
-    what_changed: Optional[dict] = None
+    root_causes: list[dict] = field(default_factory=list)
+    recommendations: list[dict] = field(default_factory=list)
+    what_changed: dict | None = None
 
 
 @dataclass
 class OverviewResponse:
     """Payload for GET /tracer/feed/issues/{cluster_id}/overview/"""
 
-    events_over_time: List[EventsOverTimePoint] = field(default_factory=list)
+    events_over_time: list[EventsOverTimePoint] = field(default_factory=list)
     pattern_summary: PatternSummary = field(default_factory=PatternSummary)
-    representative_traces: List[RepresentativeTrace] = field(default_factory=list)
+    representative_traces: list[RepresentativeTrace] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -254,13 +254,13 @@ class TracesListRow:
     """Flat row in the Traces tab AG Grid."""
 
     id: str
-    input: Optional[str]
-    timestamp: Optional[datetime]
-    latency_ms: Optional[int]
-    tokens: Optional[int]
-    cost: Optional[float]
-    score: Optional[float]
-    turns: Optional[int]
+    input: str | None
+    timestamp: datetime | None
+    latency_ms: int | None
+    tokens: int | None
+    cost: float | None
+    score: float | None
+    turns: int | None
 
 
 @dataclass
@@ -268,7 +268,7 @@ class TracesTabResponse:
     """Payload for GET /tracer/feed/issues/{cluster_id}/traces/"""
 
     aggregates: TracesAggregates
-    traces: List[TracesListRow] = field(default_factory=list)
+    traces: list[TracesListRow] = field(default_factory=list)
     total: int = 0
 
 
@@ -294,7 +294,7 @@ class ScoreTrend:
     label: str  # CustomEvalConfig.name
     current: float  # avg over current window
     prev: float  # avg over previous window
-    sparkline: List[float] = field(default_factory=list)
+    sparkline: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -310,10 +310,10 @@ class HeatmapCell:
 class TrendsTabResponse:
     """Payload for GET /tracer/feed/issues/{cluster_id}/trends/"""
 
-    metrics: List[TrendMetric] = field(default_factory=list)
-    events_over_time: List[EventsOverTimePoint] = field(default_factory=list)
-    score_trends: List[ScoreTrend] = field(default_factory=list)
-    activity_heatmap: List[List[HeatmapCell]] = field(default_factory=list)
+    metrics: list[TrendMetric] = field(default_factory=list)
+    events_over_time: list[EventsOverTimePoint] = field(default_factory=list)
+    score_trends: list[ScoreTrend] = field(default_factory=list)
+    activity_heatmap: list[list[HeatmapCell]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -325,20 +325,20 @@ class TrendsTabResponse:
 class SidebarTimeline:
     """Timeline section — just the basics (no deploy, no audit log)."""
 
-    first_seen: Optional[datetime]
-    last_seen: Optional[datetime]
-    age_days: Optional[int]
+    first_seen: datetime | None
+    last_seen: datetime | None
+    age_days: int | None
 
 
 @dataclass
 class SidebarAIMetadata:
     """AI Metadata section — the 5 fields that actually have backend data."""
 
-    model: Optional[str] = None
-    model_version: Optional[str] = None
-    project: Optional[str] = None
-    eval_score: Optional[float] = None
-    trace_id: Optional[str] = None
+    model: str | None = None
+    model_version: str | None = None
+    project: str | None = None
+    eval_score: float | None = None
+    trace_id: str | None = None
 
 
 @dataclass
@@ -353,8 +353,8 @@ class EvaluationResult:
     label: str  # CustomEvalConfig.name
     type: str  # "llm_judge" | "deterministic"
     result: str  # "passed" | "failed"
-    score: Optional[float] = None
-    value: Optional[str] = None
+    score: float | None = None
+    value: str | None = None
 
 
 @dataclass
@@ -375,8 +375,8 @@ class FeedSidebar:
 
     timeline: SidebarTimeline
     ai_metadata: SidebarAIMetadata
-    evaluations: List[EvaluationResult] = field(default_factory=list)
-    co_occurring_issues: List[CoOccurringIssue] = field(default_factory=list)
+    evaluations: list[EvaluationResult] = field(default_factory=list)
+    co_occurring_issues: list[CoOccurringIssue] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -402,10 +402,10 @@ class Recommendation:
     title: str  # last segment of the error category path
     description: str
     priority: str  # critical | high | medium | low
-    root_cause_link: Optional[int] = None  # index into root_causes (1-based)
-    immediate_fix: Optional[str] = None
-    insights: Optional[str] = None
-    evidence: List[str] = field(default_factory=list)
+    root_cause_link: int | None = None  # index into root_causes (1-based)
+    immediate_fix: str | None = None
+    insights: str | None = None
+    evidence: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -421,9 +421,9 @@ class DeepAnalysisResponse:
 
     status: str
     trace_id: str
-    root_causes: List[RootCause] = field(default_factory=list)
-    recommendations: List[Recommendation] = field(default_factory=list)
-    immediate_fix: Optional[str] = None
+    root_causes: list[RootCause] = field(default_factory=list)
+    recommendations: list[Recommendation] = field(default_factory=list)
+    immediate_fix: str | None = None
 
 
 @dataclass

@@ -181,6 +181,13 @@ class TestMCPSessionListView:
         assert response.status_code == 200
         assert len(response.data["result"]) >= 1
 
+    def test_list_sessions_status_filter(self, auth_client, mcp_session):
+        response = auth_client.get("/mcp/sessions/?status=active")
+        assert response.status_code == 200
+        assert response.data["status"] is True
+        assert len(response.data["result"]) >= 1
+        assert all(row["status"] == "active" for row in response.data["result"])
+
     def test_revoke_session(self, auth_client, mcp_session):
         response = auth_client.delete(f"/mcp/sessions/{mcp_session.id}/")
         assert response.status_code == 200

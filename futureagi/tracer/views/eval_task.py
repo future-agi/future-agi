@@ -241,13 +241,17 @@ def _compute_span_aggregation(base_qs):
 
 logger = structlog.get_logger(__name__)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
 from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.project import Project
 from tracer.serializers.eval_task import (
     EditEvalTaskSerializer,
+    EvalTaskListQuerySerializer,
+    EvalTaskListWithProjectNameQuerySerializer,
     EvalTaskSerializer,
     PaginationQuerySerializer,
 )
@@ -261,28 +265,108 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     serializer_class = EvalTaskSerializer
 
-    def get_queryset(self):
-        eval_task_id = self.kwargs.get("pk")
-        organization_id = (
+    def _get_request_organization(self):
+        return (
             getattr(self.request, "organization", None)
             or self.request.user.organization
-        ).id
+        )
+
+    def _project_workspace_scope_q(self, organization_id):
+        workspace = getattr(self.request, "workspace", None)
+        if not workspace:
+            return Q()
+        if getattr(workspace, "is_default", False):
+            return (
+                Q(project__workspace=workspace)
+                | Q(
+                    project__workspace__is_default=True,
+                    project__workspace__organization_id=organization_id,
+                )
+                | Q(
+                    project__workspace__isnull=True,
+                    project__organization_id=organization_id,
+                )
+            )
+        return Q(project__workspace=workspace)
+
+    def _scope_eval_task_queryset(self, queryset):
+        organization_id = self._get_request_organization().id
+        return queryset.filter(
+            project__organization_id=organization_id,
+            project__deleted=False,
+        ).filter(self._project_workspace_scope_q(organization_id))
+
+    def _scope_project_queryset(self, queryset):
+        organization_id = self._get_request_organization().id
+        workspace = getattr(self.request, "workspace", None)
+        queryset = queryset.filter(organization_id=organization_id, deleted=False)
+        if not workspace:
+            return queryset
+        if getattr(workspace, "is_default", False):
+            return queryset.filter(
+                Q(workspace=workspace)
+                | Q(
+                    workspace__is_default=True,
+                    workspace__organization_id=organization_id,
+                )
+                | Q(workspace__isnull=True, organization_id=organization_id)
+            )
+        return queryset.filter(workspace=workspace)
+
+    def _scope_custom_eval_config_queryset(self, queryset, project_id=None):
+        organization_id = self._get_request_organization().id
+        queryset = queryset.filter(
+            deleted=False,
+            project__organization_id=organization_id,
+            project__deleted=False,
+        ).filter(self._project_workspace_scope_q(organization_id))
+        if project_id:
+            queryset = queryset.filter(project_id=project_id)
+        return queryset
+
+    def _invalid_eval_ids_for_project(self, eval_ids, project_id):
+        requested_ids = {str(eval_id) for eval_id in (eval_ids or [])}
+        if not requested_ids:
+            return []
+        visible_ids = {
+            str(eval_id)
+            for eval_id in self._scope_custom_eval_config_queryset(
+                CustomEvalConfig.objects.all(), project_id=project_id
+            )
+            .filter(id__in=requested_ids)
+            .values_list("id", flat=True)
+        }
+        return sorted(requested_ids - visible_ids)
+
+    def get_serializer(self, *args, **kwargs):
+        serializer = super().get_serializer(*args, **kwargs)
+        fields = getattr(serializer, "fields", None)
+        if fields is None and getattr(serializer, "child", None) is not None:
+            fields = getattr(serializer.child, "fields", None)
+        if not fields:
+            return serializer
+        if "project" in fields:
+            fields["project"].queryset = self._scope_project_queryset(
+                Project.objects.all()
+            )
+        if "evals" in fields:
+            fields["evals"].queryset = (
+                self._scope_custom_eval_config_queryset(CustomEvalConfig.objects.all())
+            )
+        return serializer
+
+    def get_queryset(self):
+        eval_task_id = self.kwargs.get("pk")
 
         # Get base queryset with automatic filtering from mixin
-        queryset = (
-            super()
-            .get_queryset()
-            .filter(project__organization_id=organization_id, project__deleted=False)
-        )
+        queryset = self._scope_eval_task_queryset(super().get_queryset())
         queryset = queryset.select_related("project")
         queryset = queryset.prefetch_related("evals")
 
         if eval_task_id:
             queryset = queryset.filter(id=eval_task_id)
 
-        project_id = self.request.query_params.get(
-            "project_id"
-        ) or self.request.query_params.get("projectId")
+        project_id = self.request.query_params.get("project_id")
         if project_id:
             queryset = queryset.filter(project_id=project_id)
 
@@ -310,6 +394,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             data["status"] = EvalTaskStatus.PENDING
             filters = data.get("filters", {})
             project_id = data.get("project")
+            if project_id and not self._scope_project_queryset(
+                Project.objects.all()
+            ).filter(id=project_id).exists():
+                return self._gm.bad_request("Project not found")
             if project_id:
                 filters["project_id"] = project_id
             data["filters"] = filters
@@ -317,6 +405,15 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             data["last_run"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             serializer = self.get_serializer(data=data)
             serializer.is_valid(raise_exception=True)
+            invalid_eval_ids = self._invalid_eval_ids_for_project(
+                [eval_config.id for eval_config in serializer.validated_data["evals"]],
+                project_id,
+            )
+            if invalid_eval_ids:
+                return self._gm.bad_request(
+                    "Eval configs not found for project: "
+                    + ", ".join(invalid_eval_ids)
+                )
             eval_task = serializer.save()
 
             return self._gm.success_response({"id": eval_task.id})
@@ -325,12 +422,15 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(str(e))
 
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], pagination_class=None)
+    @validated_request(query_serializer=EvalTaskListQuerySerializer)
     def list_eval_tasks(self, request, *args, **kwargs):
         """
         List Eval Tasks filtered
         """
         try:
+            query_data = request.validated_query_data
+
             queryset = self.get_queryset()
             serializer = self.get_serializer(queryset, many=True)
             eval_tasks = serializer.data
@@ -372,12 +472,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 }
                 result.append(parsed_data)
 
-            filters = self.request.data.get("filters", [])
+            filters = query_data.get("filters", [])
             if filters:
                 filter_engine = FilterEngine(result)
                 result = filter_engine.apply_filters(filters)
 
-            sort_params = self.request.data.get("sort_params", [])
+            sort_params = query_data.get("sort_params", [])
             if sort_params:
                 for sort_param in reversed(sort_params):
                     sort_key = sort_param.get("column_id")
@@ -391,8 +491,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     result.sort(key=sort_key_func, reverse=reverse)
 
             total_rows = len(result)
-            page_number = self.request.query_params.get("page_number", 0)
-            page_size = self.request.query_params.get("page_size", 30)
+            page_number = query_data.get("page_number", 0)
+            page_size = query_data.get("page_size", 30)
             start = int(page_number) * int(page_size)
             end = start + int(page_size)
             result = result[start:end]
@@ -425,10 +525,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     def get_eval_task_logs(self, request, *args, **kwargs):
         try:
             eval_task_id = self.request.query_params.get("eval_task_id")
-            eval_task = EvalTask.objects.get(
+            eval_task = self._scope_eval_task_queryset(EvalTask.objects).get(
                 id=eval_task_id,
-                project__organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
             )
 
             # Pass/fail counts — cheap aggregate, two indexed COUNTs.
@@ -590,14 +688,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             if not eval_task_id:
                 return self._gm.bad_request("eval_task_id is required")
 
-            organization = (
-                getattr(self.request, "organization", None)
-                or self.request.user.organization
-            )
-
             try:
-                eval_task = EvalTask.objects.get(
-                    id=eval_task_id, project__organization=organization
+                eval_task = self._scope_eval_task_queryset(EvalTask.objects).get(
+                    id=eval_task_id,
                 )
             except EvalTask.DoesNotExist:
                 return self._gm.bad_request(
@@ -1012,10 +1105,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 except (ValueError, AttributeError):
                     return self._gm.bad_request(f"Invalid UUID: {eid}")
 
-            eval_tasks = EvalTask.objects.filter(
+            eval_tasks = self._scope_eval_task_queryset(EvalTask.objects).filter(
                 id__in=eval_task_ids,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
             )
             if not eval_tasks.exists():
                 return self._gm.bad_request("No eval tasks found for the provided IDs")
@@ -1053,10 +1144,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("Eval task ID is required")
 
             try:
-                eval_task = EvalTask.objects.get(
+                eval_task = self._scope_eval_task_queryset(EvalTask.objects).get(
                     id=eval_task_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
                 )
             except EvalTask.DoesNotExist:
                 return self._gm.bad_request("Eval task not found")
@@ -1086,10 +1175,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request("Eval task ID is required")
 
             try:
-                eval_task = EvalTask.objects.get(
+                eval_task = self._scope_eval_task_queryset(EvalTask.objects).get(
                     id=eval_task_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
                 )
             except EvalTask.DoesNotExist:
                 return self._gm.bad_request("Eval task not found")
@@ -1123,12 +1210,15 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(str(e))
 
-    @action(detail=False, methods=["get"])
+    @action(detail=False, methods=["get"], pagination_class=None)
+    @validated_request(query_serializer=EvalTaskListWithProjectNameQuerySerializer)
     def list_eval_tasks_with_project_name(self, request, *args, **kwargs):
         """
         List Eval Tasks filtered
         """
         try:
+            query_data = request.validated_query_data
+
             queryset = self.get_queryset()
 
             result = []
@@ -1152,18 +1242,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 }
                 result.append(parsed_data)
 
-            filters = self.request.query_params.get("filters", [])
-            if filters:
-                filters = json.loads(filters)
+            filters = query_data.get("filters", [])
             if filters:
                 filter_engine = FilterEngine(result)
                 result = filter_engine.apply_filters(filters)
 
-            sort_params = self.request.query_params.get(
-                "sort_params", []
-            ) or self.request.query_params.get("sortParams", [])
-            if sort_params:
-                sort_params = json.loads(sort_params)
+            sort_params = query_data.get("sort_params", [])
             if sort_params:
                 for sort_param in reversed(sort_params):
                     sort_key = sort_param.get("column_id")
@@ -1179,12 +1263,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     result.sort(key=sort_key_func, reverse=reverse)
 
             total_rows = len(result)
-            page_number = self.request.query_params.get(
-                "page_number", 0
-            ) or self.request.query_params.get("pageNumber", 0)
-            page_size = self.request.query_params.get(
-                "page_size", 10
-            ) or self.request.query_params.get("pageSize", 10)
+            page_number = query_data.get("page_number", 0)
+            page_size = query_data.get("page_size", 10)
             start = int(page_number) * int(page_size)
             end = start + int(page_size)
             result = result[start:end]
@@ -1233,15 +1313,17 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # Get eval task with row-level locking to prevent concurrent modifications
             with transaction.atomic():
                 try:
-                    # Use no_workspace_objects manager to avoid the outer join issue with select_for_update
+                    # Lock only the EvalTask row. Workspace scoping joins through
+                    # nullable Project.workspace for legacy rows, and PostgreSQL
+                    # rejects FOR UPDATE on the nullable side of that outer join.
                     eval_task = (
-                        EvalTask.no_workspace_objects.select_for_update()
-                        .prefetch_related("evals")
-                        .get(
-                            id=eval_task_id,
-                            project__organization=getattr(request, "organization", None)
-                            or request.user.organization,
+                        self._scope_eval_task_queryset(
+                            EvalTask.no_workspace_objects.select_for_update(
+                                of=("self",)
+                            )
                         )
+                        .prefetch_related("evals")
+                        .get(id=eval_task_id)
                     )
                 except EvalTask.DoesNotExist:
                     return self._gm.bad_request("Eval task not found")
@@ -1283,7 +1365,17 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 update_fields = self._extract_update_fields(validated_data)
 
                 # Handle evaluation changes first
-                new_evals = set(validated_data.get("evals", []))
+                requested_evals = validated_data.get("evals")
+                if requested_evals is not None:
+                    invalid_eval_ids = self._invalid_eval_ids_for_project(
+                        requested_evals, eval_task.project_id
+                    )
+                    if invalid_eval_ids:
+                        return self._gm.bad_request(
+                            "Eval configs not found for task project: "
+                            + ", ".join(invalid_eval_ids)
+                        )
+                new_evals = set(requested_evals or [])
                 if new_evals and new_evals != original_state["evals"]:
                     self._update_eval_assignments(eval_task, new_evals)
 
@@ -1566,19 +1658,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     def get_eval_details(self, request, *args, **kwargs):
         try:
             eval_id = self.request.query_params.get("eval_id")
+            if not eval_id:
+                return self._gm.bad_request("eval_id is required")
 
             queryset = (
-                EvalTask.objects.select_related("project")
-                .prefetch_related("evals")
-                .get(
-                    id=eval_id,
-                    project__organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                )
+                self._scope_eval_task_queryset(
+                    EvalTask.objects.select_related("project").prefetch_related("evals")
+                ).get(id=eval_id)
             )
-
-            if not queryset:
-                return self._gm.bad_request("Eval task not found")
 
             # Build rich eval objects so the frontend can render eval cards
             # with name, mapping, model, template info — not just bare UUIDs.
@@ -1623,6 +1710,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             return self._gm.success_response(result)
 
+        except EvalTask.DoesNotExist:
+            return self._gm.not_found("Eval task not found")
         except Exception as e:
             traceback.print_exc()
             return self._gm.bad_request(f"Error fetching eval task details {str(e)}")

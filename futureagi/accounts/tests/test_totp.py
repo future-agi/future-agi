@@ -26,6 +26,16 @@ class TestTOTPSetup:
         assert data["qr_code"].startswith("data:image/png;base64,")
         assert len(data["secret"]) == 32  # base32 secret length
 
+    def test_totp_setup_rejects_unknown_request_fields(self, auth_client, user):
+        response = auth_client.post(
+            "/accounts/2fa/totp/setup/",
+            {"code": "123456"},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 400
+        assert response.json()["details"] == {"code": ["Unknown field."]}
+
     def test_totp_confirm_with_valid_code(self, auth_client, user):
         """Confirming with correct code activates TOTP and returns recovery codes."""
         # Setup
@@ -54,6 +64,16 @@ class TestTOTPSetup:
 
         response = auth_client.post("/accounts/2fa/totp/confirm/", {"code": "000000"})
         assert response.status_code == 400
+
+    def test_totp_confirm_rejects_unknown_request_fields(self, auth_client, user):
+        response = auth_client.post(
+            "/accounts/2fa/totp/confirm/",
+            {"code": "000000", "totpCode": "000000"},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 400
+        assert response.json()["details"] == {"totpCode": ["Unknown field."]}
 
     def test_totp_confirm_replaces_unconfirmed_device(self, auth_client, user):
         """Starting setup again replaces unconfirmed device."""

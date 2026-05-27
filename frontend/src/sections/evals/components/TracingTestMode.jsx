@@ -208,6 +208,16 @@ const normalizeRowType = (value) => {
   return "Span";
 };
 
+export const buildTracingPreviewListParams = ({
+  selectedProjectId,
+  effectiveFilters,
+}) => ({
+  project_id: selectedProjectId,
+  page_number: 0,
+  page_size: 50,
+  filters: JSON.stringify(effectiveFilters || []),
+});
+
 const TracingTestMode = React.forwardRef(
   (
     {
@@ -475,13 +485,10 @@ const TracingTestMode = React.forwardRef(
           }
 
           let endpoint;
-          const params = {
-            project_id: selectedProjectId,
-            page_number: 0,
-            page_size: 50,
-            filters: JSON.stringify(effectiveFilters || []),
-            interval: "year",
-          };
+          const params = buildTracingPreviewListParams({
+            selectedProjectId,
+            effectiveFilters,
+          });
 
           if (rowType === "Span") {
             endpoint = endpoints.project.getSpansForObserveProject();
@@ -711,7 +718,7 @@ const TracingTestMode = React.forwardRef(
       if (!currentRow) return [];
       if (!columns.length) {
         // No column config — use all row keys directly. canonicalEntries
-        // drops the camelCase aliases the axios interceptor attaches so
+        // drops legacy camelCase aliases attaches so
         // each backend field only appears once.
         return canonicalEntries(currentRow).map(([key, val]) => ({
           key,
@@ -851,7 +858,9 @@ const TracingTestMode = React.forwardRef(
         (rowType === "Session" || rowType === "Trace");
       if (usePrecomputed) {
         return pickerSourceColumns
-          .map((c) => (typeof c === "string" ? c : c?.field || c?.name || c?.headerName))
+          .map((c) =>
+            typeof c === "string" ? c : c?.field || c?.name || c?.headerName,
+          )
           .filter(Boolean);
       }
       return walkedFromDetail || rowFields.map((f) => f?.colId || f?.key);
@@ -984,10 +993,7 @@ const TracingTestMode = React.forwardRef(
             const path = prefix ? `${prefix}.${k}` : k;
             valueMap[path] = v;
             if (v && typeof v === "object") {
-              if (
-                Array.isArray(v) ||
-                Object.keys(v).length < DICT_LIMIT
-              ) {
+              if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
                 walkValues(v, path);
               }
             }
@@ -1033,9 +1039,7 @@ const TracingTestMode = React.forwardRef(
 
           if (val !== undefined) {
             evalMapping[variable] =
-              typeof val === "object"
-                ? JSON.stringify(val)
-                : String(val ?? "");
+              typeof val === "object" ? JSON.stringify(val) : String(val ?? "");
           }
         }
 
@@ -1054,7 +1058,8 @@ const TracingTestMode = React.forwardRef(
         if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
 
         const compositeCtx = {};
-        if (rowType === "Span" && spanDetail) compositeCtx.span_context = spanDetail;
+        if (rowType === "Span" && spanDetail)
+          compositeCtx.span_context = spanDetail;
         if (rowType === "Trace" && currentRow)
           compositeCtx.trace_context = currentRow;
         if (rowType === "Session" && currentRow)
@@ -1081,13 +1086,16 @@ const TracingTestMode = React.forwardRef(
                   }),
                 },
               }
-            : await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
-                mapping: evalMapping,
-                model,
-                error_localizer: errorLocalizerEnabled,
-                config: compositeConfig,
-                ...compositeCtx,
-              })
+            : await axios.post(
+                endpoints.develop.eval.executeCompositeEval(tid),
+                {
+                  mapping: evalMapping,
+                  model,
+                  error_localizer: errorLocalizerEnabled,
+                  config: compositeConfig,
+                  ...compositeCtx,
+                },
+              )
           : await axios.post(endpoints.develop.eval.evalPlayground, {
               template_id: tid,
               model,
@@ -1364,66 +1372,66 @@ const TracingTestMode = React.forwardRef(
           (rows?.length ?? 0) > 0 &&
           !loading &&
           !isPendingNewFetch && (
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 1,
-            }}
-          >
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: "11px" }}
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+              }}
             >
-              Row {Math.min(currentRowIndex + 1, rows?.length ?? 0)} of{" "}
-              {rows?.length ?? 0}
-              {(totalRows ?? 0) > (rows?.length ?? 0) && (
-                <Typography
-                  component="span"
-                  sx={{
-                    fontSize: "11px",
-                    color: "text.disabled",
-                    ml: 0.5,
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontSize: "11px" }}
+              >
+                Row {Math.min(currentRowIndex + 1, rows?.length ?? 0)} of{" "}
+                {rows?.length ?? 0}
+                {(totalRows ?? 0) > (rows?.length ?? 0) && (
+                  <Typography
+                    component="span"
+                    sx={{
+                      fontSize: "11px",
+                      color: "text.disabled",
+                      ml: 0.5,
+                    }}
+                  >
+                    ({totalRows} matching total)
+                  </Typography>
+                )}
+              </Typography>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                <IconButton
+                  size="small"
+                  disabled={currentRowIndex === 0}
+                  onClick={() => {
+                    setCurrentRowIndex((i) => Math.max(0, i - 1));
+                    setResult(null);
+                    setError(null);
+                    onClearResult?.();
                   }}
+                  sx={{ width: 24, height: 24 }}
                 >
-                  ({totalRows} matching total)
-                </Typography>
-              )}
-            </Typography>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-              <IconButton
-                size="small"
-                disabled={currentRowIndex === 0}
-                onClick={() => {
-                  setCurrentRowIndex((i) => Math.max(0, i - 1));
-                  setResult(null);
-                  setError(null);
-                  onClearResult?.();
-                }}
-                sx={{ width: 24, height: 24 }}
-              >
-                <Iconify icon="mdi:chevron-left" width={16} />
-              </IconButton>
-              <IconButton
-                size="small"
-                disabled={currentRowIndex >= (rows?.length ?? 0) - 1}
-                onClick={() => {
-                  setCurrentRowIndex((i) =>
-                    Math.min((rows?.length ?? 0) - 1, i + 1),
-                  );
-                  setResult(null);
-                  setError(null);
-                  onClearResult?.();
-                }}
-                sx={{ width: 24, height: 24 }}
-              >
-                <Iconify icon="mdi:chevron-right" width={16} />
-              </IconButton>
+                  <Iconify icon="mdi:chevron-left" width={16} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  disabled={currentRowIndex >= (rows?.length ?? 0) - 1}
+                  onClick={() => {
+                    setCurrentRowIndex((i) =>
+                      Math.min((rows?.length ?? 0) - 1, i + 1),
+                    );
+                    setResult(null);
+                    setError(null);
+                    onClearResult?.();
+                  }}
+                  sx={{ width: 24, height: 24 }}
+                >
+                  <Iconify icon="mdi:chevron-right" width={16} />
+                </IconButton>
+              </Box>
             </Box>
-          </Box>
-        )}
+          )}
 
         {/* Span/Trace detail — table format like DatasetTestMode */}
         {loadingDetail && (
@@ -1500,8 +1508,7 @@ const TracingTestMode = React.forwardRef(
             {/* Rows — iterate span detail keys, flatten span_attributes */}
             <Box sx={{ maxHeight: 400, overflowY: "auto" }}>
               {(() => {
-                // canonicalEntries skips the camelCase aliases the axios
-                // interceptor adds — otherwise every field shows up twice
+                // canonicalEntries skips the camelCase aliases that may exist in legacy objects — otherwise every field shows up twice
                 // in the span detail table.
                 const raw = canonicalEntries(spanDetail).filter(
                   ([key]) => key !== "spans",
@@ -1690,31 +1697,36 @@ const TracingTestMode = React.forwardRef(
           !loading &&
           !isPendingNewFetch &&
           totalRows === 0 && (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 0.75,
-              py: 3,
-              border: "1px dashed",
-              borderColor: "divider",
-              borderRadius: "8px",
-            }}
-          >
-            <Iconify
-              icon="mdi:table-off"
-              width={28}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography variant="body2" fontWeight={600} color="text.secondary">
-              No {rowType.toLowerCase()} data found
-            </Typography>
-            <Typography variant="caption" color="text.disabled">
-              Add {rowType.toLowerCase()} to this project before running a test
-            </Typography>
-          </Box>
-        )}
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 0.75,
+                py: 3,
+                border: "1px dashed",
+                borderColor: "divider",
+                borderRadius: "8px",
+              }}
+            >
+              <Iconify
+                icon="mdi:table-off"
+                width={28}
+                sx={{ color: "text.disabled" }}
+              />
+              <Typography
+                variant="body2"
+                fontWeight={600}
+                color="text.secondary"
+              >
+                No {rowType.toLowerCase()} data found
+              </Typography>
+              <Typography variant="caption" color="text.disabled">
+                Add {rowType.toLowerCase()} to this project before running a
+                test
+              </Typography>
+            </Box>
+          )}
 
         {/* Variable mapping */}
         {variables.length > 0 && (

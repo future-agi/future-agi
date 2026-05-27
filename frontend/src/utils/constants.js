@@ -53,7 +53,7 @@ export const AdvanceNumberFilterOperators = [
   { label: "Greater Than Or Equal", value: "greater_than_or_equal" },
   { label: "Less Than Or Equal", value: "less_than_or_equal" },
   { label: "Between", value: "between" },
-  { label: "Not In Between", value: "not_in_between" },
+  { label: "Not Between", value: "not_between" },
 ];
 
 export const TextFilterOperators = [
