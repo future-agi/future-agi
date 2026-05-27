@@ -19,6 +19,23 @@ RUNTIME_REQUEST_VALIDATION_EXTENSION = "x-runtime-request-validation"
 RUNTIME_RESPONSE_VALIDATION_EXTENSION = "x-runtime-response-validation"
 
 
+def hide_swagger_schema_for_actions(*action_names):
+    """Hide explicitly unsupported ViewSet actions from generated OpenAPI output."""
+
+    def decorator(viewset_class):
+        for action_name in action_names:
+            action = getattr(viewset_class, action_name, None)
+            if action is None:
+                continue
+
+            overrides = dict(getattr(action, "_swagger_auto_schema", {}))
+            overrides["auto_schema"] = None
+            action._swagger_auto_schema = overrides
+        return viewset_class
+
+    return decorator
+
+
 def _documented_response_has_schema(response):
     if response is None:
         return False

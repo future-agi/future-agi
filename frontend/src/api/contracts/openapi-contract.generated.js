@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 980,
+  "endpointCount": 976,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -29934,78 +29934,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "/tracer/charts/": {
-      "get": {
-        "operationId": "tracer_charts_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {
-          "page": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          "limit": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/FetchGraph"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "tracer_charts_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/FetchGraph"
-        },
-        "queryParameters": {},
-        "responses": {
-          "201": {
-            "$ref": "#/definitions/FetchGraph"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
     "/tracer/charts/fetch_graph/": {
       "get": {
         "operationId": "tracer_charts_fetch_graph",
@@ -30055,69 +29983,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
               }
             }
           },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/tracer/charts/{id}/": {
-      "get": {
-        "operationId": "tracer_charts_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/FetchGraph"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "tracer_charts_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/FetchGraph"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/FetchGraph"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "tracer_charts_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/FetchGraph"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/FetchGraph"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "tracer_charts_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -34760,78 +34625,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "/tracer/trace-annotation/": {
-      "get": {
-        "operationId": "tracer_trace-annotation_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {
-          "page": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          "limit": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/GetTraceAnnotation"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "tracer_trace-annotation_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/GetTraceAnnotation"
-        },
-        "queryParameters": {},
-        "responses": {
-          "201": {
-            "$ref": "#/definitions/GetTraceAnnotation"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
     "/tracer/trace-annotation/get_annotation_values/": {
       "get": {
         "operationId": "tracer_trace-annotation_get_annotation_values",
@@ -34891,69 +34684,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "500": {
             "$ref": "#/definitions/ApiErrorResponse"
           },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/tracer/trace-annotation/{id}/": {
-      "get": {
-        "operationId": "tracer_trace-annotation_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GetTraceAnnotation"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "tracer_trace-annotation_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/GetTraceAnnotation"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GetTraceAnnotation"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "tracer_trace-annotation_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/GetTraceAnnotation"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GetTraceAnnotation"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "tracer_trace-annotation_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }

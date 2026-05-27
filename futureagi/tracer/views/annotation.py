@@ -20,7 +20,10 @@ from model_hub.views.scores import (
     _auto_complete_queue_items,
     _auto_create_queue_items_for_default_queues,
 )
-from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_contracts import (
+    hide_swagger_schema_for_actions,
+    validated_request,
+)
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observation_span import ObservationSpan
@@ -94,6 +97,14 @@ def _annotation_label_workspace_scope_q(request):
     return scope
 
 
+@hide_swagger_schema_for_actions(
+    "list",
+    "create",
+    "retrieve",
+    "update",
+    "partial_update",
+    "destroy",
+)
 class TraceAnnotationView(ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]

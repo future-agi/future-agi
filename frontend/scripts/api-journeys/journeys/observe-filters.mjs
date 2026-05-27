@@ -2935,6 +2935,8 @@ export const observeFilterJourneys = [
       );
 
       const routeId = "00000000-0000-4000-8000-000000000018";
+      const generatedContractAudit =
+        await loadGeneratedTraceAnnotationCrudContractAudit();
       const guardCalls = [
         ["GET", () => client.get(apiPath("/tracer/trace-annotation/"))],
         ["POST", () => client.post(apiPath("/tracer/trace-annotation/"), {})],
@@ -3145,6 +3147,16 @@ export const observeFilterJourneys = [
         active_score_count: audit.active_score_count,
         active_note_count: audit.active_note_count,
         legacy_trace_annotation_count: audit.legacy_trace_annotation_count,
+        generated_contract_trace_annotation_crud_methods:
+          generatedContractAudit.advertised_crud_methods,
+        generated_contract_trace_annotation_openapi_success_statuses:
+          generatedContractAudit.openapi_success_statuses,
+        generated_trace_annotation_client_success_statuses:
+          generatedContractAudit.generated_client_success_statuses,
+        generated_contract_get_annotation_values_methods:
+          generatedContractAudit.get_annotation_values_methods,
+        generated_contract_bulk_annotation_methods:
+          generatedContractAudit.bulk_annotation_methods,
       });
     },
   },
@@ -10148,6 +10160,45 @@ const CHART_CRUD_CONTRACT_OPERATIONS = [
   },
 ];
 
+const TRACE_ANNOTATION_CRUD_CONTRACT_OPERATIONS = [
+  {
+    key: "list",
+    path: "/tracer/trace-annotation/",
+    method: "get",
+    responseType: "tracerTraceAnnotationListResponse",
+  },
+  {
+    key: "create",
+    path: "/tracer/trace-annotation/",
+    method: "post",
+    responseType: "tracerTraceAnnotationCreateResponse",
+  },
+  {
+    key: "read",
+    path: "/tracer/trace-annotation/{id}/",
+    method: "get",
+    responseType: "tracerTraceAnnotationReadResponse",
+  },
+  {
+    key: "update",
+    path: "/tracer/trace-annotation/{id}/",
+    method: "put",
+    responseType: "tracerTraceAnnotationUpdateResponse",
+  },
+  {
+    key: "partial_update",
+    path: "/tracer/trace-annotation/{id}/",
+    method: "patch",
+    responseType: "tracerTraceAnnotationPartialUpdateResponse",
+  },
+  {
+    key: "delete",
+    path: "/tracer/trace-annotation/{id}/",
+    method: "delete",
+    responseType: "tracerTraceAnnotationDeleteResponse",
+  },
+];
+
 async function loadGeneratedChartCrudContractAudit() {
   const [{ OPENAPI_CONTRACT }, generatedApiText] = await Promise.all([
     import(
@@ -10170,10 +10221,65 @@ async function loadGeneratedChartCrudContractAudit() {
     "Generated OpenAPI contract no longer advertises /tracer/charts/fetch_graph/.",
   );
 
+  return {
+    fetch_graph_methods: fetchGraphMethods,
+    ...collectGeneratedCrudContractAudit({
+      endpoints,
+      generatedApiText,
+      operations: CHART_CRUD_CONTRACT_OPERATIONS,
+    }),
+  };
+}
+
+async function loadGeneratedTraceAnnotationCrudContractAudit() {
+  const [{ OPENAPI_CONTRACT }, generatedApiText] = await Promise.all([
+    import(
+      new URL(
+        "../../../src/api/contracts/openapi-contract.generated.js",
+        import.meta.url,
+      )
+    ),
+    readFile(
+      new URL("../../../src/generated/api-contracts/api.ts", import.meta.url),
+      "utf8",
+    ),
+  ]);
+  const endpoints = OPENAPI_CONTRACT?.endpoints || {};
+  const getAnnotationValuesMethods = Object.keys(
+    endpoints["/tracer/trace-annotation/get_annotation_values/"] || {},
+  ).sort();
+  const bulkAnnotationMethods = Object.keys(
+    endpoints["/tracer/bulk-annotation/"] || {},
+  ).sort();
+  assert(
+    getAnnotationValuesMethods.includes("get"),
+    "Generated OpenAPI contract no longer advertises /tracer/trace-annotation/get_annotation_values/.",
+  );
+  assert(
+    bulkAnnotationMethods.includes("post"),
+    "Generated OpenAPI contract no longer advertises /tracer/bulk-annotation/.",
+  );
+
+  return {
+    bulk_annotation_methods: bulkAnnotationMethods,
+    get_annotation_values_methods: getAnnotationValuesMethods,
+    ...collectGeneratedCrudContractAudit({
+      endpoints,
+      generatedApiText,
+      operations: TRACE_ANNOTATION_CRUD_CONTRACT_OPERATIONS,
+    }),
+  };
+}
+
+function collectGeneratedCrudContractAudit({
+  endpoints,
+  generatedApiText,
+  operations,
+}) {
   const advertisedCrudMethods = [];
   const openapiSuccessStatuses = {};
   const generatedClientSuccessStatuses = {};
-  for (const operation of CHART_CRUD_CONTRACT_OPERATIONS) {
+  for (const operation of operations) {
     const openapiOperation = endpoints[operation.path]?.[operation.method];
     if (openapiOperation) {
       advertisedCrudMethods.push(
@@ -10194,7 +10300,6 @@ async function loadGeneratedChartCrudContractAudit() {
 
   return {
     advertised_crud_methods: advertisedCrudMethods,
-    fetch_graph_methods: fetchGraphMethods,
     generated_client_success_statuses: generatedClientSuccessStatuses,
     openapi_success_statuses: openapiSuccessStatuses,
   };
