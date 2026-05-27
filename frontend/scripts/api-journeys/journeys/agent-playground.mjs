@@ -214,6 +214,46 @@ export const agentPlaygroundJourneys = [
         targetNode.node_connection?.source_node_id === sourceNode.id,
         "Target node create did not return the source node connection.",
       );
+      assert(
+        isUuid(sourceNode.prompt_template?.prompt_template_id) &&
+          isUuid(sourceNode.prompt_template?.prompt_version_id) &&
+          isUuid(targetNode.prompt_template?.prompt_version_id),
+        "Created prompt nodes did not return prompt template/version ids.",
+      );
+      const mismatchedPromptVersion = await expectApiError(
+        () =>
+          client.patch(
+            apiPath(
+              "/agent-playground/graphs/{id}/versions/{version_id}/nodes/{node_id}/",
+              {
+                id: graphId,
+                version_id: draftVersionId,
+                node_id: sourceNode.id,
+              },
+            ),
+            {
+              prompt_template: {
+                messages: [
+                  {
+                    id: "msg-mismatched-version",
+                    role: "user",
+                    content: [
+                      {
+                        type: "text",
+                        text: "This update must not accept a foreign version.",
+                      },
+                    ],
+                  },
+                ],
+                response_format: "text",
+                prompt_template_id: sourceNode.prompt_template.prompt_template_id,
+                prompt_version_id: targetNode.prompt_template.prompt_version_id,
+              },
+            },
+          ),
+        [400],
+        "Agent node prompt update accepted a version from another prompt template.",
+      );
 
       const targetDetail = await client.get(
         apiPath(
@@ -576,6 +616,7 @@ export const agentPlaygroundJourneys = [
         restored_version_id: restoredVersion.id,
         demoted_restore_version_id: restoreVersion.id,
         active_restore_error_status: activeRestoreError.status,
+        mismatched_prompt_version_status: mismatchedPromptVersion.status,
         missing_execution_status: missingExecution.status,
         deleted_graph_status: deletedGraphDetail.status,
         pre_delete_audit: preDeleteAudit,
