@@ -5630,6 +5630,55 @@ export const observeFilterJourneys = [
         "Linked source trace has no matching spans for trace-row evaluation.",
       );
 
+      const updatedTaskName = `${taskName} edited`;
+      const edited = await client.patch(
+        apiPath("/tracer/eval-task/update_eval_task/"),
+        {
+          eval_task_id: createdTaskId,
+          name: updatedTaskName,
+          sampling_rate: 93,
+          filters: {
+            project_id: projectId,
+            trace_id: [traceId],
+          },
+          evals: [seedEval.id],
+          edit_type: "edit_rerun",
+        },
+      );
+      assert(
+        edited?.task_id === createdTaskId,
+        "Linked task edit response id mismatch.",
+      );
+      const editedDetail = await client.get(
+        apiPath("/tracer/eval-task/get_eval_details/"),
+        {
+          query: { eval_id: createdTaskId },
+        },
+      );
+      assert(
+        editedDetail?.name === updatedTaskName,
+        "Linked task edit did not persist the updated name.",
+      );
+      assert(
+        Number(editedDetail?.sampling_rate) === 93,
+        "Linked task edit did not persist the updated sampling rate.",
+      );
+      assert(
+        asArray(editedDetail?.filters_applied?.trace_id).includes(traceId),
+        "Linked task edit dropped the trace_id filter.",
+      );
+      const editedAudit = await loadEvalTaskLinkedSourceAudit({
+        organizationId,
+        workspaceId,
+        taskId: createdTaskId,
+        projectId,
+        traceId,
+      });
+      assert(
+        editedAudit.trace_id_filter_contains === true,
+        "Linked task DB filters dropped the selected trace_id after edit.",
+      );
+
       const deleted = await client.post(
         apiPath("/tracer/eval-task/mark_eval_tasks_deleted/"),
         { eval_task_ids: [createdTaskId] },
@@ -5651,7 +5700,10 @@ export const observeFilterJourneys = [
         source_trace_id: traceId,
         source_trace_name: trace.name || traceDetail?.name || null,
         source_url: `/dashboard/observe/${projectId}/trace/${traceId}`,
+        edited_task_name: updatedTaskName,
+        edited_sampling_rate: editedDetail.sampling_rate,
         filters_applied: taskDetail.filters_applied,
+        edited_filters_applied: editedDetail.filters_applied,
         matched_span_count: audit.matched_span_count,
         source_reverse_task_column_count:
           audit.source_reverse_task_column_count,
