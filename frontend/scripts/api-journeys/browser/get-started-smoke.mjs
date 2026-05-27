@@ -356,6 +356,7 @@ async function clickVisibleText(page, text) {
   );
   const clicked = await page.evaluate((expectedText) => {
     const normalized = (value) => String(value || "").trim();
+    const actionableSelector = "button,[role='button'],a,[role='tab']";
     const isVisible = (element) => {
       const style = window.getComputedStyle(element);
       const rect = element.getBoundingClientRect();
@@ -366,17 +367,20 @@ async function clickVisibleText(page, text) {
         rect.height > 0
       );
     };
-    const element = Array.from(document.querySelectorAll("body *")).find(
+    const matches = Array.from(document.querySelectorAll("body *")).filter(
       (candidate) =>
         isVisible(candidate) &&
         normalized(candidate.textContent) === expectedText,
     );
-    const clickable =
-      element?.closest("button,[role='button'],a,[role='tab']") || element;
+    const element =
+      matches.find((candidate) => candidate.matches(actionableSelector)) ||
+      matches
+        .map((candidate) => candidate.closest(actionableSelector))
+        .find((candidate) => candidate && isVisible(candidate));
+    const clickable = element?.closest(actionableSelector) || element;
     if (!clickable) return false;
-    clickable.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    clickable.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    clickable.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    clickable.scrollIntoView({ block: "center", inline: "center" });
+    clickable.click();
     return true;
   }, text);
   assert(clicked, `Could not click visible text ${text}.`);
