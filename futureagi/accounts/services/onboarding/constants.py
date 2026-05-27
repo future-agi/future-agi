@@ -193,6 +193,49 @@ AVAILABLE_PATH_STATUSES = (
     "hidden",
 )
 
+ONBOARDING_ACTIVATION_EVENTS = (
+    "onboarding_transition_viewed",
+    "onboarding_home_viewed",
+    "onboarding_goal_selected",
+    "onboarding_goal_changed",
+    "onboarding_recommended_action_viewed",
+    "onboarding_recommended_action_clicked",
+    "onboarding_path_card_clicked",
+    "onboarding_blocked_state_viewed",
+    "onboarding_diagnostics_opened",
+    "onboarding_sample_project_opened",
+    "sample_signal_viewed",
+    "sample_to_real_setup_clicked",
+    "first_quality_loop_completed",
+    "daily_quality_home_viewed",
+    "daily_quality_top_change_reviewed",
+    "daily_quality_item_reviewed",
+    "daily_quality_action_created",
+    "daily_quality_action_opened",
+    "daily_quality_action_assigned",
+    "daily_quality_action_completed",
+    "daily_quality_action_dismissed",
+    "daily_quality_no_signal_viewed",
+    "weekly_quality_review_opened",
+    "weekly_quality_action_assigned",
+    "weekly_quality_action_completed",
+    "weekly_quality_review_completed",
+    "reactivation_reason_clicked",
+    "observe_project_created",
+    "trace_ingested",
+    "trace_reviewed",
+    "team_member_invited",
+    "trace_failure_detected",
+)
+
+ONBOARDING_ACTIVATION_EVENT_ALIASES = {
+    "goal_selected": "onboarding_goal_selected",
+    "goal_changed": "onboarding_goal_changed",
+    "sample_project_opened": "onboarding_sample_project_opened",
+    "sample_trace_detail_opened": "sample_signal_viewed",
+    "quality_dashboard_viewed": "weekly_quality_review_opened",
+}
+
 
 def choices(values):
     return tuple((value, value) for value in values)
@@ -204,3 +247,7 @@ def canonical_goal(value):
 
 def canonical_path(value):
     return PRODUCT_PATH_ALIASES.get(value, value)
+
+
+def canonical_activation_event(value):
+    return ONBOARDING_ACTIVATION_EVENT_ALIASES.get(value, value)
