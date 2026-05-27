@@ -203,12 +203,14 @@ def test_daily_quality_digest_send_log_carries_safe_preview(
 ):
     _allow_user(user)
     now = timezone.now()
+    due_at = now + timedelta(hours=6)
     campaign = lifecycle_campaign_by_key("daily_quality_open_actions")
     _activated_observe_workspace(organization, workspace, user, now=now)
     OnboardingQualityAction.no_workspace_objects.create(
         organization=organization,
         workspace=workspace,
         created_by=user,
+        assigned_to=user,
         product_path="observe",
         action_key="trace-action-1",
         status=OnboardingQualityAction.STATUS_OPEN,
@@ -218,6 +220,7 @@ def test_daily_quality_digest_send_log_carries_safe_preview(
         source_type="trace",
         source_id="trace-123",
         is_sample=False,
+        due_at=due_at,
         last_event_at=now - timedelta(minutes=30),
         metadata={"api_token": "secret-value"},
     )
@@ -255,6 +258,9 @@ def test_daily_quality_digest_send_log_carries_safe_preview(
     assert preview["campaign_key"] == "daily_quality_open_actions"
     assert preview["actions"][0]["action_id"] == "trace-action-1"
     assert preview["actions"][0]["route"] == "/dashboard/home?mode=daily-quality"
+    assert preview["actions"][0]["assigned_to_user_id"] == str(user.id)
+    assert preview["actions"][0]["due_at"] == due_at.isoformat()
+    assert preview["actions"][0]["is_overdue"] is False
     assert "api_token" not in str(preview)
     assert "secret-value" not in str(preview)
 

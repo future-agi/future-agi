@@ -585,6 +585,7 @@ class OnboardingQualityAction(BaseModel):
     is_sample = models.BooleanField(default=False, db_index=True)
     opened_at = models.DateTimeField(null=True, blank=True, db_index=True)
     assigned_at = models.DateTimeField(null=True, blank=True)
+    due_at = models.DateTimeField(null=True, blank=True, db_index=True)
     completed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     dismissed_at = models.DateTimeField(null=True, blank=True, db_index=True)
     last_event_at = models.DateTimeField(db_index=True)
@@ -609,6 +610,10 @@ class OnboardingQualityAction(BaseModel):
             models.Index(
                 fields=["assigned_to", "status", "-last_event_at"],
                 name="onb_qact_assignee_status",
+            ),
+            models.Index(
+                fields=["workspace", "status", "due_at"],
+                name="onb_qact_ws_status_due",
             ),
         ]
         constraints = [

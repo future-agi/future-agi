@@ -57,7 +57,7 @@ def _daily_quality_open_actions_preview(
         product_path=primary_path,
         status=OnboardingQualityAction.STATUS_OPEN,
         is_sample=False,
-    ).order_by("-last_event_at", "action_key")
+    ).order_by("due_at", "-last_event_at", "action_key")
     total_count = queryset.count()
     actions = [
         _preview_action(record=record, now=now)
@@ -80,6 +80,9 @@ def _daily_quality_open_actions_preview(
             "fallback_route",
             "source_type",
             "source_id",
+            "assigned_to_user_id",
+            "due_at",
+            "is_overdue",
             "primary_path",
             "status",
             "age_minutes",
@@ -102,6 +105,11 @@ def _preview_action(*, record, now):
         else DEFAULT_ACTION_FALLBACK_ROUTE,
         "source_type": record.source_type or "workspace",
         "source_id": record.source_id or str(record.workspace_id),
+        "assigned_to_user_id": str(record.assigned_to_id)
+        if record.assigned_to_id
+        else None,
+        "due_at": record.due_at.isoformat() if record.due_at else None,
+        "is_overdue": bool(record.due_at and record.due_at < now),
         "primary_path": record.product_path,
         "status": record.status,
         "age_minutes": age_minutes,

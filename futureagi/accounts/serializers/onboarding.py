@@ -1130,6 +1130,19 @@ class DailyQualityActionSerializer(serializers.Serializer):
     route_available = serializers.BooleanField(default=True)
     source_type = serializers.CharField()
     source_id = serializers.CharField(required=False, allow_null=True)
+    assigned_to_user_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    assigned_to_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    assigned_at = serializers.DateTimeField(required=False, allow_null=True)
+    due_at = serializers.DateTimeField(required=False, allow_null=True)
+    is_overdue = serializers.BooleanField(default=False)
     success_event = serializers.CharField(
         required=False,
         allow_blank=True,

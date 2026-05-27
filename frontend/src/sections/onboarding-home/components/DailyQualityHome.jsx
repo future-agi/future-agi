@@ -22,6 +22,48 @@ const windowLabel = (dailyQuality) => {
   return `Review through ${new Date(end).toLocaleDateString()}`;
 };
 
+const dueLabel = (dueAt) => {
+  if (!dueAt) return null;
+  return `Due ${new Date(dueAt).toLocaleDateString()}`;
+};
+
+function ActionMeta({ action }) {
+  const chips = [];
+  if (action?.assignedToName) {
+    chips.push({
+      key: "assigned",
+      label: `Owner ${action.assignedToName}`,
+      color: "default",
+    });
+  }
+  const label = dueLabel(action?.dueAt);
+  if (label) {
+    chips.push({
+      key: "due",
+      label,
+      color: action.isOverdue ? "error" : "default",
+    });
+  }
+  if (!chips.length) return null;
+  return (
+    <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+      {chips.map((chip) => (
+        <Chip
+          key={chip.key}
+          size="small"
+          variant="outlined"
+          color={chip.color}
+          label={chip.label}
+        />
+      ))}
+    </Stack>
+  );
+}
+
+ActionMeta.propTypes = {
+  action: PropTypes.object,
+};
+
 function ProductCard({ card }) {
   return (
     <Box
@@ -161,6 +203,7 @@ export default function DailyQualityHome({
             <Typography variant="body2" color="text.secondary">
               {primaryAction.body}
             </Typography>
+            <ActionMeta action={primaryAction} />
             {!primaryAction.routeAvailable ? (
               <Alert severity="info" sx={{ borderRadius: 1 }}>
                 Opening the nearest available route.
@@ -235,6 +278,7 @@ export default function DailyQualityHome({
                     <Typography variant="caption" color="text.secondary">
                       {action.body}
                     </Typography>
+                    <ActionMeta action={action} />
                   </Box>
                   <Stack direction="row" spacing={0.5} flexWrap="wrap">
                     <Button

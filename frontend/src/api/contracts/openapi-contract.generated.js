@@ -75181,6 +75181,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "daily_quality_empty_state_viewed",
             "daily_quality_digest_destination_opened",
             "daily_quality_route_fallback_used",
+            "weekly_quality_review_opened",
+            "weekly_quality_action_assigned",
+            "weekly_quality_action_completed",
+            "weekly_quality_review_completed",
+            "weekly_quality_digest_sent",
+            "weekly_quality_digest_suppressed",
             "lifecycle_email_send_queued",
             "lifecycle_email_sent",
             "lifecycle_email_send_failed",
@@ -75189,10 +75195,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "lifecycle_email_unsubscribed",
             "lifecycle_email_snoozed",
             "lifecycle_email_completed",
-            "weekly_quality_review_opened",
-            "weekly_quality_action_assigned",
-            "weekly_quality_action_completed",
-            "weekly_quality_review_completed",
             "reactivation_reason_clicked",
             "observe_project_created",
             "trace_received",
@@ -93678,6 +93680,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/DailyQualityProductCard"
           }
         },
+        "weekly_review": {
+          "$ref": "#/definitions/DailyQualityWeeklyReview"
+        },
         "digest_eligible": {
           "title": "Digest eligible",
           "type": "boolean"
@@ -93747,6 +93752,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_activated",
             "sample_only",
             "no_useful_signal",
+            "open_action",
             "already_reviewed",
             "frequency_capped",
             "flag_disabled",
@@ -93867,6 +93873,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "not_activated",
             "sample_only",
             "no_useful_signal",
+            "open_action",
             "already_reviewed",
             "frequency_capped",
             "flag_disabled",
@@ -101548,6 +101555,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "minLength": 1,
           "x-nullable": true
         },
+        "assigned_to_user_id": {
+          "title": "Assigned to user id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "assigned_to_name": {
+          "title": "Assigned to name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "assigned_at": {
+          "title": "Assigned at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "due_at": {
+          "title": "Due at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "is_overdue": {
+          "title": "Is overdue",
+          "type": "boolean",
+          "default": false
+        },
         "success_event": {
           "title": "Success event",
           "type": "string",
@@ -101671,7 +101705,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "trace_failure",
             "span_latency",
             "span_cost",
+            "agent_run_issue",
+            "gateway_request_issue",
             "eval_failure",
+            "voice_call_issue",
             "alert_triggered",
             "feed_issue",
             "dashboard_missing",
@@ -101729,6 +101766,71 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Created at",
           "type": "string",
           "format": "date-time"
+        }
+      },
+      "x-nullable": true
+    },
+    "DailyQualityWeeklyReview": {
+      "required": [
+        "due",
+        "status",
+        "route",
+        "window",
+        "summary",
+        "unresolved_count",
+        "completed_count"
+      ],
+      "type": "object",
+      "properties": {
+        "due": {
+          "title": "Due",
+          "type": "boolean"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "due",
+            "not_due",
+            "permission_limited",
+            "flag_disabled",
+            "no_useful_signal",
+            "completed_recently"
+          ]
+        },
+        "route": {
+          "title": "Route",
+          "type": "string",
+          "minLength": 1
+        },
+        "window": {
+          "$ref": "#/definitions/DailyQualityWindow"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string",
+          "minLength": 1
+        },
+        "unresolved_count": {
+          "title": "Unresolved count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed_count": {
+          "title": "Completed count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_completed_at": {
+          "title": "Last completed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "action_label": {
+          "title": "Action label",
+          "type": "string",
+          "x-nullable": true
         }
       },
       "x-nullable": true

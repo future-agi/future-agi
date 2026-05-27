@@ -382,6 +382,12 @@ export const ActivationEventResultApiEventName = {
   daily_quality_empty_state_viewed: 'daily_quality_empty_state_viewed',
   daily_quality_digest_destination_opened: 'daily_quality_digest_destination_opened',
   daily_quality_route_fallback_used: 'daily_quality_route_fallback_used',
+  weekly_quality_review_opened: 'weekly_quality_review_opened',
+  weekly_quality_action_assigned: 'weekly_quality_action_assigned',
+  weekly_quality_action_completed: 'weekly_quality_action_completed',
+  weekly_quality_review_completed: 'weekly_quality_review_completed',
+  weekly_quality_digest_sent: 'weekly_quality_digest_sent',
+  weekly_quality_digest_suppressed: 'weekly_quality_digest_suppressed',
   lifecycle_email_send_queued: 'lifecycle_email_send_queued',
   lifecycle_email_sent: 'lifecycle_email_sent',
   lifecycle_email_send_failed: 'lifecycle_email_send_failed',
@@ -390,10 +396,6 @@ export const ActivationEventResultApiEventName = {
   lifecycle_email_unsubscribed: 'lifecycle_email_unsubscribed',
   lifecycle_email_snoozed: 'lifecycle_email_snoozed',
   lifecycle_email_completed: 'lifecycle_email_completed',
-  weekly_quality_review_opened: 'weekly_quality_review_opened',
-  weekly_quality_action_assigned: 'weekly_quality_action_assigned',
-  weekly_quality_action_completed: 'weekly_quality_action_completed',
-  weekly_quality_review_completed: 'weekly_quality_review_completed',
   reactivation_reason_clicked: 'reactivation_reason_clicked',
   observe_project_created: 'observe_project_created',
   trace_received: 'trace_received',
@@ -1432,6 +1434,7 @@ export const LifecyclePreviewApiSuppressionReason = {
   not_activated: 'not_activated',
   sample_only: 'sample_only',
   no_useful_signal: 'no_useful_signal',
+  open_action: 'open_action',
   already_reviewed: 'already_reviewed',
   frequency_capped: 'frequency_capped',
   flag_disabled: 'flag_disabled',
@@ -1476,7 +1479,10 @@ export const DailyQualitySignalApiType = {
   trace_failure: 'trace_failure',
   span_latency: 'span_latency',
   span_cost: 'span_cost',
+  agent_run_issue: 'agent_run_issue',
+  gateway_request_issue: 'gateway_request_issue',
   eval_failure: 'eval_failure',
+  voice_call_issue: 'voice_call_issue',
   alert_triggered: 'alert_triggered',
   feed_issue: 'feed_issue',
   dashboard_missing: 'dashboard_missing',
@@ -1547,6 +1553,11 @@ export interface DailyQualityActionApi {
   source_type: string;
   /** @minLength 1 */
   source_id?: string;
+  assigned_to_user_id?: string;
+  assigned_to_name?: string;
+  assigned_at?: string;
+  due_at?: string;
+  is_overdue?: boolean;
   success_event?: string;
   is_primary?: boolean;
   is_sample?: boolean;
@@ -1583,6 +1594,34 @@ export interface DailyQualityProductCardApi {
   route: string;
 }
 
+export type DailyQualityWeeklyReviewApiStatus = typeof DailyQualityWeeklyReviewApiStatus[keyof typeof DailyQualityWeeklyReviewApiStatus];
+
+
+export const DailyQualityWeeklyReviewApiStatus = {
+  due: 'due',
+  not_due: 'not_due',
+  permission_limited: 'permission_limited',
+  flag_disabled: 'flag_disabled',
+  no_useful_signal: 'no_useful_signal',
+  completed_recently: 'completed_recently',
+} as const;
+
+export interface DailyQualityWeeklyReviewApi {
+  due: boolean;
+  status: DailyQualityWeeklyReviewApiStatus;
+  /** @minLength 1 */
+  route: string;
+  window: DailyQualityWindowApi;
+  /** @minLength 1 */
+  summary: string;
+  /** @minimum 0 */
+  unresolved_count: number;
+  /** @minimum 0 */
+  completed_count: number;
+  last_completed_at?: string;
+  action_label?: string;
+}
+
 export interface DailyQualityStateApi {
   mode: DailyQualityStateApiMode;
   last_reviewed_at?: string;
@@ -1591,6 +1630,7 @@ export interface DailyQualityStateApi {
   primary_action?: DailyQualityActionApi;
   action_cards?: DailyQualityActionApi[];
   product_cards?: DailyQualityProductCardApi[];
+  weekly_review?: DailyQualityWeeklyReviewApi;
   digest_eligible: boolean;
   digest_suppression_reason?: string;
   diagnostics?: string[];
@@ -1629,6 +1669,7 @@ export const LifecycleEligibilityApiSuppressionReason = {
   not_activated: 'not_activated',
   sample_only: 'sample_only',
   no_useful_signal: 'no_useful_signal',
+  open_action: 'open_action',
   already_reviewed: 'already_reviewed',
   frequency_capped: 'frequency_capped',
   flag_disabled: 'flag_disabled',

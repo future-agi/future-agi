@@ -308,10 +308,12 @@ def test_daily_quality_open_action_digest_preview_uses_safe_action_snapshot(
     user,
 ):
     now = timezone.now()
+    due_at = now - timedelta(minutes=15)
     OnboardingQualityAction.no_workspace_objects.create(
         organization=organization,
         workspace=workspace,
         created_by=user,
+        assigned_to=user,
         product_path="observe",
         action_key="trace-action-1",
         status=OnboardingQualityAction.STATUS_OPEN,
@@ -322,6 +324,7 @@ def test_daily_quality_open_action_digest_preview_uses_safe_action_snapshot(
         source_type="trace",
         source_id="trace-123",
         is_sample=False,
+        due_at=due_at,
         last_event_at=now - timedelta(minutes=75),
         metadata={
             "api_token": "secret-value",
@@ -378,6 +381,9 @@ def test_daily_quality_open_action_digest_preview_uses_safe_action_snapshot(
         "fallback_route",
         "source_type",
         "source_id",
+        "assigned_to_user_id",
+        "due_at",
+        "is_overdue",
         "primary_path",
         "status",
         "age_minutes",
@@ -391,6 +397,9 @@ def test_daily_quality_open_action_digest_preview_uses_safe_action_snapshot(
             "fallback_route": "/dashboard/get-started",
             "source_type": "trace",
             "source_id": "trace-123",
+            "assigned_to_user_id": str(user.id),
+            "due_at": due_at.isoformat(),
+            "is_overdue": True,
             "primary_path": "observe",
             "status": OnboardingQualityAction.STATUS_OPEN,
             "age_minutes": 75,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, datetime, time, timedelta
 
 from django.db import transaction
+from django.utils import timezone
+from django.utils.dateparse import parse_date, parse_datetime
 
 from accounts.models import OnboardingQualityAction
 from accounts.services.onboarding.activation_events import events_for_workspace
@@ -70,6 +72,52 @@ def _assigned_user_id(metadata):
     return assigned_to if assigned_to else None
 
 
+def _assigned_to_name(record):
+    assigned_to = getattr(record, "assigned_to", None)
+    if not assigned_to:
+        return None
+    return (
+        getattr(assigned_to, "name", "")
+        or getattr(assigned_to, "first_name", "")
+        or getattr(assigned_to, "email", "")
+        or None
+    )
+
+
+def _metadata_due_at(metadata):
+    value = (
+        metadata.get("due_at")
+        or metadata.get("dueAt")
+        or metadata.get("due_date")
+        or metadata.get("dueDate")
+    )
+    if not value:
+        return None
+    if isinstance(value, datetime):
+        due_at = value
+    elif isinstance(value, date):
+        due_at = datetime.combine(value, time.max)
+    elif isinstance(value, str):
+        due_at = parse_datetime(value)
+        if due_at is None:
+            parsed_date = parse_date(value)
+            due_at = datetime.combine(parsed_date, time.max) if parsed_date else None
+    else:
+        return None
+    if due_at is None:
+        return None
+    if timezone.is_naive(due_at):
+        due_at = timezone.make_aware(due_at, timezone.get_current_timezone())
+    return due_at
+
+
+def _due_payload(due_at, now):
+    return {
+        "due_at": due_at,
+        "is_overdue": bool(due_at and due_at < now),
+    }
+
+
 def _action_defaults_from_event(event, action_key):
     metadata = compact_action_metadata(event.metadata)
     source_type = metadata.get("source_type") or metadata.get("artifact_type")
@@ -99,6 +147,7 @@ def _action_defaults_from_event(event, action_key):
         "source_id": str(source_id or event.workspace_id)[:128],
         "is_sample": event.is_sample,
         "last_event_at": event.occurred_at,
+        "due_at": _metadata_due_at(metadata),
         "metadata": metadata,
     }
 
@@ -118,6 +167,7 @@ def _merged_defaults(record, defaults):
         **defaults,
         "created_by": record.created_by or defaults["created_by"],
         "assigned_to_id": defaults["assigned_to_id"] or record.assigned_to_id,
+        "due_at": defaults["due_at"] or record.due_at,
         "label": defaults["label"]
         if defaults["label"] != DEFAULT_ACTION_LABEL
         else record.label,
@@ -187,7 +237,7 @@ def sync_quality_action_for_event(event):
         return record
 
 
-def _action_dict_from_record(record):
+def _action_dict_from_record(record, now):
     return {
         "id": record.action_key,
         "label": record.label or DEFAULT_ACTION_LABEL,
@@ -199,6 +249,12 @@ def _action_dict_from_record(record):
         "route_available": True,
         "source_type": record.source_type or "workspace",
         "source_id": record.source_id or str(record.workspace_id),
+        "assigned_to_user_id": str(record.assigned_to_id)
+        if record.assigned_to_id
+        else None,
+        "assigned_to_name": _assigned_to_name(record),
+        "assigned_at": record.assigned_at,
+        **_due_payload(record.due_at, now),
         "success_event": "daily_quality_action_completed",
         "is_primary": False,
         "is_sample": False,
@@ -207,7 +263,7 @@ def _action_dict_from_record(record):
     }
 
 
-def _action_dict_from_event(context, action_key, event, metadata):
+def _action_dict_from_event(context, action_key, event, metadata, now):
     route = _route_from_metadata(metadata, "route", DEFAULT_ACTION_ROUTE)
     fallback_route = _route_from_metadata(
         metadata,
@@ -216,6 +272,8 @@ def _action_dict_from_event(context, action_key, event, metadata):
     )
     source_type = metadata.get("source_type") or metadata.get("artifact_type")
     source_id = metadata.get("source_id") or metadata.get("artifact_id")
+    due_at = _metadata_due_at(metadata)
+    assigned_to_user_id = _assigned_user_id(metadata)
     return {
         "id": action_key,
         "label": safe_metadata_text(metadata, "label", DEFAULT_ACTION_LABEL),
@@ -230,6 +288,14 @@ def _action_dict_from_event(context, action_key, event, metadata):
         "route_available": True,
         "source_type": str(source_type or "workspace"),
         "source_id": str(source_id) if source_id else str(context.workspace.id),
+        "assigned_to_user_id": str(assigned_to_user_id)
+        if assigned_to_user_id
+        else None,
+        "assigned_to_name": safe_metadata_text(metadata, "assigned_to_name", None),
+        "assigned_at": event.occurred_at
+        if event.event_name == "daily_quality_action_assigned"
+        else None,
+        **_due_payload(due_at, now),
         "success_event": "daily_quality_action_completed",
         "is_primary": False,
         "is_sample": False,
@@ -272,10 +338,19 @@ def _event_derived_open_actions(context, now, *, lookback_days):
                     action_key,
                     event,
                     metadata_by_action.get(action_key) or event.metadata or {},
+                    now,
                 ),
             )
         )
     return actions
+
+
+def _action_sort_key(item):
+    timestamp, action = item
+    due_at = action.get("due_at")
+    if due_at:
+        return (0 if action.get("is_overdue") else 1, due_at, action["id"])
+    return (2, -timestamp.timestamp(), action["id"])
 
 
 def open_quality_actions_for_context(context, now, *, limit=5, lookback_days=30):
@@ -292,10 +367,16 @@ def open_quality_actions_for_context(context, now, *, limit=5, lookback_days=30)
             status=OnboardingQualityAction.STATUS_OPEN,
             is_sample=False,
             last_event_at__gte=since,
-        ).order_by("-last_event_at", "action_key")[:limit]
+        )
+        .select_related("assigned_to")
+        .order_by("due_at", "-last_event_at", "action_key")[:limit]
     )
     merged = [
-        (record.last_event_at, _action_dict_from_record(record)) for record in records
+        (
+            record.due_at or record.last_event_at,
+            _action_dict_from_record(record, now),
+        )
+        for record in records
     ]
     existing_ids = {action["id"] for _timestamp, action in merged}
     for timestamp, action in _event_derived_open_actions(
@@ -311,7 +392,6 @@ def open_quality_actions_for_context(context, now, *, limit=5, lookback_days=30)
         action
         for _timestamp, action in sorted(
             merged,
-            key=lambda item: (item[0], item[1]["id"]),
-            reverse=True,
+            key=_action_sort_key,
         )[:limit]
     ]

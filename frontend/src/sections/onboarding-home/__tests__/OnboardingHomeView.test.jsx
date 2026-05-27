@@ -348,6 +348,8 @@ describe("OnboardingHomeView", () => {
     );
     expect(actionCard).toBeVisible();
     expect(actionCard).toHaveTextContent("Assign trace owner");
+    expect(actionCard).toHaveTextContent("Owner Ava");
+    expect(actionCard).toHaveTextContent(/Due .*2026/);
     expect(screen.getByTestId("weekly-quality-review")).toBeVisible();
 
     await userEvent.click(
