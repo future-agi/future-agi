@@ -109,7 +109,9 @@ async function main() {
       const labelElement = Array.from(document.querySelectorAll("label")).find(
         (candidate) =>
           visible(candidate) &&
-          normalize(candidate.textContent) === expectedLabel,
+          normalize(candidate.textContent) === expectedLabel &&
+          (!document.querySelector('[role="dialog"]') ||
+            document.querySelector('[role="dialog"]').contains(candidate)),
       );
       const root =
         labelElement?.closest(".MuiFormControl-root") ||
@@ -519,30 +521,109 @@ async function fillChipsInput(page, placeholder, value) {
 }
 
 async function selectSearchFieldOption(page, label, option) {
-  const box = await labeledInputBox(page, label);
-  await page.mouse.click(box.x, box.y);
+  await openSearchSelectField(page, label, option);
   await clickVisibleTextElement(page, option, {
     exact: true,
-    selector: '[role="menuitem"], li',
+    selector: '[role="menuitem"], .MuiMenuItem-root, li',
   });
   await waitForLabeledInputValue(page, label, option);
 }
 
-async function labeledInputBox(page, label) {
+async function openSearchSelectField(page, label, option) {
+  const strategies = ["input", "root", "icon", "dispatch"];
+  for (const strategy of strategies) {
+    const box = await labeledInputBox(page, label, strategy);
+    if (box.dispatched) {
+      await page.waitForTimeout(100);
+    } else {
+      await page.mouse.click(box.x, box.y);
+    }
+    const opened = await visibleTextExists(page, option, {
+      exact: true,
+      selector: '[role="menuitem"], .MuiMenuItem-root, li',
+      timeout: 1000,
+    });
+    if (opened) return;
+  }
+  throw new Error(`Could not open search select ${label}.`);
+}
+
+async function labeledInputBox(page, label, strategy = "input") {
   await page.waitForFunction(
     (expectedLabel) =>
       Boolean(window.__userManagementInputByLabel(expectedLabel)),
     { timeout: 30000 },
     label,
   );
-  const box = await page.evaluate((expectedLabel) => {
-    const input = window.__userManagementInputByLabel(expectedLabel);
-    if (!input) return null;
-    const rect = input.getBoundingClientRect();
-    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-  }, label);
+  const box = await page.evaluate(
+    ({ expectedLabel, strategy }) => {
+      const input = window.__userManagementInputByLabel(expectedLabel);
+      if (!input) return null;
+      const root =
+        input.closest(".MuiFormControl-root") ||
+        input.closest(".MuiTextField-root");
+      if (strategy === "dispatch") {
+        input.focus();
+        input.dispatchEvent(new FocusEvent("focus", { bubbles: true }));
+        input.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+        input.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+        input.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        root?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        return { dispatched: true };
+      }
+      let target = input;
+      if (strategy === "root") {
+        target = root || input;
+      }
+      if (strategy === "icon") {
+        target =
+          root?.querySelector(".MuiInputAdornment-root svg") ||
+          root?.querySelector(".MuiInputAdornment-root [class*='Iconify']") ||
+          input;
+      }
+      const rect = target.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    },
+    { expectedLabel: label, strategy },
+  );
   assert(box, `Could not locate input for ${label}.`);
   return box;
+}
+
+async function visibleTextExists(
+  page,
+  text,
+  { exact = false, selector = "body *", timeout = 30000 } = {},
+) {
+  return page
+    .waitForFunction(
+      ({ text: expectedText, exact: exactMatch, selector: targetSelector }) => {
+        const normalize = (value) => String(value || "").trim();
+        const visible = (element) => {
+          const style = window.getComputedStyle(element);
+          const rect = element.getBoundingClientRect();
+          return (
+            style.visibility !== "hidden" &&
+            style.display !== "none" &&
+            rect.width > 0 &&
+            rect.height > 0
+          );
+        };
+        return Array.from(document.querySelectorAll(targetSelector)).some(
+          (candidate) => {
+            if (!visible(candidate)) return false;
+            const textContent = normalize(candidate.textContent);
+            return exactMatch
+              ? textContent === expectedText
+              : textContent.includes(expectedText);
+          },
+        );
+      },
+      { timeout },
+      { text, exact, selector },
+    )
+    .then(() => true)
+    .catch(() => false);
 }
 
 async function waitForLabeledInputValue(page, label, value) {
