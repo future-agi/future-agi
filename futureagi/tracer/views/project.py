@@ -3,16 +3,13 @@ from datetime import datetime, timedelta
 import structlog
 from django.db import models
 from django.db.models import Count
-from django.db.models.functions import Coalesce
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
-
-logger = structlog.get_logger(__name__)
-from analytics.utils import mixpanel_slack_notfy, track_mixpanel_event
+from ai_tools.drf_bridge import expose_to_mcp
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
 from tfc.routers import uses_db
@@ -22,14 +19,13 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.db_routing import DATABASE_FOR_PROJECT_LIST
 from tracer.models.eval_task import EvalTask
-from tracer.models.monitor import UserAlertMonitor, UserAlertMonitorLog
+from tracer.models.monitor import UserAlertMonitor
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.models.trace_session import TraceSession
-from tracer.queries.error_analysis import TraceErrorAnalysisDB
 from tracer.queries.end_users import (
     build_user_graph_pg,
     build_user_metrics_pg,
@@ -66,7 +62,57 @@ from tracer.utils.constants import (
 from tracer.utils.graphs_optimized import get_all_system_metrics
 from tracer.utils.helper import get_default_project_version_config, get_sort_query
 
+logger = structlog.get_logger(__name__)
 
+
+@expose_to_mcp(
+    category="tracing",
+    tools={
+        "list": {
+            "name": "list_trace_projects",
+            "description": "List tracing projects in the current workspace. A tracing project is a container for LLM/agent traces (observe) or evaluation runs (experiment). Use this to discover project IDs, names, and types. Filter by name or project_type. Returns paginated results.",
+            "query_params": {
+                "name": {
+                    "type": str,
+                    "description": "Filter projects by name (case-insensitive substring match). Example: 'chatbot' matches 'production-chatbot-v2'.",
+                    "required": False,
+                },
+                "project_type": {
+                    "type": str,
+                    "description": "Filter by project type. One of: 'experiment' (offline eval runs) or 'observe' (live production tracing). Omit to return both.",
+                    "required": False,
+                },
+                "page_number": {
+                    "type": int,
+                    "default": 0,
+                    "description": "Page number, 0-indexed. Example: 0 for first page, 1 for second page.",
+                    "required": False,
+                },
+                "page_size": {
+                    "type": int,
+                    "default": 20,
+                    "description": "Number of projects per page. Range 1-100. Default 20.",
+                    "required": False,
+                },
+            },
+        },
+        "retrieve": {
+            "name": "get_trace_project",
+            "description": "Get full details of a single tracing project by its UUID, including config, sampling_rate, trace_type, and metadata. Use this after list_trace_projects to inspect a specific project.",
+        },
+        "create": {
+            "name": "create_trace_project",
+            "description": "Create a new tracing project in the current workspace. Requires name (unique per org+type), model_type (e.g. 'GenerativeLLM' for chat LLMs), and trace_type ('observe' or 'experiment'). Project name must NOT collide with an existing project of the same trace_type.",
+            "include_fields": ["name", "model_type", "trace_type", "source", "tags"],
+        },
+        "update_project_name": {
+            "name": "rename_trace_project",
+            "description": "Rename a tracing project and optionally adjust its trace sampling rate. Requires the project UUID — call list_trace_projects first to obtain it. Use this when the user asks to 'rename project X to Y' or 'change sampling rate of X to N%'.",
+            "serializer": "ProjectNameUpdateSerializer",
+            "method": "POST",
+        },
+    },
+)
 class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -1039,9 +1085,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                                 "session": _series("session_count", "session"),
                                 "trace": _series("trace_count", "trace"),
                                 "cost": _series("cost", "cost"),
-                                "input_tokens": _series(
-                                    "input_tokens", "input_tokens"
-                                ),
+                                "input_tokens": _series("input_tokens", "input_tokens"),
                                 "output_tokens": _series(
                                     "output_tokens", "output_tokens"
                                 ),
