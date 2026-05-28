@@ -1,5 +1,6 @@
 import { Box, Tab, Tabs, useTheme } from "@mui/material";
 import React, { useMemo } from "react";
+import { useSearchParams } from "react-router-dom";
 import WorkbenchMetricsProvider from "./context/WorkbenchMetricsProvider";
 import { useWorkbenchMetrics } from "./context/WorkbenchMetricsContext";
 import MetricsContent from "./MetricsContent/MetricsContent";
@@ -8,6 +9,8 @@ import MetricFilterDrawer from "./MetricFilterDrawer/MetricFilterDrawer";
 import { getMetricsTabSx } from "./common";
 import { METRIC_TAB_IDS } from "./constants";
 import SvgColor from "src/components/svg-color";
+import { PROMPT_ONBOARDING_MODES } from "../promptActions/promptOnboardingRoute";
+import PromptMetricsOnboardingFocusPanel from "./PromptMetricsOnboardingFocusPanel";
 
 const icon = (name) => (
   <SvgColor
@@ -18,7 +21,12 @@ const icon = (name) => (
 
 const MetricsTabs = () => {
   const theme = useTheme();
-  const { activeTab, setActiveTab } = useWorkbenchMetrics();
+  const [searchParams] = useSearchParams();
+  const { activeTab, setActiveTab, setIsFilterDrawerOpen } =
+    useWorkbenchMetrics();
+  const isMetricsOnboarding =
+    searchParams.get("source") === "onboarding" &&
+    searchParams.get("onboarding") === PROMPT_ONBOARDING_MODES.METRICS;
 
   const metricsTabData = [
     { id: "Metrics", title: "Metrics", icon: () => icon("metric") },
@@ -63,6 +71,13 @@ const MetricsTabs = () => {
         {activeTab === METRIC_TAB_IDS.METRICS && <MetricsContent />}
         {activeTab === METRIC_TAB_IDS.LINKED_TRACES && <LinkedTracesContent />}
       </Box>
+
+      <PromptMetricsOnboardingFocusPanel
+        activeTab={activeTab}
+        isOnboarding={isMetricsOnboarding}
+        onOpenFilters={() => setIsFilterDrawerOpen(true)}
+        onOpenLinkedTraces={() => setActiveTab(METRIC_TAB_IDS.LINKED_TRACES)}
+      />
     </Box>
   );
 };
