@@ -1,6 +1,6 @@
 /* eslint-disable react/prop-types */
 import React, { useState, useMemo, useCallback } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Box,
   Typography,
@@ -653,6 +653,7 @@ const AuditLogTab = ({ gatewayId }) => {
 const BudgetRBACSection = () => {
   const { tab: tabSlug } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const tab = tabSlugToIndex(tabSlug);
 
   const handleTabChange = useCallback(
@@ -689,6 +690,8 @@ const BudgetRBACSection = () => {
 
   const budgets = useMemo(() => extractBudgets(config), [config]);
   const roles = useMemo(() => extractRBAC(config), [config]);
+  const isOnboardingRoute = searchParams.get("source") === "onboarding";
+  const onboardingRequestId = searchParams.get("request_id");
 
   if (gwLoading || configLoading) {
     return (
@@ -752,6 +755,8 @@ const BudgetRBACSection = () => {
         open={budgetDialogOpen}
         onClose={() => setBudgetDialogOpen(false)}
         gatewayId={gatewayId}
+        onboardingRequestId={onboardingRequestId}
+        shouldRecordOnboardingCompletion={isOnboardingRoute}
       />
     </Box>
   );

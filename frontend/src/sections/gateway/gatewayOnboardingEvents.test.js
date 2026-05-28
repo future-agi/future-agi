@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildGatewayFallbackPolicyCreatedPayload } from "./gatewayOnboardingEvents";
+import {
+  buildGatewayFallbackPolicyCreatedPayload,
+  buildGatewayPolicyCreatedPayload,
+} from "./gatewayOnboardingEvents";
 
 describe("gatewayOnboardingEvents", () => {
   it("builds a safe gateway fallback policy completion payload", () => {
@@ -42,5 +45,36 @@ describe("gatewayOnboardingEvents", () => {
     });
 
     expect(payload.idempotencyKey.length).toBeLessThanOrEqual(160);
+  });
+
+  it("builds generic gateway policy completion payloads", () => {
+    expect(
+      buildGatewayPolicyCreatedPayload({
+        gatewayId: "gateway-1",
+        policyId: "budget:per_model",
+        policyType: "budget",
+        requestId: "req-123",
+        source: "gateway_budget_onboarding",
+        metadata: {
+          budget_level: "per_model",
+          limit: 1000,
+        },
+      }),
+    ).toMatchObject({
+      eventName: "gateway_policy_created",
+      primaryPath: "gateway",
+      stage: "add_gateway_policy",
+      source: "gateway_budget_onboarding",
+      metadata: {
+        gateway_id: "gateway-1",
+        request_id: "req-123",
+        policy_type: "budget",
+        policy_id: "budget:per_model",
+        gateway_synced: true,
+        budget_level: "per_model",
+        limit: 1000,
+      },
+      idempotencyKey: "gateway_policy_created:budget:req-123:gateway-1",
+    });
   });
 });
