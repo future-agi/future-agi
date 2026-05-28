@@ -1635,7 +1635,10 @@ def evaluate_observation_span(
         )
         return True
     except ValueError as e:
-        logger.error(f"Error during evaluation in evaluate_observation_span: {e}")
+        # Expected validation failure (e.g. missing required input for the eval).
+        # Recorded as a failed-eval result below; logged at WARNING so it does
+        # not page Sentry as a code bug.
+        logger.warning(f"Error during evaluation in evaluate_observation_span: {e}")
         _create_error_eval_logger(observation_span, custom_eval_config, None, str(e))
         return False
 
@@ -1770,7 +1773,9 @@ def evaluate_observation_span_observe(
 
         return True
     except ValueError as e:
-        logger.error(
+        # Expected validation failure (missing/invalid eval input). Persisted as
+        # a failed span below; WARNING keeps it out of the Sentry issue stream.
+        logger.warning(
             f"Error during evaluation in evaluate_observation_span_observe: {e}"
         )
         if eval_task_id:
@@ -3061,7 +3066,8 @@ def evaluate_trace_observe(
         )
         return True
     except ValueError as e:
-        logger.error(f"Error during evaluation in evaluate_trace_observe: {e}")
+        # Expected validation failure; persisted as a failed eval below.
+        logger.warning(f"Error during evaluation in evaluate_trace_observe: {e}")
         if eval_task_id:
             try:
                 with transaction.atomic():
@@ -3156,7 +3162,10 @@ def evaluate_trace_session_observe(
         )
         return True
     except ValueError as e:
-        logger.error(f"Error during evaluation in evaluate_trace_session_observe: {e}")
+        # Expected validation failure; persisted as a failed eval below.
+        logger.warning(
+            f"Error during evaluation in evaluate_trace_session_observe: {e}"
+        )
         if eval_task_id:
             try:
                 with transaction.atomic():

@@ -669,7 +669,11 @@ def bulk_create_observation_span_task(
         payload_bytes = payload_storage.retrieve(payload_key)
 
         if payload_bytes is None:
-            logger.error(
+            # Expected race: the payload TTL'd out (or its writer hasn't landed)
+            # before this task ran. The raised ValueError below is what Temporal
+            # retries on, so this log is purely informational - WARNING avoids
+            # double-reporting the same condition as a Sentry error.
+            logger.warning(
                 "trace_payload_not_found_in_redis",
                 payload_key=payload_key,
             )

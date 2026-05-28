@@ -52,19 +52,58 @@ import { initGoogleAds } from "./utils/googleAds";
 import { initReddit } from "./utils/redditAds";
 import { initTwitter } from "./utils/twitterAds";
 
+const IS_PRODUCTION = CURRENT_ENVIRONMENT === "production";
+const DEFAULT_TRACES_SAMPLE_RATE = IS_PRODUCTION ? 0.1 : 1.0;
+const tracesSampleRateEnv = import.meta.env.VITE_SENTRY_TRACES_SAMPLE_RATE;
+const configuredTracesSampleRate = Number(
+  tracesSampleRateEnv === "" ? undefined : tracesSampleRateEnv,
+);
+const sentryTracesSampleRate = Number.isFinite(configuredTracesSampleRate)
+  ? configuredTracesSampleRate
+  : DEFAULT_TRACES_SAMPLE_RATE;
+
+// Browser/extension/network errors that are never actionable. Dropping them
+// keeps the issue stream focused on real application bugs.
+const SENTRY_IGNORE_ERRORS = [
+  // Benign ResizeObserver loop notifications fired by many UI libraries
+  "ResizeObserver loop limit exceeded",
+  "ResizeObserver loop completed with undelivered notifications",
+  // Stale chunk after a deploy - the app reloads to recover
+  "Loading chunk",
+  "Loading CSS chunk",
+  "Failed to fetch dynamically imported module",
+  "Importing a module script failed",
+  // User connectivity / aborted navigations, not app faults
+  "NetworkError when attempting to fetch resource",
+  "Network request failed",
+  "Failed to fetch",
+  "TypeError: cancelled",
+  "AbortError",
+  "Non-Error promise rejection captured",
+];
+
 Sentry.init({
   dsn: SENTRY_DSN,
-  sendDefaultPii: true,
-  environment:
-    CURRENT_ENVIRONMENT === "production" ? "production" : "development",
+  // Do not attach IP/user PII automatically; user context is set explicitly
+  // (and scrubbed) by the logger where it is actually needed.
+  sendDefaultPii: false,
+  environment: CURRENT_ENVIRONMENT || "development",
+  release: import.meta.env.VITE_APP_VERSION || undefined,
   integrations: [
     Sentry.browserTracingIntegration(),
-    Sentry.replayIntegration({ maskAllText: false, blockAllMedia: false }),
+    // Mask text and media in session replays so we never stream customer
+    // content (prompts, PII, uploads) to a third party.
+    Sentry.replayIntegration({ maskAllText: true, blockAllMedia: true }),
   ],
-  tracesSampleRate: 1.0,
+  // 100% tracing in production is expensive and noisy; sample at 10% there and
+  // keep full fidelity in lower environments. Override via VITE_SENTRY_TRACES_SAMPLE_RATE.
+  tracesSampleRate: sentryTracesSampleRate,
   replaysSessionSampleRate: 0.1,
   replaysOnErrorSampleRate: 1.0,
   enabled: CURRENT_ENVIRONMENT !== "local",
+  ignoreErrors: SENTRY_IGNORE_ERRORS,
+  // Ignore noise injected by browser extensions / third-party scripts.
+  denyUrls: [/extensions\//i, /^chrome:\/\//i, /^moz-extension:\/\//i],
   tracePropagationTargets: [HOST_API],
 });
 
