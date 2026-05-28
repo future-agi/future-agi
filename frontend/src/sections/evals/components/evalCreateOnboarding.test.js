@@ -3,6 +3,7 @@ import {
   buildEvalCreateDraftHref,
   buildEvalDatasetCreatedPayload,
   buildEvalFixRerunCompletedPayload,
+  buildEvalFixRerunReviewedPayload,
   buildEvalFailureActionCreatedPayload,
   buildEvalFailuresReviewedPayload,
   buildEvalReviewDetailHref,
@@ -665,13 +666,57 @@ describe("evalCreateOnboarding", () => {
     });
   });
 
+  it("builds a fix-rerun reviewed payload without captured content", () => {
+    const payload = buildEvalFixRerunReviewedPayload({
+      evalId: "eval-1",
+      evalLogId: "log-2",
+      previousRunId: "run-1",
+      rerunFrom: EVAL_FIX_RERUN_ORIGINS.SOURCE_FIX,
+      reviewOutcome: "result_summary_reviewed",
+      rowSource: "dataset_evaluation",
+      runId: "run-2",
+      sourceId: "data-1",
+      sourceType: "dataset",
+    });
+
+    expect(payload).toMatchObject({
+      eventName: "onboarding_eval_fix_rerun_reviewed",
+      primaryPath: "evals",
+      stage: "fix_eval_source",
+      source: "eval_review_onboarding",
+      artifactType: "eval_run",
+      artifactId: "run-2",
+      metadata: {
+        eval_id: "eval-1",
+        eval_log_id: "log-2",
+        previous_run_id: "run-1",
+        rerun_from: "source_fix",
+        review_outcome: "result_summary_reviewed",
+        review_surface: "usage_log_detail",
+        row_source: "dataset_evaluation",
+        run_id: "run-2",
+        source_id: "data-1",
+        source_type: "dataset",
+        step: "review",
+        tab: "usage",
+      },
+      idempotencyKey:
+        "onboarding_eval_fix_rerun_reviewed:source_fix:run-1:run-2",
+    });
+    expect(payload.metadata).not.toHaveProperty("output");
+    expect(payload.metadata).not.toHaveProperty("reason");
+    expect(payload.metadata).not.toHaveProperty("value");
+  });
+
   it("parses eval failure action onboarding query params", () => {
     expect(
       getEvalFailureActionOnboardingParams(
-        "?source=onboarding&step=fix-eval-failure&run_id=run-1&source_type=dataset&source_id=data-1",
+        "?source=onboarding&step=fix-eval-failure&run_id=run-1&source_type=dataset&source_id=data-1&rerun_from=source_fix&previous_run_id=run-0",
       ),
     ).toEqual({
       isOnboarding: true,
+      previousRunId: "run-0",
+      rerunFrom: EVAL_FIX_RERUN_ORIGINS.SOURCE_FIX,
       runId: "run-1",
       sourceId: "data-1",
       sourceType: "dataset",
@@ -680,6 +725,8 @@ describe("evalCreateOnboarding", () => {
 
     expect(getEvalFailureActionOnboardingParams("?source=onboarding")).toEqual({
       isOnboarding: false,
+      previousRunId: null,
+      rerunFrom: null,
       runId: null,
       sourceId: null,
       sourceType: null,

@@ -360,6 +360,8 @@ export const getEvalFailureActionOnboardingParams = (search = "") => {
     isOnboarding:
       params.get("source") === "onboarding" &&
       [EVAL_REVIEW_STEP, EVAL_FIX_STEP].includes(step),
+    previousRunId: params.get("previous_run_id"),
+    rerunFrom: normalizeFixRerunOrigin(params.get("rerun_from")),
     runId: params.get("run_id"),
     sourceId: params.get("source_id"),
     sourceType: params.get("source_type"),
@@ -832,6 +834,55 @@ export const buildEvalFailuresReviewedPayload = ({
       "eval_failures_reviewed",
       safeKeyPart(runId || evalLogId, "no-run"),
       safeKeyPart(evalId, "no-eval"),
+    ].join(":"),
+    isSample: false,
+  };
+};
+
+export const buildEvalFixRerunReviewedPayload = ({
+  evalId,
+  evalLogId,
+  previousRunId,
+  rerunFrom,
+  reviewOutcome,
+  reviewSurface = "usage_log_detail",
+  rowSource,
+  runId,
+  sourceId,
+  sourceType,
+} = {}) => {
+  const normalizedRerunFrom = normalizeFixRerunOrigin(rerunFrom);
+  const artifactId = safeKeyPart(
+    runId || evalLogId || evalId,
+    EVAL_REVIEW_ARTIFACT_ID,
+  );
+
+  return {
+    eventName: "onboarding_eval_fix_rerun_reviewed",
+    primaryPath: "evals",
+    stage: "fix_eval_source",
+    source: "eval_review_onboarding",
+    artifactType: "eval_run",
+    artifactId,
+    metadata: compactMetadata({
+      eval_id: evalId,
+      eval_log_id: evalLogId,
+      previous_run_id: previousRunId,
+      rerun_from: normalizedRerunFrom,
+      review_outcome: reviewOutcome,
+      review_surface: reviewSurface,
+      row_source: rowSource,
+      run_id: runId,
+      source_id: sourceId,
+      source_type: sourceType,
+      step: EVAL_REVIEW_STEP,
+      tab: "usage",
+    }),
+    idempotencyKey: [
+      "onboarding_eval_fix_rerun_reviewed",
+      safeKeyPart(normalizedRerunFrom, "rerun"),
+      safeKeyPart(previousRunId, "no-previous-run"),
+      artifactId,
     ].join(":"),
     isSample: false,
   };

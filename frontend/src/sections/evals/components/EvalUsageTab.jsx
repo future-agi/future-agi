@@ -41,6 +41,7 @@ import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/use
 import {
   buildEvalFailuresReviewedPayload,
   buildEvalFailureActionCreatedPayload,
+  buildEvalFixRerunReviewedPayload,
   buildEvalScorerEditCtaClickedPayload,
   buildEvalScorerEditHref,
   buildEvalSourceFixCtaClickedPayload,
@@ -550,20 +551,41 @@ const EvalUsageTab = ({
     if (recordedReviewedRowsRef.current.has(eventKey)) return;
     recordedReviewedRowsRef.current.add(eventKey);
 
+    const reviewOutcome = getEvalUsageReviewOutcome(detailRow);
+
     recordActivationEvent?.(
       buildEvalFailuresReviewedPayload({
         evalId: templateId,
         evalLogId,
-        reviewOutcome: getEvalUsageReviewOutcome(detailRow),
+        reviewOutcome,
         rowSource: detailRow.source,
         runId: failureActionOnboardingParams.runId,
       }),
     );
+    if (failureActionOnboardingParams.rerunFrom) {
+      recordActivationEvent?.(
+        buildEvalFixRerunReviewedPayload({
+          evalId: templateId,
+          evalLogId,
+          previousRunId: failureActionOnboardingParams.previousRunId,
+          rerunFrom: failureActionOnboardingParams.rerunFrom,
+          reviewOutcome,
+          rowSource: detailRow.source,
+          runId: failureActionOnboardingParams.runId,
+          sourceId: failureActionOnboardingParams.sourceId,
+          sourceType: failureActionOnboardingParams.sourceType,
+        }),
+      );
+    }
   }, [
     detailIndex,
     detailRow,
     failureActionOnboardingParams.isOnboarding,
+    failureActionOnboardingParams.previousRunId,
+    failureActionOnboardingParams.rerunFrom,
     failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.sourceId,
+    failureActionOnboardingParams.sourceType,
     failureActionOnboardingParams.step,
     recordActivationEvent,
     templateId,
