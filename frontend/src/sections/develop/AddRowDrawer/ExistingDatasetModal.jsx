@@ -38,20 +38,8 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { getExistingDatasetConfigValues } from "./existingDatasetMapping";
 import { getCreatedDatasetCopyId } from "./existingDatasetResponse";
-
-// Helper functions remain unchanged
-const getConfigtValues = (column, dataset) => {
-  const mapping = {};
-  if (column.length > 0) {
-    for (const key of column) {
-      mapping[key.name] = dataset ? "" : key.name;
-    }
-  } else {
-    mapping.key = "";
-  }
-  return { mapping: { ...mapping } };
-};
 
 function replaceKeys(obj, arr) {
   const output = {};
@@ -248,7 +236,13 @@ const ExistingDatasetModal = ({
   useEffect(() => {
     setSelectedDatasetColumns([]);
     if (selectedDatasetColumn?.length > 0) {
-      setValue("config", getConfigtValues(selectedDatasetColumn, dataset));
+      setValue(
+        "config",
+        getExistingDatasetConfigValues(selectedDatasetColumn, {
+          isAddingToExistingDataset: Boolean(dataset),
+          targetColumns: currentDatasetColumns || [],
+        }),
+      );
 
       const updatedWithCheckbox = selectedDatasetColumn.map((col) => ({
         ...col,
@@ -264,7 +258,7 @@ const ExistingDatasetModal = ({
 
       setCheckboxHandle(checkboxState);
     }
-  }, [dataset, selectedDatasetColumn, setValue]);
+  }, [currentDatasetColumns, dataset, selectedDatasetColumn, setValue]);
 
   const performClose = () => {
     onClose();
@@ -480,7 +474,13 @@ const ExistingDatasetModal = ({
                 <Iconify icon="mingcute:close-line" color="text.primary" />
               </IconButton>
             </Box>
-            <HelperText text="Choose from the existing datasets in our system to create a new dataset" />
+            <HelperText
+              text={
+                dataset
+                  ? "Choose from existing datasets to import rows into this dataset"
+                  : "Choose from the existing datasets in our system to create a new dataset"
+              }
+            />
           </Box>
           <React.Fragment>
             <Box
@@ -579,7 +579,7 @@ const ExistingDatasetModal = ({
                     color="text.primary"
                     variant="s1"
                   >
-                    Map to new dataset
+                    {dataset ? "Map to existing dataset" : "Map to new dataset"}
                   </Typography>
                   <Box
                     sx={{

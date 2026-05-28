@@ -134,18 +134,8 @@ async function main() {
       "Choose Datasets or experiments",
       sourceName,
     );
-    await selectMappingForSourceColumn(
-      page,
-      "Column 1",
-      "Column 1",
-      target.columnOne.id,
-    );
-    await selectMappingForSourceColumn(
-      page,
-      "Column 2",
-      "Column 2",
-      target.columnTwo.id,
-    );
+    await waitForMappingValue(page, "Column 1", "Column 1");
+    await waitForMappingValue(page, "Column 2", "Column 2");
 
     const importResponse = await waitForResponseDuring(
       page,
@@ -690,45 +680,6 @@ async function selectSearchOptionByLabel(page, label, optionText) {
   await clickMenuItem(page, optionText);
 }
 
-async function selectMappingForSourceColumn(
-  page,
-  sourceColumnName,
-  targetColumnName,
-  targetColumnId,
-) {
-  await waitForVisibleInputValue(page, sourceColumnName);
-  const clicked = await page.evaluate((expectedSourceColumn) => {
-    const sourceInput = window
-      .visibleElements("input")
-      .filter((input) => input.readOnly && input.value === expectedSourceColumn)
-      .sort((a, b) => {
-        const rectA = a.getBoundingClientRect();
-        const rectB = b.getBoundingClientRect();
-        return rectA.left - rectB.left;
-      })[0];
-    if (!sourceInput) return false;
-
-    const sourceRect = sourceInput.getBoundingClientRect();
-    const y = sourceRect.top + sourceRect.height / 2;
-    const targetInput = window.visibleElements("input").find((candidate) => {
-      const rect = candidate.getBoundingClientRect();
-      return (
-        !candidate.readOnly &&
-        rect.left > sourceRect.right &&
-        y >= rect.top &&
-        y <= rect.bottom
-      );
-    });
-    if (!targetInput || targetInput.disabled) return false;
-    targetInput.focus();
-    targetInput.click();
-    return true;
-  }, sourceColumnName);
-  assert(clicked, `Could not focus mapping for ${sourceColumnName}.`);
-  await clickMenuItemByValueOrText(page, targetColumnId, targetColumnName);
-  await waitForMappingValue(page, sourceColumnName, targetColumnName);
-}
-
 async function waitForMappingValue(page, sourceColumnName, targetColumnName) {
   await page.waitForFunction(
     ({ sourceColumnName: sourceName, targetColumnName: targetName }) => {
@@ -782,57 +733,6 @@ async function clickMenuItem(page, text) {
     const rect = item.getBoundingClientRect();
     return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
   }, text);
-  assert(clickTarget, `Could not click menu item: ${text}`);
-  await page.mouse.click(clickTarget.x, clickTarget.y);
-}
-
-async function clickMenuItemByValueOrText(page, value, text) {
-  await page.waitForFunction(
-    ({ expectedValue, expectedText }) =>
-      window
-        .visibleElements('[role="menuitem"],li.MuiMenuItem-root')
-        .some((element) => {
-          const itemValue =
-            element.getAttribute("value") || element.dataset.value || "";
-          return (
-            itemValue === String(expectedValue) ||
-            window.normalizeText(element.textContent) === expectedText
-          );
-        }),
-    { timeout: 30000 },
-    { expectedValue: value, expectedText: text },
-  );
-  if (process.env.DEBUG_MENU === "1") {
-    const menuItems = await page.evaluate(() =>
-      window
-        .visibleElements('[role="menuitem"],li.MuiMenuItem-root')
-        .map((element) => ({
-          text: window.normalizeText(element.textContent),
-          value: element.getAttribute("value") || element.dataset.value || "",
-        })),
-    );
-    console.error(
-      `menu_items_for_${text}_expected_${value}=${JSON.stringify(menuItems, null, 2)}`,
-    );
-  }
-  const clickTarget = await page.evaluate(
-    ({ expectedValue, expectedText }) => {
-      const item = window
-        .visibleElements('[role="menuitem"],li.MuiMenuItem-root')
-        .find((element) => {
-          const itemValue =
-            element.getAttribute("value") || element.dataset.value || "";
-          return (
-            itemValue === String(expectedValue) ||
-            window.normalizeText(element.textContent) === expectedText
-          );
-        });
-      if (!item || item.getAttribute("aria-disabled") === "true") return null;
-      const rect = item.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    },
-    { expectedValue: value, expectedText: text },
-  );
   assert(clickTarget, `Could not click menu item: ${text}`);
   await page.mouse.click(clickTarget.x, clickTarget.y);
 }
