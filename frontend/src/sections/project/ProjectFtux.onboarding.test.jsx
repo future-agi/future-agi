@@ -36,6 +36,10 @@ describe("ProjectFtux observe onboarding", () => {
           label: "Review setup",
           onClick: onPrimaryAction,
         }}
+        observeSetupSecondaryAction={{
+          label: "Open sample trace",
+          onClick: vi.fn(),
+        }}
       />,
       { route: "/dashboard/observe?setup=true&source=onboarding" },
     );
@@ -45,6 +49,9 @@ describe("ProjectFtux observe onboarding", () => {
     expect(screen.getByText("Trace")).toBeVisible();
     expect(screen.getByText("Review")).toBeVisible();
     expect(screen.getByText("Observe setup instructions")).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: /open sample trace/i }),
+    ).toBeVisible();
 
     await user.click(screen.getByRole("button", { name: /review setup/i }));
 

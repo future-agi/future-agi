@@ -414,7 +414,7 @@ const normalizeAvailableGoal = (raw) => ({
   disabledReason: raw.disabled_reason ?? raw.disabledReason ?? null,
 });
 
-const normalizeSampleProject = (raw = {}) => {
+export const normalizeSampleProject = (raw = {}) => {
   const href = raw.href ?? null;
   if (!isInternalHref(href)) {
     throw new Error(`Sample project has external href: ${href}`);

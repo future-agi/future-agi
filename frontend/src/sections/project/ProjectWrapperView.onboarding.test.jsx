@@ -1,10 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "src/utils/test-utils";
 import { renderWithRouter } from "src/utils/test-utils";
+import userEvent from "@testing-library/user-event";
 import ProjectWrapperView from "./ProjectWrapperView";
 
 const mocks = vi.hoisted(() => ({
+  openSampleProject: vi.fn(),
   recordActivationEvent: vi.fn(),
+  recordActivationState: null,
   useQuery: vi.fn(),
 }));
 
@@ -35,7 +38,17 @@ vi.mock("notistack", async (importOriginal) => {
 
 vi.mock("src/sections/onboarding-home/hooks/useRecordActivationEvent", () => ({
   useRecordActivationEvent: () => ({
+    data: mocks.recordActivationState,
     mutate: (...args) => mocks.recordActivationEvent(...args),
+  }),
+}));
+
+vi.mock("src/sections/onboarding-home/hooks/useSampleProject", () => ({
+  useSampleProject: () => ({
+    openSampleProject: {
+      isPending: false,
+      mutateAsync: (...args) => mocks.openSampleProject(...args),
+    },
   }),
 }));
 
@@ -84,6 +97,19 @@ vi.mock("src/utils/axios", () => ({
 describe("ProjectWrapperView observe setup onboarding", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.recordActivationState = {
+      sampleProject: {
+        available: true,
+        isHidden: false,
+        status: "not_created",
+      },
+    };
+    mocks.openSampleProject.mockResolvedValue({
+      sampleProject: {
+        entryRoute:
+          "/dashboard/observe/sample-project/trace/sample-trace?sample=true&from=onboarding",
+      },
+    });
     mocks.useQuery.mockReturnValue({
       data: {
         result: {
@@ -120,6 +146,58 @@ describe("ProjectWrapperView observe setup onboarding", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Observe setup drawer")).toBeVisible();
+    });
+  });
+
+  it("hides the sample trace shortcut when sample data is unavailable", () => {
+    mocks.recordActivationState = {
+      sampleProject: {
+        available: false,
+        isHidden: true,
+        status: "unavailable",
+      },
+    };
+
+    renderWithRouter(<ProjectWrapperView />, {
+      route: "/dashboard/observe?setup=true&source=onboarding",
+    });
+
+    expect(
+      screen.queryByRole("button", { name: /open sample trace/i }),
+    ).toBeNull();
+  });
+
+  it("opens a sample trace from the observe setup focus", async () => {
+    const user = userEvent.setup();
+    mocks.useQuery.mockReturnValue({
+      data: {
+        result: {
+          metadata: { total_rows: 0 },
+          projects: [],
+        },
+      },
+      isLoading: false,
+    });
+
+    renderWithRouter(<ProjectWrapperView />, {
+      route: "/dashboard/observe?setup=true&source=onboarding",
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /open sample trace/i }),
+    );
+
+    expect(mocks.openSampleProject).toHaveBeenCalledWith({
+      path: "observe",
+      source: "observe_setup_onboarding",
+      reason: "setup_observe",
+      openAfterCreate: true,
+    });
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(
+        "/dashboard/observe/sample-project/trace/sample-trace",
+      );
+      expect(window.location.search).toBe("?sample=true&from=onboarding");
     });
   });
 

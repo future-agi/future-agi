@@ -309,6 +309,9 @@ describe("onboarding home API", () => {
       },
     );
     expect(opened.stage).toBe("waiting_for_first_trace_sample_available");
+    expect(opened.sampleProject.entryRoutes).toEqual([
+      "/dashboard/observe/observe-1/trace/trace-1?sample=true&from=onboarding",
+    ]);
     expect(hidden.sampleProject.status).toBe("unavailable");
   });
 

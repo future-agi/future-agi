@@ -29,12 +29,16 @@ async function main() {
     password: process.env.ONBOARDING_SIGNUP_PASSWORD || "SecurePass123!",
   };
   const evidence = {
+    activationEventPosts: [],
     activationStateRequests: [],
     apiFailures: [],
     onboardingPosts: [],
+    sampleProjectPosts: [],
+    sampleProjectResponses: [],
     setupPosts: [],
     signupPosts: [],
     tokenPosts: [],
+    traceDetailRequests: [],
   };
   const pageErrors = [];
 
@@ -71,16 +75,41 @@ async function main() {
         Object.fromEntries(url.searchParams),
       );
     }
+    if (
+      path === "/accounts/activation-events/" &&
+      request.method() === "POST"
+    ) {
+      evidence.activationEventPosts.push(parseJsonPostData(request.postData()));
+    }
+    if (path === "/accounts/sample-project/" && request.method() === "POST") {
+      evidence.sampleProjectPosts.push(parseJsonPostData(request.postData()));
+    }
+    if (/^\/tracer\/trace\/[^/]+\/$/.test(path) && request.method() === "GET") {
+      evidence.traceDetailRequests.push(path);
+    }
   });
-  page.on("response", (response) => {
+  page.on("response", async (response) => {
     const url = safeUrl(response.url());
+    const path = url ? slashPath(url.pathname) : null;
     if (
       url &&
       url.origin === new URL(API_BASE).origin &&
-      isTrackedApiPath(slashPath(url.pathname)) &&
+      isTrackedApiPath(path) &&
       response.status() >= 400
     ) {
       evidence.apiFailures.push(`${response.status()} ${url.pathname}`);
+    }
+    if (
+      url &&
+      url.origin === new URL(API_BASE).origin &&
+      path === "/accounts/sample-project/" &&
+      response.status() < 400
+    ) {
+      try {
+        evidence.sampleProjectResponses.push(await response.json());
+      } catch {
+        evidence.sampleProjectResponses.push({ parse_error: true });
+      }
     }
   });
   page.on("pageerror", (error) => pageErrors.push(error.message));
@@ -161,6 +190,33 @@ async function main() {
     await expectVisibleText(page, "Setup Telemetry", { timeout: 45000 });
     await expectVisibleText(page, "Setup Instrumentation", { timeout: 45000 });
     await expectNoVisibleText(page, "Code not available");
+    const observeSetupUrl = page.url();
+    await expectVisibleText(page, "Open sample trace", { timeout: 45000 });
+    await clickVisibleButtonText(page, "Open sample trace", 45000);
+    await page.waitForFunction(
+      () => {
+        const segments = window.location.pathname.split("/").filter(Boolean);
+        const params = new URLSearchParams(window.location.search);
+        return (
+          segments.length === 5 &&
+          segments[0] === "dashboard" &&
+          segments[1] === "observe" &&
+          segments[3] === "trace" &&
+          params.get("sample") === "true" &&
+          params.get("from") === "onboarding"
+        );
+      },
+      { timeout: 45000 },
+    );
+    await expectVisibleText(page, "Trace", { exact: true, timeout: 45000 });
+    await waitForCondition(
+      () => evidence.sampleProjectPosts.length === 1,
+      "Expected one sample-project POST.",
+    );
+    await waitForCondition(
+      () => evidence.traceDetailRequests.length >= 1,
+      "Expected trace detail request for sample trace.",
+    );
 
     const browserState = await page.evaluate(() => ({
       initialRender: localStorage.getItem("initial-render"),
@@ -186,6 +242,24 @@ async function main() {
       )}`,
     );
     assert(evidence.setupPosts.length === 1, "Expected one setup POST.");
+    assert(
+      evidence.sampleProjectPosts[0]?.source === "observe_setup_onboarding",
+      `Expected sample source observe_setup_onboarding, got ${evidence.sampleProjectPosts[0]?.source}`,
+    );
+    assert(
+      evidence.sampleProjectPosts[0]?.reason === "setup_observe",
+      `Expected sample reason setup_observe, got ${evidence.sampleProjectPosts[0]?.reason}`,
+    );
+    assert(
+      evidence.activationEventPosts.some(
+        (payload) =>
+          payload?.event_name === "sample_trace_detail_opened" &&
+          payload?.primary_path === "sample" &&
+          payload?.stage === "review_first_trace" &&
+          payload?.is_sample === true,
+      ),
+      "Expected sample trace detail activation event.",
+    );
     assert(
       evidence.activationStateRequests.some(
         (request) => request.source === "setup_org",
@@ -227,7 +301,12 @@ async function main() {
             email: user.email,
             onboarding_post: evidence.onboardingPosts[0],
             observe_cta_href: observeCtaHref,
-            observe_setup_url: page.url(),
+            observe_setup_url: observeSetupUrl,
+            sample_project_post: evidence.sampleProjectPosts[0],
+            sample_trace_activation_event: evidence.activationEventPosts.find(
+              (payload) => payload?.event_name === "sample_trace_detail_opened",
+            ),
+            sample_trace_url: page.url(),
             screenshot: SCREENSHOT_PATH,
             setup_post: evidence.setupPosts[0],
             signup_post: evidence.signupPosts[0],
@@ -527,9 +606,21 @@ function isTrackedApiPath(path) {
     path === "/accounts/token/" ||
     path === "/accounts/onboarding/" ||
     path === "/accounts/team/users/" ||
+    path === "/accounts/sample-project/" ||
+    path === "/accounts/activation-events/" ||
     path === "/accounts/activation-state/" ||
-    path === "/accounts/user-info/"
+    path === "/accounts/user-info/" ||
+    /^\/tracer\/trace\/[^/]+\/$/.test(path)
   );
+}
+
+async function waitForCondition(condition, message, timeout = 30000) {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < timeout) {
+    if (condition()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(message);
 }
 
 async function safeBodyText(page) {

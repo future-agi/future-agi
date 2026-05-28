@@ -129,12 +129,17 @@ def test_sample_project_hide_endpoint_suppresses_sample_state(auth_client, works
     assert result["sample_project"]["status"] == "hidden"
     assert result["sample_project"]["is_hidden"] is True
     assert result["activation_state"]["sample_project"]["status"] == "hidden"
-    assert result["activation_state"]["fallback_action"]["id"] == "open_get_started"
+    assert (
+        result["activation_state"]["fallback_action"]["id"]
+        == "open_observe_setup_fallback"
+    )
 
 
 @pytest.mark.django_db
 @override_settings(ONBOARDING_FEATURE_FLAGS={"onboarding_sample_project": False})
 def test_sample_project_endpoint_returns_unavailable_when_flag_off(auth_client):
+    before_count = OnboardingSampleProject.no_workspace_objects.count()
+
     response = auth_client.post(
         "/accounts/sample-project/",
         {"path": "observe"},
@@ -143,4 +148,4 @@ def test_sample_project_endpoint_returns_unavailable_when_flag_off(auth_client):
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["result"]["sample_project"]["status"] == "unavailable"
-    assert OnboardingSampleProject.no_workspace_objects.count() == 0
+    assert OnboardingSampleProject.no_workspace_objects.count() == before_count

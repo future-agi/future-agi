@@ -8,7 +8,11 @@ import NewExperiment from "./NewProject/NewExperiment";
 import NewObserve from "./NewProject/NewObserve";
 import ObserveOnboardingFocusPanel from "src/sections/projects/ObserveOnboardingFocusPanel";
 
-const ProjectFtux = ({ observeSetupCopy, observeSetupPrimaryAction }) => {
+const ProjectFtux = ({
+  observeSetupCopy,
+  observeSetupPrimaryAction,
+  observeSetupSecondaryAction,
+}) => {
   const location = useLocation();
   const currentPath = location.pathname;
   const [isObserve, setIsObserve] = useState(currentPath.includes("observe"));
@@ -53,6 +57,7 @@ const ProjectFtux = ({ observeSetupCopy, observeSetupPrimaryAction }) => {
           currentStep={observeSetupCopy.currentStep}
           description={observeSetupCopy.description}
           primaryAction={observeSetupPrimaryAction}
+          secondaryAction={observeSetupSecondaryAction}
           steps={observeSetupCopy.steps}
           sx={{ width: "100%", mb: 2 }}
           title={observeSetupCopy.title}
@@ -87,6 +92,11 @@ ProjectFtux.propTypes = {
     title: PropTypes.string.isRequired,
   }),
   observeSetupPrimaryAction: PropTypes.shape({
+    disabled: PropTypes.bool,
+    label: PropTypes.string.isRequired,
+    onClick: PropTypes.func.isRequired,
+  }),
+  observeSetupSecondaryAction: PropTypes.shape({
     disabled: PropTypes.bool,
     label: PropTypes.string.isRequired,
     onClick: PropTypes.func.isRequired,

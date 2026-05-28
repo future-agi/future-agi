@@ -2,6 +2,7 @@ import axios, { endpoints } from "src/utils/axios";
 import {
   normalizeActivationState,
   normalizeProductPath,
+  normalizeSampleProject,
 } from "../activation-state-utils";
 
 export const ONBOARDING_HOME_QUERY_KEY = "onboarding-home";
@@ -49,6 +50,15 @@ const unwrapPayload = (response) =>
 
 const normalizeActivationStatePayload = (payload) =>
   normalizeActivationState(payload?.activation_state ?? payload);
+
+const normalizeSampleProjectPayload = (payload) => {
+  const state = normalizeActivationStatePayload(payload);
+  if (!payload?.sample_project) return state;
+  return {
+    ...state,
+    sampleProject: normalizeSampleProject(payload.sample_project),
+  };
+};
 
 const activationStateParams = (params = {}) =>
   compactObject({
@@ -162,7 +172,7 @@ export const openSampleProject = async (payload = {}) => {
     throw new OnboardingEndpointUnavailableError("sampleProject");
   }
   const response = await axios.post(endpoint, sampleProjectPayload(payload));
-  return normalizeActivationStatePayload(unwrapPayload(response));
+  return normalizeSampleProjectPayload(unwrapPayload(response));
 };
 
 export const hideSampleProject = async (payload = {}) => {

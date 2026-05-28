@@ -18,7 +18,7 @@ import React, {
   useState,
 } from "react";
 import axios, { endpoints } from "src/utils/axios";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { Helmet } from "react-helmet-async";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import axiosInstance from "src/utils/axios";
@@ -35,7 +35,9 @@ import ProjectRightSection from "./RightSection/ProjectRightSection";
 import ProjectFtux from "./ProjectFtux";
 import ProjectFilterPanel from "./ProjectFilterPanel";
 import NewProjectDrawer from "./NewProject/NewProjectDrawer";
+import { canOpenSample } from "src/sections/onboarding-home/activation-state-utils";
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import { useSampleProject } from "src/sections/onboarding-home/hooks/useSampleProject";
 import ObserveOnboardingFocusPanel from "src/sections/projects/ObserveOnboardingFocusPanel";
 import {
   buildObserveRouteFocusPayload,
@@ -63,13 +65,21 @@ const ProjectWrapperView = () => {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [setupDrawerOpen, setSetupDrawerOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const gridRef = useRef(null);
   const recordedObserveSetupFocusRef = useRef(false);
   const autoOpenedObserveSetupDrawerRef = useRef(false);
   const currentTab = location.pathname.split("/").pop();
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
-  const { mutate: recordActivationEvent } = useRecordActivationEvent();
+  const { data: observeSetupFocusState, mutate: recordActivationEvent } =
+    useRecordActivationEvent();
+  const {
+    openSampleProject: {
+      isPending: isOpeningSampleTrace,
+      mutateAsync: openSampleProject,
+    },
+  } = useSampleProject();
   const { data, isLoading } = useQuery({
     queryKey: [`project-${currentTab}-list`],
     queryFn: () =>
@@ -108,6 +118,9 @@ const ProjectWrapperView = () => {
         : null,
     [showObserveSetupFocus],
   );
+  const canOpenObserveSetupSample = canOpenSample(
+    observeSetupFocusState?.sampleProject,
+  );
 
   useEffect(() => {
     if (!showObserveSetupFocus || recordedObserveSetupFocusRef.current) return;
@@ -142,6 +155,37 @@ const ProjectWrapperView = () => {
       ?.scrollIntoView?.({ behavior: "smooth", block: "start" });
   }, [isProjectCount]);
 
+  const handleOpenSampleTrace = useCallback(async () => {
+    try {
+      const nextState = await openSampleProject({
+        path: "observe",
+        source: "observe_setup_onboarding",
+        reason: "setup_observe",
+        openAfterCreate: true,
+      });
+      const entryRoute =
+        nextState?.sampleProject?.entryRoute ||
+        nextState?.sampleProject?.entryRoutes?.[0];
+      if (entryRoute) {
+        navigate(entryRoute);
+        return;
+      }
+      enqueueSnackbar(
+        "Sample trace is not available yet. Continue with setup.",
+        {
+          variant: "info",
+        },
+      );
+    } catch {
+      enqueueSnackbar(
+        "Sample trace is not available yet. Continue with setup.",
+        {
+          variant: "error",
+        },
+      );
+    }
+  }, [enqueueSnackbar, navigate, openSampleProject]);
+
   const observeSetupPrimaryAction = useMemo(() => {
     if (!observeSetupCopy) return null;
     return {
@@ -149,6 +193,27 @@ const ProjectWrapperView = () => {
       onClick: handleObserveSetupPrimaryAction,
     };
   }, [handleObserveSetupPrimaryAction, isProjectCount, observeSetupCopy]);
+
+  const observeSetupSecondaryAction = useMemo(() => {
+    if (
+      !observeSetupCopy ||
+      !showObserveSetupFocus ||
+      !canOpenObserveSetupSample
+    ) {
+      return null;
+    }
+    return {
+      disabled: isOpeningSampleTrace,
+      label: isOpeningSampleTrace ? "Opening sample..." : "Open sample trace",
+      onClick: handleOpenSampleTrace,
+    };
+  }, [
+    canOpenObserveSetupSample,
+    handleOpenSampleTrace,
+    isOpeningSampleTrace,
+    observeSetupCopy,
+    showObserveSetupFocus,
+  ]);
 
   const handleSearchChange = (e) => {
     setSearchQuery(e.target.value);
@@ -240,6 +305,7 @@ const ProjectWrapperView = () => {
       <ProjectFtux
         observeSetupCopy={observeSetupCopy}
         observeSetupPrimaryAction={observeSetupPrimaryAction}
+        observeSetupSecondaryAction={observeSetupSecondaryAction}
       />
     );
   }
@@ -265,6 +331,7 @@ const ProjectWrapperView = () => {
               currentStep={observeSetupCopy.currentStep}
               description={observeSetupCopy.description}
               primaryAction={observeSetupPrimaryAction}
+              secondaryAction={observeSetupSecondaryAction}
               steps={observeSetupCopy.steps}
               sx={{ mb: 0 }}
               title={observeSetupCopy.title}
