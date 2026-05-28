@@ -4,7 +4,6 @@ analytics, etc. All are clean ModelViewSets with serializers; the bridge
 auto-generates CRUD tool names.
 """
 
-from agentcc.views.analytics import AgentccAnalyticsViewSet
 from agentcc.views.api_key import AgentccAPIKeyViewSet
 from agentcc.views.blocklist import AgentccBlocklistViewSet
 from agentcc.views.custom_property import AgentccCustomPropertySchemaViewSet
@@ -31,7 +30,8 @@ from ai_tools.drf_bridge import expose_to_mcp
 # so AgentccBlocklistViewSet -> "agentcc_blocklist" by default. That's
 # fine — agentcc IS its own product area.
 
-expose_to_mcp(category="agentcc")(AgentccAnalyticsViewSet)
+# AgentccAnalyticsViewSet has no standard list/retrieve (custom analytics
+# actions only) — not a CRUD ViewSet, so not bridged.
 expose_to_mcp(category="agentcc")(AgentccAPIKeyViewSet)
 expose_to_mcp(category="agentcc")(AgentccBlocklistViewSet)
 expose_to_mcp(category="agentcc")(AgentccCustomPropertySchemaViewSet)

@@ -289,7 +289,9 @@ class TestDRFBridgeToolExecution:
             result = tool.execute(tool.input_model(id="xyz-123"), tool_context)
 
         assert not result.is_error
-        assert mock_view.kwargs == {"pk": "xyz-123"}
+        # Bridge sets the id under "pk" plus the viewset's lookup_field/
+        # lookup_url_kwarg names; "pk" is the guaranteed invariant.
+        assert mock_view.kwargs["pk"] == "xyz-123"
 
     def test_error_response_handled(self, tool_context):
         tool = self._make_tool("list", "GET")

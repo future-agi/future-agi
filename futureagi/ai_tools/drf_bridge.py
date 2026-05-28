@@ -174,7 +174,11 @@ def _derive_entity_name(viewset_cls) -> str:
         if name.endswith(intent_suffix):
             name = name[: -len(intent_suffix)]
             break
-    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+    # CamelCase -> snake_case, treating runs of capitals (acronyms like
+    # APIKey, TTSVoice) as a single token: APIKey -> api_key, TTSVoice -> tts_voice.
+    snake = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", name)
+    snake = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", snake)
+    snake = snake.lower()
     return snake or viewset_cls.__name__.lower()
 
 
@@ -230,6 +234,9 @@ class ViewSetBinding:
     pk_field: str | None
     serializer_override: str | None = None
     query_params: dict | None = None
+    pk_kwarg: str | None = (
+        None  # APIView path-kwarg name for the id (e.g. call_execution_id)
+    )
 
 
 def _resolve_class(dotted_path: str):
@@ -562,6 +569,8 @@ class DRFBridgeTool(BaseTool):
         param_dict = params.model_dump(exclude_none=True)
 
         method = self.binding.method.upper()
+        viewset_cls = _resolve_class(self.binding.viewset_class)
+        is_apiview = _is_apiview_class(viewset_cls)
         kwargs = {}
 
         if self.binding.detail and self.binding.pk_field:
@@ -570,7 +579,25 @@ class DRFBridgeTool(BaseTool):
                 return ToolResult.validation_error(
                     f"'{self.binding.pk_field}' is required for this action."
                 )
-            kwargs["pk"] = str(pk_value)
+            pk_value = str(pk_value)
+            if is_apiview:
+                # APIView handlers take the id as a named URL kwarg whose name
+                # is view-specific (e.g. call_execution_id). Use the configured
+                # pk_kwarg, else fall back to "pk".
+                kwargs[self.binding.pk_kwarg or "pk"] = pk_value
+            else:
+                # ModelViewSet get_object() reads self.kwargs[lookup_url_kwarg
+                # or lookup_field]. Set every plausible name so retrieve/update/
+                # destroy resolve regardless of the viewset's lookup config.
+                lookup_field = getattr(viewset_cls, "lookup_field", "pk") or "pk"
+                lookup_kwarg = (
+                    getattr(viewset_cls, "lookup_url_kwarg", None) or lookup_field
+                )
+                keys = {"pk"} | {
+                    k for k in (lookup_field, lookup_kwarg) if isinstance(k, str)
+                }
+                for key in keys:
+                    kwargs[key] = pk_value
 
         if method == "GET":
             query_params = param_dict
@@ -580,13 +607,12 @@ class DRFBridgeTool(BaseTool):
             body_data = param_dict
 
         request = _build_drf_request(method, body_data, query_params, context)
-        viewset_cls = _resolve_class(self.binding.viewset_class)
         view = _instantiate_view(
             viewset_cls, self.binding.action, method, request, kwargs
         )
 
         try:
-            if _is_apiview_class(viewset_cls):
+            if is_apiview:
                 action_method = _resolve_apiview_handler(
                     view, method, self.binding.action
                 )
@@ -693,6 +719,35 @@ def _register_bridge_tool(
             (PydanticBaseModel,),
             {"__annotations__": annotations, **fields_dict},
         )
+    elif (
+        action_name in LIST_ACTIONS or (method == "GET" and not detail)
+    ) and not query_params:
+        # List/GET-collection actions take OPTIONAL filter/pagination params,
+        # never the create-shaped model serializer (which has required fields).
+        # Default to a small set of universally-safe optional filters so the
+        # LLM can call with no args and get the first page.
+        input_model = type(
+            f"Input_{tool_name}",
+            (PydanticBaseModel,),
+            {
+                "__annotations__": {
+                    "search": str | None,
+                    "page": int | None,
+                    "page_size": int | None,
+                },
+                "search": PydanticField(
+                    default=None,
+                    description="Optional case-insensitive name/text filter.",
+                ),
+                "page": PydanticField(
+                    default=None, description="Optional 1-indexed page number."
+                ),
+                "page_size": PydanticField(
+                    default=None,
+                    description="Optional page size (number of items to return).",
+                ),
+            },
+        )
     elif detail and action_name in ("retrieve", "destroy"):
         list_tool_hint = tool_config.get("id_source")
         if not list_tool_hint:
@@ -740,6 +795,7 @@ def _register_bridge_tool(
         pk_field=pk_field if detail else None,
         serializer_override=serializer_override,
         query_params=query_params,
+        pk_kwarg=tool_config.get("pk_kwarg"),
     )
 
     tool_cls = type(
