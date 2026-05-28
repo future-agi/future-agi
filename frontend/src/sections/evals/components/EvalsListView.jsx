@@ -450,9 +450,10 @@ const EvalsListView = () => {
           return (
             <CustomTooltip size="small" type="black" show arrow title={name || ""} placement="top">
               <Typography
-                variant="body2"
+                variant="s1"
+
                 noWrap
-                sx={{ fontWeight: 500, display: "block" }}
+               
               >
                 {name}
               </Typography>
