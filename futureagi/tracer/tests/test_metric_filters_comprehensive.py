@@ -352,6 +352,55 @@ class TestPGMetricFilters:
         )
         assert q != Q()
 
+    # --- in / not_in on system-metric columns ---
+    # Regression: the PG operator_map was missing "in" / "not_in", so the
+    # Observe toolbar's multi-select filters (node_type, status, model, …)
+    # silently dropped on the PG fallback path.
+
+    @staticmethod
+    def _system_metric_filter(column_id, filter_op, filter_value):
+        return {
+            "column_id": column_id,
+            "filter_config": {
+                "filter_type": "text",
+                "filter_op": filter_op,
+                "filter_value": filter_value,
+                "col_type": "SYSTEM_METRIC",
+            },
+        }
+
+    def test_node_type_in_list_produces_q(self):
+        q = FilterEngine.get_filter_conditions_for_system_metrics(
+            [self._system_metric_filter("node_type", "in", ["llm"])]
+        )
+        assert q != Q()
+        assert "node_type__in" in str(q)
+        assert "llm" in str(q)
+
+    def test_node_type_in_multi_value(self):
+        q = FilterEngine.get_filter_conditions_for_system_metrics(
+            [self._system_metric_filter("node_type", "in", ["llm", "chain"])]
+        )
+        assert q != Q()
+        assert "node_type__in" in str(q)
+
+    def test_node_type_not_in_negates(self):
+        q = FilterEngine.get_filter_conditions_for_system_metrics(
+            [self._system_metric_filter("node_type", "not_in", ["llm"])]
+        )
+        assert q != Q()
+        assert q.negated, "not_in should produce a negated Q"
+        assert "node_type__in" in str(q)
+
+    def test_in_with_scalar_value_coerced_to_list(self):
+        """Mirrors CH builder behaviour: scalar value gets wrapped in a list."""
+        q = FilterEngine.get_filter_conditions_for_system_metrics(
+            [self._system_metric_filter("node_type", "in", "llm")]
+        )
+        assert q != Q()
+        assert "node_type__in" in str(q)
+        assert "llm" in str(q)
+
 
 # ============================================================================
 # 3. SpanList ClickHouse filter builder — verify span-level filters

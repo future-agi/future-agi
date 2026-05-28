@@ -634,6 +634,8 @@ class FilterEngine:
             "between": "range",
             "not_between": "exclude",
             "contains": "icontains",
+            "in": "in",
+            "not_in": "in",
         }
 
         # Map column IDs to their aggregated field names
@@ -752,6 +754,12 @@ class FilterEngine:
                 else:
                     # Keep existing behavior for single value contains
                     q_objects.append(Q(**{f"{field_name}__icontains": filter_value}))
+            elif filter_op == "in":
+                values = filter_value if isinstance(filter_value, list) else [filter_value]
+                q_objects.append(Q(**{f"{field_name}__in": values}))
+            elif filter_op == "not_in":
+                values = filter_value if isinstance(filter_value, list) else [filter_value]
+                q_objects.append(~Q(**{f"{field_name}__in": values}))
             elif isinstance(filter_value, list) and filter_op == "equals":
                 q_objects.append(Q(**{f"{field_name}__in": filter_value}))
             elif isinstance(filter_value, list) and filter_op == "not_equals":

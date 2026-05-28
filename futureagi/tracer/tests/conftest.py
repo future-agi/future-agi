@@ -364,7 +364,7 @@ def stub_cost_log(monkeypatch):
     expects: ``.status``, mutable ``.config``, ``.log_id``, and ``.save()``.
     """
     try:
-        from ee.usage.models.usage import APICallStatusChoices
+        from tfc.constants.api_calls import APICallStatusChoices
         processing_status = APICallStatusChoices.PROCESSING.value
     except ImportError:
         processing_status = "processing"

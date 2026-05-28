@@ -36,11 +36,7 @@ from tfc.settings.settings import HUGGINGFACE_API_TOKEN
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
 except ImportError:
@@ -136,22 +132,23 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
 
     def post(self, request, *args, **kwargs):
         try:
-            call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row_entry is None
-                or call_log_row_entry.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
-                return self._gm.too_many_requests(
-                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
+            if log_and_deduct_cost_for_resource_request is not None:
+                call_log_row_entry = log_and_deduct_cost_for_resource_request(
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                    workspace=request.workspace,
                 )
-            call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
-            call_log_row_entry.save()
+                if (
+                    call_log_row_entry is None
+                    or call_log_row_entry.status
+                    == APICallStatusChoices.RESOURCE_LIMIT.value
+                ):
+                    return self._gm.too_many_requests(
+                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
+                    )
+                call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
+                call_log_row_entry.save()
 
             form = UploadFileForm(request.POST, request.FILES)
             new_dataset_name = form.data.get("name")
@@ -215,20 +212,21 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                     rows_in_dataset = (
                         int(num_rows) if num_rows else int(dataset_info.get("num_rows"))
                     )
-                    call_log_row = log_and_deduct_cost_for_resource_request(
-                        organization,
-                        api_call_type=APICallTypeChoices.ROW_ADD.value,
-                        config={"total_rows": rows_in_dataset},
-                        workspace=request.workspace,
-                    )
-                    if (
-                        call_log_row is None
-                        or call_log_row.status
-                        == APICallStatusChoices.RESOURCE_LIMIT.value
-                    ):
-                        return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
-                    call_log_row.status = APICallStatusChoices.SUCCESS.value
-                    call_log_row.save()
+                    if log_and_deduct_cost_for_resource_request is not None:
+                        call_log_row = log_and_deduct_cost_for_resource_request(
+                            organization,
+                            api_call_type=APICallTypeChoices.ROW_ADD.value,
+                            config={"total_rows": rows_in_dataset},
+                            workspace=request.workspace,
+                        )
+                        if (
+                            call_log_row is None
+                            or call_log_row.status
+                            == APICallStatusChoices.RESOURCE_LIMIT.value
+                        ):
+                            return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                        call_log_row.status = APICallStatusChoices.SUCCESS.value
+                        call_log_row.save()
 
                     try:
                         first_row = load_hf_dataset_with_retries(

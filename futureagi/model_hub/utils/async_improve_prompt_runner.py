@@ -12,14 +12,11 @@ except ImportError:
     PromptGenerator = _ee_stub("PromptGenerator")
 
 logger = structlog.get_logger(__name__)
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.models.usage import APICallStatusChoices
+    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    APICallStatusChoices = None
-try:
-    from ee.usage.utils.usage_entries import APICallTypeChoices, count_text_tokens, log_and_deduct_cost_for_api_request
-except ImportError:
-    APICallTypeChoices = None
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
 
@@ -54,42 +51,45 @@ async def improve_prompt_async(
         except ImportError:
             check_usage = None
 
-        usage_check = await database_sync_to_async(check_usage)(
-            str(organization_id), BillingEventType.AI_PROMPT_IMPROVEMENT
-        )
-        if not usage_check.allowed:
-            await ws_manager.send_improve_prompt_error_message(
-                improve_id=improve_id,
-                error=usage_check.reason or "Usage limit exceeded",
+        if check_usage is not None and BillingEventType is not None:
+            usage_check = await database_sync_to_async(check_usage)(
+                str(organization_id), BillingEventType.AI_PROMPT_IMPROVEMENT
             )
-            return
+            if not usage_check.allowed:
+                await ws_manager.send_improve_prompt_error_message(
+                    improve_id=improve_id,
+                    error=usage_check.reason or "Usage limit exceeded",
+                )
+                return
 
         prompt_generator = PromptGenerator()
         prompt_generator.organization_id = organization_id
 
         # Create a call_log_row for tracking
+        call_log_row = None
         config = {
-            "input_tokens": count_text_tokens(
-                original_prompt + (improvement_suggestions or "")
+            "input_tokens": (count_text_tokens(
+                original_prompt + (improvement_suggestions or "")) if count_text_tokens else 0
             )
         }
-        call_log_row = await database_sync_to_async(
-            log_and_deduct_cost_for_api_request
-        )(
-            organization,
-            APICallTypeChoices.PROMPT_BENCH.value,
-            config=config,
-            source="run_prompt_improve",
-            workspace=workspace,
-        )
+        if log_and_deduct_cost_for_api_request is not None:
+            call_log_row = await database_sync_to_async(
+                log_and_deduct_cost_for_api_request
+            )(
+                organization,
+                APICallTypeChoices.PROMPT_BENCH.value,
+                config=config,
+                source="run_prompt_improve",
+                workspace=workspace,
+            )
 
-        if (
-            call_log_row is None
-            or call_log_row.status != APICallStatusChoices.PROCESSING.value
-        ):
-            await ws_manager.send_improve_prompt_error_message(
-                improve_id=improve_id,
-                error="Insufficient credits",
+            if (
+                call_log_row is None
+                or call_log_row.status != APICallStatusChoices.PROCESSING.value
+            ):
+                await ws_manager.send_improve_prompt_error_message(
+                    improve_id=improve_id,
+                    error="Insufficient credits",
             )
             return
 
@@ -125,15 +125,24 @@ async def improve_prompt_async(
                 from ee.usage.services.emitter import emit
             except ImportError:
                 emit = None
+            try:
+                from ee.usage.utils.event_properties import llm_usage_properties
+            except ImportError:
+                llm_usage_properties = lambda obj: {}
 
             actual_cost = 0
             if hasattr(prompt_generator, "llm") and prompt_generator.llm:
                 actual_cost = getattr(prompt_generator.llm, "cost", {}).get(
                     "total_cost", 0
                 )
-            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+            if BillingConfig is not None:
 
-            emit(
+                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+
+                emit(
                 UsageEvent(
                     org_id=str(organization_id),
                     event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
@@ -142,6 +151,7 @@ async def improve_prompt_async(
                         "source": "run_prompt_improve",
                         "source_id": str(improve_id),
                         "raw_cost_usd": str(actual_cost),
+                        **llm_usage_properties(prompt_generator),
                     },
                 )
             )

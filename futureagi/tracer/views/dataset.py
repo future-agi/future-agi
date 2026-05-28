@@ -280,7 +280,7 @@ def create_new_dataset(new_dataset_name, organization, user_id):
     ).exists():
         raise ValueError(get_error_message("DATASET_EXIST_IN_ORG"))
 
-    if not check_if_dataset_creation_is_allowed(organization):
+    if check_if_dataset_creation_is_allowed is not None and not check_if_dataset_creation_is_allowed(organization):
         raise ValueError(get_error_message("DATASET_CREATE_LIMIT_REACHED"))
 
     dataset_id = uuid.uuid4()

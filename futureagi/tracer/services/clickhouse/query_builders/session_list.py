@@ -60,6 +60,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "traces_count": "traces_count",
     }
 
+    # Columns that require a session-scoped subquery because they are
+    # set on child spans, not root spans. The main query restricts to
+    # root spans only, so filtering these directly would miss matches.
+    SUBQUERY_FILTER_COLS = {"end_user_id"}
+
     def __init__(
         self,
         project_id: Optional[str] = None,
@@ -79,6 +84,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.user_id = user_id
         self.start_date: Optional[datetime] = None
         self.end_date: Optional[datetime] = None
+        # Populated by _extract_end_user_ids() during build
+        self._end_user_ids: Optional[List[str]] = None
 
     def build(self) -> Tuple[str, Dict[str, Any]]:
         """Build the session list query.
@@ -90,7 +97,12 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
-        # Translate span-level filters (exclude session-level aggregate filters)
+        # Extract end_user_id filters — these need a subquery because
+        # end_user_id is set on child spans, not root spans.
+        self._end_user_ids = self._extract_end_user_ids()
+
+        # Translate span-level filters (exclude session-level aggregate
+        # filters AND end_user_id filters handled via subquery)
         span_filters = self._extract_span_filters()
         fb = ClickHouseFilterBuilder(table=self.TABLE)
         extra_where, extra_params = fb.translate(span_filters)
@@ -111,7 +123,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.params["limit"] = self.page_size + 1  # +1 for has_more
         self.params["offset"] = offset
 
-        # Optional user filter
+        # Optional user filter (legacy path via self.user_id kwarg)
         user_clause = ""
         if self.user_id:
             self.params["user_id"] = self.user_id
@@ -119,6 +131,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
+        end_user_clause = self._build_end_user_subquery()
 
         # Light aggregation — no input column (heavy). First/last messages
         # fetched separately via build_content_query().
@@ -139,6 +152,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
           AND start_time >= %(start_date)s
           AND start_time < %(end_date)s
           {user_clause}
+          {end_user_clause}
           {filter_fragment}
         GROUP BY trace_session_id
         {having_fragment}
@@ -204,6 +218,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             user_clause = "AND end_user_id = %(user_id)s"
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
+        end_user_clause = self._build_end_user_subquery()
 
         query = f"""
         SELECT count(DISTINCT trace_session_id) AS total
@@ -215,6 +230,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
           AND start_time >= %(start_date)s
           AND start_time < %(end_date)s
           {user_clause}
+          {end_user_clause}
           {filter_fragment}
         """
         return query, params
@@ -237,6 +253,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
+        end_user_clause = self._build_end_user_subquery()
 
         # Select the aggregate aliases so HAVING on `duration`/`total_cost`/
         # `total_tokens`/`traces_count` resolves (otherwise CH raises Code 47
@@ -257,6 +274,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
               {user_clause}
+              {end_user_clause}
               {filter_fragment}
             GROUP BY trace_session_id
             {having_fragment}
@@ -371,14 +389,59 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """Extract filters that apply at the span level (pre-GROUP BY).
 
         Filters on aggregate columns (duration, total_cost, etc.) are
-        handled separately via HAVING clauses.
+        handled separately via HAVING clauses. Filters on
+        ``SUBQUERY_FILTER_COLS`` (e.g. ``end_user_id``) are handled via
+        session-scoped subqueries and also excluded here.
         """
+        excluded = self.SESSION_FILTER_MAP.keys() | self.SUBQUERY_FILTER_COLS
         span_filters: List[Dict] = []
         for f in self.filters:
             col_id = f.get("column_id") or f.get("columnId")
-            if col_id not in self.SESSION_FILTER_MAP:
+            if col_id not in excluded:
                 span_filters.append(f)
         return span_filters
+
+    def _extract_end_user_ids(self) -> Optional[List[str]]:
+        """Extract end_user_id values from filters.
+
+        Returns a list of UUID strings if an ``end_user_id`` filter is
+        present, or ``None`` if not.
+        """
+        for f in self.filters:
+            col_id = f.get("column_id") or f.get("columnId")
+            if col_id != "end_user_id":
+                continue
+            config = f.get("filter_config") or f.get("filterConfig", {})
+            value = config.get("filter_value", config.get("filterValue"))
+            if isinstance(value, list):
+                return [str(v) for v in value if v]
+            if value:
+                return [str(value)]
+        return None
+
+    def _build_end_user_subquery(self) -> str:
+        """Build a subquery clause restricting sessions to those with matching end_user_id.
+
+        ``end_user_id`` is set on child spans, not root spans. The main
+        session list query only looks at root spans. This subquery first
+        finds ``trace_session_id`` values from ANY span (including child
+        spans) where the user matches, then the outer query can aggregate
+        root spans for those sessions.
+
+        Returns an empty string when no end_user_id filter is active.
+        """
+        if not self._end_user_ids:
+            return ""
+        self.params["_eu_ids"] = tuple(self._end_user_ids)
+        return (
+            f"AND trace_session_id IN ("
+            f"SELECT DISTINCT trace_session_id FROM {self.TABLE} "
+            f"WHERE {self.project_filter_sql()} "
+            f"AND _peerdb_is_deleted = 0 "
+            f"AND end_user_id IN %(_eu_ids)s "
+            f"AND trace_session_id IS NOT NULL"
+            f")"
+        )
 
     def _build_having_clauses(self) -> str:
         """Build HAVING clause fragments for aggregate-level filters."""

@@ -279,7 +279,10 @@ def validate_file_url(
 
 
 def get_recommendations(new_dataset):
-    recommendations = EvalRecommender(dataset_id=new_dataset.id).recommend_evals()
+    try:
+        recommendations = EvalRecommender(dataset_id=new_dataset.id).recommend_evals()
+    except Exception:
+        recommendations = {}
     recommend_evals = recommendations.get("recommended_evals", [])
     (
         recommend_evals.append("Deterministic Evals")

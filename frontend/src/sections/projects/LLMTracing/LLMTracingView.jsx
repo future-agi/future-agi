@@ -991,14 +991,20 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   }, [observeId]);
 
   const handleAutoSize = () => {
+    const isSimulator = projectSource === PROJECT_SOURCE.SIMULATOR;
+
     const gridRef =
-      selectedGraph === "primary"
-        ? selectedTab === "trace"
-          ? primaryTraceGridRef
-          : primarySpanGridRef
-        : selectedTab === "trace"
-          ? compareTraceGridRef
-          : compareSpanGridRef;
+      isSimulator && selectedTab === "trace"
+        ? selectedGraph === "primary"
+          ? primaryCallLogsGridRef
+          : compareCallLogsGridRef
+        : selectedGraph === "primary"
+          ? selectedTab === "trace"
+            ? primaryTraceGridRef
+            : primarySpanGridRef
+          : selectedTab === "trace"
+            ? compareTraceGridRef
+            : compareSpanGridRef;
 
     if (!gridRef.current?.api) return;
 

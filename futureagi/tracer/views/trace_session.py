@@ -3,7 +3,7 @@ import json
 import traceback
 from collections import defaultdict
 from dataclasses import asdict
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 try:
     import orjson
@@ -1013,6 +1013,33 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     except EndUser.DoesNotExist:
                         raise Exception("User not found")  # noqa: B904
 
+            # In org-scoped mode with a user filter, narrow session_ids to
+            # only those linked to this user's spans BEFORE the heavy
+            # aggregation. Without this, the GROUP BY scans every session
+            # in every org project and exceeds PG's 30s statement_timeout.
+            # In single-project mode session_ids is already bounded by
+            # project_id, so the planner handles it without help.
+            if org_scope and end_user_filter:
+                user_session_ids = list(
+                    ObservationSpan.objects.filter(
+                        trace__session_id__in=session_ids,
+                        **end_user_filter,
+                    )
+                    .values_list("trace__session_id", flat=True)
+                    .distinct()
+                )
+                if not user_session_ids:
+                    return self._gm.success_response(
+                        {
+                            "metadata": {"total_rows": 0},
+                            "table": [],
+                            "config": get_default_project_session_config(),
+                        }
+                    )
+                session_ids = TraceSession.objects.filter(
+                    id__in=user_session_ids
+                ).values("id")
+
             fm_lm_columns = {"first_message", "last_message"}
             needs_first_last = any(
                 f.get("column_id") in fm_lm_columns for f in remaining_filters
@@ -1385,6 +1412,13 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         """
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
+        # Resolve `org` once at the top — it's referenced both when injecting
+        # the synthetic end_user_id filter (below) and when decorating the
+        # formatted output with EndUser info (later). Previously only the
+        # later block defined it, so the earlier reference NameError'd as
+        # soon as ``user_id_raw`` was truthy and silently fell through to PG.
+        org = getattr(request, "organization", None) or request.user.organization
+
         org_scope = bool(org_project_ids)
         filters = list(validated_data.get("filters", []) or [])
         sort_params = validated_data.get("sort_params", [])
@@ -1415,9 +1449,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             _remaining.append(_f)
         filters = _remaining
 
-        # Resolve the raw user_id to a list of end_user UUIDs and inject as
-        # a synthetic end_user_id IN(...) filter. Scope by org (and project
-        # if we're in project mode).
+        # Resolve the raw user_id to end_user rows in one query. We need
+        # both the UUIDs (to inject as a synthetic end_user_id IN(...)
+        # filter) and the display fields (to stitch onto the formatted
+        # output later) — fetch them together to save a round-trip.
+        end_user_display: Optional[Dict[str, Any]] = None
         if user_id_raw:
             _eu_qs = EndUser.objects.filter(
                 user_id=user_id_raw,
@@ -1426,9 +1462,18 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
             if not org_scope and project_id:
                 _eu_qs = _eu_qs.filter(project_id=project_id)
-            _ids = [str(u) for u in _eu_qs.values_list("id", flat=True)]
+            _eu_rows = list(
+                _eu_qs.values("id", "user_id", "user_id_type", "user_id_hash")
+            )
+            _ids = [str(r["id"]) for r in _eu_rows]
             if not _ids:
                 _ids = [NIL_UUID]
+            else:
+                end_user_display = {
+                    "user_id": _eu_rows[0]["user_id"],
+                    "user_id_type": _eu_rows[0]["user_id_type"],
+                    "user_id_hash": _eu_rows[0]["user_id_hash"],
+                }
             filters.append(
                 {
                     "column_id": "end_user_id",
@@ -1511,6 +1556,18 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     entry["session_name"] = _name_map.get(_UUID(sid))
                 except (ValueError, TypeError):
                     entry["session_name"] = None
+
+        # Inject user info when a user_id filter is active. The EndUser
+        # row was already resolved above when we built the synthetic
+        # filter, so no extra DB hit is needed here. In org-scoped mode
+        # multiple EndUser rows can match (one per project) — we pick
+        # the first; the display fields are typically identical across
+        # rows for the same logical user.
+        if end_user_display and formatted:
+            for entry in formatted:
+                entry["user_id"] = end_user_display["user_id"]
+                entry["user_id_type"] = end_user_display["user_id_type"]
+                entry["user_id_hash"] = end_user_display["user_id_hash"]
 
         # Phase 2: Aggregated span attributes for custom columns
         _SKIP_ATTR_PREFIXES = (

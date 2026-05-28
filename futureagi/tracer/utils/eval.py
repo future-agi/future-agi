@@ -14,20 +14,23 @@ logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
-from model_hub.tasks.user_evaluation import trigger_error_localization_for_span
 from sdk.utils.helpers import _get_api_call_type
+from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
+from tfc.utils.case import to_camel_case, to_snake_case
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.eval_task import EvalTask
-from tracer.models.observation_span import EvalLogger, EvalTargetType, ObservationSpan
+from tracer.models.observation_span import (
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+    ObservationType,
+)
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.utils.helper import FieldConfig, get_default_trace_config
 from tracer.views.project import get_default_project_version_config
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+from tfc.constants.api_calls import APICallStatusChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -39,6 +42,7 @@ OBSERVE = "observe"
 
 # Re-export for backward compat
 from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
+
 
 # Friendly eval-mapping shorthands used in saved configs. The user-
 # facing variable picker (voice projects in particular) lets people map
@@ -67,6 +71,43 @@ def _walk_dotted_path(root, path):
                 return None
         else:
             return None
+    return current
+
+
+def _walk_raw_log(raw_log: dict, path: str):
+    """Walk raw_log with snake_case ↔ camelCase coercion per segment.
+
+    Voice-only fallback in ``_process_mapping``. Bridges FE picker
+    snake_case paths (``messages.0.end_time``) to vapi/retell camelCase
+    keys (``endTime``). Returns ``_MISSING`` on miss — distinguishing
+    that from a legitimate ``None`` matters because voice transcripts
+    store real ``null`` for fields like ``duration``/``metadata``.
+    """
+    if not isinstance(path, str) or not path:
+        return _MISSING
+
+    current = raw_log
+    for part in path.split("."):
+        if isinstance(current, list):
+            try:
+                current = current[int(part)]
+            except (ValueError, IndexError):
+                return _MISSING
+            continue
+        if not isinstance(current, dict):
+            return _MISSING
+        if part in current:
+            current = current[part]
+            continue
+        camel = to_camel_case(part)
+        if camel != part and camel in current:
+            current = current[camel]
+            continue
+        snake = to_snake_case(part)
+        if snake != part and snake in current:
+            current = current[snake]
+            continue
+        return _MISSING
     return current
 
 
@@ -207,9 +248,7 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
     from tracer.models.observation_span import ObservationSpan
 
     try:
-        _agg = ObservationSpan.objects.filter(
-            trace=trace, deleted=False
-        ).aggregate(
+        _agg = ObservationSpan.objects.filter(trace=trace, deleted=False).aggregate(
             span_count=Count("id"),
             error_count=Count("id", filter=Q(status="ERROR")),
             total_tokens=Sum("total_tokens"),
@@ -286,9 +325,7 @@ def build_session_context(session) -> dict | None:
         per_trace = {
             row["trace_id"]: row
             for row in (
-                ObservationSpan.objects.filter(
-                    trace_id__in=trace_ids, deleted=False
-                )
+                ObservationSpan.objects.filter(trace_id__in=trace_ids, deleted=False)
                 .values("trace_id")
                 .annotate(
                     span_count=Count("id"),
@@ -303,11 +340,11 @@ def build_session_context(session) -> dict | None:
         # trace to bound payload size.
         spans_by_trace: dict = {}
         for s in (
-            ObservationSpan.objects.filter(
-                trace_id__in=trace_ids, deleted=False
-            )
+            ObservationSpan.objects.filter(trace_id__in=trace_ids, deleted=False)
             .order_by("start_time")
-            .values("id", "trace_id", "name", "observation_type", "status", "parent_span_id")
+            .values(
+                "id", "trace_id", "name", "observation_type", "status", "parent_span_id"
+            )
         ):
             bucket = spans_by_trace.setdefault(s["trace_id"], [])
             if len(bucket) >= 50:
@@ -356,9 +393,7 @@ def build_session_context(session) -> dict | None:
         return {
             "id": str(session.id),
             "name": session.name,
-            "project_id": (
-                str(session.project_id) if session.project_id else None
-            ),
+            "project_id": (str(session.project_id) if session.project_id else None),
             "bookmarked": session.bookmarked,
             "created_at": (
                 session.created_at.isoformat() if session.created_at else None
@@ -368,9 +403,7 @@ def build_session_context(session) -> dict | None:
             "error_count": sess_agg["error_count"] or 0,
             "total_tokens": sess_agg["total_tokens"] or 0,
             "total_cost": (
-                float(round(sess_agg["total_cost"], 6))
-                if sess_agg["total_cost"]
-                else 0
+                float(round(sess_agg["total_cost"], 6)) if sess_agg["total_cost"] else 0
             ),
             "start_time": str(start) if start else None,
             "end_time": str(end) if end else None,
@@ -422,9 +455,7 @@ def _process_mapping(
     try:
         given_eval_template = EvalTemplate.no_workspace_objects.get(id=eval_template_id)
         optional_keys = given_eval_template.config.get("optional_keys", [])
-        is_user_custom_eval = bool(
-            given_eval_template.config.get("custom_eval", False)
-        )
+        is_user_custom_eval = bool(given_eval_template.config.get("custom_eval", False))
         if len(optional_keys) > 0:
             for key in optional_keys:
                 if key in mapping and (mapping[key] is None or mapping[key] == ""):
@@ -457,6 +488,20 @@ def _process_mapping(
             if model_val is not _MISSING:
                 resolved_value = model_val
 
+        # Voice raw_log fallback: paths the BE response builder normalizes
+        # from raw_log at API time (messages.<n>.*, started_at, …) but
+        # never persists as flat span_attributes. Gated on observation_type
+        # so non-voice spans are unaffected. See _walk_raw_log.
+        if (
+            resolved_value is _MISSING
+            and span.observation_type == ObservationType.CONVERSATION
+        ):
+            raw_log = span_attrs.get("raw_log")
+            if isinstance(raw_log, dict):
+                walked = _walk_raw_log(raw_log, attribute)
+                if walked is not _MISSING:
+                    resolved_value = walked
+
         if resolved_value is not _MISSING:
             if isinstance(resolved_value, str):
                 parsed_mapping[key] = resolved_value
@@ -477,6 +522,203 @@ def _process_mapping(
             )
 
     return parsed_mapping
+
+
+def _dedupe_preserve_order(items):
+    """Return ``items`` with duplicates removed, keeping first-seen order.
+
+    Used to guarantee ``EvalLogger.output_str_list`` never repeats a choice
+    when the upstream eval emits duplicates (per-item dicts, choices arrays,
+    plain string lists — all funnel through here).
+    """
+    seen = set()
+    out = []
+    for x in items:
+        if x in seen:
+            continue
+        seen.add(x)
+        out.append(x)
+    return out
+
+
+def _dual_write_eval_value(value, config_output, logger_kwargs):
+    """Populate ``logger_kwargs`` with one eval result, dual-writing both the
+    new (``output_str``) and legacy (``output_float`` / ``output_str_list``)
+    shapes so FE readers that still consume the typed columns keep working.
+
+    Gating (see the dual-write plan):
+      * ``output_float`` is (re-)populated only when ``config_output == "score"``.
+      * ``output_str_list`` is (re-)populated only when ``config_output == "choices"``.
+      * ``output_bool`` is never touched here; the bool / "Passed"/"Failed"
+        branches behave exactly as today's dispatch.
+      * Any other ``config_output`` (``Pass/Fail``, ``reason``, ``numeric``, …)
+        keeps today's isinstance-chain behaviour unchanged.
+
+    The dict shape ``{"score": …, "choice": …}`` / ``{"score": …, "choices": […]}``
+    comes from ``evaluations/engine/formatting.py``'s choices branch; we serialize
+    it as JSON into ``output_str`` for the new format.
+    """
+    if isinstance(value, bool):
+        logger_kwargs["output_bool"] = value
+        return
+    if value in ("Passed", "Failed"):
+        logger_kwargs["output_bool"] = value == "Passed"
+        return
+
+    if config_output == "score":
+        if isinstance(value, dict):
+            logger_kwargs["output_str"] = json.dumps(value)
+            score = value.get("score")
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                logger_kwargs["output_float"] = float(score)
+        elif isinstance(value, (int, float)):
+            logger_kwargs["output_float"] = float(value)
+        elif isinstance(value, list):
+            # Score evals never store a list — collapse to the mean so the FE
+            # always reads a single scalar from output_float. Elements may be
+            # raw numbers or per-item dicts shaped like ``{"score": …, "choice": …}``
+            # from the choices-promoted code path; extract the score from each.
+            # Keep the original list in output_str so per-element values stay
+            # inspectable.
+            logger_kwargs["output_str"] = json.dumps(value)
+            numerics = []
+            for v in value:
+                if isinstance(v, bool):
+                    continue
+                if isinstance(v, (int, float)):
+                    numerics.append(v)
+                elif isinstance(v, dict):
+                    s = v.get("score")
+                    if isinstance(s, (int, float)) and not isinstance(s, bool):
+                        numerics.append(s)
+            if numerics:
+                logger_kwargs["output_float"] = sum(numerics) / len(numerics)
+        else:
+            logger_kwargs["output_str"] = str(value)
+        return
+
+    if config_output == "choices":
+        if isinstance(value, dict):
+            logger_kwargs["output_str"] = json.dumps(value)
+            choice = value.get("choice")
+            choices = value.get("choices")
+            if isinstance(choice, str):
+                logger_kwargs["output_str_list"] = [choice]
+            elif isinstance(choices, list):
+                logger_kwargs["output_str_list"] = _dedupe_preserve_order(choices)
+        elif isinstance(value, str):
+            logger_kwargs["output_str"] = value
+            logger_kwargs["output_str_list"] = [value]
+        elif isinstance(value, list):
+            # Two shapes can arrive here:
+            #   * Plain list of choice strings.
+            #   * List of per-item dicts shaped like ``{"choice": …}`` /
+            #     ``{"choices": [...]}`` (mirrors the dict branch above).
+            # Flatten + dedupe to a single ordered list either way. If any
+            # element is a dict, also dump the raw list to ``output_str`` so the
+            # per-item payloads stay inspectable.
+            if any(isinstance(v, dict) for v in value):
+                logger_kwargs["output_str"] = json.dumps(value)
+            collected = []
+            for v in value:
+                if isinstance(v, str):
+                    collected.append(v)
+                elif isinstance(v, dict):
+                    inner_choice = v.get("choice")
+                    inner_choices = v.get("choices")
+                    if isinstance(inner_choice, str):
+                        collected.append(inner_choice)
+                    elif isinstance(inner_choices, list):
+                        collected.extend(c for c in inner_choices if isinstance(c, str))
+            logger_kwargs["output_str_list"] = _dedupe_preserve_order(collected)
+        elif isinstance(value, (int, float)):
+            logger_kwargs["output_float"] = float(value)
+        else:
+            logger_kwargs["output_str"] = str(value)
+        return
+
+    # Other output types — preserve today's dispatch verbatim.
+    if isinstance(value, (int, float)):
+        logger_kwargs["output_float"] = float(value)
+    elif isinstance(value, list):
+        logger_kwargs["output_str_list"] = value
+    else:
+        logger_kwargs["output_str"] = str(value)
+
+
+def _eval_config_output(custom_eval_config):
+    """Read the stored ``output`` type from an eval template config.
+
+    Never use the runtime-promoted value (``format_eval_value`` internally
+    promotes ``score`` → ``choices`` when ``choice_scores`` exist); the gating
+    rules in :func:`_dual_write_eval_value` are keyed on the **stored** type.
+    """
+    try:
+        return custom_eval_config.eval_template.config.get("output", "score")
+    except (AttributeError, TypeError):
+        return "score"
+
+
+def _emit_eval_billing(
+    org_id: str,
+    api_call_type,
+    source_id: str,
+    target_type: str,
+    result,
+    custom_eval_config,
+    ws_id: str | None,
+    api_call_log_row,
+    feedback_id=None,
+):
+    """Emit a UsageEvent for the new billing pipeline after a successful eval.
+
+    Centralizes the dual-write block used by span/trace/session eval paths.
+    Silently no-ops when ee billing modules are unavailable or on any error.
+    """
+    try:
+        from ee.usage.schemas.events import UsageEvent
+    except ImportError:
+        return
+    try:
+        from ee.usage.services.config import BillingConfig
+    except ImportError:
+        return
+    try:
+        from ee.usage.services.emitter import emit
+    except ImportError:
+        return
+    try:
+        from ee.usage.utils.event_properties import token_usage_properties
+    except ImportError:
+        token_usage_properties = lambda token_usage: {}
+
+    try:
+        billing_config = BillingConfig.get()
+        _llm_cost = (result.cost or {}).get("total_cost", 0)
+        _per_run_fee = billing_config.get_eval_per_run_fee()
+        _actual_cost = _llm_cost + _per_run_fee
+        _token_usage = result.token_usage or {}
+        credits = billing_config.calculate_ai_credits(_actual_cost)
+
+        emit(
+            UsageEvent(
+                org_id=org_id,
+                event_type=api_call_type,
+                amount=credits,
+                properties={
+                    "source": "tracer" if not feedback_id else "feedback",
+                    "source_id": source_id,
+                    "model": custom_eval_config.model or "",
+                    "workspace_id": ws_id or "",
+                    "log_id": str(api_call_log_row.log_id) if api_call_log_row else "",
+                    "raw_cost_usd": str(_actual_cost),
+                    "target_type": target_type,
+                    **token_usage_properties(_token_usage),
+                },
+            )
+        )
+    except Exception:
+        pass  # Metering failure must not break eval
 
 
 def _run_evaluation(
@@ -527,23 +769,26 @@ def _run_evaluation(
             check_usage = None
 
         org = observation_span.project.organization
-        usage_check = check_usage(str(org.id), api_call_type)
-        if not usage_check.allowed:
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+        if check_usage is not None:
+            usage_check = check_usage(str(org.id), api_call_type)
+            if not usage_check.allowed:
+                raise ValueError(usage_check.reason or "Usage limit exceeded")
 
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=org,
-            api_call_type=api_call_type,
-            source="tracer" if not feedback_id else "feedback",
-            source_id=eval_model.id,
-            config=source_config,
-            workspace=workspace,
-        )
-        if not api_call_log_row:
-            raise ValueError("API call not allowed : Error validating the api call.")
+        api_call_log_row = None
+        if log_and_deduct_cost_for_api_request is not None:
+            api_call_log_row = log_and_deduct_cost_for_api_request(
+                organization=org,
+                api_call_type=api_call_type,
+                source="tracer" if not feedback_id else "feedback",
+                source_id=eval_model.id,
+                config=source_config,
+                workspace=workspace,
+            )
+            if not api_call_log_row:
+                raise ValueError("API call not allowed : Error validating the api call.")
 
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError("API call not allowed : ", api_call_log_row.status)
+            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                raise ValueError("API call not allowed : ", api_call_log_row.status)
 
         # Apply the same empty-input rules the dataset and playground
         # paths use, so eval tasks behave consistently with everywhere
@@ -577,19 +822,20 @@ def _run_evaluation(
             response["warnings"] = [partial_input_warning]
         value = runner.format_output(result_data=response, eval_template=eval_model)
 
-        config_dict = json.loads(api_call_log_row.config)
-        output_payload = {"output": value, "reason": response["reason"]}
-        if response.get("warnings"):
-            output_payload["warnings"] = response["warnings"]
-        config_dict.update(
-            {
-                "input": response["data"],
-                "output": output_payload,
-            }
-        )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
+            output_payload = {"output": value, "reason": response["reason"]}
+            if response.get("warnings"):
+                output_payload["warnings"] = response["warnings"]
+            config_dict.update(
+                {
+                    "input": response["data"],
+                    "output": output_payload,
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:
@@ -605,25 +851,34 @@ def _run_evaluation(
                 from ee.usage.services.emitter import emit
             except ImportError:
                 emit = None
-
+            try:
+                from ee.usage.utils.event_properties import token_usage_properties
+            except ImportError:
+                token_usage_properties = lambda token_usage: {}
+            
+            _token_usage = getattr(eval_instance, "token_usage", {})
             actual_cost = getattr(eval_instance, "cost", {}).get("total_cost", 0)
-            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+            credits = 0
+            if BillingConfig is not None:
+                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            emit(
-                UsageEvent(
-                    org_id=str(observation_span.project.organization_id),
-                    event_type=api_call_type,
-                    amount=credits,
-                    properties={
-                        "source": "tracer" if not feedback_id else "feedback",
-                        "source_id": str(eval_model.id),
-                        "model": custom_eval_config.model if custom_eval_config else "",
-                        "workspace_id": str(workspace.id) if workspace else "",
-                        "log_id": str(api_call_log_row.log_id),
-                        "raw_cost_usd": str(actual_cost),
-                    },
+            if emit is not None and UsageEvent is not None:
+                emit(
+                    UsageEvent(
+                        org_id=str(observation_span.project.organization_id),
+                        event_type=api_call_type,
+                        amount=credits,
+                        properties={
+                            "source": "tracer" if not feedback_id else "feedback",
+                            "source_id": str(eval_model.id),
+                            "model": custom_eval_config.model if custom_eval_config else "",
+                            "workspace_id": str(workspace.id) if workspace else "",
+                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
+                            "raw_cost_usd": str(actual_cost),
+                            **token_usage_properties(_token_usage),
+                        },
+                    )
                 )
-            )
         except Exception:
             pass  # Metering failure must not break eval
 
@@ -653,18 +908,19 @@ def _run_evaluation(
             "eval_task_id": eval_task_id,
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
-            "log_id": api_call_log_row.log_id,
+            "log_id": api_call_log_row.log_id if api_call_log_row else None,
         }
 
     except Exception as e:
         traceback.print_exc()
         error_message = str(e)
         try:
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
-            current_config.update({"output": {"output": None, "reason": str(e)}})
-            api_call_log_row.config = json.dumps(current_config)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                current_config = json.loads(api_call_log_row.config)
+                current_config.update({"output": {"output": None, "reason": str(e)}})
+                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.save()
         except Exception:
             pass
         logger_kwargs = {
@@ -689,16 +945,9 @@ def _run_evaluation(
     # Determine the appropriate field based on value type
     if value != "ERROR":  # Only try to process value type if no error occurred
         logger_kwargs["value"] = value
-        if isinstance(value, bool):
-            logger_kwargs["output_bool"] = value
-        elif isinstance(value, float) or isinstance(value, int):
-            logger_kwargs["output_float"] = float(value)
-        elif value in ["Passed", "Failed"]:
-            logger_kwargs["output_bool"] = True if value == "Passed" else False
-        elif isinstance(value, list):
-            logger_kwargs["output_str_list"] = value
-        else:
-            logger_kwargs["output_str"] = str(value)
+        _dual_write_eval_value(
+            value, _eval_config_output(custom_eval_config), logger_kwargs
+        )
 
     return logger_kwargs
 
@@ -809,14 +1058,9 @@ def _execute_composite_on_span(
 
     if value != "ERROR":
         logger_kwargs["value"] = value
-        if isinstance(value, bool):
-            logger_kwargs["output_bool"] = value
-        elif isinstance(value, float) or isinstance(value, int):
-            logger_kwargs["output_float"] = float(value)
-        elif isinstance(value, list):
-            logger_kwargs["output_str_list"] = value
-        else:
-            logger_kwargs["output_str"] = str(value)
+        _dual_write_eval_value(
+            value, _eval_config_output(custom_eval_config), logger_kwargs
+        )
 
     return logger_kwargs
 
@@ -858,7 +1102,9 @@ def _execute_composite_on_trace(
         .order_by("order")
     )
     if not child_links:
-        raise ValueError(f"Composite {parent.id} has no children — cannot run on trace.")
+        raise ValueError(
+            f"Composite {parent.id} has no children — cannot run on trace."
+        )
 
     # Mirror the single-eval trace path: set the workspace ContextVar so child
     # evals' tools (explore_trace etc.) see the right org scope.
@@ -944,14 +1190,9 @@ def _execute_composite_on_trace(
         value = "ERROR"
 
     if value != "ERROR":
-        if isinstance(value, bool):
-            logger_kwargs["output_bool"] = value
-        elif isinstance(value, float) or isinstance(value, int):
-            logger_kwargs["output_float"] = float(value)
-        elif isinstance(value, list):
-            logger_kwargs["output_str_list"] = value
-        else:
-            logger_kwargs["output_str"] = str(value)
+        _dual_write_eval_value(
+            value, _eval_config_output(custom_eval_config), logger_kwargs
+        )
 
     return logger_kwargs
 
@@ -1080,14 +1321,9 @@ def _execute_composite_on_session(
         value = "ERROR"
 
     if value != "ERROR":
-        if isinstance(value, bool):
-            logger_kwargs["output_bool"] = value
-        elif isinstance(value, float) or isinstance(value, int):
-            logger_kwargs["output_float"] = float(value)
-        elif isinstance(value, list):
-            logger_kwargs["output_str_list"] = value
-        else:
-            logger_kwargs["output_str"] = str(value)
+        _dual_write_eval_value(
+            value, _eval_config_output(custom_eval_config), logger_kwargs
+        )
 
     return logger_kwargs
 
@@ -1177,23 +1413,27 @@ def _execute_evaluation(
             is_active=True,
         )
 
-    api_call_log_row = log_and_deduct_cost_for_api_request(
-        organization=observation_span.project.organization,
-        api_call_type=api_call_type,
-        source="tracer" if not feedback_id else "feedback",
-        source_id=eval_model.id,
-        config=source_config,
-        workspace=workspace,
-    )
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-        raise ValueError("API call not allowed : ", api_call_log_row.status)
+    api_call_log_row = None
+    if log_and_deduct_cost_for_api_request is not None:
+        api_call_log_row = log_and_deduct_cost_for_api_request(
+            organization=observation_span.project.organization,
+            api_call_type=api_call_type,
+            source="tracer" if not feedback_id else "feedback",
+            source_id=eval_model.id,
+            config=source_config,
+            workspace=workspace,
+        )
+        if not api_call_log_row:
+            raise ValueError("API call not allowed : Error validating the api call.")
+        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Build context for data_injection support ---
     _eval_inputs = dict(run_params or {})
     _di = _di_normalize(
-        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+        (custom_eval_config.config or {})
+        .get("run_config", {})
+        .get("data_injection", {})
     )
     if _di["span_context"]:
         _eval_inputs["span_context"] = build_span_context(observation_span)
@@ -1235,16 +1475,30 @@ def _execute_evaluation(
         # Build the output payload up front so the partial-input warning
         # rides on the single save below — avoids losing the warning if a
         # follow-up save were to fail (see _build_apicall_output).
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "input": result.data,
-                "output": _build_apicall_output(result, partial_input_warning),
-            }
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "input": result.data,
+                    "output": _build_apicall_output(result, partial_input_warning),
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
+
+        # Dual-write: emit usage event for new billing system (cost-based)
+        _emit_eval_billing(
+            org_id=org_id,
+            api_call_type=api_call_type,
+            source_id=str(eval_model.id),
+            target_type=EvalTargetType.SPAN.value,
+            result=result,
+            custom_eval_config=custom_eval_config,
+            ws_id=ws_id,
+            api_call_log_row=api_call_log_row,
+            feedback_id=feedback_id,
         )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
 
         # Parse metadata
         metadata = result.metadata
@@ -1283,18 +1537,19 @@ def _execute_evaluation(
             "eval_task_id": eval_task_id,
             "custom_eval_config": custom_eval_config,
             "eval_type_id": eval_type_id,
-            "log_id": api_call_log_row.log_id,
+            "log_id": api_call_log_row.log_id if api_call_log_row else None,
         }
 
     except Exception as e:
         traceback.print_exc()
         error_message = str(e)
         try:
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
-            current_config.update({"output": {"output": None, "reason": str(e)}})
-            api_call_log_row.config = json.dumps(current_config)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                current_config = json.loads(api_call_log_row.config)
+                current_config.update({"output": {"output": None, "reason": str(e)}})
+                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.save()
         except Exception:
             pass
         logger_kwargs = {
@@ -1319,16 +1574,9 @@ def _execute_evaluation(
     # Determine the appropriate field based on value type
     if value != "ERROR":
         logger_kwargs["value"] = value
-        if isinstance(value, bool):
-            logger_kwargs["output_bool"] = value
-        elif isinstance(value, float) or isinstance(value, int):
-            logger_kwargs["output_float"] = float(value)
-        elif value in ["Passed", "Failed"]:
-            logger_kwargs["output_bool"] = True if value == "Passed" else False
-        elif isinstance(value, list):
-            logger_kwargs["output_str_list"] = value
-        else:
-            logger_kwargs["output_str"] = str(value)
+        _dual_write_eval_value(
+            value, _eval_config_output(custom_eval_config), logger_kwargs
+        )
 
     # Persist EvalLogger result
     if logger_kwargs:
@@ -1361,7 +1609,10 @@ def _execute_evaluation(
             ).get(pk=eval_log.pk)
 
         if custom_eval_config.error_localizer:
-            from model_hub.tasks.user_evaluation import _eval_passed
+            from model_hub.tasks.user_evaluation import (
+                _eval_passed,
+                trigger_error_localization_for_span,
+            )
 
             if not _eval_passed(value):
                 trigger_error_localization_for_span(
@@ -2248,13 +2499,9 @@ def _process_trace_mapping(
     is_user_custom_eval = False
 
     try:
-        given_eval_template = EvalTemplate.no_workspace_objects.get(
-            id=eval_template_id
-        )
+        given_eval_template = EvalTemplate.no_workspace_objects.get(id=eval_template_id)
         optional_keys = given_eval_template.config.get("optional_keys", []) or []
-        is_user_custom_eval = bool(
-            given_eval_template.config.get("custom_eval", False)
-        )
+        is_user_custom_eval = bool(given_eval_template.config.get("custom_eval", False))
         for key in optional_keys:
             if key in mapping and (mapping[key] is None or mapping[key] == ""):
                 mapping.pop(key)
@@ -2269,9 +2516,7 @@ def _process_trace_mapping(
             f"EvalTemplate {eval_template_id} not found while processing "
             f"trace mapping for trace {trace.id}"
         )
-        raise ValueError(
-            f"EvalTemplate {eval_template_id} not found"
-        )
+        raise ValueError(f"EvalTemplate {eval_template_id} not found")
 
     for key, attribute in mapping.items():
         value = _resolve_trace_path(trace, attribute) if attribute else _MISSING
@@ -2306,13 +2551,9 @@ def _process_session_mapping(
     is_user_custom_eval = False
 
     try:
-        given_eval_template = EvalTemplate.no_workspace_objects.get(
-            id=eval_template_id
-        )
+        given_eval_template = EvalTemplate.no_workspace_objects.get(id=eval_template_id)
         optional_keys = given_eval_template.config.get("optional_keys", []) or []
-        is_user_custom_eval = bool(
-            given_eval_template.config.get("custom_eval", False)
-        )
+        is_user_custom_eval = bool(given_eval_template.config.get("custom_eval", False))
         for key in optional_keys:
             if key in mapping and (mapping[key] is None or mapping[key] == ""):
                 mapping.pop(key)
@@ -2324,15 +2565,11 @@ def _process_session_mapping(
             f"EvalTemplate {eval_template_id} not found while processing "
             f"session mapping for session {trace_session.id}"
         )
-        raise ValueError(
-            f"EvalTemplate {eval_template_id} not found"
-        )
+        raise ValueError(f"EvalTemplate {eval_template_id} not found")
 
     for key, attribute in mapping.items():
         value = (
-            _resolve_session_path(trace_session, attribute)
-            if attribute
-            else _MISSING
+            _resolve_session_path(trace_session, attribute) if attribute else _MISSING
         )
         if value is _MISSING:
             if is_user_custom_eval:
@@ -2426,31 +2663,32 @@ def _execute_evaluation_for_trace(
         source_config["feedback_id"] = str(feedback_id)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
-    api_call_log_row = log_and_deduct_cost_for_api_request(
-        organization=trace.project.organization,
-        api_call_type=api_call_type,
-        source="tracer" if not feedback_id else "feedback",
-        source_id=eval_template.id,
-        config=source_config,
-        workspace=workspace,
-    )
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-        raise ValueError("API call not allowed : ", api_call_log_row.status)
+    api_call_log_row = None
+    if log_and_deduct_cost_for_api_request is not None:
+        api_call_log_row = log_and_deduct_cost_for_api_request(
+            organization=trace.project.organization,
+            api_call_type=api_call_type,
+            source="tracer" if not feedback_id else "feedback",
+            source_id=eval_template.id,
+            config=source_config,
+            workspace=workspace,
+        )
+        if not api_call_log_row:
+            raise ValueError("API call not allowed : Error validating the api call.")
+        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Set workspace context for tools that need org-scoping ---
     # See _execute_evaluation_for_session for rationale; same applies here.
     try:
         from tfc.middleware.workspace_context import set_workspace_context
+
         set_workspace_context(
             workspace=workspace,
             organization=trace.project.organization,
         )
     except Exception as _ctx_err:
-        logger.warning(
-            "Failed to set workspace context for trace eval: %s", _ctx_err
-        )
+        logger.warning("Failed to set workspace context for trace eval: %s", _ctx_err)
 
     # --- Build context for data_injection support (trace-scoped) ---
     # Mirrors the span-level _execute_evaluation block. At trace level, the
@@ -2464,7 +2702,9 @@ def _execute_evaluation_for_trace(
     #                     trace-scoped but the anchor span has rich detail.
     _eval_inputs = dict(run_params or {})
     _di = _di_normalize(
-        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+        (custom_eval_config.config or {})
+        .get("run_config", {})
+        .get("data_injection", {})
     )
     if _di["trace_context"]:
         _eval_inputs["trace_context"] = build_trace_context(trace)
@@ -2493,16 +2733,30 @@ def _execute_evaluation_for_trace(
             )
         )
 
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "input": result.data,
-                "output": _build_apicall_output(result, partial_input_warning),
-            }
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "input": result.data,
+                    "output": _build_apicall_output(result, partial_input_warning),
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
+
+        # Dual-write: emit usage event for new billing system (cost-based)
+        _emit_eval_billing(
+            org_id=org_id,
+            api_call_type=api_call_type,
+            source_id=str(eval_template.id),
+            target_type=EvalTargetType.TRACE.value,
+            result=result,
+            custom_eval_config=custom_eval_config,
+            ws_id=ws_id,
+            api_call_log_row=api_call_log_row,
+            feedback_id=feedback_id,
         )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
 
         metadata = result.metadata
         if isinstance(metadata, str):
@@ -2545,13 +2799,14 @@ def _execute_evaluation_for_trace(
         traceback.print_exc()
         error_message = str(e)
         try:
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
-            current_config.update(
-                {"output": {"output": None, "reason": str(e)}}
-            )
-            api_call_log_row.config = json.dumps(current_config)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                current_config = json.loads(api_call_log_row.config)
+                current_config.update(
+                    {"output": {"output": None, "reason": str(e)}}
+                )
+                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.save()
         except Exception:
             pass
         logger_kwargs = {
@@ -2576,16 +2831,9 @@ def _execute_evaluation_for_trace(
         value = "ERROR"
 
     if value != "ERROR":
-        if isinstance(value, bool):
-            logger_kwargs["output_bool"] = value
-        elif isinstance(value, float) or isinstance(value, int):
-            logger_kwargs["output_float"] = float(value)
-        elif value in ["Passed", "Failed"]:
-            logger_kwargs["output_bool"] = True if value == "Passed" else False
-        elif isinstance(value, list):
-            logger_kwargs["output_str_list"] = value
-        else:
-            logger_kwargs["output_str"] = str(value)
+        _dual_write_eval_value(
+            value, _eval_config_output(custom_eval_config), logger_kwargs
+        )
 
     EvalLogger.objects.create(**logger_kwargs)
 
@@ -2651,18 +2899,20 @@ def _execute_evaluation_for_session(
         source_config["feedback_id"] = str(feedback_id)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
-    api_call_log_row = log_and_deduct_cost_for_api_request(
-        organization=trace_session.project.organization,
-        api_call_type=api_call_type,
-        source="tracer" if not feedback_id else "feedback",
-        source_id=eval_template.id,
-        config=source_config,
-        workspace=workspace,
-    )
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-        raise ValueError("API call not allowed : ", api_call_log_row.status)
+    api_call_log_row = None
+    if log_and_deduct_cost_for_api_request is not None:
+        api_call_log_row = log_and_deduct_cost_for_api_request(
+            organization=trace_session.project.organization,
+            api_call_type=api_call_type,
+            source="tracer" if not feedback_id else "feedback",
+            source_id=eval_template.id,
+            config=source_config,
+            workspace=workspace,
+        )
+        if not api_call_log_row:
+            raise ValueError("API call not allowed : Error validating the api call.")
+        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Set workspace context for tools that need org-scoping ---
     # The explore_trace tool's live DB actions (list_trace_spans, span_detail)
@@ -2672,14 +2922,13 @@ def _execute_evaluation_for_session(
     # individual trace spans during exploration.
     try:
         from tfc.middleware.workspace_context import set_workspace_context
+
         set_workspace_context(
             workspace=workspace,
             organization=trace_session.project.organization,
         )
     except Exception as _ctx_err:
-        logger.warning(
-            "Failed to set workspace context for session eval: %s", _ctx_err
-        )
+        logger.warning("Failed to set workspace context for session eval: %s", _ctx_err)
 
     # --- Build context for data_injection support (session-scoped) ---
     # Mirrors the span-level _execute_evaluation block. At session level, the
@@ -2694,7 +2943,9 @@ def _execute_evaluation_for_session(
     #   span_context    → not applicable at session-level.
     _eval_inputs = dict(run_params or {})
     _di = _di_normalize(
-        (custom_eval_config.config or {}).get("run_config", {}).get("data_injection", {})
+        (custom_eval_config.config or {})
+        .get("run_config", {})
+        .get("data_injection", {})
     )
     if _di["session_context"]:
         _session_ctx = build_session_context(trace_session)
@@ -2718,16 +2969,30 @@ def _execute_evaluation_for_session(
             )
         )
 
-        config_dict = json.loads(api_call_log_row.config)
-        config_dict.update(
-            {
-                "input": result.data,
-                "output": _build_apicall_output(result, partial_input_warning),
-            }
+        if api_call_log_row is not None:
+            config_dict = json.loads(api_call_log_row.config)
+            config_dict.update(
+                {
+                    "input": result.data,
+                    "output": _build_apicall_output(result, partial_input_warning),
+                }
+            )
+            api_call_log_row.config = json.dumps(config_dict)
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save()
+
+        # Dual-write: emit usage event for new billing system (cost-based)
+        _emit_eval_billing(
+            org_id=org_id,
+            api_call_type=api_call_type,
+            source_id=str(eval_template.id),
+            target_type=EvalTargetType.SESSION.value,
+            result=result,
+            custom_eval_config=custom_eval_config,
+            ws_id=ws_id,
+            api_call_log_row=api_call_log_row,
+            feedback_id=feedback_id,
         )
-        api_call_log_row.config = json.dumps(config_dict)
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save()
 
         metadata = result.metadata
         if isinstance(metadata, str):
@@ -2770,13 +3035,14 @@ def _execute_evaluation_for_session(
         traceback.print_exc()
         error_message = str(e)
         try:
-            api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
-            current_config.update(
-                {"output": {"output": None, "reason": str(e)}}
-            )
-            api_call_log_row.config = json.dumps(current_config)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                api_call_log_row.status = APICallStatusChoices.ERROR.value
+                current_config = json.loads(api_call_log_row.config)
+                current_config.update(
+                    {"output": {"output": None, "reason": str(e)}}
+                )
+                api_call_log_row.config = json.dumps(current_config)
+                api_call_log_row.save()
         except Exception:
             pass
         logger_kwargs = {
@@ -2801,16 +3067,9 @@ def _execute_evaluation_for_session(
         value = "ERROR"
 
     if value != "ERROR":
-        if isinstance(value, bool):
-            logger_kwargs["output_bool"] = value
-        elif isinstance(value, float) or isinstance(value, int):
-            logger_kwargs["output_float"] = float(value)
-        elif value in ["Passed", "Failed"]:
-            logger_kwargs["output_bool"] = True if value == "Passed" else False
-        elif isinstance(value, list):
-            logger_kwargs["output_str_list"] = value
-        else:
-            logger_kwargs["output_str"] = str(value)
+        _dual_write_eval_value(
+            value, _eval_config_output(custom_eval_config), logger_kwargs
+        )
 
     EvalLogger.objects.create(**logger_kwargs)
 
@@ -2890,9 +3149,7 @@ def evaluate_trace_observe(
     target_type='trace' EvalLogger row anchored to the trace's root span.
     """
     if not trace_id or not custom_eval_config_id:
-        raise ValueError(
-            "trace_id and custom_eval_config_id are required parameters"
-        )
+        raise ValueError("trace_id and custom_eval_config_id are required parameters")
 
     try:
         custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
@@ -2996,9 +3253,7 @@ def evaluate_trace_observe(
         )
         return False
     except Exception as e:
-        logger.exception(
-            f"Exception during evaluation in evaluate_trace_observe: {e}"
-        )
+        logger.exception(f"Exception during evaluation in evaluate_trace_observe: {e}")
         return False
 
 
@@ -3021,9 +3276,7 @@ def evaluate_trace_session_observe(
     and the session FK populated.
     """
     if not session_id or not custom_eval_config_id:
-        raise ValueError(
-            "session_id and custom_eval_config_id are required parameters"
-        )
+        raise ValueError("session_id and custom_eval_config_id are required parameters")
 
     try:
         custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
@@ -3067,9 +3320,7 @@ def evaluate_trace_session_observe(
         )
         return True
     except ValueError as e:
-        logger.error(
-            f"Error during evaluation in evaluate_trace_session_observe: {e}"
-        )
+        logger.error(f"Error during evaluation in evaluate_trace_session_observe: {e}")
         if eval_task_id:
             try:
                 with transaction.atomic():

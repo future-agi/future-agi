@@ -20,10 +20,7 @@ from agentic_eval.core_evals.fi_evals.eval_type import (
 )
 from model_hub.models.choices import EvalOutputType, EvalTemplateType, OwnerChoices
 from model_hub.types import EvalListFilters, ThirtyDayDataPoint
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+from tfc.constants.api_calls import APICallStatusChoices
 
 if TYPE_CHECKING:
     from model_hub.models.evals_metric import EvalTemplate

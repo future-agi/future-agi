@@ -370,3 +370,293 @@ class TestQueryTimeoutBudget:
         assert "LIMIT 500" in query
         assert "parent_span_id IS NULL OR parent_span_id = ''" in query
         assert "PREWHERE" in query
+
+
+@pytest.mark.unit
+class TestEndUserSubquery:
+    """Verify the session-scoped subquery used to filter by end_user_id.
+
+    ``end_user_id`` is set on the child span carrying the OTel ``user.id``
+    attribute, not on root spans. The session list query restricts to root
+    spans, so a direct ``end_user_id IN (...)`` would miss matches. The
+    builder hoists the filter into a session-scoped subquery:
+    ``trace_session_id IN (SELECT DISTINCT trace_session_id FROM spans
+    WHERE project_id ... AND end_user_id IN (...))``.
+    """
+
+    @staticmethod
+    def _build_with_end_user(
+        *,
+        end_user_ids,
+        project_id=None,
+        project_ids=None,
+        extra_filters=None,
+    ):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        filters = list(extra_filters or [])
+        if end_user_ids is not None:
+            filters.append(
+                {
+                    "column_id": "end_user_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": end_user_ids,
+                    },
+                }
+            )
+        return SessionListQueryBuilder(
+            project_id=project_id,
+            project_ids=project_ids,
+            filters=filters,
+            page_number=0,
+            page_size=30,
+        )
+
+    def test_subquery_emitted_single_project(self):
+        """Single-project mode emits a session-scoped subquery on end_user_id."""
+        ids = [str(uuid.uuid4()) for _ in range(3)]
+        builder = self._build_with_end_user(
+            end_user_ids=ids, project_id=str(uuid.uuid4())
+        )
+        query, params = builder.build()
+
+        assert "trace_session_id IN (" in query
+        assert "SELECT DISTINCT trace_session_id FROM spans" in query
+        assert "end_user_id IN %(_eu_ids)s" in query
+        assert "project_id = %(project_id)s" in query
+        assert params.get("_eu_ids") == tuple(ids)
+
+    def test_subquery_emitted_org_scope(self):
+        """Org-scoped mode uses project_id IN (...) inside the subquery."""
+        ids = [str(uuid.uuid4()) for _ in range(2)]
+        project_ids = [str(uuid.uuid4()) for _ in range(4)]
+        builder = self._build_with_end_user(end_user_ids=ids, project_ids=project_ids)
+        query, params = builder.build()
+
+        assert "trace_session_id IN (" in query
+        # Org-scope: the subquery's own project filter must use IN (...)
+        sub_start = query.index("SELECT DISTINCT trace_session_id")
+        subquery_body = query[sub_start:]
+        assert "project_id IN %(project_ids)s" in subquery_body
+        assert params.get("_eu_ids") == tuple(ids)
+        assert params.get("project_ids") == tuple(project_ids)
+
+    def test_no_subquery_when_filter_absent(self):
+        """Regression guard: absent filter must NOT emit the subquery clause."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id=str(uuid.uuid4()),
+            filters=[],
+            page_number=0,
+            page_size=30,
+        )
+        query, params = builder.build()
+
+        assert "trace_session_id IN (" not in query
+        assert "_eu_ids" not in params
+
+    def test_end_user_id_not_in_root_span_where(self):
+        """end_user_id must NOT appear as a direct root-span WHERE column.
+
+        The whole point of the subquery is to avoid filtering on the root
+        span's (always-NULL) end_user_id. Make sure the filter builder
+        didn't also splice it into the outer WHERE.
+        """
+        ids = [str(uuid.uuid4())]
+        builder = self._build_with_end_user(
+            end_user_ids=ids, project_id=str(uuid.uuid4())
+        )
+        query, params = builder.build()
+
+        # Find the start of the subquery. The text BEFORE that point is
+        # the outer root-span WHERE and must not reference end_user_id.
+        sub_start = query.index("SELECT DISTINCT trace_session_id")
+        outer_before_subquery = query[:sub_start]
+        assert "end_user_id" not in outer_before_subquery, (
+            "end_user_id leaked into outer root-span WHERE — "
+            "it must only appear inside the session-scoped subquery"
+        )
+
+        # Also walk past the subquery's matching `)` and verify there's
+        # nothing more downstream — the trailing part of the query
+        # (GROUP BY / ORDER BY / LIMIT) must not mention end_user_id.
+        depth = 0
+        sub_end = None
+        for i in range(sub_start, len(query)):
+            ch = query[i]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    sub_end = i
+                    break
+        # We started inside the parenthesised subquery (depth begins at
+        # 1 by the time we hit `SELECT`), so finding depth == -1 means
+        # we hit the close of the subquery from outside.
+        # Use a simpler fallback: find the last %(_eu_ids)s reference
+        # and look only past it.
+        eu_pos = query.rfind("%(_eu_ids)s")
+        # Everything after `IS NOT NULL)` closing the subquery should
+        # not contain end_user_id.
+        after_subquery = query[query.index(")", eu_pos) :]
+        assert "end_user_id" not in after_subquery, (
+            "end_user_id leaked into trailing query body — "
+            f"context: ...{after_subquery[:200]}"
+        )
+
+    def test_subquery_present_in_simple_count(self):
+        """Simple count query (no HAVING) must also wrap the subquery."""
+        ids = [str(uuid.uuid4())]
+        builder = self._build_with_end_user(
+            end_user_ids=ids, project_id=str(uuid.uuid4())
+        )
+        builder.build()
+        query, params = builder.build_count_query()
+
+        assert "count(DISTINCT trace_session_id)" in query
+        assert "trace_session_id IN (" in query
+        assert "end_user_id IN %(_eu_ids)s" in query
+        assert params.get("_eu_ids") == tuple(ids)
+
+    def test_subquery_present_in_aggregated_count(self):
+        """Aggregated count (HAVING path) must also wrap the subquery."""
+        ids = [str(uuid.uuid4())]
+        # Add a HAVING-targeting filter to force the aggregated count path
+        having_filter = {
+            "column_id": "duration",
+            "filter_config": {
+                "filter_op": "greater_than",
+                "filter_value": 60,
+            },
+        }
+        builder = self._build_with_end_user(
+            end_user_ids=ids,
+            project_id=str(uuid.uuid4()),
+            extra_filters=[having_filter],
+        )
+        builder.build()
+        query, params = builder.build_count_query()
+
+        assert "count() AS total FROM (" in query  # aggregated path
+        assert "trace_session_id IN (" in query
+        assert "end_user_id IN %(_eu_ids)s" in query
+        assert "HAVING" in query
+        assert params.get("_eu_ids") == tuple(ids)
+
+    def test_extract_handles_list_value(self):
+        """_extract_end_user_ids returns a list when filter_value is a list."""
+        ids = [str(uuid.uuid4()) for _ in range(3)]
+        builder = self._build_with_end_user(
+            end_user_ids=ids, project_id=str(uuid.uuid4())
+        )
+        result = builder._extract_end_user_ids()
+        assert result == ids
+
+    def test_extract_handles_scalar_value(self):
+        """_extract_end_user_ids wraps a scalar filter_value in a single-element list."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        single = str(uuid.uuid4())
+        builder = SessionListQueryBuilder(
+            project_id=str(uuid.uuid4()),
+            filters=[
+                {
+                    "column_id": "end_user_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": single,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=30,
+        )
+        result = builder._extract_end_user_ids()
+        assert result == [single]
+
+    def test_extract_returns_none_when_absent(self):
+        """_extract_end_user_ids returns None when no end_user_id filter exists."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id=str(uuid.uuid4()),
+            filters=[
+                {
+                    "column_id": "model",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "gpt-4o",
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=30,
+        )
+        assert builder._extract_end_user_ids() is None
+
+    def test_extract_ignores_empty_list_entries(self):
+        """Empty / falsy values in the list are dropped."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        valid = str(uuid.uuid4())
+        builder = SessionListQueryBuilder(
+            project_id=str(uuid.uuid4()),
+            filters=[
+                {
+                    "column_id": "end_user_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": [valid, "", None],
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=30,
+        )
+        result = builder._extract_end_user_ids()
+        assert result == [valid]
+
+    def test_subquery_perf_with_large_id_list(self):
+        """Generating a subquery with 1000 end_user_id values stays fast."""
+        ids = [str(uuid.uuid4()) for _ in range(1000)]
+        builder = self._build_with_end_user(
+            end_user_ids=ids, project_id=str(uuid.uuid4())
+        )
+
+        start = time.monotonic()
+        for _ in range(50):
+            builder.params = {"project_id": builder.project_id}
+            builder.build()
+        elapsed = time.monotonic() - start
+        assert elapsed < 1.0, f"build() with 1k IDs too slow: {elapsed:.3f}s / 50 iters"
+
+    def test_camelcase_filter_keys_supported(self):
+        """Frontend camelCase keys (columnId/filterConfig) are also recognized."""
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        ids = [str(uuid.uuid4())]
+        builder = SessionListQueryBuilder(
+            project_id=str(uuid.uuid4()),
+            filters=[
+                {
+                    "columnId": "end_user_id",
+                    "filterConfig": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ids,
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=30,
+        )
+        query, params = builder.build()
+        assert "trace_session_id IN (" in query
+        assert params.get("_eu_ids") == tuple(ids)

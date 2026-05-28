@@ -64,16 +64,14 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
     from ee.usage.models.usage import (
-        APICallStatusChoices,
-        APICallTypeChoices,
         OrganizationSubscription,
         SubscriptionTierChoices,
     )
 except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
     OrganizationSubscription = None
     SubscriptionTierChoices = None
 try:

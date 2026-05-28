@@ -575,6 +575,7 @@ const ModelSelector = ({
   onSelectedKBsChange,
   activeContextOptions: activeContextOptionsProp,
   onActiveContextOptionsChange,
+  hideDatasetContextToggle = false,
 }) => {
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
@@ -1672,7 +1673,10 @@ const ModelSelector = ({
             {/* ══ Data Injection submenu ══ */}
             {plusSubmenu === "injection" && (
               <Box>
-                {CONTEXT_OPTIONS.map((opt) => {
+                {CONTEXT_OPTIONS.filter(
+                  (opt) =>
+                    !(hideDatasetContextToggle && opt.value === "dataset_row"),
+                ).map((opt) => {
                   const isActive = activeContextOptions.includes(opt.value);
                   return (
                     <MenuItem
@@ -1797,6 +1801,7 @@ ModelSelector.propTypes = {
   disabled: PropTypes.bool,
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,
+  hideDatasetContextToggle: PropTypes.bool,
 };
 
 export default ModelSelector;

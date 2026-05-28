@@ -26,11 +26,7 @@ from model_hub.views.utils.synthetic_data import determine_data_type_syn_data
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
 except ImportError:
@@ -54,30 +50,40 @@ class CreateSyntheticDataset(APIView):
                 org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                feat_check = Entitlements.check_feature(
-                    str(org.id), "has_synthetic_data"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
+                if Entitlements is not None:
+                    feat_check = Entitlements.check_feature(
+                        str(org.id), "has_synthetic_data"
+                    )
+                    if not feat_check.allowed:
+                        return self._gm.forbidden_response(feat_check.reason)
             except ImportError:
                 pass
 
-            call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row_entry is None
-                or call_log_row_entry.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
-                return self._gm.too_many_requests(
-                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
+            # SyntheticDataAgent requires the ee module
+            try:
+                from ee.agenthub.synthetic_data_agent.synthetic_data_agent import SyntheticDataAgent  # noqa: F401
+            except ImportError:
+                return self._gm.forbidden_response(
+                    "Synthetic data generation is not available on your plan."
                 )
-            call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
-            call_log_row_entry.save()
+
+            if log_and_deduct_cost_for_resource_request is not None:
+                call_log_row_entry = log_and_deduct_cost_for_resource_request(
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row_entry is None
+                    or call_log_row_entry.status
+                    == APICallStatusChoices.RESOURCE_LIMIT.value
+                ):
+                    return self._gm.too_many_requests(
+                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
+                    )
+                call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
+                call_log_row_entry.save()
 
             serializer = SyntheticDatasetCreationSerializer(data=request.data)
 
@@ -110,19 +116,20 @@ class CreateSyntheticDataset(APIView):
                     return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
 
                 # ------------------- Added Row Check -------------------
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": validated_data["num_rows"]},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
-                call_log_row.status = APICallStatusChoices.SUCCESS.value
-                call_log_row.save()
+                if log_and_deduct_cost_for_resource_request is not None:
+                    call_log_row = log_and_deduct_cost_for_resource_request(
+                        organization,
+                        api_call_type=APICallTypeChoices.ROW_ADD.value,
+                        config={"total_rows": validated_data["num_rows"]},
+                        workspace=request.workspace,
+                    )
+                    if (
+                        call_log_row is None
+                        or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                    ):
+                        return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                    call_log_row.status = APICallStatusChoices.SUCCESS.value
+                    call_log_row.save()
                 # dataset = Dataset.objects.create(name=dataset_name)
                 dataset_serializer = DatasetSerializer(
                     data={
@@ -393,19 +400,20 @@ class UpdateSyntheticDatasetConfigView(APIView):
                 return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
 
             # Check row limit
-            call_log_row = log_and_deduct_cost_for_resource_request(
-                getattr(request, "organization", None) or request.user.organization,
-                api_call_type=APICallTypeChoices.ROW_ADD.value,
-                config={"total_rows": validated_data["num_rows"]},
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row is None
-                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
-                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
-            call_log_row.status = APICallStatusChoices.SUCCESS.value
-            call_log_row.save()
+            if log_and_deduct_cost_for_resource_request is not None:
+                call_log_row = log_and_deduct_cost_for_resource_request(
+                    getattr(request, "organization", None) or request.user.organization,
+                    api_call_type=APICallTypeChoices.ROW_ADD.value,
+                    config={"total_rows": validated_data["num_rows"]},
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is None
+                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                ):
+                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                call_log_row.status = APICallStatusChoices.SUCCESS.value
+                call_log_row.save()
 
             # Update the dataset name if it changed
             new_dataset_name = validated_data["dataset"]["name"]

@@ -1,17 +1,19 @@
 import json
 import traceback
 import uuid as uuid_module
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from random import sample
 
 import structlog
 from django.db import models, transaction
-from django.db.models import Count, F, Func, Max, Q, Value
+from django.db.models import Avg, Count, F, Func, Max, Q, Value
 from django.utils import timezone
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
+
+from model_hub.models.evals_metric import EvalTemplate
 
 
 class _RegexpReplace(Func):
@@ -36,7 +38,6 @@ class _RegexpReplace(Func):
 
 # Re-exported for back-compat; canonical definition lives in `tracer.utils.eval`.
 from tracer.utils.eval import _walk_dotted_path  # noqa: E402, F401
-
 
 # Per-variable size cap to keep the panel payload bounded — a single
 # log row that maps a giant JSON document into the eval would otherwise
@@ -103,6 +104,139 @@ def _resolve_input_variables(custom_eval_config, obs_span):
             continue
         resolved[var_name] = value
     return resolved
+
+
+def _truthy(v):
+    """Match common DRF bool query-param conventions."""
+    return str(v).lower() in ("true", "1", "yes")
+
+
+def _compute_eval_aggregation(base_qs):
+    """Per-eval-config rollup for one eval task.
+
+    Returns a dict keyed by ``CustomEvalConfig.name`` so the FE can render
+    one row per configured eval. Value shape:
+
+        {"id": str, "name": str, "output_type": str, "aggregated_score": ...}
+
+    ``aggregated_score`` depends on the eval's ``output_type_normalized``:
+      * ``percentage``    → ``Avg(output_float)``, rounded to 4 dp.
+      * ``pass_fail``     → pass-rate as 0–100 pct, 2 dp (matches the
+        ``pass_rate`` field on the legacy ``get_usage`` shape).
+      * ``deterministic`` → ``{choice: pct}`` dict, 2 dp. Only choices that
+        actually appeared in the data are included.
+
+    The deterministic branch iterates rows in Python because PostgreSQL
+    JSONB array unnesting isn't expressible cleanly through the ORM and
+    the row count per (eval_task × eval_config) is bounded.
+    """
+    # Imported lazily to avoid the module-import cycle bite (tracer.views
+    # → tracer.models pulls things that import this view at import time).
+    from tracer.models.custom_eval_config import CustomEvalConfig
+
+    config_ids = list(
+        base_qs.values_list("custom_eval_config_id", flat=True).distinct()
+    )
+    configs = CustomEvalConfig.objects.filter(id__in=config_ids).select_related(
+        "eval_template"
+    )
+
+    result = {}
+    for cfg in configs:
+        output_type = (
+            cfg.eval_template.output_type_normalized
+            if cfg.eval_template
+            else "pass_fail"
+        )
+        rows = base_qs.filter(custom_eval_config_id=cfg.id, error=False)
+
+        aggregated_score = None
+        if output_type == "percentage":
+            avg = (
+                rows.exclude(output_float__isnull=True)
+                .aggregate(avg=Avg("output_float"))
+                .get("avg")
+            )
+            aggregated_score = round(avg, 4) if avg is not None else None
+        elif output_type == "pass_fail":
+            bool_rows = rows.exclude(output_bool__isnull=True)
+            total = bool_rows.count()
+            passed = bool_rows.filter(output_bool=True).count()
+            aggregated_score = round(passed / total * 100, 2) if total else None
+        elif output_type == "deterministic":
+            counter = Counter()
+            tally = 0
+            for lst in rows.values_list("output_str_list", flat=True):
+                if not lst:
+                    continue
+                tally += 1
+                # One count per choice per row — a multi-choice row that
+                # picks {"A","B"} contributes 1 to each, not 2 to one.
+                counter.update(set(lst))
+            aggregated_score = (
+                {c: round(n / tally * 100, 2) for c, n in counter.items()}
+                if tally
+                else {}
+            )
+
+        result[cfg.name] = {
+            "id": str(cfg.id),
+            "name": cfg.name,
+            "output_type": output_type,
+            "aggregated_score": aggregated_score,
+        }
+    return result
+
+
+def _compute_span_aggregation(base_qs):
+    """Per-span pivot of raw eval values for one eval task.
+
+    Returns ``{span_id → {eval_name → {id, name, output_type, value}}}``.
+    ``value`` is the raw column read for the eval's output type — no
+    averaging. Session/trace-target rows (``observation_span_id IS NULL``)
+    are filtered out.
+
+    When the same ``(span, eval_config)`` has multiple rows (re-runs),
+    the latest by ``created_at`` wins via the ORDER BY + first-seen set.
+    """
+    qs = (
+        base_qs.filter(observation_span_id__isnull=False, error=False)
+        .select_related("custom_eval_config__eval_template")
+        .order_by("observation_span_id", "custom_eval_config_id", "-created_at")
+    )
+
+    result = defaultdict(dict)
+    seen = set()
+    for log in qs.iterator(chunk_size=1000):
+        key = (log.observation_span_id, log.custom_eval_config_id)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        cfg = log.custom_eval_config
+        if cfg is None:
+            continue
+        output_type = (
+            cfg.eval_template.output_type_normalized
+            if cfg.eval_template
+            else "pass_fail"
+        )
+        if output_type == EvalTemplate.OutputTypeNormalized.PERCENTAGE:
+            value = log.output_float
+        elif output_type == EvalTemplate.OutputTypeNormalized.PASS_FAIL:
+            value = log.output_bool
+        elif output_type == EvalTemplate.OutputTypeNormalized.DETERMINISTIC:
+            value = log.output_str_list
+        else:
+            value = None
+
+        result[str(log.observation_span_id)][cfg.name] = {
+            "id": str(cfg.id),
+            "name": cfg.name,
+            "output_type": output_type,
+            "value": value,
+        }
+    return dict(result)
 
 
 logger = structlog.get_logger(__name__)
@@ -479,6 +613,38 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # passes this when the user picks one from the dropdown.
             eval_id_filter = self.request.query_params.get("eval_id")
 
+            # ── Aggregation short-circuit ──
+            # When either flag is set, return ONLY the aggregated payload.
+            # Soft-deleted rows are excluded (intentional departure from the
+            # legacy path) so rollups reflect the user's current view of
+            # the data. ``period`` is not applied — these are task-wide.
+            eval_aggregation = _truthy(
+                self.request.query_params.get("eval_aggregation")
+            )
+            span_aggregation = _truthy(
+                self.request.query_params.get("span_aggregation")
+            )
+            if eval_aggregation or span_aggregation:
+                agg_base_qs = EvalLogger.objects.filter(
+                    eval_task_id=str(eval_task_id),
+                    deleted=False,
+                )
+                if eval_id_filter:
+                    agg_base_qs = agg_base_qs.filter(
+                        custom_eval_config_id=eval_id_filter
+                    )
+
+                agg_response = {"eval_task_id": str(eval_task_id)}
+                if eval_aggregation:
+                    agg_response["eval_aggregation"] = _compute_eval_aggregation(
+                        agg_base_qs
+                    )
+                if span_aggregation:
+                    agg_response["span_aggregation"] = _compute_span_aggregation(
+                        agg_base_qs
+                    )
+                return self._gm.success_response(agg_response)
+
             period_delta = self._USAGE_PERIOD_MAP.get(period, timedelta(days=30))
             end_date = timezone.now()
             start_date = end_date - period_delta
@@ -659,9 +825,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
 
             paginator = ExtendedPageNumberPagination()
             paginator.page_size = page_size
-            logs_page = paginator.paginate_queryset(
-                logs_qs, self.request, view=self
-            )
+            logs_page = paginator.paginate_queryset(logs_qs, self.request, view=self)
 
             log_items = []
             for log in logs_page:

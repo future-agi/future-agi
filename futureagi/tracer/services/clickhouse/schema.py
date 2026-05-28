@@ -38,9 +38,12 @@ from typing import Dict, List, Optional, Tuple
 # Resolve the configured CH database name for use in DDL templates.
 # Falls back to "futureagi" which is the production default.
 _CH_DATABASE = os.getenv("CH_DATABASE", "futureagi")
-_USE_REPLICATED_ENGINES = os.getenv(
-    "CH_USE_REPLICATED_ENGINES", "true"
-).lower() in {"1", "true", "yes", "on"}
+_USE_REPLICATED_ENGINES = os.getenv("CH_USE_REPLICATED_ENGINES", "true").lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _to_single_node_engine(ddl: str) -> str:
@@ -62,6 +65,7 @@ def _to_single_node_engine(ddl: str) -> str:
         return f"{engine}({args})" if args else f"{engine}()"
 
     return re.sub(pattern, repl, ddl, flags=re.DOTALL)
+
 
 # ============================================================================
 # LAYER 1 — PeerDB CDC Landing Tables
@@ -744,6 +748,8 @@ CREATE TABLE IF NOT EXISTS spans (
     INDEX idx_span_attr_str_keys mapKeys(span_attr_str) TYPE bloom_filter GRANULARITY 1,
     INDEX idx_span_attr_num_keys mapKeys(span_attr_num) TYPE bloom_filter GRANULARITY 1,
     INDEX idx_span_attr_bool_keys mapKeys(span_attr_bool) TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1,
+    INDEX idx_end_user_id end_user_id TYPE bloom_filter GRANULARITY 1,
 
     -- Projection for fast root-span pagination: allows CH to skip non-root
     -- spans via the index instead of scanning all rows.
@@ -753,7 +759,8 @@ CREATE TABLE IF NOT EXISTS spans (
             start_time, end_time, latency_ms, cost,
             total_tokens, prompt_tokens, completion_tokens,
             model, provider, trace_session_id, trace_tags,
-            project_id, parent_span_id, _peerdb_is_deleted, created_at
+            project_id, parent_span_id, _peerdb_is_deleted, created_at,
+            end_user_id
         ORDER BY (project_id, _peerdb_is_deleted, parent_span_id, start_time)
     )
 )
@@ -1958,10 +1965,7 @@ def get_all_schema_ddl() -> List[Tuple[str, str]]:
     if _USE_REPLICATED_ENGINES:
         return list(SCHEMA_DDL_STATEMENTS)
 
-    return [
-        (name, _to_single_node_engine(ddl))
-        for name, ddl in SCHEMA_DDL_STATEMENTS
-    ]
+    return [(name, _to_single_node_engine(ddl)) for name, ddl in SCHEMA_DDL_STATEMENTS]
 
 
 def get_drop_statements() -> List[str]:

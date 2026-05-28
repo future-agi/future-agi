@@ -184,6 +184,7 @@ const SimulationTestMode = React.forwardRef(
       initialRunTestId = "",
       isComposite = false,
       compositeAdhocConfig = null,
+      initialExecutionId=null
     },
     ref,
   ) => {
@@ -204,7 +205,9 @@ const SimulationTestMode = React.forwardRef(
     // Test executions (runs within a simulation)
     const [executions, setExecutions] = useState([]);
     const [executionsFetched, setExecutionsFetched] = useState(false);
-    const [selectedExecutionId, setSelectedExecutionId] = useState("");
+    const [selectedExecutionId, setSelectedExecutionId] = useState(
+      initialExecutionId || "",
+    );
 
     // Call executions (individual calls)
     const [calls, setCalls] = useState([]);
@@ -352,7 +355,13 @@ const SimulationTestMode = React.forwardRef(
           setExecutions(items);
           setExecutionsFetched(true);
           if (items.length > 0) {
-            setSelectedExecutionId(items[0].id || "");
+  
+            const preferred =
+              initialExecutionId &&
+              items.some((it) => it.id === initialExecutionId)
+                ? initialExecutionId
+                : items[0].id || "";
+            setSelectedExecutionId(preferred);
           }
         } catch {
           if (cancelled) return;
@@ -365,7 +374,7 @@ const SimulationTestMode = React.forwardRef(
       return () => {
         cancelled = true;
       };
-    }, [selectedRunTestId]);
+    }, [selectedRunTestId, initialExecutionId]);
 
     // 3. Fetch call executions for the selected execution
     useEffect(() => {
@@ -1151,6 +1160,7 @@ const SimulationTestMode = React.forwardRef(
                 setCurrentCallIndex(0);
                 setCallDetail(null);
               }}
+              disabled={!!initialExecutionId}
               sx={{ fontSize: "13px" }}
             >
               {executions.map((ex, i) => (
@@ -1850,6 +1860,7 @@ SimulationTestMode.propTypes = {
   initialRunTestId: PropTypes.string,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
+  initialExecutionId :PropTypes.string
 };
 
 export default SimulationTestMode;

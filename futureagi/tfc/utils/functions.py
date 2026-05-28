@@ -14,10 +14,7 @@ from model_hub.models.develop_dataset import Cell, Column
 from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from tfc.utils.clickhouse import ClickHouseClientSingleton
-try:
-    from ee.usage.models.usage import APICallStatusChoices
-except ImportError:
-    APICallStatusChoices = None
+from tfc.constants.api_calls import APICallStatusChoices
 
 
 def add_one_day_in_date(date_str):

@@ -28,6 +28,27 @@ class UserIdType(models.TextChoices):
     EMAIL = "email", "Email"
     PHONE = "phone", "Phone"
     UUID = "uuid", "UUID"
+
+
+class ObservationType(models.TextChoices):
+    """Typed enum mirroring ``ObservationSpan.OBSERVATION_SPAN_TYPES``.
+
+    Use this for equality checks against ``ObservationSpan.observation_type``
+    instead of bare string literals. Values must stay in lockstep with the
+    ``OBSERVATION_SPAN_TYPES`` tuple below.
+    """
+
+    TOOL = "tool", "Tool"
+    CHAIN = "chain", "Chain"
+    LLM = "llm", "LLM"
+    RETRIEVER = "retriever", "Retriever"
+    EMBEDDING = "embedding", "Embedding"
+    AGENT = "agent", "Agent"
+    RERANKER = "reranker", "Reranker"
+    UNKNOWN = "unknown", "Unknown"
+    GUARDRAIL = "guardrail", "Guardrail"
+    EVALUATOR = "evaluator", "Evaluator"
+    CONVERSATION = "conversation", "Conversation"
     CUSTOM = "custom", "Custom"
 
 

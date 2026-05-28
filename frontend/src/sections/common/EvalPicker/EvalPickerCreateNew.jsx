@@ -53,6 +53,7 @@ import {
   contextOptionsForRowType,
   extractCodeEvaluateParams,
 } from "./evalPickerConfigUtils";
+import { useParams } from "react-router";
 
 const TRACING_ROW_TYPE_TO_KEY = {
   Span: "spans",
@@ -125,7 +126,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const sourceRef = useRef(null);
-
+  const {testId,executionId} = useParams();
   // Form state (same as EvalCreatePage)
   const [name, setName] = useState("");
   const [mode, setMode] = useState("single");
@@ -261,7 +262,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       try {
         const data = await createEval.mutateAsync({
           is_draft: true,
-          eval_type: "agent",
+          // eval_type: "agent",
           output_type: "pass_fail",
           model: "turing_large",
           pass_threshold: 0.5,
@@ -276,6 +277,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   // Auto-save to draft
   const buildPayload = useCallback(
     () => ({
+      eval_type: evalType,
       instructions: evalType === "code" ? "" : instructions,
       code: evalType === "code" ? code : undefined,
       code_language: evalType === "code" ? codeLanguage : undefined,
@@ -378,6 +380,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       if (!code.trim()) next.instructions = "Code is required";
     } else if (!instructions.trim()) {
       next.instructions = "Instructions are required";
+    } else if (instructions.trim().length < 10) {
+      next.instructions = "Instructions must be at least 10 characters.";
     } else if (
       !hasDataInjection &&
       !/\{\{\s*[^{}]+?\s*\}\}/.test(instructions)
@@ -955,6 +959,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     selectedDatasets={fewShotExamples}
                     onChange={setFewShotExamples}
                   />
+                  {errors.instructions && (
+                    <Typography variant="caption" color="error.main">
+                      {errors.instructions}
+                    </Typography>
+                  )}
                 </>
               )}
 
@@ -1181,6 +1190,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
                     isComposite={isComposite}
+                    initialRunTestId={testId}
+                    initialExecutionId={executionId}
                     compositeAdhocConfig={compositeAdhocConfig}
                   />
                 )}

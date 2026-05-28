@@ -8,7 +8,7 @@ import {
   Typography,
 } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import _ from "lodash";
@@ -17,6 +17,7 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "src/components/snackbar";
 import DeleteConfirmation from "./DeleteConfirmation";
 
 // ── Status Config ──
@@ -73,6 +74,19 @@ StatusBadge.propTypes = {
 const HoverChipList = ({ items, label, emptyText }) => {
   const [anchorEl, setAnchorEl] = useState(null);
   const open = Boolean(anchorEl);
+  // Short delay before closing lets the cursor cross the gap from the
+  // trigger Box into the Popover Paper without dismissing it.
+  const closeTimerRef = useRef(null);
+  const openPopover = (e) => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    setAnchorEl(e.currentTarget);
+  };
+  const scheduleClose = () => {
+    closeTimerRef.current = setTimeout(() => setAnchorEl(null), 120);
+  };
+  const cancelClose = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  };
 
   if (!items?.length) {
     return (
@@ -98,13 +112,21 @@ const HoverChipList = ({ items, label, emptyText }) => {
     fontSize: "12px",
     height: 22,
     "& .MuiChip-label": { px: 0.75 },
+    "&:hover, &.MuiChip-clickable:hover": {
+      backgroundColor: (theme) =>
+        alpha(
+          theme.palette.primary.main,
+          0.1 + theme.palette.action.hoverOpacity,
+        ),
+      color: "primary.main",
+    },
   };
 
   return (
     <>
       <Box
-        onMouseEnter={(e) => setAnchorEl(e.currentTarget)}
-        onMouseLeave={() => setAnchorEl(null)}
+        onMouseEnter={openPopover}
+        onMouseLeave={scheduleClose}
         sx={{ display: "flex", alignItems: "center", height: "100%", gap: 0.5 }}
       >
         <Chip label={firstItem} size="small" sx={chipStyles} />
@@ -126,6 +148,8 @@ const HoverChipList = ({ items, label, emptyText }) => {
         transformOrigin={{ vertical: "top", horizontal: "left" }}
         disableRestoreFocus
         PaperProps={{
+          onMouseEnter: cancelClose,
+          onMouseLeave: scheduleClose,
           sx: {
             pointerEvents: "auto",
             p: 1.5,
@@ -338,7 +362,14 @@ const TaskListView = ({
   const { mutate: resumeTask } = useMutation({
     mutationFn: (taskId) =>
       axios.post(endpoints.project.resumeEvalTask(taskId)),
+    meta: { errorHandled: true },
     onSuccess: () => refetch(),
+    onError: () => {
+      refetch();
+      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+        variant: "error",
+      });
+    },
   });
 
   // Delete mutation

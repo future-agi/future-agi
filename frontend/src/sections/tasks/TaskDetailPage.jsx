@@ -93,10 +93,18 @@ const TaskDetailPage = () => {
 
   const { mutate: resumeTask } = useMutation({
     mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId)),
+    meta: { errorHandled: true },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task resumed", { variant: "success" });
+    },
+    onError: () => {
+      queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
+      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+        variant: "error",
+      });
     },
   });
 

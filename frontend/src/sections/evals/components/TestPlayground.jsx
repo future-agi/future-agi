@@ -835,25 +835,37 @@ const TestPlayground = React.forwardRef(
       Simulation: false,
     });
 
-    const handleDatasetReady = useCallback((isReady) => {
-      setTabReady((prev) =>
-        prev.Dataset === !!isReady ? prev : { ...prev, Dataset: !!isReady },
-      );
-    }, []);
-    const handleTracingReady = useCallback((isReady) => {
-      setTabReady((prev) =>
-        prev.Tracing === !!isReady ? prev : { ...prev, Tracing: !!isReady },
-      );
-    }, []);
-    const handleSimulationReady = useCallback((isReady) => {
-      setTabReady((prev) =>
-        prev.Simulation === !!isReady
-          ? prev
-          : { ...prev, Simulation: !!isReady },
-      );
-    }, []);
-
-    useEffect(() => {
+ 
+    const handleDatasetReady = useCallback(
+      (isReady, mapping) => {
+        setTabReady((prev) =>
+          prev.Dataset === !!isReady ? prev : { ...prev, Dataset: !!isReady },
+        );
+        onReadyChange?.(!!isReady, mapping);
+      },
+      [onReadyChange],
+    );
+    const handleTracingReady = useCallback(
+      (isReady, mapping) => {
+        setTabReady((prev) =>
+          prev.Tracing === !!isReady ? prev : { ...prev, Tracing: !!isReady },
+        );
+        onReadyChange?.(!!isReady, mapping);
+      },
+      [onReadyChange],
+    );
+    const handleSimulationReady = useCallback(
+      (isReady, mapping) => {
+        setTabReady((prev) =>
+          prev.Simulation === !!isReady
+            ? prev
+            : { ...prev, Simulation: !!isReady },
+        );
+        onReadyChange?.(!!isReady, mapping);
+      },
+      [onReadyChange],
+    );
+  useEffect(() => {
       if (!onReadyChange) return;
       onReadyChange(!!tabReady[activeTab]);
     }, [activeTab, tabReady, onReadyChange]);
@@ -1633,7 +1645,7 @@ const TestPlayground = React.forwardRef(
                                 fontWeight: 600,
                                 fontFamily: "'IBM Plex Sans', sans-serif",
                                 color: isSelected
-                                  ? "common.white"
+                                  ? "primary.contrastText"
                                   : isDefault
                                     ? "info.main"
                                     : "text.primary",
