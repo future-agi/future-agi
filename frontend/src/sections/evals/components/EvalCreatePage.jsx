@@ -66,6 +66,7 @@ import {
   getEvalRunResultId,
   getEvalStarterScorer,
   shouldAutoConfirmEvalOnboardingSource,
+  shouldAutoSaveEvalOnboardingStarterScorer,
 } from "./evalCreateOnboarding";
 
 const EVAL_TYPE_TABS = [
@@ -176,6 +177,7 @@ const EvalCreatePage = () => {
   const recordedOnboardingFocusRef = useRef(new Set());
   const recordedSourceSelectionRef = useRef(new Set());
   const autoConfirmedSourceRef = useRef(new Set());
+  const autoSavedStarterScorerRef = useRef(new Set());
   const onboardingParams = useMemo(
     () => getEvalCreateOnboardingParams(location.search),
     [location.search],
@@ -194,6 +196,10 @@ const EvalCreatePage = () => {
   );
   const shouldAutoConfirmOnboardingSource = useMemo(
     () => shouldAutoConfirmEvalOnboardingSource(onboardingParams),
+    [onboardingParams],
+  );
+  const shouldAutoSaveOnboardingStarterScorer = useMemo(
+    () => shouldAutoSaveEvalOnboardingStarterScorer(onboardingParams),
     [onboardingParams],
   );
   const onboardingSourceSetupHref = useMemo(() => {
@@ -276,6 +282,8 @@ const EvalCreatePage = () => {
   const [draftLoadComplete, setDraftLoadComplete] = useState(!urlDraftId);
   const [isTesting, setIsTesting] = useState(false);
   const [isPlaygroundReady, setIsPlaygroundReady] = useState(false);
+  const [autoSavingOnboardingStarter, setAutoSavingOnboardingStarter] =
+    useState(false);
   const draftCreating = useRef(false);
   const autoSaveTimer = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId);
@@ -805,6 +813,67 @@ const EvalCreatePage = () => {
     recordActivationEvent,
   ]);
 
+  useEffect(() => {
+    if (
+      !draftId ||
+      !draftLoadComplete ||
+      !shouldAutoSaveOnboardingStarterScorer ||
+      autoSavingOnboardingStarter ||
+      mode !== "single" ||
+      evalType !== "code"
+    ) {
+      return;
+    }
+
+    const starter = getEvalStarterScorer({
+      sourceId: onboardingParams.sourceId,
+      sourceType: onboardingParams.sourceType,
+    });
+    const starterKey = [
+      draftId,
+      onboardingParams.sourceType,
+      onboardingParams.sourceId,
+    ].join(":");
+
+    const starterIsUnchanged =
+      name === starter.name &&
+      description === starter.description &&
+      code === starter.code &&
+      codeLanguage === starter.codeLanguage &&
+      outputType === starter.outputType &&
+      passThreshold === starter.passThreshold;
+
+    if (
+      !starterIsUnchanged ||
+      publishedRef.current ||
+      autoSavedStarterScorerRef.current.has(starterKey)
+    ) {
+      return;
+    }
+
+    autoSavedStarterScorerRef.current.add(starterKey);
+    setAutoSavingOnboardingStarter(true);
+    handleSaveSingle().finally(() => {
+      setAutoSavingOnboardingStarter(false);
+    });
+  }, [
+    autoSavingOnboardingStarter,
+    code,
+    codeLanguage,
+    description,
+    draftId,
+    draftLoadComplete,
+    evalType,
+    handleSaveSingle,
+    mode,
+    name,
+    onboardingParams.sourceId,
+    onboardingParams.sourceType,
+    outputType,
+    passThreshold,
+    shouldAutoSaveOnboardingStarterScorer,
+  ]);
+
   const handleSaveComposite = useCallback(async () => {
     try {
       // Build child_weights only for selected children; backend defaults to 1.0 if missing.
@@ -987,8 +1056,11 @@ const EvalCreatePage = () => {
 
     if (onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.SCORER) {
       return {
-        disabled: !draftId || isLoading || !canSave,
-        label: "Save starter scorer",
+        disabled:
+          autoSavingOnboardingStarter || !draftId || isLoading || !canSave,
+        label: autoSavingOnboardingStarter
+          ? "Preparing first run"
+          : "Save starter scorer",
         onClick: mode === "single" ? handleSaveSingle : handleSaveComposite,
       };
     }
@@ -1026,6 +1098,7 @@ const EvalCreatePage = () => {
     };
   }, [
     canSave,
+    autoSavingOnboardingStarter,
     draftId,
     handleConfirmOnboardingSource,
     handleSaveComposite,
@@ -1821,9 +1894,13 @@ const EvalCreatePage = () => {
                   );
                 })()}
                 {(() => {
-                  const saveDisabled = isLoading || !canSave;
+                  const saveDisabled =
+                    autoSavingOnboardingStarter || isLoading || !canSave;
                   let saveDisabledReason = "";
-                  if (isLoading) {
+                  if (autoSavingOnboardingStarter) {
+                    saveDisabledReason =
+                      "Starter scorer is being prepared for the first run.";
+                  } else if (isLoading) {
                     saveDisabledReason = "Save is already in progress.";
                   } else if (mode === "composite") {
                     if (!compositeName.trim()) {
@@ -1875,7 +1952,9 @@ const EvalCreatePage = () => {
                           }
                           sx={{ textTransform: "none" }}
                         >
-                          {isLoading ? "Saving..." : "Save Evaluation"}
+                          {isLoading || autoSavingOnboardingStarter
+                            ? "Saving..."
+                            : "Save Evaluation"}
                         </Button>
                       </span>
                     </CustomTooltip>

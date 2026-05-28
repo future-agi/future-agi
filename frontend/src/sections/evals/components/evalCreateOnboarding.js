@@ -240,6 +240,19 @@ export const shouldAutoConfirmEvalOnboardingSource = ({
       sourceId,
   );
 
+export const shouldAutoSaveEvalOnboardingStarterScorer = ({
+  isOnboarding,
+  sourceId,
+  sourceType,
+  step,
+} = {}) =>
+  Boolean(
+    isOnboarding &&
+      step === EVAL_CREATE_ONBOARDING_STEPS.SCORER &&
+      sourceType === "trace_project" &&
+      sourceId,
+  );
+
 export const getEvalCreateOnboardingCopy = ({ rerunFrom, step } = {}) => {
   if (step === EVAL_CREATE_ONBOARDING_STEPS.RUN && rerunFrom) {
     return EVAL_RERUN_COPY;
@@ -258,7 +271,13 @@ export const getEvalCreateInitialSourceTab = ({
     return SOURCE_TYPE_TO_TAB[sourceType] || EVAL_CREATE_SOURCE_TABS.DATASET;
   }
 
-  if (step === EVAL_CREATE_ONBOARDING_STEPS.RUN && sourceType) {
+  if (
+    [
+      EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+      EVAL_CREATE_ONBOARDING_STEPS.RUN,
+    ].includes(step) &&
+    sourceType
+  ) {
     return SOURCE_TYPE_TO_TAB[sourceType] || EVAL_CREATE_SOURCE_TABS.CUSTOM;
   }
 

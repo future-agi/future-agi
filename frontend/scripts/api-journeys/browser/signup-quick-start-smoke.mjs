@@ -582,17 +582,6 @@ async function main() {
       45000,
     );
     const evalScorerOnboardingUrl = page.url();
-    const starterScorerName =
-      `output-quality-${realProject.projectId.slice(0, 12)}`.toLowerCase();
-    await page.waitForFunction(
-      (expectedName) =>
-        Array.from(document.querySelectorAll("input")).some(
-          (element) => element.value === expectedName,
-        ),
-      { timeout: 45000 },
-      starterScorerName,
-    );
-    await clickVisibleButtonText(page, "Save starter scorer", 45000);
     await page.waitForFunction(
       ({ projectId }) => {
         const params = new URLSearchParams(window.location.search);
@@ -609,6 +598,9 @@ async function main() {
       { timeout: 45000 },
       { projectId: realProject.projectId },
     );
+    await expectNoVisibleText(page, "Save starter scorer", {
+      timeout: 45000,
+    });
     await expectVisibleTestId(page, "eval-onboarding-focus", {
       timeout: 45000,
     });

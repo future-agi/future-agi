@@ -44,6 +44,7 @@ import {
   getEvalSourceFixOnboardingCopy,
   getEvalSourceFixOnboardingParams,
   shouldAutoConfirmEvalOnboardingSource,
+  shouldAutoSaveEvalOnboardingStarterScorer,
 } from "./evalCreateOnboarding";
 
 describe("evalCreateOnboarding", () => {
@@ -183,6 +184,14 @@ describe("evalCreateOnboarding", () => {
       getEvalCreateInitialSourceTab({
         isOnboarding: true,
         sourceType: "trace_project",
+        step: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+      }),
+    ).toBe(EVAL_CREATE_SOURCE_TABS.TRACING);
+
+    expect(
+      getEvalCreateInitialSourceTab({
+        isOnboarding: true,
+        sourceType: "trace_project",
         step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
       }),
     ).toBe(EVAL_CREATE_SOURCE_TABS.TRACING);
@@ -220,6 +229,35 @@ describe("evalCreateOnboarding", () => {
         sourceId: "project-1",
         sourceType: "trace_project",
         step: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+      }),
+    ).toBe(false);
+  });
+
+  it("auto-saves only trace-project starter scorers on the onboarding scorer step", () => {
+    expect(
+      shouldAutoSaveEvalOnboardingStarterScorer({
+        isOnboarding: true,
+        sourceId: "project-1",
+        sourceType: "trace_project",
+        step: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldAutoSaveEvalOnboardingStarterScorer({
+        isOnboarding: true,
+        sourceId: "dataset-1",
+        sourceType: "dataset",
+        step: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldAutoSaveEvalOnboardingStarterScorer({
+        isOnboarding: true,
+        sourceId: "project-1",
+        sourceType: "trace_project",
+        step: EVAL_CREATE_ONBOARDING_STEPS.DATA,
       }),
     ).toBe(false);
   });

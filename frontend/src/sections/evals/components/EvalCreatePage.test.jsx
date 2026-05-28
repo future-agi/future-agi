@@ -4,6 +4,7 @@ import { renderWithRouter, waitFor, screen } from "src/utils/test-utils";
 import EvalCreatePage from "./EvalCreatePage";
 
 const mocks = vi.hoisted(() => ({
+  axiosGet: vi.fn(),
   axiosPost: vi.fn(),
   invalidateQueries: vi.fn(),
   recordActivationEvent: vi.fn(),
@@ -23,7 +24,7 @@ vi.mock("@tanstack/react-query", async () => {
 
 vi.mock("src/utils/axios", () => ({
   default: {
-    get: vi.fn(),
+    get: mocks.axiosGet,
     post: mocks.axiosPost,
   },
   endpoints: {
@@ -76,6 +77,9 @@ describe("EvalCreatePage onboarding source handoff", () => {
     mocks.axiosPost.mockResolvedValue({
       data: { result: { id: "eval-draft-1" } },
     });
+    mocks.axiosGet.mockResolvedValue({
+      data: { result: {} },
+    });
     mocks.updateDraftMutateAsync.mockResolvedValue({});
   });
 
@@ -113,6 +117,54 @@ describe("EvalCreatePage onboarding source handoff", () => {
           source_type: "trace_project",
           step: "data",
           surface: "tracing",
+        }),
+      }),
+    );
+  });
+
+  it("auto-saves the untouched trace starter scorer and opens the run step", async () => {
+    renderWithRouter(<EvalCreatePage />, {
+      route:
+        "/dashboard/evaluations/create/eval-draft-1?source=onboarding&step=scorer&source_type=trace_project&source_id=project-1",
+    });
+
+    await waitFor(() =>
+      expect(mocks.updateDraftMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: expect.stringContaining("def evaluate("),
+          code_language: "python",
+          description: "Starter scorer for trace project onboarding.",
+          eval_type: "code",
+          name: "output-quality-project-1",
+          output_type: "percentage",
+          pass_threshold: 0.7,
+          publish: true,
+        }),
+      ),
+    );
+
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).get("step")).toBe(
+        "run",
+      ),
+    );
+    expect(window.location.pathname).toBe(
+      "/dashboard/evaluations/create/eval-draft-1",
+    );
+    expect(new URLSearchParams(window.location.search).get("source_id")).toBe(
+      "project-1",
+    );
+    expect(mocks.recordActivationEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "eval_scorer_created",
+        artifactId: "eval-draft-1",
+        artifactType: "eval_scorer",
+        metadata: expect.objectContaining({
+          eval_id: "eval-draft-1",
+          eval_type: "code",
+          source_id: "project-1",
+          source_type: "trace_project",
+          step: "scorer",
         }),
       }),
     );
