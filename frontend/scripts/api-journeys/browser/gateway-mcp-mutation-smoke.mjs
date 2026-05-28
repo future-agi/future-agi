@@ -682,10 +682,14 @@ async function setInputByLabel(page, label, value, timeout = 30000) {
   const updated = await page.evaluate(
     ({ label: expectedLabel, value: nextValue }) => {
       const labels = window.visibleElements("label");
-      const labelElement = labels.find(
-        (candidate) =>
-          window.normalizeText(candidate.textContent) === expectedLabel,
-      );
+      const labelElement = labels.find((candidate) => {
+        const text = window.normalizeText(candidate.textContent);
+        return (
+          text === expectedLabel ||
+          text.replace(/\s*\*$/, "") === expectedLabel ||
+          text.includes(expectedLabel)
+        );
+      });
       const formControl =
         labelElement?.closest(".MuiFormControl-root") ||
         labelElement?.parentElement;
@@ -726,10 +730,14 @@ async function selectOptionByLabel(page, label, optionText, timeout = 30000) {
   await waitForVisibleText(page, label, { timeout });
   const opened = await page.evaluate((expectedLabel) => {
     const labels = window.visibleElements("label");
-    const labelElement = labels.find(
-      (candidate) =>
-        window.normalizeText(candidate.textContent) === expectedLabel,
-    );
+    const labelElement = labels.find((candidate) => {
+      const text = window.normalizeText(candidate.textContent);
+      return (
+        text === expectedLabel ||
+        text.replace(/\s*\*$/, "") === expectedLabel ||
+        text.includes(expectedLabel)
+      );
+    });
     const formControl =
       labelElement?.closest(".MuiFormControl-root") ||
       labelElement?.parentElement;
