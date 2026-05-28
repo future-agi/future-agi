@@ -363,6 +363,13 @@ def test_evaluator_after_trace_review_activates(organization, workspace, user):
 
     assert payload["stage"] == "activated"
     assert payload["is_activated"] is True
+    assert payload["stage_copy"] == {
+        "eyebrow": "Aha moment reached",
+        "title": "Your first quality loop is live",
+        "description": (
+            "Review daily quality next and keep improving the loop from real signals."
+        ),
+    }
 
 
 @pytest.mark.django_db

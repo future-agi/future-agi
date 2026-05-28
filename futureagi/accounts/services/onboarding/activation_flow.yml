@@ -756,9 +756,9 @@ stages:
   activated:
     home_mode: first_run
     copy:
-      eyebrow: Activated
-      title: First quality loop is ready
-      description: The workspace has completed a first meaningful loop.
+      eyebrow: Aha moment reached
+      title: Your first quality loop is live
+      description: Review daily quality next and keep improving the loop from real signals.
     progress:
       build: complete
       test: available
