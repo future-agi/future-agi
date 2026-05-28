@@ -153,6 +153,52 @@ class CompareVersionsSerializer(serializers.Serializer):
         return data
 
 
+class PromptTemplateListRequestSerializer(serializers.Serializer):
+    """Query parameters for listing prompt templates in the workspace.
+
+    Returns paginated prompt template records (id, name, folder, modality,
+    updated_at). Use this for any "list prompt templates", "show my
+    prompts", "find prompt named X" query. Filter by search (matches name),
+    modality (chat/completion/image/etc.), or page through results.
+    """
+
+    search = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text=(
+            "Filter by template name (case-insensitive substring match). "
+            "Example: 'summari' matches 'summarization-v3'."
+        ),
+    )
+    page = serializers.IntegerField(
+        min_value=1,
+        default=1,
+        help_text="Page number, 1-indexed. Default 1.",
+    )
+    page_size = serializers.IntegerField(
+        min_value=1,
+        max_value=100,
+        default=20,
+        help_text="Number of templates per page. Range 1-100. Default 20.",
+    )
+    ordering = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text=(
+            "Sort order. One of: 'name', '-name', 'created_at', "
+            "'-created_at'. Prefix with '-' for descending."
+        ),
+    )
+    modality = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Filter by model modality. List of strings, e.g. ['chat'], "
+            "['completion'], ['image']. Omit to include all modalities."
+        ),
+    )
+
+
 class PromptTemplateSerializer(serializers.ModelSerializer):
     """A prompt template is a reusable, versioned LLM prompt definition.
 

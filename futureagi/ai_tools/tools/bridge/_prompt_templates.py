@@ -2,8 +2,9 @@
 
 Applies @expose_to_mcp programmatically to avoid editing the legacy
 model_hub/views/prompt_template.py file (which has pre-existing lint debt).
-This file does the same thing as adding @expose_to_mcp directly to the
-ViewSet class — the decorator is just a callable.
+Descriptions live on the PromptTemplateSerializer's docstring — the bridge
+auto-derives the tool description from there, so this file only declares
+tool names, query params, and field allowlists.
 """
 
 from ai_tools.drf_bridge import expose_to_mcp
@@ -14,12 +15,6 @@ expose_to_mcp(
     tools={
         "list": {
             "name": "list_prompt_templates",
-            "description": (
-                "List prompt templates in the workspace. Prompt templates are "
-                "reusable, versioned LLM prompt definitions. Returns template "
-                "id, name, folder, and modality. Filter by name (search) or "
-                "modality."
-            ),
             "query_params": {
                 "search": {
                     "type": str,
@@ -53,52 +48,9 @@ expose_to_mcp(
                 },
             },
         },
-        "retrieve": {
-            "name": "get_prompt_template",
-            "description": (
-                "Get full details of a single prompt template by its UUID, "
-                "including its name, description, variables, placeholders, and "
-                "folder. Use this after list_prompt_templates to inspect a "
-                "specific template."
-            ),
-        },
-        "create": {
-            "name": "create_prompt_template",
-            "description": (
-                "Create a new prompt template in the current workspace. "
-                "Requires a unique name. variable_names and placeholders are "
-                "optional. Returns the created template's id."
-            ),
-            "include_fields": [
-                "name",
-                "description",
-                "variable_names",
-                "placeholders",
-                "prompt_folder",
-            ],
-        },
-        "update": {
-            "name": "update_prompt_template",
-            "description": (
-                "Update an existing prompt template's metadata (name, "
-                "description, variables, placeholders, folder). Requires the "
-                "template UUID — call list_prompt_templates first."
-            ),
-            "include_fields": [
-                "name",
-                "description",
-                "variable_names",
-                "placeholders",
-                "prompt_folder",
-            ],
-        },
-        "destroy": {
-            "name": "delete_prompt_template",
-            "description": (
-                "Delete a prompt template by its UUID (soft delete). Requires "
-                "the template UUID — call list_prompt_templates first. This "
-                "also removes its associated versions."
-            ),
-        },
+        "retrieve": {"name": "get_prompt_template"},
+        "create": {"name": "create_prompt_template"},
+        "update": {"name": "update_prompt_template"},
+        "destroy": {"name": "delete_prompt_template"},
     },
 )(PromptTemplateViewSet)

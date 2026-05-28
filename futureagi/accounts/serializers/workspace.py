@@ -238,7 +238,15 @@ class PaginationSerializer(serializers.Serializer):
 
 
 class WorkspaceListRequestSerializer(PaginationSerializer):
-    """Serializer for workspace list request"""
+    """List workspaces the current user can access in their organization.
+
+    Returns paginated workspace records with id, name, display_name, admin
+    list, and timestamps. Use the 'search' query param to match workspace
+    name or display_name (case-insensitive). Use this for any "list
+    workspaces", "show my workspaces", "find workspace named X" query.
+    Organisation owners and admins see all workspaces; other members see
+    only those they belong to.
+    """
 
     pass
 
@@ -320,7 +328,19 @@ class UserListSortField(serializers.Field):
 
 
 class UserListRequestSerializer(PaginationSerializer):
-    """Serializer for user list request with additional filters"""
+    """**The single canonical tool for listing users / team members / org members.**
+
+    Returns paginated user records with id, name, email, role, status, start
+    date, and last update date. Use this for any query about people in the
+    organization or a workspace: "list users", "show my team", "who is in
+    the org?", "show org members", "find users in workspace X", "show
+    pending invitations". Supports filtering by workspace_id (scope to a
+    single workspace), filter_role ('OWNER', 'ADMIN', 'MEMBER',
+    'WORKSPACE_ADMIN', 'WORKSPACE_MEMBER', etc.), filter_status ('Active',
+    'Inactive', 'Request Pending', etc.), and search (matches name or
+    email). Sort by 'name', 'email', 'role', 'status', or 'start_date'
+    (prefix with '-' for descending).
+    """
 
     sort = UserListSortField(required=False, default=list)
     workspace_id = serializers.UUIDField(required=False)

@@ -89,6 +89,21 @@ ACTION_METHOD_MAP = {
     "destroy": "DELETE",
 }
 
+ACTION_VERB_MAP = {
+    "list": "List",
+    "retrieve": "Get",
+    "create": "Create a new",
+    "update": "Update an existing",
+    "partial_update": "Partially update",
+    "destroy": "Delete a",
+    "get": "List",  # APIView fallback
+    "post": "Create or submit a",
+    "put": "Replace a",
+    "patch": "Partially update a",
+    "delete": "Delete a",
+}
+
+# Kept for backward compat with any callers that still reference it.
 ACTION_DESCRIPTION_MAP = {
     "list": "List all {entity}s in the workspace.",
     "retrieve": "Get detailed information about a single {entity} by ID.",
@@ -97,6 +112,72 @@ ACTION_DESCRIPTION_MAP = {
     "partial_update": "Partially update an existing {entity}.",
     "destroy": "Delete a {entity}.",
 }
+
+
+def _derive_entity_name(viewset_cls) -> str:
+    """Turn a ViewSet/APIView class name into a snake_case singular entity.
+
+    Strips common suffixes in the right order (APIView before View before
+    ViewSet) so `UserListAPIView` → `user`, `PromptTemplateViewSet` →
+    `prompt_template`, `ProjectView` → `project`. Also drops list/detail
+    intent suffixes that obscure the entity.
+    """
+    import re
+
+    name = viewset_cls.__name__
+    for suffix in ("APIView", "GenericViewSet", "ViewSet", "View"):
+        if name.endswith(suffix):
+            name = name[: -len(suffix)]
+            break
+    for intent_suffix in ("List", "Detail", "Operations"):
+        if name.endswith(intent_suffix):
+            name = name[: -len(intent_suffix)]
+            break
+    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower()
+    return snake or viewset_cls.__name__.lower()
+
+
+def _clean_docstring(text: str | None) -> str:
+    if not text:
+        return ""
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    out: list[str] = []
+    for line in lines:
+        if (
+            line.startswith("Args")
+            or line.startswith("Returns")
+            or line.startswith(":param")
+        ):
+            break
+        out.append(line)
+    return " ".join(out).strip()
+
+
+def _derive_description(
+    viewset_cls,
+    action_name: str,
+    entity_name: str,
+    serializer_cls,
+) -> str:
+    """Compose a tool description from the serializer's docstring.
+
+    Output shape: "{verb} {entity}s. {serializer_doc}"
+    Falls back to the ViewSet's docstring, then a generic action-only string.
+    """
+    verb = ACTION_VERB_MAP.get(action_name, action_name)
+    plural_marker = "s" if action_name in LIST_ACTIONS or action_name == "get" else ""
+
+    serializer_doc = ""
+    if serializer_cls is not None:
+        serializer_doc = _clean_docstring(getattr(serializer_cls, "__doc__", None))
+
+    if not serializer_doc:
+        serializer_doc = _clean_docstring(getattr(viewset_cls, "__doc__", None))
+
+    base = f"{verb} {entity_name}{plural_marker}."
+    if serializer_doc:
+        return f"{base} {serializer_doc}"
+    return base
 
 
 @dataclass
@@ -533,15 +614,13 @@ def _register_bridge_tool(
     include_fields = tool_config.get("include_fields")
     exclude_fields = tool_config.get("exclude_fields")
 
-    entity_name = (
-        viewset_cls.__name__.replace("View", "").replace("ViewSet", "").lower()
+    entity_name = tool_config.get("entity") or _derive_entity_name(viewset_cls)
+    serializer_for_doc = _get_action_serializer(
+        viewset_cls, action_name, tool_config.get("serializer")
     )
     description = tool_config.get(
         "description",
-        ACTION_DESCRIPTION_MAP.get(action_name, f"{action_name} {entity_name}").format(
-            entity=entity_name
-        ),
-    )
+    ) or _derive_description(viewset_cls, action_name, entity_name, serializer_for_doc)
 
     if query_params:
         annotations = {}

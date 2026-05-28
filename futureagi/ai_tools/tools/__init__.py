@@ -309,7 +309,7 @@ from ai_tools.tools.users import (
     get_user_permissions,  # noqa: F401
     invite_users,  # noqa: F401
     list_api_keys,  # noqa: F401
-    list_org_members,  # noqa: F401
+    # list_org_members — removed, duplicate of list_users bridge tool
     list_organizations,  # noqa: F401
     # list_users — replaced by DRF bridge on UserListAPIView
     list_workspace_members,  # noqa: F401

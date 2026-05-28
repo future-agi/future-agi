@@ -70,7 +70,6 @@ logger = structlog.get_logger(__name__)
     tools={
         "list": {
             "name": "list_trace_projects",
-            "description": "List tracing projects in the current workspace. A tracing project is a container for LLM/agent traces (observe) or evaluation runs (experiment). Use this to discover project IDs, names, and types. Filter by name or project_type. Returns paginated results.",
             "query_params": {
                 "name": {
                     "type": str,
@@ -98,16 +97,13 @@ logger = structlog.get_logger(__name__)
         },
         "retrieve": {
             "name": "get_trace_project",
-            "description": "Get full details of a single tracing project by its UUID, including config, sampling_rate, trace_type, and metadata. Use this after list_trace_projects to inspect a specific project.",
         },
         "create": {
             "name": "create_trace_project",
-            "description": "Create a new tracing project in the current workspace. Requires name (unique per org+type), model_type (e.g. 'GenerativeLLM' for chat LLMs), and trace_type ('observe' or 'experiment'). Project name must NOT collide with an existing project of the same trace_type.",
             "include_fields": ["name", "model_type", "trace_type", "source", "tags"],
         },
         "update_project_name": {
             "name": "rename_trace_project",
-            "description": "Rename a tracing project and optionally adjust its trace sampling rate. Requires the project UUID — call list_trace_projects first to obtain it. Use this when the user asks to 'rename project X to Y' or 'change sampling rate of X to N%'.",
             "serializer": "ProjectNameUpdateSerializer",
             "method": "POST",
         },
