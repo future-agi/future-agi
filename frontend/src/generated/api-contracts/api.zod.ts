@@ -5695,7 +5695,7 @@ export const agentccGatewaysTestMcpToolBodyArgumentsDefault = {  };
 
 export const AgentccGatewaysTestMcpToolBody = zod.object({
   "name": zod.string().min(1),
-  "arguments": zod.record(zod.string(), zod.string()).default(agentccGatewaysTestMcpToolBodyArgumentsDefault)
+  "arguments": zod.record(zod.string(), zod.unknown()).default(agentccGatewaysTestMcpToolBodyArgumentsDefault)
 })
 
 
@@ -5872,7 +5872,7 @@ export const AgentccGatewaysUpdateMcpGuardrailsParams = zod.object({
 })
 
 export const AgentccGatewaysUpdateMcpGuardrailsBody = zod.object({
-  "config": zod.record(zod.string(), zod.string())
+  "config": zod.record(zod.string(), zod.unknown())
 })
 
 export const AgentccGatewaysUpdateMcpGuardrailsResponse = zod.object({
@@ -5905,7 +5905,7 @@ export const AgentccGatewaysUpdateMcpServerParams = zod.object({
 
 export const AgentccGatewaysUpdateMcpServerBody = zod.object({
   "server_id": zod.string().min(1),
-  "config": zod.record(zod.string(), zod.string())
+  "config": zod.record(zod.string(), zod.unknown())
 })
 
 export const AgentccGatewaysUpdateMcpServerResponse = zod.object({

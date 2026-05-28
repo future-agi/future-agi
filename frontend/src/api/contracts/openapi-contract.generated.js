@@ -56060,7 +56060,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
             "x-nullable": true
           }
         }
@@ -56095,7 +56094,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
             "x-nullable": true
           }
         }
@@ -56132,7 +56130,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Arguments",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
             "x-nullable": true
           },
           "default": {}

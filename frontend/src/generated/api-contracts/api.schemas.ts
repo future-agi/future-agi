@@ -2731,7 +2731,7 @@ export interface GatewayBatchSubmitResponseApi {
   result: GatewayBatchSubmitResultApi;
 }
 
-export type GatewayMCPToolTestRequestApiArguments = {[key: string]: string};
+export type GatewayMCPToolTestRequestApiArguments = {[key: string]: unknown};
 
 export interface GatewayMCPToolTestRequestApi {
   /** @minLength 1 */
@@ -2868,13 +2868,13 @@ export interface GatewayNamedConfigRequestApi {
   config: GatewayNamedConfigRequestApiConfig;
 }
 
-export type GatewayMCPGuardrailsUpdateRequestApiConfig = {[key: string]: string};
+export type GatewayMCPGuardrailsUpdateRequestApiConfig = {[key: string]: unknown};
 
 export interface GatewayMCPGuardrailsUpdateRequestApi {
   config: GatewayMCPGuardrailsUpdateRequestApiConfig;
 }
 
-export type GatewayMCPServerUpdateRequestApiConfig = {[key: string]: string};
+export type GatewayMCPServerUpdateRequestApiConfig = {[key: string]: unknown};
 
 export interface GatewayMCPServerUpdateRequestApi {
   /** @minLength 1 */

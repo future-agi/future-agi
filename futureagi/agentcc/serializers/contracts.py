@@ -357,7 +357,7 @@ class GatewayBatchRequestSerializer(serializers.Serializer):
 
 class GatewayMCPServerUpdateRequestSerializer(serializers.Serializer):
     server_id = serializers.CharField()
-    config = serializers.DictField()
+    config = serializers.DictField(child=serializers.JSONField())
 
 
 class GatewayMCPServerRemoveRequestSerializer(serializers.Serializer):
@@ -365,12 +365,14 @@ class GatewayMCPServerRemoveRequestSerializer(serializers.Serializer):
 
 
 class GatewayMCPGuardrailsUpdateRequestSerializer(serializers.Serializer):
-    config = serializers.DictField()
+    config = serializers.DictField(child=serializers.JSONField())
 
 
 class GatewayMCPToolTestRequestSerializer(serializers.Serializer):
     name = serializers.CharField()
-    arguments = serializers.DictField(required=False, default=dict)
+    arguments = serializers.DictField(
+        child=serializers.JSONField(), required=False, default=dict
+    )
 
 
 class PIIEntitySerializer(serializers.Serializer):
