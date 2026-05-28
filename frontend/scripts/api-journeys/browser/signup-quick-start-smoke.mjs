@@ -115,10 +115,17 @@ async function main() {
       { timeout: 45000 },
     );
     await expectVisibleText(page, "Connect observability", { timeout: 45000 });
+    await expectVisibleTestId(page, "observe-setup-panel", { timeout: 45000 });
     await expectVisibleText(page, "Connect one observe project", {
       exact: true,
       timeout: 45000,
     });
+    const observeCtaHref = await expectVisibleActionHref(
+      page,
+      "Connect observability",
+      "/dashboard/observe?setup=true&source=onboarding",
+      { timeout: 45000 },
+    );
 
     const browserState = await page.evaluate(() => ({
       initialRender: localStorage.getItem("initial-render"),
@@ -184,6 +191,7 @@ async function main() {
             browser_state: browserState,
             email: user.email,
             onboarding_post: evidence.onboardingPosts[0],
+            observe_cta_href: observeCtaHref,
             screenshot: SCREENSHOT_PATH,
             setup_post: evidence.setupPosts[0],
             signup_post: evidence.signupPosts[0],
@@ -256,6 +264,67 @@ async function expectVisibleText(
     { timeout },
     { text, exact },
   );
+}
+
+async function expectVisibleTestId(page, testId, { timeout = 30000 } = {}) {
+  await page.waitForFunction(
+    (expectedTestId) => {
+      const element = document.querySelector(
+        `[data-testid="${expectedTestId}"]`,
+      );
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    },
+    { timeout },
+    testId,
+  );
+}
+
+async function expectVisibleActionHref(
+  page,
+  text,
+  expectedPath,
+  { timeout = 30000 } = {},
+) {
+  const handle = await page.waitForFunction(
+    ({ expectedText, expectedHrefPath }) => {
+      const normalized = (value) => String(value || "").trim();
+      const isVisible = (element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.visibility !== "hidden" &&
+          style.display !== "none" &&
+          rect.width > 0 &&
+          rect.height > 0 &&
+          !element.disabled
+        );
+      };
+      const action = Array.from(document.querySelectorAll("a, button")).find(
+        (element) => {
+          if (!isVisible(element)) return false;
+          if (normalized(element.textContent) !== expectedText) return false;
+          const href = element.getAttribute("href") || element.href;
+          if (!href) return false;
+          const url = new URL(href, window.location.origin);
+          return `${url.pathname}${url.search}` === expectedHrefPath;
+        },
+      );
+      return action?.getAttribute("href") || action?.href || false;
+    },
+    { timeout },
+    { expectedText: text, expectedHrefPath: expectedPath },
+  );
+  const href = await handle.jsonValue();
+  await handle.dispose();
+  return href;
 }
 
 async function clickVisibleButtonText(page, text, timeout = 30000) {
