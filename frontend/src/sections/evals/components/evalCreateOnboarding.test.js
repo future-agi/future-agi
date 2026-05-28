@@ -18,6 +18,8 @@ import {
   EVAL_CREATE_SOURCE_TABS,
   evalCreateOnboardingStage,
   evalUsageLogMatchesRun,
+  getEvalUsageLogId,
+  getEvalUsageReviewOutcome,
   getEvalCreateInitialSourceTab,
   getEvalCreateOnboardingCopy,
   getEvalCreateOnboardingParams,
@@ -367,6 +369,31 @@ describe("evalCreateOnboarding", () => {
     expect(evalUsageLogMatchesRun({ id: "log-2" }, "log-1")).toBe(false);
   });
 
+  it("extracts eval usage log ids without reading result content", () => {
+    expect(
+      getEvalUsageLogId({
+        detail: { eval_log_id: "detail-log-1" },
+        output: "Do not inspect this field",
+        reason: "Do not inspect this field",
+      }),
+    ).toBe("detail-log-1");
+    expect(getEvalUsageLogId({ evaluation_id: "evaluation-1" })).toBe(
+      "evaluation-1",
+    );
+  });
+
+  it("classifies eval usage review outcome from status fields", () => {
+    expect(getEvalUsageReviewOutcome({ result: "Failed" })).toBe(
+      "failure_reviewed",
+    );
+    expect(getEvalUsageReviewOutcome({ score: 0.4 })).toBe(
+      "weak_result_reviewed",
+    );
+    expect(getEvalUsageReviewOutcome({ result: "Passed", score: 0.95 })).toBe(
+      "result_summary_reviewed",
+    );
+  });
+
   it("builds a review route focus payload", () => {
     expect(
       buildEvalReviewRouteFocusPayload({
@@ -396,6 +423,9 @@ describe("evalCreateOnboarding", () => {
     expect(
       buildEvalFailuresReviewedPayload({
         evalId: "eval-1",
+        evalLogId: "log-1",
+        reviewOutcome: "failure_reviewed",
+        rowSource: "eval_playground",
         runId: "run-1",
       }),
     ).toMatchObject({
@@ -407,6 +437,10 @@ describe("evalCreateOnboarding", () => {
       artifactId: "run-1",
       metadata: {
         eval_id: "eval-1",
+        eval_log_id: "log-1",
+        review_outcome: "failure_reviewed",
+        review_surface: "usage_log_detail",
+        row_source: "eval_playground",
         run_id: "run-1",
         step: "review",
         tab: "usage",

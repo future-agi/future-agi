@@ -60,7 +60,6 @@ import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerCon
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import EvalOnboardingFocusPanel from "./EvalOnboardingFocusPanel";
 import {
-  buildEvalFailuresReviewedPayload,
   buildEvalReviewRouteFocusPayload,
   getEvalReviewOnboardingCopy,
   getEvalReviewOnboardingParams,
@@ -136,7 +135,6 @@ const EvalDetailPage = () => {
   const { data: versionsData } = useEvalVersions(evalId);
   const testPlaygroundRef = useRef(null);
   const recordedOnboardingFocusRef = useRef(false);
-  const recordedReviewRef = useRef(false);
 
   // Editable fields
   const [instructions, setInstructions] = useState("");
@@ -221,17 +219,7 @@ const EvalDetailPage = () => {
         }),
       );
     }
-
-    if (activeTab !== "usage" || recordedReviewRef.current) return;
-
-    recordedReviewRef.current = true;
-    recordActivationEvent?.(
-      buildEvalFailuresReviewedPayload({
-        evalId,
-        runId: reviewOnboardingParams.runId,
-      }),
-    );
-  }, [activeTab, evalId, recordActivationEvent, reviewOnboardingParams]);
+  }, [evalId, recordActivationEvent, reviewOnboardingParams]);
 
   const handleTabChange = useCallback(
     (_, val) => {

@@ -39,8 +39,11 @@ import { isEditableElement } from "src/utils/keyboardUtils";
 import UsageChart from "./UsageChart";
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import {
+  buildEvalFailuresReviewedPayload,
   buildEvalFailureActionCreatedPayload,
   evalUsageLogMatchesRun,
+  getEvalUsageLogId,
+  getEvalUsageReviewOutcome,
   getEvalFailureActionOnboardingParams,
 } from "./evalCreateOnboarding";
 
@@ -409,6 +412,7 @@ const EvalUsageTab = ({
   const [searchQuery, setSearchQuery] = useState("");
   const [detailIndex, setDetailIndex] = useState(null); // index in filteredLogs
   const autoOpenedReviewRunRef = useRef(null);
+  const recordedReviewedRowsRef = useRef(new Set());
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
 
   const period = DATE_OPTION_TO_PERIOD[dateOption] || "30d";
@@ -477,6 +481,41 @@ const EvalUsageTab = ({
     failureActionOnboardingParams.isOnboarding,
     failureActionOnboardingParams.runId,
     filteredLogs,
+  ]);
+
+  useEffect(() => {
+    if (
+      !failureActionOnboardingParams.isOnboarding ||
+      failureActionOnboardingParams.step !== "review" ||
+      !detailRow
+    ) {
+      return;
+    }
+
+    const evalLogId = getEvalUsageLogId(detailRow);
+    const eventKey = `${failureActionOnboardingParams.runId || "no-run"}:${
+      evalLogId || detailIndex
+    }`;
+    if (recordedReviewedRowsRef.current.has(eventKey)) return;
+    recordedReviewedRowsRef.current.add(eventKey);
+
+    recordActivationEvent?.(
+      buildEvalFailuresReviewedPayload({
+        evalId: templateId,
+        evalLogId,
+        reviewOutcome: getEvalUsageReviewOutcome(detailRow),
+        rowSource: detailRow.source,
+        runId: failureActionOnboardingParams.runId,
+      }),
+    );
+  }, [
+    detailIndex,
+    detailRow,
+    failureActionOnboardingParams.isOnboarding,
+    failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.step,
+    recordActivationEvent,
+    templateId,
   ]);
 
   const handleFeedbackSubmitted = useCallback(() => {

@@ -195,6 +195,25 @@ export const getEvalRunResultId = (result = {}) =>
   result?.log_id ||
   null;
 
+export const getEvalUsageLogId = (log = {}) => {
+  const detail = log?.detail || {};
+  return (
+    log?.id ||
+    log?.run_id ||
+    log?.log_id ||
+    log?.eval_log_id ||
+    log?.eval_task_id ||
+    log?.evaluation_id ||
+    detail?.id ||
+    detail?.run_id ||
+    detail?.log_id ||
+    detail?.eval_log_id ||
+    detail?.eval_task_id ||
+    detail?.evaluation_id ||
+    null
+  );
+};
+
 export const evalUsageLogMatchesRun = (log = {}, runId) => {
   if (!runId) return false;
 
@@ -216,6 +235,21 @@ export const evalUsageLogMatchesRun = (log = {}, runId) => {
   const target = String(runId);
 
   return candidates.some((candidate) => String(candidate || "") === target);
+};
+
+export const getEvalUsageReviewOutcome = (log = {}) => {
+  const result = String(log?.result || "").toLowerCase();
+  const status = String(log?.status || "").toLowerCase();
+  const score =
+    typeof log?.score === "number" ? log.score : Number.parseFloat(log?.score);
+
+  if (["failed", "fail"].includes(result) || status === "error") {
+    return "failure_reviewed";
+  }
+  if (Number.isFinite(score) && score < 0.7) {
+    return "weak_result_reviewed";
+  }
+  return "result_summary_reviewed";
 };
 
 export const getEvalReviewOnboardingParams = (search = "") => {
@@ -481,8 +515,18 @@ export const buildEvalReviewRouteFocusPayload = ({
   };
 };
 
-export const buildEvalFailuresReviewedPayload = ({ evalId, runId } = {}) => {
-  const artifactId = safeKeyPart(runId || evalId, EVAL_REVIEW_ARTIFACT_ID);
+export const buildEvalFailuresReviewedPayload = ({
+  evalId,
+  evalLogId,
+  reviewOutcome,
+  reviewSurface = "usage_log_detail",
+  rowSource,
+  runId,
+} = {}) => {
+  const artifactId = safeKeyPart(
+    runId || evalLogId || evalId,
+    EVAL_REVIEW_ARTIFACT_ID,
+  );
 
   return {
     eventName: "eval_failures_reviewed",
@@ -493,13 +537,17 @@ export const buildEvalFailuresReviewedPayload = ({ evalId, runId } = {}) => {
     artifactId,
     metadata: compactMetadata({
       eval_id: evalId,
+      eval_log_id: evalLogId,
+      review_outcome: reviewOutcome,
+      review_surface: reviewSurface,
+      row_source: rowSource,
       run_id: runId,
       step: EVAL_REVIEW_STEP,
       tab: "usage",
     }),
     idempotencyKey: [
       "eval_failures_reviewed",
-      safeKeyPart(runId, "no-run"),
+      safeKeyPart(runId || evalLogId, "no-run"),
       safeKeyPart(evalId, "no-eval"),
     ].join(":"),
     isSample: false,
