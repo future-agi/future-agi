@@ -223,6 +223,78 @@ class AttributeBucket:
     count: int
 
 
+def scoped_trace_ids(
+    project_id: str,
+    trace_ids: Iterable[str],
+    filters: list[dict],
+) -> Optional[list[str]]:
+    """Narrow a trace-id set by canonical filters, evaluated in ClickHouse.
+
+    The blast-radius pattern: callers pass the cluster's stored trace_ids
+    (`trace_ids`); this returns the subset whose spans satisfy `filters`
+    (attr.* / eval.* / annotation / column), evaluated via the prod-proven
+    ClickHouseFilterBuilder against the shredded `spans` table.
+
+    `filters` is the canonical FE/BE contract (list of
+    {column_id, filter_config{col_type, filter_type, filter_op, filter_value}}).
+
+    Returns the surviving trace-id list, or None when CH is unavailable
+    (caller decides whether to fall back to the unfiltered set or error).
+    """
+    ids = [str(t) for t in trace_ids if t]
+    if not ids:
+        return []
+    if not filters:
+        return ids
+    if not is_clickhouse_enabled():
+        logger.info("ch_unavailable_for_scoped_trace_ids", project_id=project_id)
+        return None
+
+    # Imported lazily — heavy module, only needed when filters are present.
+    from tracer.services.clickhouse.query_builders.filters import (
+        ClickHouseFilterBuilder,
+    )
+
+    fb = ClickHouseFilterBuilder(
+        table="spans",
+        query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+        project_id=str(project_id),
+        score_date_scope=False,
+    )
+    where, params = fb.translate(filters)
+    params = dict(params)
+    params["_pid"] = str(project_id)
+    params["_tids"] = ids
+
+    where_clause = (f" AND ({where})" if where else "")
+    query = (
+        "SELECT DISTINCT toString(trace_id) FROM spans "
+        "WHERE project_id = %(_pid)s "
+        "AND _peerdb_is_deleted = 0 "
+        "AND toString(trace_id) IN %(_tids)s"
+        f"{where_clause}"
+    )
+    try:
+        client = ClickHouseClient()
+        rows, _types, query_time_ms = client.execute_read(query, params)
+    except Exception as e:
+        logger.warning(
+            "ch_scoped_trace_ids_failed",
+            error=str(e),
+            project_id=project_id,
+        )
+        return None
+
+    logger.info(
+        "scoped_trace_ids_fetched",
+        project_id=project_id,
+        in_count=len(ids),
+        out_count=len(rows),
+        query_time_ms=query_time_ms,
+    )
+    return [row[0] for row in rows]
+
+
 def aggregate_attribute_over_traces(
     trace_ids: Iterable[str],
     attr_key: str,
