@@ -167,6 +167,42 @@ TASKS = [
         "msg": "Who am I? List my projects, and get details on one",
         "expected_tools": ["whoami", "list_trace_projects", "get_trace_project"],
     },
+    # --- Prompt template bridge tools (read-only, no destructive ops) ---
+    {
+        "id": 26,
+        "msg": "List all my prompt templates",
+        "expected_tools": ["list_prompt_templates"],
+    },
+    {
+        "id": 27,
+        "msg": "Show me my prompt templates",
+        "expected_tools": ["list_prompt_templates"],
+    },
+    {
+        "id": 28,
+        "msg": "Search for prompt templates with 'eval' in the name",
+        "expected_tools": ["list_prompt_templates"],
+    },
+    {
+        "id": 29,
+        "msg": "How many prompt templates do I have?",
+        "expected_tools": ["list_prompt_templates"],
+    },
+    {
+        "id": 30,
+        "msg": "List my prompt templates, then get details of the first one",
+        "expected_tools": ["list_prompt_templates", "get_prompt_template"],
+    },
+    {
+        "id": 31,
+        "msg": "Find a prompt template called 'summarization' and show me its details",
+        "expected_tools": ["list_prompt_templates", "get_prompt_template"],
+    },
+    {
+        "id": 32,
+        "msg": "Show me what variables my prompt templates use",
+        "expected_tools": ["list_prompt_templates"],
+    },
 ]
 
 
@@ -348,6 +384,11 @@ async def main():
                 "get_trace_project",
                 "create_trace_project",
                 "rename_trace_project",
+                "list_prompt_templates",
+                "get_prompt_template",
+                "create_prompt_template",
+                "update_prompt_template",
+                "delete_prompt_template",
             ]
             else ""
         )

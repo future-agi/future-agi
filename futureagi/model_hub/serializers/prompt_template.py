@@ -6,10 +6,8 @@ import structlog
 import yaml
 from rest_framework import serializers
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.choices import ProviderLogoUrls
-from model_hub.models.prompt_label import PromptLabel
 from model_hub.models.run_prompt import (
     PromptTemplate,
     PromptVersion,
@@ -17,6 +15,8 @@ from model_hub.models.run_prompt import (
     UserResponseSchema,
 )
 from model_hub.utils.utils import get_model_mode
+
+logger = structlog.get_logger(__name__)
 
 
 class VersionDefaultSerializer(serializers.Serializer):
@@ -154,6 +154,80 @@ class CompareVersionsSerializer(serializers.Serializer):
 
 
 class PromptTemplateSerializer(serializers.ModelSerializer):
+    """A prompt template is a reusable, versioned LLM prompt definition.
+
+    Templates have versions (drafts, defaults, named labels) that capture
+    the actual messages, model config, and execution settings. Use prompt
+    folders to organise templates into groups.
+    """
+
+    id = serializers.UUIDField(
+        read_only=True,
+        help_text=(
+            "Unique prompt template identifier. UUID v4 format. "
+            "Example: '550e8400-e29b-41d4-a716-446655440000'. "
+            "**How to get it:** call `list_prompt_templates` to discover "
+            "template IDs (optionally filter by 'search' query param to find "
+            "by name)."
+        ),
+    )
+    name = serializers.CharField(
+        max_length=255,
+        help_text=(
+            "Human-readable prompt template name. Must be unique within the "
+            "workspace. Use kebab-case or descriptive phrases. "
+            "Examples: 'customer-support-greeting', 'summarization-v3', "
+            "'rag-final-answer'."
+        ),
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text=(
+            "Optional free-form description of what the prompt is for. "
+            "Example: 'Generates polite customer support replies given a "
+            "ticket summary and tone tag.'"
+        ),
+    )
+    variable_names = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "List of variable names referenced inside the prompt messages, "
+            "e.g. ['user_name', 'ticket_summary', 'tone']. These are the "
+            "placeholders that callers must provide at runtime. Auto-derived "
+            "from the prompt body if omitted."
+        ),
+    )
+    placeholders = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Optional default values for the template's variables. "
+            "Object with shape {variable_name: default_value}. Example: "
+            "{'tone': 'friendly', 'user_name': 'there'}. Used in playgrounds "
+            "and previews when no explicit value is supplied."
+        ),
+    )
+    prompt_folder = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "UUID of the folder to place this template in. **How to get it:** "
+            "call `list_prompt_folders` first. Omit or pass null to leave at "
+            "workspace root."
+        ),
+    )
+    organization = serializers.UUIDField(
+        read_only=True,
+        help_text="Organization UUID. Auto-set from the authenticated user.",
+    )
+    created_by = serializers.UUIDField(
+        read_only=True,
+        help_text="UUID of the user who created the template. Auto-set on create.",
+    )
+
     class Meta:
         model = PromptTemplate
         fields = [
