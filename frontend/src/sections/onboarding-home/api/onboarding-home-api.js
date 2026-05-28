@@ -76,6 +76,26 @@ const goalPayload = (payload = {}) =>
     known_goal_id: payload.knownGoalId ?? payload.known_goal_id,
   });
 
+const activationEventMetadata = (metadata) => {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    return metadata;
+  }
+
+  return Object.fromEntries(
+    Object.entries(metadata)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => {
+        if (value === null || typeof value === "string") {
+          return [key, value];
+        }
+        if (typeof value === "object") {
+          return [key, JSON.stringify(value)];
+        }
+        return [key, String(value)];
+      }),
+  );
+};
+
 export const fetchActivationState = async (params = {}) => {
   const response = await axios.get(endpoints.onboarding.activationState, {
     params: activationStateParams(params),
@@ -102,7 +122,7 @@ const activationEventPayload = (payload = {}) =>
     artifact_type: payload.artifactType ?? payload.artifact_type,
     artifact_id: payload.artifactId ?? payload.artifact_id,
     project_id: payload.projectId ?? payload.project_id,
-    metadata: payload.metadata,
+    metadata: activationEventMetadata(payload.metadata),
     idempotency_key: payload.idempotencyKey ?? payload.idempotency_key,
     is_sample: payload.isSample ?? payload.is_sample,
   });

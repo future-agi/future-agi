@@ -165,7 +165,13 @@ describe("onboarding home API", () => {
       artifactType: "trace",
       artifactId: "trace-1",
       projectId: "observe-1",
-      metadata: { entry: "trace_full_page" },
+      metadata: {
+        entry: "trace_full_page",
+        retry: 1,
+        setup: true,
+        empty: null,
+        skipped: undefined,
+      },
     });
 
     expect(axios.post).toHaveBeenCalledWith("/accounts/activation-events/", {
@@ -176,7 +182,12 @@ describe("onboarding home API", () => {
       artifact_type: "trace",
       artifact_id: "trace-1",
       project_id: "observe-1",
-      metadata: { entry: "trace_full_page" },
+      metadata: {
+        entry: "trace_full_page",
+        retry: "1",
+        setup: "true",
+        empty: null,
+      },
     });
     expect(state.stage).toBe("create_trace_evaluator");
   });
