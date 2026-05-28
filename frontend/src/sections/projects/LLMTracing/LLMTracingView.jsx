@@ -2101,19 +2101,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   // `filtersStorageKey` restores any non-empty extraFilters it finds.
   const clearPrimaryExtraFilters = useCallback(() => {
     setExtraFilters([]);
-    try {
-      localStorage.removeItem(filtersStorageKey);
-    } catch {
-      /* noop */
-    }
+    localStorage.removeItem(filtersStorageKey);
   }, [setExtraFilters, filtersStorageKey]);
   const clearCompareExtraFilters = useCallback(() => {
     setCompareExtraFilters([]);
-    try {
-      localStorage.removeItem(filtersStorageKey);
-    } catch {
-      /* noop */
-    }
+    localStorage.removeItem(filtersStorageKey);
   }, [setCompareExtraFilters, filtersStorageKey]);
 
   // Pending custom cols, queued until the backend returns real columns so
