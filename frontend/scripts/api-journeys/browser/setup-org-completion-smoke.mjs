@@ -80,12 +80,15 @@ async function main() {
     await page.goto(`${APP_BASE}/auth/jwt/setup-org?step=2`, {
       waitUntil: "domcontentloaded",
     });
-    await expectVisibleText(page, "Collaborate with your team");
+    await expectVisibleText(page, "Invite your team later");
     await page.evaluate(() => {
       localStorage.setItem("redirectUrl", "/dashboard/observe?project=stale");
     });
 
-    await page.type('input[placeholder="Add organization name"]', "Smoke Org");
+    const organizationNameInput = 'input[placeholder="Add organization name"]';
+    await page.click(organizationNameInput, { clickCount: 3 });
+    await page.keyboard.press("Backspace");
+    await page.type(organizationNameInput, "Smoke Org");
     await page.type('input[placeholder="Email"]', "teammate@example.com");
     await page.click('button[type="submit"]');
     await page.waitForFunction(

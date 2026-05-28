@@ -16,10 +16,7 @@ export const organizationSchema = z.object({
   members: z
     .array(
       z.object({
-        email: z
-          .string()
-          .email("Invalid email format")
-          .min(1, "Email is required"),
+        email: z.string().optional(),
         name: z.string().optional(),
         organization_role: z.string().min(1, "Role is required"),
         disabled: z.boolean().optional(),
@@ -29,7 +26,17 @@ export const organizationSchema = z.object({
       const seen = new Map();
 
       members.forEach((member, index) => {
-        const email = member.email.trim().toLowerCase();
+        const email = (member.email || "").trim().toLowerCase();
+        if (!email) return;
+
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "Invalid email format",
+            path: [index, "email"],
+          });
+          return;
+        }
 
         if (seen.has(email)) {
           ctx.addIssue({

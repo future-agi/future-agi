@@ -171,19 +171,27 @@ def user_signup(request):
         if User.objects.filter(email=email).exists():
             return _gm.bad_request("User with this email already exists.")
 
+        if data.get("password"):
+            try:
+                validate_password(data["password"])
+            except ValidationError as exc:
+                return _gm.bad_request("\n".join(exc.messages))
+
         # Allowlist fields to prevent hidden-parameter attacks
         allowed_fields = {
             "email",
             "full_name",
             "company_name",
+            "password",
             "allow_email",
         }
         sanitized_data = {k: v for k, v in data.items() if k in allowed_fields}
         first_signup(sanitized_data)
+        message = "User Created Successfully"
+        if not sanitized_data.get("password"):
+            message = "User Created Successfully, Please Check your email to proceed"
 
-        return _gm.success_response(
-            {"message": "User Created Successfully, Please Check your email to proceed"}
-        )
+        return _gm.success_response({"message": message})
 
     except Exception:
         logger.exception("Error during signup")

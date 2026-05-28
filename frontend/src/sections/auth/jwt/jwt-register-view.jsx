@@ -9,7 +9,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import LoadingButton from "@mui/lab/LoadingButton";
 import Divider from "@mui/material/Divider";
-import { Box, Button } from "@mui/material";
+import { Box, Button, IconButton, InputAdornment } from "@mui/material";
 import { useNavigate, useLocation } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { useAuthContext } from "src/auth/hooks";
@@ -51,9 +51,12 @@ export default function JwtRegisterView() {
       .transform((value) => (typeof value === "string" ? value.trim() : value))
       .required("Email is required")
       .email("Email must be a valid email address"),
-    password: Yup.string().when("$registerSuccess", {
+    password: Yup.string().when("$passwordRequired", {
       is: true,
-      then: (schema) => schema.required("Password is required"),
+      then: (schema) =>
+        schema
+          .required("Password is required")
+          .min(8, "Password must be at least 8 characters"),
       otherwise: (schema) => schema.notRequired(),
     }),
   });
@@ -113,7 +116,7 @@ export default function JwtRegisterView() {
   const methods = useForm({
     resolver: yupResolver(RegisterSchema),
     defaultValues,
-    context: { registerSuccess },
+    context: { passwordRequired: registerSuccess || !onboarding_token },
   });
 
   const { handleSubmit, watch } = methods;
@@ -129,6 +132,7 @@ export default function JwtRegisterView() {
         email: data?.email,
         full_name: data?.fullName,
         company_name: "",
+        password: data?.password || undefined,
         recaptcha_response: token,
         allow_email: true,
       };
@@ -145,11 +149,9 @@ export default function JwtRegisterView() {
         enqueueSnackbar({
           variant: "success",
           message:
-            response?.result?.message ||
-            "Thanks for registering! Please check your email.",
+            response?.result?.message || "Account created. Continuing setup.",
           autoHideDuration: 3000,
         });
-        setRegisterSuccess(true);
         trackEvent(Events.newUserSignUp, {
           [PropertyName.method]: "email",
           [PropertyName.email]: data.email,
@@ -174,8 +176,24 @@ export default function JwtRegisterView() {
           userId: response?.result?.user_id,
         });
 
-        // Always navigate to login after registration
-        // navigate(paths.auth.jwt.login);
+        if (!onboarding_token && data?.password) {
+          const loginToken = GOOGLE_SITE_KEY
+            ? await executeRecaptcha("login")
+            : "";
+          const loginResponse = await axios.post(endpoints.auth.login, {
+            email: data.email,
+            password: data.password,
+            recaptcha_response: loginToken,
+          });
+          if (loginResponse.status === 200) {
+            await login(loginResponse);
+            localStorage.setItem("signupProvider", "email");
+            navigate(paths.auth.jwt.setup_org + search);
+            return;
+          }
+        }
+
+        setRegisterSuccess(true);
       }
       setLoading(false);
     } catch (error) {
@@ -302,7 +320,7 @@ export default function JwtRegisterView() {
           lineHeight: "36px",
         }}
       >
-        Start your journey with us
+        Get to your first useful trace review in minutes
       </Typography>
     </Stack>
   );
@@ -322,6 +340,32 @@ export default function JwtRegisterView() {
         name="email"
         label="Business Email ID"
       />
+      {!onboarding_token && (
+        <RHFTextField
+          name="password"
+          label="Password"
+          placeholder="Create password"
+          type={password.value ? "text" : "password"}
+          autoComplete="new-password"
+          size="small"
+          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+          InputProps={{
+            endAdornment: (
+              <InputAdornment position="end">
+                <IconButton onClick={password.onToggle} edge="end">
+                  <Iconify
+                    icon={
+                      password.value
+                        ? "solar:eye-bold"
+                        : "solar:eye-closed-bold"
+                    }
+                  />
+                </IconButton>
+              </InputAdornment>
+            ),
+          }}
+        />
+      )}
       {!!errorMsg && (
         <Alert
           icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
@@ -346,7 +390,7 @@ export default function JwtRegisterView() {
         loading={loading}
         sx={{ height: "42px", borderRadius: 0.5 }}
       >
-        Continue
+        Create account and continue
       </LoadingButton>
       <Typography
         fontWeight={"fontWeightRegular"}

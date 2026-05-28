@@ -172,7 +172,7 @@ MemberRow.propTypes = {
   onRemove: PropTypes.func,
 };
 
-const useOrganizationInitialData = (isOwner) => {
+const useOrganizationInitialData = (isOwner, user) => {
   const { enqueueSnackbar } = useSnackbar();
   const [isLoading, setIsLoading] = useState(true);
   const [initialData, setInitialData] = useState(null);
@@ -201,8 +201,15 @@ const useOrganizationInitialData = (isOwner) => {
                 },
               ];
 
+        const organizationName =
+          orgDetails.org_name ||
+          user?.organization?.display_name ||
+          user?.organization?.name ||
+          generateNameFromEmail(user?.email) ||
+          "";
+
         setInitialData({
-          orgName: orgDetails.org_name,
+          orgName: organizationName,
           members: prefilledMembers,
         });
       } catch (error) {
@@ -210,7 +217,11 @@ const useOrganizationInitialData = (isOwner) => {
           variant: "error",
         });
         setInitialData({
-          orgName: "",
+          orgName:
+            user?.organization?.display_name ||
+            user?.organization?.name ||
+            generateNameFromEmail(user?.email) ||
+            "",
           members: [
             {
               email: "",
@@ -225,11 +236,18 @@ const useOrganizationInitialData = (isOwner) => {
       }
     };
     if (!isOwner) {
+      setIsLoading(false);
       return;
     }
 
     fetchOrgDetails();
-  }, [enqueueSnackbar]);
+  }, [
+    enqueueSnackbar,
+    isOwner,
+    user?.email,
+    user?.organization?.display_name,
+    user?.organization?.name,
+  ]);
 
   return { initialData, isLoading };
 };
@@ -256,7 +274,7 @@ const SetupOrganization = ({ getStarted = false }) => {
   const { user } = useAuthContext();
   const isOwner = user?.organization_role === "Owner";
   const { initialData, isLoading: isFetchingInitialData } =
-    useOrganizationInitialData(isOwner);
+    useOrganizationInitialData(isOwner, user);
 
   const { data: invitesData, refetch: refetchInvites } = useQuery({
     queryKey: ["owner-org-invites"],
@@ -430,11 +448,11 @@ const SetupOrganization = ({ getStarted = false }) => {
     mutationFn: async (data) => {
       const membersToSend = data.members
         .map((m, i) => ({ ...m, originalIndex: i }))
-        .filter((m) => !m.disabled && m.email.trim())
+        .filter((m) => !m.disabled && (m.email || "").trim())
         .map((m) => ({
           index: m.originalIndex,
           email: m.email,
-          name: m.name || generateNameFromEmail(m.email),
+          name: m.name || generateNameFromEmail(m.email || ""),
           organization_role: m.organization_role,
         }));
 
@@ -571,7 +589,7 @@ const SetupOrganization = ({ getStarted = false }) => {
       ...data,
       members: data?.members.map((member) => ({
         ...member,
-        name: member.name || generateNameFromEmail(member.email),
+        name: member.name || generateNameFromEmail(member.email || ""),
       })),
     };
     createOrg(processedData);
@@ -599,7 +617,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           )}
 
           <Typography variant="m2" fontWeight="fontWeightMedium">
-            Invite people to collaborate in FutureAGI
+            Invite people when you are ready
           </Typography>
 
           <Box
@@ -712,7 +730,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               maxWidth: "100%",
             }}
           >
-            Continue
+            Continue to onboarding
           </LoadingButton>
         </Stack>
       </form>
@@ -885,7 +903,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Collaborate with your team
+                Invite your team later
               </Typography>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -896,7 +914,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Make the collaboration seamless
+                Continue now and review the first signal
               </Typography>
             </Box>
             {renderOrgSetup()}
@@ -918,7 +936,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Collaborate with your team
+                Invite your team later
               </Typography>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -929,7 +947,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Make the collaboration seamless
+                Continue now and review the first signal
               </Typography>
             </Box>
             {renderOrgSetup()}
