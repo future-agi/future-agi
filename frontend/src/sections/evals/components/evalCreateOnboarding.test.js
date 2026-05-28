@@ -14,6 +14,7 @@ import {
   buildEvalScorerSourceHref,
   buildEvalSourceFixCtaClickedPayload,
   buildEvalSourceFixHref,
+  buildEvalSourceFixRerunClickedPayload,
   buildEvalSourceFixRouteFocusPayload,
   buildEvalSourceSelectedPayload,
   buildEvalSourceSetupHref,
@@ -351,12 +352,13 @@ describe("evalCreateOnboarding", () => {
   it("builds source-fix routes only when source context is actionable", () => {
     expect(
       buildEvalSourceFixHref({
+        evalId: "eval-1",
         runId: "run-1",
         sourceId: "data-1",
         sourceType: "dataset",
       }),
     ).toBe(
-      "/dashboard/develop/data-1?source=onboarding&step=fix-eval-failure&source_type=dataset&source_id=data-1&run_id=run-1",
+      "/dashboard/develop/data-1?source=onboarding&step=fix-eval-failure&source_type=dataset&source_id=data-1&eval_id=eval-1&run_id=run-1",
     );
     expect(
       buildEvalSourceFixHref({
@@ -379,9 +381,10 @@ describe("evalCreateOnboarding", () => {
   it("parses and describes eval source-fix destination params", () => {
     expect(
       getEvalSourceFixOnboardingParams(
-        "?source=onboarding&step=fix-eval-failure&run_id=run-1&source_type=dataset&source_id=data-1",
+        "?source=onboarding&step=fix-eval-failure&eval_id=eval-1&run_id=run-1&source_type=dataset&source_id=data-1",
       ),
     ).toEqual({
+      evalId: "eval-1",
       isOnboarding: true,
       runId: "run-1",
       sourceId: "data-1",
@@ -390,6 +393,7 @@ describe("evalCreateOnboarding", () => {
     });
 
     expect(getEvalSourceFixOnboardingParams("?source=onboarding")).toEqual({
+      evalId: null,
       isOnboarding: false,
       runId: null,
       sourceId: null,
@@ -619,6 +623,7 @@ describe("evalCreateOnboarding", () => {
 
   it("builds a source-fix route focus payload without source content", () => {
     const payload = buildEvalSourceFixRouteFocusPayload({
+      evalId: "eval-1",
       route: "develop_dataset",
       runId: "run-1",
       sourceId: "data-1",
@@ -633,6 +638,7 @@ describe("evalCreateOnboarding", () => {
       artifactType: "eval_source_fix_route",
       artifactId: "data-1",
       metadata: {
+        eval_id: "eval-1",
         route: "develop_dataset",
         run_id: "run-1",
         source_id: "data-1",
@@ -640,6 +646,41 @@ describe("evalCreateOnboarding", () => {
         step: "fix-eval-failure",
       },
       idempotencyKey: "onboarding_eval_source_fix_route_viewed:dataset:data-1",
+    });
+    expect(payload.metadata).not.toHaveProperty("rows");
+    expect(payload.metadata).not.toHaveProperty("output");
+    expect(payload.metadata).not.toHaveProperty("reason");
+  });
+
+  it("builds a source-fix rerun click payload without source content", () => {
+    const payload = buildEvalSourceFixRerunClickedPayload({
+      evalId: "eval-1",
+      rerunRoute:
+        "/dashboard/evaluations/create/eval-1?source=onboarding&step=run",
+      route: "develop_dataset",
+      runId: "run-1",
+      sourceId: "data-1",
+      sourceType: "dataset",
+    });
+
+    expect(payload).toMatchObject({
+      eventName: "onboarding_eval_source_fix_rerun_clicked",
+      primaryPath: "evals",
+      stage: "fix_eval_source",
+      source: "eval_review_onboarding",
+      artifactType: "eval_source_fix_route",
+      artifactId: "data-1",
+      metadata: {
+        eval_id: "eval-1",
+        rerun_route:
+          "/dashboard/evaluations/create/eval-1?source=onboarding&step=run",
+        route: "develop_dataset",
+        run_id: "run-1",
+        source_id: "data-1",
+        source_type: "dataset",
+        step: "fix-eval-failure",
+      },
+      idempotencyKey: "onboarding_eval_source_fix_rerun_clicked:dataset:eval-1",
     });
     expect(payload.metadata).not.toHaveProperty("rows");
     expect(payload.metadata).not.toHaveProperty("output");

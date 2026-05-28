@@ -1,12 +1,19 @@
 import React, {
-  useMemo,
+  startTransition,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
-  startTransition,
 } from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  Paper,
+  useTheme,
+} from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 
 import { useObserveHeader } from "../project/context/ObserveHeaderContext";
@@ -32,6 +39,8 @@ import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import {
+  buildEvalRunStepHref,
+  buildEvalSourceFixRerunClickedPayload,
   buildEvalSourceFixRouteFocusPayload,
   getEvalSourceFixOnboardingCopy,
   getEvalSourceFixOnboardingParams,
@@ -119,6 +128,17 @@ const ObservePage = React.memo(() => {
     sourceFixOnboardingParams.isOnboarding &&
     ["trace", "trace_project"].includes(sourceFixOnboardingParams.sourceType) &&
     sourceFixOnboardingParams.sourceId === observeId;
+  const sourceFixRerunHref = useMemo(() => {
+    if (!showEvalSourceFixBanner || !sourceFixOnboardingParams.evalId) {
+      return null;
+    }
+
+    return buildEvalRunStepHref({
+      evalId: sourceFixOnboardingParams.evalId,
+      sourceId: sourceFixOnboardingParams.sourceId,
+      sourceType: sourceFixOnboardingParams.sourceType,
+    });
+  }, [showEvalSourceFixBanner, sourceFixOnboardingParams]);
 
   // Determine if current route uses the new tab system
   const currentRouteSegment = useMemo(() => {
@@ -397,6 +417,7 @@ const ObservePage = React.memo(() => {
     recordedSourceFixFocusRef.current = true;
     recordActivationEvent?.(
       buildEvalSourceFixRouteFocusPayload({
+        evalId: sourceFixOnboardingParams.evalId,
         route: "observe_project",
         runId: sourceFixOnboardingParams.runId,
         sourceId: sourceFixOnboardingParams.sourceId,
@@ -407,6 +428,27 @@ const ObservePage = React.memo(() => {
     recordActivationEvent,
     showEvalSourceFixBanner,
     sourceFixOnboardingParams,
+  ]);
+
+  const handleSourceFixRerun = useCallback(() => {
+    if (!sourceFixRerunHref) return;
+
+    recordActivationEvent?.(
+      buildEvalSourceFixRerunClickedPayload({
+        evalId: sourceFixOnboardingParams.evalId,
+        rerunRoute: sourceFixRerunHref,
+        route: "observe_project",
+        runId: sourceFixOnboardingParams.runId,
+        sourceId: sourceFixOnboardingParams.sourceId,
+        sourceType: sourceFixOnboardingParams.sourceType,
+      }),
+    );
+    navigate(sourceFixRerunHref);
+  }, [
+    navigate,
+    recordActivationEvent,
+    sourceFixOnboardingParams,
+    sourceFixRerunHref,
   ]);
 
   if (!observeId) {
@@ -460,7 +502,21 @@ const ObservePage = React.memo(() => {
       />
 
       {showEvalSourceFixBanner && (
-        <Alert severity="info" sx={{ mx: 2, mt: 1, mb: 0.5, flexShrink: 0 }}>
+        <Alert
+          action={
+            sourceFixRerunHref ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={handleSourceFixRerun}
+              >
+                Rerun eval
+              </Button>
+            ) : null
+          }
+          severity="info"
+          sx={{ mx: 2, mt: 1, mb: 0.5, flexShrink: 0 }}
+        >
           {sourceFixOnboardingCopy.description}
         </Alert>
       )}

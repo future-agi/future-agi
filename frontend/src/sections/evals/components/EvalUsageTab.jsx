@@ -431,6 +431,7 @@ const EvalUsageTab = ({
       return null;
     }
     return buildEvalSourceFixHref({
+      evalId: templateId,
       runId: failureActionOnboardingParams.runId,
       sourceId: failureActionOnboardingParams.sourceId,
       sourceType: failureActionOnboardingParams.sourceType,
@@ -441,6 +442,7 @@ const EvalUsageTab = ({
     failureActionOnboardingParams.sourceId,
     failureActionOnboardingParams.sourceType,
     failureActionOnboardingParams.step,
+    templateId,
   ]);
 
   // Split queries

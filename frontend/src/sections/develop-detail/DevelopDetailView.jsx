@@ -1,5 +1,5 @@
-import { Alert, Box, Skeleton, useTheme } from "@mui/material";
-import { Outlet, useLocation, useParams } from "react-router";
+import { Alert, Box, Button, Skeleton, useTheme } from "@mui/material";
+import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 import React, {
   useCallback,
   useEffect,
@@ -49,6 +49,8 @@ import ConditionalNodeV2 from "./AddColumn/ConditionalNode/ConditionalNodeV2";
 import ExperimentTabHeader from "./ExperimentTab/ExperimentTabHeader";
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import {
+  buildEvalRunStepHref,
+  buildEvalSourceFixRerunClickedPayload,
   buildEvalSourceFixRouteFocusPayload,
   getEvalSourceFixOnboardingCopy,
   getEvalSourceFixOnboardingParams,
@@ -65,6 +67,7 @@ const TabOptions = [
 const DevelopDetailView = () => {
   const { dataset } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const { pathname } = location;
 
   // Check if we're in scenario context (using URL params)
@@ -148,6 +151,17 @@ const DevelopDetailView = () => {
     sourceFixOnboardingParams.isOnboarding &&
     sourceFixOnboardingParams.sourceType === "dataset" &&
     sourceFixOnboardingParams.sourceId === dataset;
+  const sourceFixRerunHref = useMemo(() => {
+    if (!showEvalSourceFixBanner || !sourceFixOnboardingParams.evalId) {
+      return null;
+    }
+
+    return buildEvalRunStepHref({
+      evalId: sourceFixOnboardingParams.evalId,
+      sourceId: sourceFixOnboardingParams.sourceId,
+      sourceType: sourceFixOnboardingParams.sourceType,
+    });
+  }, [showEvalSourceFixBanner, sourceFixOnboardingParams]);
 
   const SkeletonHeader = () => {
     return <Skeleton width="60%" />;
@@ -318,6 +332,7 @@ const DevelopDetailView = () => {
     recordedSourceFixFocusRef.current = true;
     recordActivationEvent?.(
       buildEvalSourceFixRouteFocusPayload({
+        evalId: sourceFixOnboardingParams.evalId,
         route: "develop_dataset",
         runId: sourceFixOnboardingParams.runId,
         sourceId: sourceFixOnboardingParams.sourceId,
@@ -328,6 +343,27 @@ const DevelopDetailView = () => {
     recordActivationEvent,
     showEvalSourceFixBanner,
     sourceFixOnboardingParams,
+  ]);
+
+  const handleSourceFixRerun = useCallback(() => {
+    if (!sourceFixRerunHref) return;
+
+    recordActivationEvent?.(
+      buildEvalSourceFixRerunClickedPayload({
+        evalId: sourceFixOnboardingParams.evalId,
+        rerunRoute: sourceFixRerunHref,
+        route: "develop_dataset",
+        runId: sourceFixOnboardingParams.runId,
+        sourceId: sourceFixOnboardingParams.sourceId,
+        sourceType: sourceFixOnboardingParams.sourceType,
+      }),
+    );
+    navigate(sourceFixRerunHref);
+  }, [
+    navigate,
+    recordActivationEvent,
+    sourceFixOnboardingParams,
+    sourceFixRerunHref,
   ]);
 
   const getRightSection = () => {
@@ -427,7 +463,21 @@ const DevelopDetailView = () => {
         />
 
         {showEvalSourceFixBanner && (
-          <Alert severity="info" sx={{ mx: 2, mt: 1, flexShrink: 0 }}>
+          <Alert
+            action={
+              sourceFixRerunHref ? (
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={handleSourceFixRerun}
+                >
+                  Rerun eval
+                </Button>
+              ) : null
+            }
+            severity="info"
+            sx={{ mx: 2, mt: 1, flexShrink: 0 }}
+          >
             {sourceFixOnboardingCopy.description}
           </Alert>
         )}

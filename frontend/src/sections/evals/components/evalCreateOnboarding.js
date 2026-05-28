@@ -309,6 +309,7 @@ export const getEvalSourceFixOnboardingParams = (search = "") => {
   const step = params.get("step");
 
   return {
+    evalId: params.get("eval_id"),
     isOnboarding:
       params.get("source") === "onboarding" && step === EVAL_FIX_STEP,
     runId: params.get("run_id"),
@@ -360,6 +361,7 @@ export const buildEvalReviewDetailHref = (evalId, search = "") => {
 };
 
 export const buildEvalSourceFixHref = ({
+  evalId,
   runId,
   sourceId,
   sourceType,
@@ -379,6 +381,7 @@ export const buildEvalSourceFixHref = ({
   params.set("step", EVAL_FIX_STEP);
   params.set("source_type", sourceType);
   params.set("source_id", sourceId);
+  if (evalId) params.set("eval_id", evalId);
   if (runId) params.set("run_id", runId);
 
   return `${basePath}?${params.toString()}`;
@@ -597,6 +600,7 @@ export const buildEvalReviewRouteFocusPayload = ({
 };
 
 export const buildEvalSourceFixRouteFocusPayload = ({
+  evalId,
   route,
   runId,
   sourceId,
@@ -615,6 +619,7 @@ export const buildEvalSourceFixRouteFocusPayload = ({
     artifactType: "eval_source_fix_route",
     artifactId,
     metadata: compactMetadata({
+      eval_id: evalId,
       route,
       run_id: runId,
       source_id: sourceId,
@@ -625,6 +630,44 @@ export const buildEvalSourceFixRouteFocusPayload = ({
       "onboarding_eval_source_fix_route_viewed",
       safeKeyPart(sourceType, "source"),
       artifactId,
+    ].join(":"),
+    isSample: false,
+  };
+};
+
+export const buildEvalSourceFixRerunClickedPayload = ({
+  evalId,
+  rerunRoute,
+  route,
+  runId,
+  sourceId,
+  sourceType,
+} = {}) => {
+  const artifactId = safeKeyPart(
+    sourceId || evalId || runId,
+    EVAL_SOURCE_FIX_ARTIFACT_ID,
+  );
+
+  return {
+    eventName: "onboarding_eval_source_fix_rerun_clicked",
+    primaryPath: "evals",
+    stage: "fix_eval_source",
+    source: "eval_review_onboarding",
+    artifactType: "eval_source_fix_route",
+    artifactId,
+    metadata: compactMetadata({
+      eval_id: evalId,
+      rerun_route: rerunRoute,
+      route,
+      run_id: runId,
+      source_id: sourceId,
+      source_type: sourceType,
+      step: EVAL_FIX_STEP,
+    }),
+    idempotencyKey: [
+      "onboarding_eval_source_fix_rerun_clicked",
+      safeKeyPart(sourceType, "source"),
+      safeKeyPart(evalId || sourceId || runId, "eval-source-fix"),
     ].join(":"),
     isSample: false,
   };
