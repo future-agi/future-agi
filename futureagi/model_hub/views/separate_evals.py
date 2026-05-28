@@ -3,10 +3,11 @@ import math
 import traceback
 import uuid
 from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Callable, Optional
+from typing import Any
 
 import structlog
 from django.db import IntegrityError, transaction
@@ -36,10 +37,8 @@ from model_hub.models.evals_metric import (
     UserEvalMetric,
 )
 from model_hub.models.run_prompt import PromptEvalConfig
-from model_hub.serializers.develop_dataset import (
-    EvalPlayGroundFeedbackSerializer,
-)
 from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
     CellErrorLocalizerResponseSerializer,
     CompositeEvalAdhocExecuteRequestSerializer,
     CompositeEvalCreateRequestSerializer,
@@ -49,35 +48,35 @@ from model_hub.serializers.contracts import (
     CompositeEvalExecuteResponseSerializer,
     CompositeEvalUpdateRequestSerializer,
     DuplicateEvalTemplateResponseSerializer,
-    EvalApiLogTableQuerySerializer,
     EvalApiLogRowResponseSerializer,
+    EvalApiLogTableQuerySerializer,
     EvalApiLogTableResponseSerializer,
     EvalCodeSnippetResponseSerializer,
     EvalExecutionResponseSerializer,
     EvalFeedbackListResponseSerializer,
-    EvalMetricResponseSerializer,
     EvalMetricQuerySerializer,
+    EvalMetricRequestSerializer,
+    EvalMetricResponseSerializer,
     EvalPlaygroundFeedbackResponseSerializer,
     EvalTemplateBulkDeleteRequestSerializer,
     EvalTemplateBulkDeleteResponseSerializer,
-    EvalTemplateCreateV2RequestSerializer,
     EvalTemplateCreateResponseSerializer,
+    EvalTemplateCreateV2RequestSerializer,
     EvalTemplateDetailResponseSerializer,
     EvalTemplateListChartsRequestSerializer,
     EvalTemplateListChartsResponseSerializer,
     EvalTemplateListResponseSerializer,
-    EvalTemplateUpdateV2RequestSerializer,
+    EvalTemplateNamesRequestSerializer,
+    EvalTemplateNamesResponseSerializer,
     EvalTemplateUpdateResponseSerializer,
+    EvalTemplateUpdateV2RequestSerializer,
     EvalTemplateVersionCreateRequestSerializer,
     EvalTemplateVersionListResponseSerializer,
     EvalTemplateVersionResponseSerializer,
     EvalTemplateVersionRestoreResponseSerializer,
-    EvalTemplateNamesResponseSerializer,
     EvalUsageStatsResponseSerializer,
-    EvalMetricRequestSerializer,
-    EvalTemplateNamesRequestSerializer,
-    GroundTruthConfigResponseSerializer,
     GroundTruthConfigRequestSerializer,
+    GroundTruthConfigResponseSerializer,
     GroundTruthDataResponseSerializer,
     GroundTruthDeleteResponseSerializer,
     GroundTruthEmbedResponseSerializer,
@@ -89,14 +88,16 @@ from model_hub.serializers.contracts import (
     GroundTruthSearchRequestSerializer,
     GroundTruthSearchResponseSerializer,
     GroundTruthStatusResponseSerializer,
-    GroundTruthUploadResponseSerializer,
     GroundTruthUploadRequestSerializer,
+    GroundTruthUploadResponseSerializer,
     LegacyEvalTemplatesRequestSerializer,
     LegacyEvalTemplatesResponseSerializer,
     LegacyEvalTemplateUpdateResponseSerializer,
-    MODEL_HUB_ERROR_RESPONSES,
     ModelHubEmptyRequestSerializer,
     ModelHubStringResultResponseSerializer,
+)
+from model_hub.serializers.develop_dataset import (
+    EvalPlayGroundFeedbackSerializer,
 )
 from model_hub.serializers.eval_list import EvalListRequestSerializer
 from model_hub.serializers.eval_runner import (
@@ -117,9 +118,9 @@ from model_hub.utils.function_eval_params import (
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
+from tfc.middleware.workspace_context import get_current_workspace
 from tfc.settings.settings import BASE_URL
 from tfc.telemetry import wrap_for_thread
-from tfc.middleware.workspace_context import get_current_workspace
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.functions import calculate_eval_average
@@ -130,19 +131,19 @@ try:
 except ImportError:
     UsageLimitExceeded = None
 
-logger = structlog.get_logger(__name__)
+from tfc.constants.api_calls import APICallStatusChoices
 from tracer.models.custom_eval_config import CustomEvalConfig, InlineEval, ModelChoices
 from tracer.models.external_eval_config import ExternalEvalConfig
 from tracer.models.observation_span import EvalLogger
 from tracer.utils.filters import apply_created_at_filters
 from tracer.utils.graphs import GraphEngine
 
-from tfc.constants.api_calls import APICallStatusChoices
-
 try:
     from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
+
+logger = structlog.get_logger(__name__)
 
 
 def apply_filters(row_data, filters):
@@ -163,7 +164,7 @@ def apply_filters(row_data, filters):
             if filter_value is None and filter_op not in ("is_null", "is_not_null"):
                 continue
 
-            def cell_value(row):
+            def cell_value(row, column_id=column_id):
                 cell = row.get(column_id)
                 if cell is None:
                     return None
@@ -439,7 +440,9 @@ class GetAPICallLogDetailsView(APIView):
             current_page = query["current_page_index"]
             source = query["source"]
             search = query["search"]
-            organization = getattr(request, "organization", None) or request.user.organization
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
 
             try:
                 eval_template = _get_accessible_eval_template(
@@ -694,7 +697,9 @@ class GetAPICallLogView(APIView):
             if not eval_id:
                 return self._gm.bad_request(get_error_message("EVAL_ID_REQUIRED."))
             column_config = validated_data.get("column_config")
-            organization = getattr(request, "organization", None) or request.user.organization
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
             try:
                 _get_accessible_eval_template(eval_id, organization)
             except EvalTemplate.DoesNotExist:
@@ -1410,12 +1415,12 @@ class GetEvalTemplates(APIView):
                 logs = []
             else:
                 logs = APICallLog.objects.filter(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-                created_at__gte=start_date,
-                source_id__in=paginated_template_ids,
-            ).values("source_id", "created_at", "status", "config", "updated_at")
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    deleted=False,
+                    created_at__gte=start_date,
+                    source_id__in=paginated_template_ids,
+                ).values("source_id", "created_at", "status", "config", "updated_at")
 
             template_logs_map = defaultdict(list)
             for log in logs:
@@ -1488,7 +1493,6 @@ class EvalTemplateListView(APIView):
         },
     )
     def post(self, request, *args, **kwargs):
-        from model_hub.serializers.eval_list import EvalListRequestSerializer
         from model_hub.types import EvalListItem, EvalListResponse
         from model_hub.utils.eval_list import (
             build_eval_list_queryset,
@@ -2154,6 +2158,7 @@ class EvalTemplateCreateV2View(APIView):
             eval_template = EvalTemplate.objects.create(
                 name=cleaned_name,
                 organization=organization,
+                workspace=workspace,
                 owner=OwnerChoices.USER.value,
                 eval_type=req.eval_type,
                 eval_tags=eval_tags,
@@ -2758,9 +2763,7 @@ class EvalTemplateVersionListView(APIView):
                         eval_tags=list(v.eval_tags or []),
                         # Derived; tolerate camelCase from older FE round-trips.
                         choices=cs.get("choices") or [],
-                        choices_map=cs.get("choices_map")
-                        or cs.get("choicesMap")
-                        or {},
+                        choices_map=cs.get("choices_map") or cs.get("choicesMap") or {},
                         multi_choice=bool(cs.get("multi_choice", False)),
                     )
                 )
@@ -2869,7 +2872,7 @@ class _SnapshotField:
     rewrite needed."""
 
     name: str
-    transform: Optional[Callable[[Any], Any]] = None
+    transform: Callable[[Any], Any] | None = None
 
 
 # Each entry is nullable on EvalTemplateVersion; NULL → skip on restore
@@ -3197,9 +3200,7 @@ def _request_workspace_filter(request, field_name="workspace"):
     return Q(**{field_name: workspace})
 
 
-def _get_accessible_eval_template_for_request(
-    template_id, request, template_type=None
-):
+def _get_accessible_eval_template_for_request(template_id, request, template_type=None):
     organization = _request_organization(request)
     queryset = EvalTemplate.no_workspace_objects.filter(id=template_id, deleted=False)
     if template_type:
@@ -3280,8 +3281,7 @@ def _resolve_child_pinned_versions(child_ids, child_pinned_versions):
             )
         except EvalTemplateVersion.DoesNotExist as exc:
             raise ValueError(
-                f"Pinned version {version_id} is invalid for child template "
-                f"{child_id}."
+                f"Pinned version {version_id} is invalid for child template {child_id}."
             ) from exc
     return resolved
 
@@ -3322,8 +3322,7 @@ class CompositeEvalCreateView(APIView):
             try:
                 request_data = dict(request.validated_data)
                 request_data["child_template_ids"] = [
-                    str(child_id)
-                    for child_id in request_data["child_template_ids"]
+                    str(child_id) for child_id in request_data["child_template_ids"]
                 ]
                 req = CompositeCreateRequest(**request_data)
             except Exception as e:
@@ -3456,9 +3455,7 @@ class CompositeEvalCreateView(APIView):
                             str(pinned_version.id) if pinned_version else None
                         ),
                         pinned_version_number=(
-                            pinned_version.version_number
-                            if pinned_version
-                            else None
+                            pinned_version.version_number if pinned_version else None
                         ),
                         config=child_config,
                     )
@@ -3525,9 +3522,7 @@ class CompositeEvalDetailView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             try:
-                parent = _get_accessible_composite_template(
-                    template_id, organization
-                )
+                parent = _get_accessible_composite_template(template_id, organization)
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Composite eval template not found.")
 
@@ -3620,8 +3615,7 @@ class CompositeEvalDetailView(APIView):
                 request_data = dict(request.validated_data)
                 if request_data.get("child_template_ids") is not None:
                     request_data["child_template_ids"] = [
-                        str(child_id)
-                        for child_id in request_data["child_template_ids"]
+                        str(child_id) for child_id in request_data["child_template_ids"]
                     ]
                 req = CompositeUpdateRequest(**request_data)
             except Exception as e:
@@ -3800,9 +3794,7 @@ class CompositeEvalDetailView(APIView):
                 or req.child_configs is not None
             ):
                 existing_links = list(
-                    CompositeEvalChild.objects.filter(
-                        parent=parent, deleted=False
-                    )
+                    CompositeEvalChild.objects.filter(parent=parent, deleted=False)
                 )
                 try:
                     pinned_versions = _resolve_child_pinned_versions(
@@ -3885,7 +3877,9 @@ class CompositeEvalDetailView(APIView):
                     ),
                     weight=link.weight,
                     config=link.config or {},
-                    required_keys=list((link.child.config or {}).get("required_keys") or []),
+                    required_keys=list(
+                        (link.child.config or {}).get("required_keys") or []
+                    ),
                 )
                 for link in links
             ]
@@ -4163,8 +4157,7 @@ class CompositeEvalAdhocExecuteView(APIView):
             try:
                 request_data = dict(request.validated_data)
                 request_data["child_template_ids"] = [
-                    str(child_id)
-                    for child_id in request_data["child_template_ids"]
+                    str(child_id) for child_id in request_data["child_template_ids"]
                 ]
                 req = CompositeAdhocExecuteRequest(**request_data)
             except Exception as e:
@@ -4399,9 +4392,7 @@ class GroundTruthUploadView(APIView):
                 if uploaded_file.size > MAX_FILE_SIZE_BYTES:
                     return self._gm.bad_request("File exceeds maximum size of 50MB.")
 
-                name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[
-                    0
-                ]
+                name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
                 description = request_data.get("description", "")
 
                 try:
@@ -4718,7 +4709,7 @@ class GroundTruthConfigView(APIView):
     )
     def get(self, request, template_id, *args, **kwargs):
         try:
-            organization = _request_organization(request)
+            _request_organization(request)
             try:
                 template = _get_accessible_eval_template_for_request(
                     template_id, request
@@ -4772,7 +4763,7 @@ class GroundTruthConfigView(APIView):
                 return self._gm.bad_request(format_request_error(e))
 
             try:
-                organization = _request_organization(request)
+                _request_organization(request)
                 template = _get_accessible_eval_template_for_request(
                     template_id, request
                 )
@@ -4936,9 +4927,7 @@ class GroundTruthTriggerEmbeddingView(APIView):
             if workflow_run_id is None:
                 gt.embedding_status = "failed"
                 gt.save(update_fields=["embedding_status", "updated_at"])
-                return self._gm.bad_request(
-                    "Failed to trigger embedding generation."
-                )
+                return self._gm.bad_request("Failed to trigger embedding generation.")
 
             return self._gm.success_response(
                 {
@@ -4999,7 +4988,6 @@ class EvalUsageStatsView(APIView):
             page = int(request.GET.get("page", 0))
             page_size = min(int(request.GET.get("page_size", 25)), 100)
             period = request.GET.get("period", "30d")
-            version_filter = request.GET.get("version", None)
 
             period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
             end_date = timezone.now()
@@ -5098,7 +5086,6 @@ class EvalUsageStatsView(APIView):
                                 buckets_scores[bucket_key].append(0.0)
 
                 # Zero-fill: generate all buckets in the range
-                from datetime import datetime as _dt
 
                 current_bucket = start_date.replace(
                     minute=0,
@@ -5541,7 +5528,6 @@ class TraceEvalView(APIView):
 
                 output = result.get("output", {}) if isinstance(result, dict) else {}
                 raw_value = output.get("output") if isinstance(output, dict) else result
-                output_type = config.get("output", "Pass/Fail")
 
                 score = normalize_score(
                     raw_value,
@@ -5863,9 +5849,10 @@ class EvalPlayGroundAPIView(APIView):
                     logger.warning(f"Failed to fetch span {_span_id}: {_e}")
             if trace_context is None and _trace_id:
                 try:
-                    from django.db.models import Count, Sum, Min, Max, Q
-                    from tracer.models.trace import Trace
+                    from django.db.models import Count, Max, Min, Q, Sum
+
                     from tracer.models.observation_span import ObservationSpan
+                    from tracer.models.trace import Trace
 
                     _t = Trace.objects.filter(id=_trace_id).first()
                     if _t:
@@ -5944,10 +5931,11 @@ class EvalPlayGroundAPIView(APIView):
                     logger.warning(f"Failed to fetch trace {_trace_id}: {_e}")
             if session_context is None and _session_id:
                 try:
-                    from django.db.models import Count, Sum, Min, Max, Q
+                    from django.db.models import Count, Max, Min, Q, Sum
+
+                    from tracer.models.observation_span import ObservationSpan
                     from tracer.models.trace import Trace
                     from tracer.models.trace_session import TraceSession
-                    from tracer.models.observation_span import ObservationSpan
 
                     _ss = TraceSession.objects.filter(id=_session_id).first()
                     if _ss:
@@ -5980,9 +5968,7 @@ class EvalPlayGroundAPIView(APIView):
                                 .values("trace_id")
                                 .annotate(
                                     span_count=Count("id"),
-                                    error_count=Count(
-                                        "id", filter=Q(status="ERROR")
-                                    ),
+                                    error_count=Count("id", filter=Q(status="ERROR")),
                                     total_tokens=Sum("total_tokens"),
                                     total_latency=Sum("latency_ms"),
                                 )
@@ -6004,8 +5990,7 @@ class EvalPlayGroundAPIView(APIView):
                                     "span_count": _agg.get("span_count") or 0,
                                     "error_count": _err_count,
                                     "total_tokens": _agg.get("total_tokens") or 0,
-                                    "total_latency_ms": _agg.get("total_latency")
-                                    or 0,
+                                    "total_latency_ms": _agg.get("total_latency") or 0,
                                     "has_error": bool(_tr.error or _err_count > 0),
                                 }
                             )
@@ -6024,9 +6009,7 @@ class EvalPlayGroundAPIView(APIView):
                             ),
                             "bookmarked": _ss.bookmarked,
                             "created_at": (
-                                _ss.created_at.isoformat()
-                                if _ss.created_at
-                                else None
+                                _ss.created_at.isoformat() if _ss.created_at else None
                             ),
                             "trace_count": _trace_qs.count(),
                             "total_spans": _sess_agg["total_spans"] or 0,
@@ -6070,9 +6053,7 @@ class EvalPlayGroundAPIView(APIView):
                 from tracer.models.trace_session import TraceSession
                 from tracer.utils.eval import _process_session_mapping
 
-                _ss_for_mapping = TraceSession.objects.filter(
-                    id=_session_id
-                ).first()
+                _ss_for_mapping = TraceSession.objects.filter(id=_session_id).first()
                 if _ss_for_mapping is None:
                     return self._gm.bad_request(f"Session {_session_id} not found")
                 try:
@@ -6158,9 +6139,7 @@ class EvalPlayGroundAPIView(APIView):
             try:
                 eval_template = _get_accessible_eval_template(template_id, org)
             except EvalTemplate.DoesNotExist:
-                return self._gm.bad_request(
-                    get_error_message("MISSING_EVAL_TEMPLATE")
-                )
+                return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
 
             # Validate + coerce function params (matches Dataset / Experiments
             # paths). Without this, FE-sent blank strings flow straight into
@@ -6196,9 +6175,7 @@ class EvalPlayGroundAPIView(APIView):
                     response if response else "Evaluation has been updated."
                 )
             except Exception as e:
-                if UsageLimitExceeded is not None and isinstance(
-                    e, UsageLimitExceeded
-                ):
+                if UsageLimitExceeded is not None and isinstance(e, UsageLimitExceeded):
                     logger.warning(f"Eval playground usage limit: {str(e)}")
                     return self._gm.usage_limit_response(e.check_result)
                 logger.error(f"Error in run_eval_func: {str(e)}")
@@ -6379,7 +6356,7 @@ class EvalPlayGroundFeedbackAPIView(APIView):
             # print(f"[FEEDBACK] Storing embedding for eval_id={log.source_id} org_id={org_for_embedding} required_keys={required_keys} row_dict_keys={list(row_dict.keys())} feedback_value='{value}' feedback_comment='{explanation}'", flush=True)
             embedding_manager = EmbeddingManager()
             try:
-                result = embedding_manager.data_formatter(
+                embedding_manager.data_formatter(
                     eval_id=str(log.source_id),
                     row_dict=row_dict,
                     inputs_formater=required_keys,
@@ -6388,7 +6365,7 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                     workspace_id=None,
                 )
                 # print(f"[FEEDBACK] data_formatter returned vectors={len(result[0]) if result and result[0] else 0} metadata={len(result[1]) if result and len(result) > 1 else 0}", flush=True)
-            except Exception as e:
+            except Exception:
                 # print(f"[FEEDBACK] data_formatter FAILED: {e}", flush=True)
                 import traceback
 
@@ -6740,9 +6717,8 @@ class TestEvaluationTemplateAPIView(APIView):
                     function_template = _get_accessible_eval_template(template_id, org)
                     template_config = function_template.config or {}
                     template_config_eval_id = template_config.get("eval_type_id")
-                    if (
-                        template_config_eval_id
-                        and str(template_config_eval_id) != str(eval_id)
+                    if template_config_eval_id and str(template_config_eval_id) != str(
+                        eval_id
                     ):
                         return self._gm.bad_request(
                             "template_id eval_type_id does not match request eval_type_id"
@@ -6761,20 +6737,17 @@ class TestEvaluationTemplateAPIView(APIView):
                     function_template = EvalTemplate.no_workspace_objects.filter(
                         config__eval_type_id=eval_id,
                         deleted=False,
-                    ).filter(
-                        Q(organization=org)
-                        | Q(organization__isnull=True)
-                    )
+                    ).filter(Q(organization=org) | Q(organization__isnull=True))
 
-                    function_template = function_template.order_by("-updated_at").first()
+                    function_template = function_template.order_by(
+                        "-updated_at"
+                    ).first()
                 eval_template = function_template
 
                 if function_template and has_function_params_schema(
                     function_template.config
                 ):
-                    prepared_params = (
-                        (config.get("configuration") or {}).get("params")
-                    )
+                    prepared_params = (config.get("configuration") or {}).get("params")
                     if prepared_params is not None:
                         config["params"] = prepared_params
                     config = normalize_eval_runtime_config(
@@ -7067,7 +7040,9 @@ def create_column_config_playground(eval_template_id, source):
             raw_config = latest_log.config
             try:
                 log_config = (
-                    json.loads(raw_config) if isinstance(raw_config, str) else raw_config
+                    json.loads(raw_config)
+                    if isinstance(raw_config, str)
+                    else raw_config
                 )
             except json.JSONDecodeError:
                 log_config = {}
