@@ -1,6 +1,6 @@
 import React, { useState, useCallback } from "react";
 import { Box, Stack, Tab, Tabs, Card, Skeleton } from "@mui/material";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import SectionHeader from "../components/SectionHeader";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
@@ -19,6 +19,7 @@ import ProviderConfigView from "./ProviderConfigView";
 import RoutingConfigView from "./RoutingConfigView";
 import CacheStatusView from "./CacheStatusView";
 import AddProviderDialog from "./AddProviderDialog";
+import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
 
 const TAB_SLUGS = ["health", "config", "routing", "cache"];
 
@@ -32,6 +33,7 @@ const ProviderManagementSection = () => {
   const canWrite =
     RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT][role];
   const { tab: tabSlug } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const tab = tabSlugToIndex(tabSlug);
 
@@ -60,6 +62,11 @@ const ProviderManagementSection = () => {
 
   const isLoading =
     gwLoading || configLoading || healthLoading || orgConfigLoading;
+  const showOnboardingFocus = searchParams.get("source") === "onboarding";
+  const providers = providerHealth?.providers;
+  const hasProviders = Array.isArray(providers)
+    ? providers.length > 0
+    : Boolean(providers && Object.keys(providers).length > 0);
 
   const handleReload = () => {
     if (!gatewayId) return;
@@ -136,6 +143,36 @@ const ProviderManagementSection = () => {
             disabled: reloadMutation.isPending,
           },
         ]}
+      />
+
+      <GatewayOnboardingFocusPanel
+        currentStep="Provider"
+        description="Add one model provider so gateway traffic can resolve to a real model before the first request."
+        hidden={!showOnboardingFocus}
+        primaryAction={
+          canWrite
+            ? {
+                label: "Add Provider",
+                onClick: () => setAddProviderOpen(true),
+              }
+            : {
+                label: "Open overview",
+                onClick: () => navigate("/dashboard/gateway"),
+              }
+        }
+        secondaryAction={{
+          label: "Open API keys",
+          onClick: () => navigate("/dashboard/gateway/keys?source=onboarding"),
+        }}
+        steps={[
+          {
+            label: "Provider",
+            complete: hasProviders,
+          },
+          { label: "API key", complete: false },
+          { label: "Request", complete: false },
+        ]}
+        title="Connect a gateway provider"
       />
 
       <Tabs

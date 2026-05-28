@@ -19,9 +19,11 @@ import {
   InputAdornment,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
 import PageErrorState from "../components/PageErrorState";
+import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { useApiKeys, useSyncApiKeys } from "./hooks/useApiKeys";
 import { useGatewayContext } from "../context/useGatewayContext";
@@ -43,6 +45,8 @@ const STATUS_FILTERS = [
 ];
 
 const KeyManagementSection = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedKeyId, setSelectedKeyId] = useState(null);
@@ -51,6 +55,7 @@ const KeyManagementSection = () => {
 
   const { data: keys, isLoading, error, refetch } = useApiKeys(gatewayId);
   const syncMutation = useSyncApiKeys();
+  const showOnboardingFocus = searchParams.get("source") === "onboarding";
 
   // Client-side filters
   const filteredKeys = useMemo(() => {
@@ -155,6 +160,29 @@ const KeyManagementSection = () => {
             onClick: () => setCreateDialogOpen(true),
           },
         ]}
+      />
+
+      <GatewayOnboardingFocusPanel
+        currentStep="API key"
+        description="Create one key for the first routed request, then return to the gateway overview to send traffic."
+        hidden={!showOnboardingFocus}
+        primaryAction={{
+          label: "Create Key",
+          onClick: () => setCreateDialogOpen(true),
+        }}
+        secondaryAction={{
+          label: "Open request step",
+          onClick: () => navigate("/dashboard/gateway?onboarding=test-request"),
+        }}
+        steps={[
+          { label: "Provider", complete: true },
+          {
+            label: "API key",
+            complete: Array.isArray(keys) && keys.length > 0,
+          },
+          { label: "Request", complete: false },
+        ]}
+        title="Create the gateway API key"
       />
 
       {/* Filters */}

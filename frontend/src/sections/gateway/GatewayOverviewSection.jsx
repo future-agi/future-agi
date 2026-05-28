@@ -15,7 +15,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useMutation } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { useGatewayContext } from "./context/useGatewayContext";
@@ -28,6 +28,7 @@ import { GATEWAY_ICONS } from "./constants/gatewayIcons";
 import SectionHeader from "./components/SectionHeader";
 import PageErrorState from "./components/PageErrorState";
 import GettingStartedCard from "./components/GettingStartedCard";
+import GatewayOnboardingFocusPanel from "./components/GatewayOnboardingFocusPanel";
 import { useApiKeys } from "./keys/hooks/useApiKeys";
 import SvgColor from "src/components/svg-color";
 
@@ -84,6 +85,7 @@ const QUICK_LINKS = [
 
 const GatewayOverviewSection = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { gateway, gatewayId, isLoading, error, refreshGateways } =
     useGatewayContext();
   const [copied, setCopied] = useState(false);
@@ -149,6 +151,51 @@ const GatewayOverviewSection = () => {
       setTimeout(() => setCopied(false), 2000);
     }
   };
+
+  const isOnboardingRequestMode =
+    searchParams.get("onboarding") === "test-request" ||
+    searchParams.get("source") === "onboarding";
+
+  const openGatewayDocs = () => {
+    window.open("https://docs.futureagi.com/docs/command-center", "_blank");
+  };
+
+  const gatewayFocusPrimaryAction = (() => {
+    if (!completionState.hasProviders) {
+      return {
+        label: "Add provider",
+        onClick: () =>
+          navigate("/dashboard/gateway/providers?source=onboarding"),
+      };
+    }
+    if (!completionState.hasKeys) {
+      return {
+        label: "Create key",
+        onClick: () => navigate("/dashboard/gateway/keys?source=onboarding"),
+      };
+    }
+    if (!completionState.hasRequests) {
+      return {
+        label: "Open request docs",
+        onClick: openGatewayDocs,
+      };
+    }
+    return {
+      label: "Open logs",
+      onClick: () => navigate("/dashboard/gateway/logs"),
+    };
+  })();
+
+  const gatewayFocusSecondaryAction =
+    completionState.hasProviders && completionState.hasKeys
+      ? {
+          label: "Copy endpoint",
+          onClick: handleCopyUrl,
+        }
+      : {
+          label: "Open overview",
+          onClick: () => navigate("/dashboard/gateway"),
+        };
 
   if (isLoading) {
     return (
@@ -230,6 +277,20 @@ const GatewayOverviewSection = () => {
           </Typography>
         </Button>
       </SectionHeader>
+
+      <GatewayOnboardingFocusPanel
+        currentStep="Request"
+        description="Finish the gateway loop by routing one request through a provider-backed key, then review the first log."
+        hidden={!isOnboardingRequestMode}
+        primaryAction={gatewayFocusPrimaryAction}
+        secondaryAction={gatewayFocusSecondaryAction}
+        steps={[
+          { label: "Provider", complete: completionState.hasProviders },
+          { label: "API key", complete: completionState.hasKeys },
+          { label: "Request", complete: completionState.hasRequests },
+        ]}
+        title="Send the first gateway request"
+      />
 
       {/* Gateway Endpoint URL */}
       <Card sx={{ mb: 3 }}>
