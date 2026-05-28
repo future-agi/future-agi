@@ -68,6 +68,15 @@ _LEGACY_CDC_CHAIN_NAMES = (
     "tracer_observation_span",
 )
 
+# The legacy v1 ``spans`` DDL in this module conflicts with the v2 spans
+# schema applied by ``tracer/services/clickhouse/v2/schema/002_spans_v2.sql``.
+# Both use the same table name but different column shapes. When the
+# CH25 flag is set, the v1 registry entry is filtered out so v2 is the
+# only definition that ever lands; ``_migrate_v1_spans_if_needed`` in
+# the boot hook handles the drop + v2 reapply when an older volume
+# carries the v1 table.
+_V1_TO_V2_TABLES = ("spans",)
+
 
 def _to_single_node_engine(ddl: str) -> str:
     """Convert Replicated*MergeTree engines to single-node equivalents.
@@ -1989,11 +1998,8 @@ def get_all_schema_ddl() -> list[tuple[str, str]]:
     """
     statements = SCHEMA_DDL_STATEMENTS
     if _DROP_LEGACY_CDC_CHAIN:
-        statements = [
-            (name, ddl)
-            for name, ddl in statements
-            if name not in _LEGACY_CDC_CHAIN_NAMES
-        ]
+        excluded = set(_LEGACY_CDC_CHAIN_NAMES) | set(_V1_TO_V2_TABLES)
+        statements = [(name, ddl) for name, ddl in statements if name not in excluded]
 
     if _USE_REPLICATED_ENGINES:
         return list(statements)

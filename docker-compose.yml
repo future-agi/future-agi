@@ -309,21 +309,38 @@ services:
 
   clickhouse:
     # CH 25.3 is the floor for the v2 spans schema (typed-JSON columns
-    # in 002_spans_v2.sql require it). Devs upgrading from older
-    # compose stacks: `docker compose down -v` to reset the CH volume
-    # — typed-JSON tables can't be created on top of a 24.x data dir.
+    # in 002_spans_v2.sql require it). The boot hook in
+    # model_hub/apps.py auto-migrates a v1 `spans` table (from an older
+    # CH 24.x volume) to v2 the first time it boots — so an existing
+    # volume does not strictly require `docker compose down -v`.
     image: clickhouse/clickhouse-server:25.3-alpine
+    environment:
+      # The 25.3-alpine image ships a default-user.xml that restricts
+      # the `default` user to 127.0.0.1 / ::1 only. Backend connects
+      # from the docker bridge network and gets AUTHENTICATION_FAILED.
+      # SKIP_USER_SETUP keeps the upstream default-user config (no IP
+      # allowlist) — what every other service expects from local-dev CH.
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+      CLICKHOUSE_DB: ${CH_DATABASE:-default}
     ports:
       - "127.0.0.1:${CH_HTTP_PORT:-8123}:8123"
       - "127.0.0.1:${CH_PORT:-9000}:9000"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      # `tiered` storage policy required by the v2 spans schema
+      # (002_spans_v2.sql). Same XML used by the CI test rig at
+      # futureagi/.ci/. Without it apply_schema fails with
+      # `Unknown storage policy 'tiered'`.
+      - ./futureagi/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/storage-policy.xml:ro
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      # IPv4 literal — `localhost` resolves IPv6 first, and CH on
+      # IPv6-less hosts (Colima) only binds IPv4. Same trap as
+      # https://github.com/ClickHouse/ClickHouse/issues/55232.
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 5

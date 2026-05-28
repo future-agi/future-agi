@@ -38,13 +38,19 @@ class TestClickHouseSchema:
         assert "trace_session" in names
         assert "tracer_eval_logger" in names
         assert "trace_dict" in names
-        assert "spans" in names
         # The legacy CDC chain is gated by CH25_DROP_LEGACY_CDC_CHAIN.
-        # Default (False, prod-safe) keeps it; True (dev) drops it.
+        # Default (False, prod-safe) keeps it; True (dev) drops it AND
+        # filters the legacy v1 ``spans`` registry entry (v2 spans is
+        # applied via the v2 SQL files, not this registry).
         if should_drop_legacy_chain():
             assert "tracer_observation_span" not in names
+            assert "spans" not in names, (
+                "v1 SPANS_TABLE must be filtered when flag set — otherwise "
+                "the boot DDL apply recreates v1 after the helper drops it."
+            )
         else:
             assert "tracer_observation_span" in names
+            assert "spans" in names
 
     def test_get_all_schema_ddl_returns_list_of_tuples(self):
         """Each entry should be a (name, ddl_string) tuple."""
@@ -70,8 +76,10 @@ class TestClickHouseSchema:
 
         # CDC tables must appear before trace_dict
         assert names.index("tracer_trace") < names.index("trace_dict")
-        # trace_dict must appear before spans
-        assert names.index("trace_dict") < names.index("spans")
+        # trace_dict must appear before v1 spans (only meaningful when
+        # the v1 spans registry entry is present — i.e. flag off).
+        if not should_drop_legacy_chain():
+            assert names.index("trace_dict") < names.index("spans")
         # Dataset CDC tables must appear before dataset dictionaries
         assert names.index("model_hub_dataset") < names.index("dataset_dict")
         assert names.index("model_hub_column") < names.index("column_dict")
