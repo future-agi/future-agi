@@ -20,14 +20,11 @@ from ai_tools.tools.agents import (
 # Annotation Queue tools (8)
 from ai_tools.tools.annotation_queues import (
     add_queue_items,  # noqa: F401
-    delete_annotation_queue,  # noqa: F401
-    get_annotation_queue,  # noqa: F401
     get_queue_progress,  # noqa: F401
-    list_annotation_queues,  # noqa: F401
     submit_queue_annotations,  # noqa: F401
-    update_annotation_queue,  # noqa: F401
 )
 
+# list/get/create/update/delete_annotation_queue -> DRF bridge (see _annotation_queues.py)
 # Annotation tools (13)
 from ai_tools.tools.annotations import (
     create_annotation_label,  # noqa: F401
@@ -38,9 +35,13 @@ from ai_tools.tools.annotations import (
     update_label,  # noqa: F401
 )
 
-# list_prompt_templates — replaced by DRF bridge on PromptTemplateViewSet
-#   (prompt_template.py is legacy/lint-debt, registered programmatically here)
-from ai_tools.tools.bridge import _prompt_templates  # noqa: F401
+# DRF bridges programmatically applied for legacy lint-debt files:
+from ai_tools.tools.bridge import (
+    _annotation_queues,  # noqa: F401  list/get/create/update/delete_annotation_queue
+    _datasets,  # noqa: F401  list/get/create/update/delete_dataset
+    _eval_groups,  # noqa: F401  list/get/create/update/delete_eval_group
+    _prompt_templates,  # noqa: F401  list/get/create/update/delete_prompt_template
+)
 
 # Context tools (5) — memory tools (save/list/delete) are EE and registered
 # via ee.falcon_ai.apps.FalconAIConfig.ready().
@@ -58,21 +59,18 @@ from ai_tools.tools.datasets import (
     add_dataset_rows,  # noqa: F401
     add_rows_from_existing,  # noqa: F401
     clone_dataset,  # noqa: F401
-    create_dataset,  # noqa: F401
     delete_column,  # noqa: F401
-    delete_dataset,  # noqa: F401
     delete_rows,  # noqa: F401
     duplicate_dataset,  # noqa: F401
     duplicate_rows,  # noqa: F401
     list_dataset_evals,  # noqa: F401
-    list_datasets,  # noqa: F401
     list_knowledge_bases,  # noqa: F401
     merge_datasets,  # noqa: F401
     run_prompt_for_rows,  # noqa: F401
     update_cell_value,  # noqa: F401
-    update_dataset,  # noqa: F401
 )
 
+# list/get/create/update/delete_dataset -> DRF bridge (see _datasets.py)
 # Docs tools (3)
 from ai_tools.tools.docs import (
     ask_docs,  # noqa: F401

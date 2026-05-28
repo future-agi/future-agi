@@ -64,11 +64,26 @@ class QueueAnnotatorNestedSerializer(serializers.ModelSerializer):
 
 
 class AnnotationQueueSerializer(serializers.ModelSerializer):
+    """An annotation queue collects items (trace rows, dataset rows, evals)
+    for human review and labeling.
+
+    Each queue has a label set (define what reviewers can submit) and an
+    assignee list with roles (annotator, reviewer, manager). Items move
+    through pending -> in_progress -> completed states. Use queues to
+    coordinate labeling work, ground-truth gathering, and quality reviews.
+    Names are unique per workspace.
+    """
+
     label_ids = serializers.ListField(
         child=serializers.UUIDField(),
         write_only=True,
         required=False,
         default=list,
+        help_text=(
+            "UUIDs of labels (AnnotationsLabels) to attach to this queue. "
+            "**How to get them:** call `list_annotation_labels` first. "
+            "Reviewers can only submit values from these labels."
+        ),
     )
     annotator_ids = serializers.ListField(
         child=serializers.UUIDField(),
@@ -270,7 +285,9 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
                 )
                 if organization:
                     users = users.filter(organization=organization)
-                visible = {str(user_id) for user_id in users.values_list("id", flat=True)}
+                visible = {
+                    str(user_id) for user_id in users.values_list("id", flat=True)
+                }
 
             if requested - visible:
                 raise serializers.ValidationError(

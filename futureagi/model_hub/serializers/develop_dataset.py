@@ -15,6 +15,54 @@ from model_hub.models.evals_metric import Feedback
 
 
 class DatasetSerializer(serializers.ModelSerializer):
+    """A dataset is a workspace-scoped collection of rows and columns used as
+    input or ground-truth for evaluations, experiments, and prompt runs.
+
+    Datasets have columns (typed fields like text, json, image, choice) and
+    rows (records). They power experiments (run a prompt against every row)
+    and evaluations (score model output against expected fields). Names are
+    unique per (organization, model_type). Use list_datasets to discover,
+    list_dataset_evals to see what evals are attached, get_dataset_columns
+    to inspect schema.
+    """
+
+    id = serializers.UUIDField(
+        read_only=True,
+        help_text=(
+            "Unique dataset identifier (UUID v4). **How to get it:** call "
+            "`list_datasets` (optionally with name filter) and copy the 'id' field."
+        ),
+    )
+    name = serializers.CharField(
+        max_length=255,
+        help_text=(
+            "Human-readable dataset name. Must be unique within the "
+            "organization for the same model_type. Use kebab-case. "
+            "Examples: 'rag-eval-set-v3', 'summarization-golden', "
+            "'safety-red-team-prompts'."
+        ),
+    )
+    model_type = serializers.CharField(
+        required=False,
+        help_text=(
+            "Type of AI model the dataset is designed for. Common values: "
+            "'GenerativeLLM' (chat/completion), 'GenerativeImage', 'TTS', "
+            "'STT', 'MultiModal'. Determines which evaluators apply."
+        ),
+    )
+    source = serializers.CharField(
+        required=False,
+        help_text=(
+            "How the dataset was created. Common values: 'prototype' (user "
+            "created in UI), 'imported' (CSV/HuggingFace), 'synthetic' "
+            "(LLM-generated), 'observe' (sampled from production traces)."
+        ),
+    )
+    organization = serializers.UUIDField(
+        read_only=True,
+        help_text="Organization UUID, auto-set from the authenticated user.",
+    )
+
     class Meta:
         model = Dataset
         fields = ["id", "name", "organization", "model_type", "source", "user"]

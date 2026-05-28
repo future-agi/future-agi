@@ -6,7 +6,49 @@ from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
 
 class EvalGroupSerializer(serializers.ModelSerializer):
-    created_by = serializers.SerializerMethodField()
+    """An eval group bundles multiple eval templates so they can be applied
+    together to a dataset, prompt template, or experiment.
+
+    Use eval groups to reuse an established quality bar (e.g. an "RAG quality"
+    group containing groundedness, retrieval relevance, and answer relevance
+    templates) instead of attaching evals one-by-one. Names must be unique per
+    workspace. Use the dedicated apply-eval-group endpoint to attach a group
+    to a target dataset/template.
+    """
+
+    id = serializers.UUIDField(
+        read_only=True,
+        help_text=(
+            "Unique eval group identifier (UUID v4). **How to get it:** call "
+            "`list_eval_groups` first to discover group IDs."
+        ),
+    )
+    name = serializers.CharField(
+        max_length=255,
+        help_text=(
+            "Human-readable name. Must be unique within the workspace. "
+            "Examples: 'rag-quality-v2', 'safety-checks', 'tone-and-clarity'."
+        ),
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text=(
+            "Optional free-form description of when to use this group. "
+            "Example: 'Standard set for retrieval-augmented QA experiments.'"
+        ),
+    )
+    is_sample = serializers.BooleanField(
+        required=False,
+        help_text=(
+            "Whether this group is a built-in sample (read-only for end users) "
+            "rather than a workspace-created group. Defaults to false."
+        ),
+    )
+    created_by = serializers.SerializerMethodField(
+        help_text="Display name of the user who created the group."
+    )
 
     class Meta:
         model = EvalGroup
