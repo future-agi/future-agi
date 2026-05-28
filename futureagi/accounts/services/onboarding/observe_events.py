@@ -2,10 +2,13 @@ import structlog
 
 from accounts.services.onboarding.activation_events import (
     build_idempotency_key,
+    first_quality_loop_completed,
+    has_event,
     record_event,
 )
 
 logger = structlog.get_logger(__name__)
+NON_REAL_OBSERVE_PROJECT_SOURCES = {"demo", "sample"}
 
 
 def _user_can_access_project_workspace(project, user):
@@ -31,7 +34,7 @@ def record_observe_project_created(*, project, user=None, source="observe_projec
         return None
     if not project.organization_id or not project.workspace_id:
         return None
-    if project.source == "demo" or (project.metadata or {}).get("is_sample") is True:
+    if not _is_real_observe_project(project):
         return None
     if not _user_can_access_project_workspace(project, user):
         return None
@@ -64,5 +67,82 @@ def record_observe_project_created(*, project, user=None, source="observe_projec
             "observe_project_created_activation_record_failed",
             project_id=str(getattr(project, "id", "")),
             workspace_id=str(getattr(project, "workspace_id", "")),
+        )
+        return None
+
+
+def _is_real_observe_project(project):
+    if not project or project.trace_type != "observe":
+        return False
+    if project.source in NON_REAL_OBSERVE_PROJECT_SOURCES:
+        return False
+    metadata = project.metadata if isinstance(project.metadata, dict) else {}
+    return metadata.get("is_sample") is not True
+
+
+def _has_real_trace_review(*, organization, workspace):
+    return has_event(
+        organization=organization,
+        workspace=workspace,
+        event_name="trace_reviewed",
+        is_sample=False,
+    )
+
+
+def record_observe_first_loop_completed(
+    *,
+    organization,
+    workspace,
+    artifact_type,
+    artifact_id,
+    user=None,
+    source="observe_loop_artifact_created",
+    project=None,
+):
+    if not organization or not workspace:
+        return None
+    if project is not None and not _is_real_observe_project(project):
+        return None
+    if first_quality_loop_completed(
+        organization=organization,
+        workspace=workspace,
+        product_path="observe",
+    ):
+        return None
+    if not _has_real_trace_review(organization=organization, workspace=workspace):
+        return None
+
+    project_id = str(project.id) if project is not None else None
+    try:
+        return record_event(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            event_name="first_quality_loop_completed",
+            source=(source or "observe_loop_artifact_created")[:64],
+            product_path="observe",
+            activation_stage="activated",
+            metadata={
+                "artifact_type": artifact_type,
+                "artifact_id": str(artifact_id) if artifact_id else None,
+                "project_id": project_id,
+                "completion_source": source or "observe_loop_artifact_created",
+            },
+            idempotency_key=build_idempotency_key(
+                [
+                    "first_quality_loop_completed",
+                    workspace.id,
+                    "observe",
+                ]
+            ),
+            is_sample=False,
+        )
+    except Exception:
+        logger.exception(
+            "observe_first_loop_completion_record_failed",
+            artifact_id=str(artifact_id or ""),
+            artifact_type=artifact_type,
+            project_id=project_id or "",
+            workspace_id=str(getattr(workspace, "id", "")),
         )
         return None
