@@ -177,6 +177,65 @@ describe("OnboardingHomeView", () => {
     expect(screen.getByText("Connect one observe project")).toBeVisible();
   });
 
+  it("renders the post-aha screen after the first observe quality loop", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeFirstLoopComplete"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(panel).toBeVisible();
+    expect(within(panel).getByText("Aha moment reached")).toBeVisible();
+    expect(
+      within(panel).getByText("Your first quality loop is live"),
+    ).toBeVisible();
+    expect(within(panel).getByText("Next best step")).toBeVisible();
+    expect(
+      within(panel).getByText("first_quality_loop_completed"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /review daily quality/i }),
+    ).toHaveAttribute("href", "/dashboard/home?mode=daily-quality");
+    expect(
+      within(panel).getByRole("link", { name: /open observe/i }),
+    ).toHaveAttribute("href", "/dashboard/observe/observe-1");
+  });
+
+  it("uses the post-aha screen for activated non-observe paths", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("promptActivated"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(panel).toBeVisible();
+    expect(
+      within(panel).getByText("Your first quality loop is live"),
+    ).toBeVisible();
+    expect(within(panel).getByText("prompt")).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /review daily quality/i }),
+    ).toHaveAttribute("href", "/dashboard/home?mode=daily-quality");
+    expect(
+      within(panel).getByRole("link", { name: /open prompt metrics/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics",
+    );
+  });
+
   it("tracks canonical home and recommendation view events", async () => {
     mocks.useActivationState.mockReturnValue({
       state: normalizedFixture("observeNoSetup"),

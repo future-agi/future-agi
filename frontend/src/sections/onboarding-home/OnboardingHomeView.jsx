@@ -515,6 +515,18 @@ export default function OnboardingHomeView() {
     isChecking: Boolean(isRefetching),
   };
 
+  const firstLoopCompletePanel = ["activated", "daily_review"].includes(
+    renderedState.stage,
+  )
+    ? dailyQualityPanel || (
+        <FirstLoopCompletePanel
+          {...observePanelProps}
+          lastMeaningfulEvent={renderedState.lastMeaningfulEvent}
+          primaryPath={renderedState.primaryPath}
+        />
+      )
+    : null;
+
   const observePanel =
     renderedState.primaryPath === "observe" &&
     OBSERVE_PANEL_STAGES.has(renderedState.stage) ? (
@@ -541,12 +553,7 @@ export default function OnboardingHomeView() {
           />
         ) : null}
         {["activated", "daily_review"].includes(renderedState.stage)
-          ? dailyQualityPanel || (
-              <FirstLoopCompletePanel
-                {...observePanelProps}
-                lastMeaningfulEvent={renderedState.lastMeaningfulEvent}
-              />
-            )
+          ? firstLoopCompletePanel
           : null}
       </>
     ) : null;
@@ -651,6 +658,8 @@ export default function OnboardingHomeView() {
               />
             ) : null}
           </Stack>
+        ) : firstLoopCompletePanel ? (
+          <Stack spacing={2}>{firstLoopCompletePanel}</Stack>
         ) : dailyQualityPanel ? (
           <Stack spacing={2}>{dailyQualityPanel}</Stack>
         ) : (

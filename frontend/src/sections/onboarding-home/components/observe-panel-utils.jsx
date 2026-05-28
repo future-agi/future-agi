@@ -59,6 +59,7 @@ export function ObservePanelActions({
   onFallbackClick,
   onCheckAgain,
   isChecking = false,
+  primaryVariant = "contained",
 }) {
   const primaryHref = observeActionHref(action);
   const fallbackHref = observeActionHref(fallbackAction);
@@ -66,7 +67,7 @@ export function ObservePanelActions({
   return (
     <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
       <Button
-        variant="contained"
+        variant={primaryVariant}
         component={primaryHref ? RouterLink : "button"}
         href={primaryHref || undefined}
         disabled={!primaryHref}
@@ -107,4 +108,5 @@ ObservePanelActions.propTypes = {
   onCheckAgain: PropTypes.func,
   onFallbackClick: PropTypes.func,
   onPrimaryClick: PropTypes.func,
+  primaryVariant: PropTypes.oneOf(["contained", "outlined", "text"]),
 };
