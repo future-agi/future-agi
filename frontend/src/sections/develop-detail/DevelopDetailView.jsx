@@ -47,7 +47,7 @@ import DevelopEvaluationDrawer from "./DataTab/DevelopEvaluationDrawer";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import ConditionalNodeV2 from "./AddColumn/ConditionalNode/ConditionalNodeV2";
 import ExperimentTabHeader from "./ExperimentTab/ExperimentTabHeader";
-import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import { recordActivationEvent as recordActivationEventRequest } from "src/sections/onboarding-home/api/onboarding-home-api";
 import {
   buildEvalRunStepHref,
   buildEvalSourceFixRerunClickedPayload,
@@ -100,7 +100,6 @@ const DevelopDetailView = () => {
     location?.state?.isCommonColumn,
   );
   const theme = useTheme();
-  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const recordedSourceFixFocusRef = useRef(false);
   const [experimentSearch, setExperimentSearch] = useState("");
   const [selectedRowsCount, setSelectedRowsCount] = useState(0);
@@ -333,7 +332,7 @@ const DevelopDetailView = () => {
     if (!showEvalSourceFixBanner || recordedSourceFixFocusRef.current) return;
 
     recordedSourceFixFocusRef.current = true;
-    recordActivationEvent?.(
+    void recordActivationEventRequest(
       buildEvalSourceFixRouteFocusPayload({
         evalId: sourceFixOnboardingParams.evalId,
         route: "develop_dataset",
@@ -341,17 +340,14 @@ const DevelopDetailView = () => {
         sourceId: sourceFixOnboardingParams.sourceId,
         sourceType: sourceFixOnboardingParams.sourceType,
       }),
-    );
-  }, [
-    recordActivationEvent,
-    showEvalSourceFixBanner,
-    sourceFixOnboardingParams,
-  ]);
+    ).catch(() => undefined);
+  }, [showEvalSourceFixBanner, sourceFixOnboardingParams]);
 
   const handleSourceFixRerun = useCallback(() => {
     if (!sourceFixRerunHref) return;
 
-    recordActivationEvent?.(
+    const navigateToRerun = () => navigate(sourceFixRerunHref);
+    void recordActivationEventRequest(
       buildEvalSourceFixRerunClickedPayload({
         evalId: sourceFixOnboardingParams.evalId,
         rerunRoute: sourceFixRerunHref,
@@ -360,14 +356,8 @@ const DevelopDetailView = () => {
         sourceId: sourceFixOnboardingParams.sourceId,
         sourceType: sourceFixOnboardingParams.sourceType,
       }),
-    );
-    navigate(sourceFixRerunHref);
-  }, [
-    navigate,
-    recordActivationEvent,
-    sourceFixOnboardingParams,
-    sourceFixRerunHref,
-  ]);
+    ).finally(navigateToRerun);
+  }, [navigate, sourceFixOnboardingParams, sourceFixRerunHref]);
 
   const getRightSection = () => {
     if (isCompareDataset && currentTab === "data") {

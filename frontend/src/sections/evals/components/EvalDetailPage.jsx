@@ -66,6 +66,7 @@ import {
   buildEvalSourceFixCtaClickedPayload,
   buildEvalSourceFixHref,
   EVAL_FIX_RERUN_ORIGINS,
+  EVAL_REVIEW_ACTIONS,
   getEvalReviewOnboardingCopy,
   getEvalReviewOnboardingParams,
 } from "./evalCreateOnboarding";
@@ -213,6 +214,7 @@ const EvalDetailPage = () => {
     () => getEvalReviewOnboardingCopy(reviewOnboardingParams),
     [reviewOnboardingParams],
   );
+  const [reviewActionPreference, setReviewActionPreference] = useState(null);
   const reviewSourceFixHref = useMemo(() => {
     if (!reviewOnboardingParams.isOnboarding) return null;
 
@@ -246,6 +248,30 @@ const EvalDetailPage = () => {
     reviewOnboardingParams.sourceId,
     reviewOnboardingParams.sourceType,
   ]);
+  const handleReviewActionPreferenceChange = useCallback((nextPreference) => {
+    setReviewActionPreference((currentPreference) => {
+      if (
+        currentPreference?.actionKind === nextPreference?.actionKind &&
+        currentPreference?.evalLogId === nextPreference?.evalLogId &&
+        currentPreference?.reviewOutcome === nextPreference?.reviewOutcome &&
+        currentPreference?.runId === nextPreference?.runId
+      ) {
+        return currentPreference;
+      }
+      return nextPreference || null;
+    });
+  }, []);
+  const resolvedReviewActionKind =
+    reviewActionPreference?.runId === reviewOnboardingParams.runId
+      ? reviewActionPreference.actionKind
+      : null;
+  const hasResolvedReviewAction = Boolean(resolvedReviewActionKind);
+  const useReviewSourceFix =
+    resolvedReviewActionKind === EVAL_REVIEW_ACTIONS.SOURCE_FIX;
+  const reviewScorerActionLabel =
+    reviewActionPreference?.reviewOutcome === "result_summary_reviewed"
+      ? "Tune scorer"
+      : "Edit scorer";
 
   useEffect(() => {
     if (!reviewOnboardingParams.isOnboarding) return;
@@ -282,7 +308,7 @@ const EvalDetailPage = () => {
     [setSearchParams],
   );
   const handleReviewPrimaryAction = useCallback(() => {
-    if (reviewSourceFixHref) {
+    if (useReviewSourceFix && reviewSourceFixHref) {
       const navigateToFix = () => navigate(reviewSourceFixHref);
       if (recordActivationEvent) {
         recordActivationEvent(
@@ -327,10 +353,12 @@ const EvalDetailPage = () => {
     reviewOnboardingParams.sourceType,
     reviewScorerEditHref,
     reviewSourceFixHref,
+    useReviewSourceFix,
   ]);
   const reviewPrimaryAction = useMemo(() => {
     if (!reviewOnboardingParams.isOnboarding) return null;
-    if (reviewSourceFixHref) {
+    if (!hasResolvedReviewAction) return null;
+    if (useReviewSourceFix && reviewSourceFixHref) {
       return {
         label: "Open source fix",
         onClick: handleReviewPrimaryAction,
@@ -338,16 +366,19 @@ const EvalDetailPage = () => {
     }
     if (reviewScorerEditHref) {
       return {
-        label: "Edit scorer",
+        label: reviewScorerActionLabel,
         onClick: handleReviewPrimaryAction,
       };
     }
     return null;
   }, [
     handleReviewPrimaryAction,
+    hasResolvedReviewAction,
     reviewOnboardingParams.isOnboarding,
+    reviewScorerActionLabel,
     reviewScorerEditHref,
     reviewSourceFixHref,
+    useReviewSourceFix,
   ]);
 
   // Track dirty state
@@ -2087,6 +2118,7 @@ const EvalDetailPage = () => {
             templateId={evalId}
             outputType={outputType}
             evalType={evalType}
+            onReviewActionPreferenceChange={handleReviewActionPreferenceChange}
           />
         </Box>
       )}

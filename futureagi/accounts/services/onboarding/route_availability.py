@@ -302,7 +302,7 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
     if eval_source_type == "dataset" and eval_source_id:
         eval_source_fix_base = f"/dashboard/develop/{eval_source_id}"
     elif eval_source_type == "trace_project" and eval_source_id:
-        eval_source_fix_base = f"/dashboard/observe/{eval_source_id}"
+        eval_source_fix_base = f"/dashboard/observe/{eval_source_id}/llm-tracing"
     else:
         eval_source_fix_base = "/dashboard/evaluations/usage"
     eval_source_fix_params = {}
@@ -311,6 +311,9 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
             {
                 "source": "onboarding",
                 "step": "fix-eval-failure",
+                "source_type": eval_source_type,
+                "source_id": eval_source_id,
+                "eval_id": eval_scorer_template_id,
                 "run_id": eval_run_id,
             }
         )

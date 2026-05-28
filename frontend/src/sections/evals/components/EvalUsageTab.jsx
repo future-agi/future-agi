@@ -48,6 +48,7 @@ import {
   buildEvalSourceFixHref,
   EVAL_FIX_RERUN_ORIGINS,
   evalUsageLogMatchesRun,
+  getEvalReviewActionKind,
   getEvalUsageLogId,
   getEvalUsageReviewOutcome,
   getEvalFailureActionOnboardingParams,
@@ -404,6 +405,7 @@ const EvalUsageTab = ({
   templateId,
   outputType = "pass_fail",
   evalType = "llm",
+  onReviewActionPreferenceChange,
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
@@ -511,6 +513,41 @@ const EvalUsageTab = ({
   );
 
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
+
+  useEffect(() => {
+    if (!onReviewActionPreferenceChange) return undefined;
+
+    if (
+      !failureActionOnboardingParams.isOnboarding ||
+      failureActionOnboardingParams.step !== "review" ||
+      !detailRow
+    ) {
+      onReviewActionPreferenceChange(null);
+      return undefined;
+    }
+
+    const reviewOutcome = getEvalUsageReviewOutcome(detailRow);
+    onReviewActionPreferenceChange({
+      actionKind: getEvalReviewActionKind({
+        log: detailRow,
+        scorerEditHref,
+        sourceFixHref,
+      }),
+      evalLogId: getEvalUsageLogId(detailRow),
+      reviewOutcome,
+      runId: failureActionOnboardingParams.runId,
+    });
+
+    return undefined;
+  }, [
+    detailRow,
+    failureActionOnboardingParams.isOnboarding,
+    failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.step,
+    onReviewActionPreferenceChange,
+    scorerEditHref,
+    sourceFixHref,
+  ]);
 
   useEffect(() => {
     const runId = failureActionOnboardingParams.runId;
@@ -1060,22 +1097,35 @@ const DetailPanelContent = ({
   const detail = useMemo(() => row.detail || {}, [row.detail]);
   const warnings = row.warnings || detail.warnings || [];
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
-  const nextAction = sourceFixHref
-    ? {
-        buttonLabel: "Open source fix",
-        description: "Fix the source tied to this result, then rerun the eval.",
-        icon: "mingcute:external-link-line",
-        onClick: onSourceFixClick,
-      }
-    : scorerEditHref
+  const reviewOutcome = getEvalUsageReviewOutcome(row);
+  const nextActionKind = getEvalReviewActionKind({
+    log: row,
+    scorerEditHref,
+    sourceFixHref,
+  });
+  const nextAction =
+    nextActionKind === "source_fix"
       ? {
-          buttonLabel: "Edit scorer",
+          buttonLabel: "Open source fix",
           description:
-            "No source route was available. Edit the scorer, then rerun the eval.",
-          icon: "mingcute:edit-line",
-          onClick: onScorerEditClick,
+            "Fix the source tied to this result, then rerun the eval.",
+          icon: "mingcute:external-link-line",
+          onClick: onSourceFixClick,
         }
-      : null;
+      : nextActionKind === "scorer_edit"
+        ? {
+            buttonLabel:
+              reviewOutcome === "result_summary_reviewed"
+                ? "Tune scorer"
+                : "Edit scorer",
+            description:
+              reviewOutcome === "result_summary_reviewed"
+                ? "Tighten the scorer, then rerun the eval on the same source."
+                : "Edit the scorer, then rerun the eval on the same source.",
+            icon: "mingcute:edit-line",
+            onClick: onScorerEditClick,
+          }
+        : null;
 
   return (
     <Box
@@ -1744,6 +1794,9 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
 );
 
 EvalUsageTab.propTypes = {
+  evalType: PropTypes.string,
+  onReviewActionPreferenceChange: PropTypes.func,
+  outputType: PropTypes.string,
   templateId: PropTypes.string.isRequired,
 };
 

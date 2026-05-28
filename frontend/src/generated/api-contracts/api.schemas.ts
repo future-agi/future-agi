@@ -310,6 +310,8 @@ export type ActivationEventRequestApiArtifactType = typeof ActivationEventReques
 
 export const ActivationEventRequestApiArtifactType = {
   trace: 'trace',
+  observe_project: 'observe_project',
+  observe_setup: 'observe_setup',
   project: 'project',
   agent: 'agent',
   graph_execution: 'graph_execution',
@@ -398,6 +400,7 @@ export const ActivationEventResultApiEventName = {
   lifecycle_email_completed: 'lifecycle_email_completed',
   reactivation_reason_clicked: 'reactivation_reason_clicked',
   observe_project_created: 'observe_project_created',
+  onboarding_observe_route_focus_viewed: 'onboarding_observe_route_focus_viewed',
   trace_received: 'trace_received',
   trace_reviewed: 'trace_reviewed',
   trace_detail_opened: 'trace_detail_opened',
@@ -419,6 +422,11 @@ export const ActivationEventResultApiEventName = {
   onboarding_eval_run_clicked: 'onboarding_eval_run_clicked',
   onboarding_eval_failure_detail_opened: 'onboarding_eval_failure_detail_opened',
   onboarding_eval_source_fix_cta_clicked: 'onboarding_eval_source_fix_cta_clicked',
+  onboarding_eval_source_fix_route_viewed: 'onboarding_eval_source_fix_route_viewed',
+  onboarding_eval_source_fix_rerun_clicked: 'onboarding_eval_source_fix_rerun_clicked',
+  onboarding_eval_scorer_edit_cta_clicked: 'onboarding_eval_scorer_edit_cta_clicked',
+  onboarding_eval_fix_rerun_completed: 'onboarding_eval_fix_rerun_completed',
+  onboarding_eval_fix_rerun_reviewed: 'onboarding_eval_fix_rerun_reviewed',
   onboarding_eval_sample_viewed: 'onboarding_eval_sample_viewed',
   voice_agent_created: 'voice_agent_created',
   voice_scenario_created: 'voice_scenario_created',

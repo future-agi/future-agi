@@ -27,6 +27,7 @@ import {
   EVAL_FIX_RERUN_ORIGINS,
   evalCreateOnboardingStage,
   evalUsageLogMatchesRun,
+  getEvalReviewActionKind,
   getEvalUsageLogId,
   getEvalUsageReviewOutcome,
   getEvalCreateInitialSourceTab,
@@ -149,6 +150,24 @@ describe("evalCreateOnboarding", () => {
     );
   });
 
+  it("returns rerun copy when the eval follows a source fix", () => {
+    expect(
+      getEvalCreateOnboardingCopy({
+        rerunFrom: EVAL_FIX_RERUN_ORIGINS.SOURCE_FIX,
+        step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+      }),
+    ).toMatchObject({
+      currentStep: "Rerun",
+      title: "Rerun the eval",
+      steps: [
+        { label: "Review", complete: true },
+        { label: "Fix", complete: true },
+        { label: "Rerun", complete: false },
+        { label: "Inspect", complete: false },
+      ],
+    });
+  });
+
   it("chooses the initial source tab for onboarding create routes", () => {
     expect(
       getEvalCreateInitialSourceTab({
@@ -237,24 +256,30 @@ describe("evalCreateOnboarding", () => {
     expect(
       buildEvalRouteFocusPayload({
         draftId: "eval-1",
+        previousRunId: "run-0",
+        rerunFrom: EVAL_FIX_RERUN_ORIGINS.SOURCE_FIX,
+        runId: "run-1",
         sourceId: "data-1",
         sourceType: "dataset",
-        step: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+        step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
       }),
     ).toMatchObject({
       eventName: "onboarding_eval_route_focus_viewed",
       primaryPath: "evals",
-      stage: "add_eval_scorer",
+      stage: "run_eval",
       source: "eval_create_onboarding",
       artifactType: "eval",
       artifactId: "data-1",
       metadata: {
         draft_id: "eval-1",
+        previous_run_id: "run-0",
+        rerun_from: "source_fix",
+        run_id: "run-1",
         source_id: "data-1",
         source_type: "dataset",
-        step: "scorer",
+        step: "run",
       },
-      idempotencyKey: "onboarding_eval_route_focus_viewed:scorer:data-1",
+      idempotencyKey: "onboarding_eval_route_focus_viewed:run:data-1",
     });
   });
 
@@ -403,7 +428,7 @@ describe("evalCreateOnboarding", () => {
     expect(payload).toMatchObject({
       eventName: "onboarding_eval_fix_rerun_completed",
       primaryPath: "evals",
-      stage: "fix_eval_source",
+      stage: "eval_next_loop",
       source: "eval_review_onboarding",
       artifactType: "eval_run",
       artifactId: "run-2",
@@ -654,6 +679,39 @@ describe("evalCreateOnboarding", () => {
     );
   });
 
+  it("chooses review actions from the usage outcome", () => {
+    const sourceFixHref = "/dashboard/observe/project-1/llm-tracing";
+    const scorerEditHref = "/dashboard/evaluations/create/eval-1";
+
+    expect(
+      getEvalReviewActionKind({
+        log: { result: "Failed" },
+        scorerEditHref,
+        sourceFixHref,
+      }),
+    ).toBe("source_fix");
+    expect(
+      getEvalReviewActionKind({
+        log: { score: 0.4 },
+        scorerEditHref,
+        sourceFixHref,
+      }),
+    ).toBe("source_fix");
+    expect(
+      getEvalReviewActionKind({
+        log: { result: "Passed", score: 0.95 },
+        scorerEditHref,
+        sourceFixHref,
+      }),
+    ).toBe("scorer_edit");
+    expect(
+      getEvalReviewActionKind({
+        log: { result: "Failed" },
+        scorerEditHref,
+      }),
+    ).toBe("scorer_edit");
+  });
+
   it("builds a review route focus payload", () => {
     expect(
       buildEvalReviewRouteFocusPayload({
@@ -729,7 +787,7 @@ describe("evalCreateOnboarding", () => {
     expect(payload).toMatchObject({
       eventName: "onboarding_eval_fix_rerun_reviewed",
       primaryPath: "evals",
-      stage: "fix_eval_source",
+      stage: "review_eval_failures",
       source: "eval_review_onboarding",
       artifactType: "eval_run",
       artifactId: "run-2",
@@ -798,7 +856,7 @@ describe("evalCreateOnboarding", () => {
     expect(payload).toMatchObject({
       eventName: "eval_failure_action_created",
       primaryPath: "evals",
-      stage: "fix_eval_source",
+      stage: "eval_next_loop",
       source: "eval_review_onboarding",
       artifactType: "eval_run",
       artifactId: "feedback-1",
@@ -835,7 +893,7 @@ describe("evalCreateOnboarding", () => {
     expect(payload).toMatchObject({
       eventName: "onboarding_eval_source_fix_cta_clicked",
       primaryPath: "evals",
-      stage: "fix_eval_source",
+      stage: "eval_next_loop",
       source: "eval_review_onboarding",
       artifactType: "dataset",
       artifactId: "data-1",
@@ -867,7 +925,7 @@ describe("evalCreateOnboarding", () => {
     expect(payload).toMatchObject({
       eventName: "onboarding_eval_source_fix_route_viewed",
       primaryPath: "evals",
-      stage: "fix_eval_source",
+      stage: "eval_next_loop",
       source: "eval_review_onboarding",
       artifactType: "dataset",
       artifactId: "data-1",
@@ -900,7 +958,7 @@ describe("evalCreateOnboarding", () => {
     expect(payload).toMatchObject({
       eventName: "onboarding_eval_source_fix_rerun_clicked",
       primaryPath: "evals",
-      stage: "fix_eval_source",
+      stage: "eval_next_loop",
       source: "eval_review_onboarding",
       artifactType: "dataset",
       artifactId: "data-1",
@@ -934,7 +992,7 @@ describe("evalCreateOnboarding", () => {
     expect(payload).toMatchObject({
       eventName: "onboarding_eval_scorer_edit_cta_clicked",
       primaryPath: "evals",
-      stage: "fix_eval_source",
+      stage: "eval_next_loop",
       source: "eval_review_onboarding",
       artifactType: "eval_scorer",
       artifactId: "eval-1",

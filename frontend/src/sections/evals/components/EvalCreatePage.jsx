@@ -24,6 +24,7 @@ import React, {
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { useLocation, useNavigate, useParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSnackbar } from "notistack";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
@@ -164,6 +165,7 @@ const EvalCreatePage = () => {
   const { draftId: urlDraftId } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
@@ -308,6 +310,12 @@ const EvalCreatePage = () => {
       ) {
         const completedRunId =
           getEvalRunResultId(result) || onboardingParams.runId;
+        void queryClient.invalidateQueries({
+          queryKey: ["evals", "usage-chart", draftId],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["evals", "usage-logs", draftId],
+        });
         recordActivationEvent?.(
           buildEvalRunCompletedPayload({
             evalId: draftId,
@@ -354,6 +362,7 @@ const EvalCreatePage = () => {
       mode,
       navigate,
       onboardingParams,
+      queryClient,
       recordActivationEvent,
     ],
   );
@@ -462,6 +471,8 @@ const EvalCreatePage = () => {
     recordActivationEvent?.(
       buildEvalRouteFocusPayload({
         draftId,
+        previousRunId: onboardingParams.previousRunId,
+        rerunFrom: onboardingParams.rerunFrom,
         runId: onboardingParams.runId,
         sourceId: onboardingParams.sourceId,
         sourceType: onboardingParams.sourceType,
@@ -955,9 +966,16 @@ const EvalCreatePage = () => {
     }
 
     if (onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.RUN) {
+      const runLabel = onboardingParams.rerunFrom
+        ? isTesting
+          ? "Rerunning eval"
+          : "Rerun eval"
+        : isTesting
+          ? "Running first eval"
+          : "Run first eval";
       return {
         disabled: !draftId || isTesting || !isPlaygroundReady,
-        label: isTesting ? "Running first eval" : "Run first eval",
+        label: runLabel,
         onClick: handleTestEvaluation,
       };
     }

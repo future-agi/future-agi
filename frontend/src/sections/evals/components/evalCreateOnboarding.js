@@ -11,6 +11,11 @@ export const EVAL_FIX_RERUN_ORIGINS = {
   SOURCE_FIX: "source_fix",
 };
 
+export const EVAL_REVIEW_ACTIONS = {
+  SCORER_EDIT: "scorer_edit",
+  SOURCE_FIX: "source_fix",
+};
+
 export const EVAL_CREATE_ONBOARDING_STEPS = {
   DATA: "data",
   SCORER: "scorer",
@@ -106,6 +111,19 @@ const STEP_COPY = {
       { label: "Run", complete: false },
     ],
   },
+};
+
+const EVAL_RERUN_COPY = {
+  currentStep: "Rerun",
+  description:
+    "Run the eval again after the source fix, then compare the result.",
+  title: "Rerun the eval",
+  steps: [
+    { label: "Review", complete: true },
+    { label: "Fix", complete: true },
+    { label: "Rerun", complete: false },
+    { label: "Inspect", complete: false },
+  ],
 };
 
 const EVAL_REVIEW_COPY = {
@@ -208,8 +226,12 @@ export const getEvalCreateOnboardingParams = (search = "") => {
   };
 };
 
-export const getEvalCreateOnboardingCopy = ({ step } = {}) =>
-  STEP_COPY[step] || STEP_COPY[EVAL_CREATE_ONBOARDING_STEPS.SCORER];
+export const getEvalCreateOnboardingCopy = ({ rerunFrom, step } = {}) => {
+  if (step === EVAL_CREATE_ONBOARDING_STEPS.RUN && rerunFrom) {
+    return EVAL_RERUN_COPY;
+  }
+  return STEP_COPY[step] || STEP_COPY[EVAL_CREATE_ONBOARDING_STEPS.SCORER];
+};
 
 export const getEvalCreateInitialSourceTab = ({
   isOnboarding,
@@ -398,6 +420,28 @@ export const getEvalUsageReviewOutcome = (log = {}) => {
   return "result_summary_reviewed";
 };
 
+export const getEvalReviewActionKind = ({
+  log,
+  scorerEditHref,
+  sourceFixHref,
+} = {}) => {
+  const reviewOutcome = getEvalUsageReviewOutcome(log);
+  const shouldFixSource = ["failure_reviewed", "weak_result_reviewed"].includes(
+    reviewOutcome,
+  );
+
+  if (shouldFixSource && sourceFixHref) {
+    return EVAL_REVIEW_ACTIONS.SOURCE_FIX;
+  }
+  if (scorerEditHref) {
+    return EVAL_REVIEW_ACTIONS.SCORER_EDIT;
+  }
+  if (sourceFixHref) {
+    return EVAL_REVIEW_ACTIONS.SOURCE_FIX;
+  }
+  return null;
+};
+
 export const getEvalReviewOnboardingParams = (search = "") => {
   const params = toSearchParams(search);
   const step = params.get("step");
@@ -529,6 +573,8 @@ export const evalCreateOnboardingStage = (step) =>
 
 export const buildEvalRouteFocusPayload = ({
   draftId,
+  previousRunId,
+  rerunFrom,
   runId,
   sourceId,
   sourceType,
@@ -551,6 +597,8 @@ export const buildEvalRouteFocusPayload = ({
     artifactId,
     metadata: compactMetadata({
       draft_id: draftId,
+      previous_run_id: previousRunId,
+      rerun_from: normalizeFixRerunOrigin(rerunFrom),
       run_id: runId,
       source_id: sourceId,
       source_type: sourceType,
@@ -725,7 +773,7 @@ export const buildEvalFixRerunCompletedPayload = ({
   return {
     eventName: "onboarding_eval_fix_rerun_completed",
     primaryPath: "evals",
-    stage: "fix_eval_source",
+    stage: "eval_next_loop",
     source: "eval_review_onboarding",
     artifactType: "eval_run",
     artifactId,
@@ -805,7 +853,7 @@ export const buildEvalSourceFixRouteFocusPayload = ({
   return {
     eventName: "onboarding_eval_source_fix_route_viewed",
     primaryPath: "evals",
-    stage: "fix_eval_source",
+    stage: "eval_next_loop",
     source: "eval_review_onboarding",
     artifactType: artifactTypeForSource(sourceType, "eval_run"),
     artifactId,
@@ -842,7 +890,7 @@ export const buildEvalSourceFixRerunClickedPayload = ({
   return {
     eventName: "onboarding_eval_source_fix_rerun_clicked",
     primaryPath: "evals",
-    stage: "fix_eval_source",
+    stage: "eval_next_loop",
     source: "eval_review_onboarding",
     artifactType: artifactTypeForSource(sourceType, "eval_run"),
     artifactId,
@@ -924,7 +972,7 @@ export const buildEvalFixRerunReviewedPayload = ({
   return {
     eventName: "onboarding_eval_fix_rerun_reviewed",
     primaryPath: "evals",
-    stage: "fix_eval_source",
+    stage: EVAL_REVIEW_STAGE,
     source: "eval_review_onboarding",
     artifactType: "eval_run",
     artifactId,
@@ -972,7 +1020,7 @@ export const buildEvalFailureActionCreatedPayload = ({
   return {
     eventName: "eval_failure_action_created",
     primaryPath: "evals",
-    stage: "fix_eval_source",
+    stage: "eval_next_loop",
     source: "eval_review_onboarding",
     artifactType: "eval_run",
     artifactId,
@@ -1014,7 +1062,7 @@ export const buildEvalSourceFixCtaClickedPayload = ({
   return {
     eventName: "onboarding_eval_source_fix_cta_clicked",
     primaryPath: "evals",
-    stage: "fix_eval_source",
+    stage: "eval_next_loop",
     source: "eval_review_onboarding",
     artifactType: artifactTypeForSource(sourceType, "eval_run"),
     artifactId,
@@ -1054,7 +1102,7 @@ export const buildEvalScorerEditCtaClickedPayload = ({
   return {
     eventName: "onboarding_eval_scorer_edit_cta_clicked",
     primaryPath: "evals",
-    stage: "fix_eval_source",
+    stage: "eval_next_loop",
     source: "eval_review_onboarding",
     artifactType: "eval_scorer",
     artifactId,

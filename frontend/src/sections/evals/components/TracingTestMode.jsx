@@ -208,6 +208,37 @@ const normalizeRowType = (value) => {
   return "Span";
 };
 
+const getFirstPresentRowValue = (row, keys) => {
+  if (!row) return null;
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).length > 0) {
+      return value;
+    }
+  }
+  return null;
+};
+
+export const getTracingRowIdentifiers = (row, rowType) => {
+  const normalizedRowType = normalizeRowType(rowType);
+  const rowId = getFirstPresentRowValue(row, ["id"]);
+  const traceId =
+    getFirstPresentRowValue(row, ["trace_id", "traceId", "trace"]) ||
+    (normalizedRowType === "Trace" ? rowId : null);
+  const spanId =
+    getFirstPresentRowValue(row, ["span_id", "spanId", "span"]) ||
+    (normalizedRowType === "Span" ? rowId : null);
+  const sessionId =
+    getFirstPresentRowValue(row, ["session_id", "sessionId", "session"]) ||
+    (normalizedRowType === "Session" ? rowId : null);
+
+  return {
+    spanId,
+    traceId,
+    sessionId,
+  };
+};
+
 export const buildTracingPreviewListParams = ({
   selectedProjectId,
   effectiveFilters,
@@ -586,8 +617,7 @@ const TracingTestMode = React.forwardRef(
         return;
       }
 
-      const spanId = currentRow.span_id;
-      const traceId = currentRow.trace_id;
+      const { spanId, traceId } = getTracingRowIdentifiers(currentRow, rowType);
       const cacheKey =
         rowType === "Span"
           ? `Span:${traceId || ""}:${spanId || ""}`
@@ -1048,15 +1078,18 @@ const TracingTestMode = React.forwardRef(
         // {{session}} server-side from IDs. Composite execution expects
         // the concrete context objects directly.
         const autoCtx = {};
-        const _spanId = currentRow?.span_id || currentRow?.spanId;
-        const _traceId = currentRow?.trace_id || currentRow?.traceId;
-        const _sessionId = currentRow?.session_id || currentRow?.sessionId;
-        if (rowType === "Span" && _spanId) autoCtx.span_id = _spanId;
-        if ((rowType === "Span" || rowType === "Trace") && _traceId)
-          autoCtx.trace_id = _traceId;
-        if (rowType === "Session" && _sessionId)
-          autoCtx.session_id = _sessionId;
-        if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
+        const {
+          spanId: autoSpanId,
+          traceId: autoTraceId,
+          sessionId: autoSessionId,
+        } = getTracingRowIdentifiers(currentRow, rowType);
+        if (rowType === "Span" && autoSpanId) autoCtx.span_id = autoSpanId;
+        if ((rowType === "Span" || rowType === "Trace") && autoTraceId)
+          autoCtx.trace_id = autoTraceId;
+        if (rowType === "Session" && autoSessionId)
+          autoCtx.session_id = autoSessionId;
+        if (rowType === "VoiceCall" && autoTraceId)
+          autoCtx.trace_id = autoTraceId;
 
         const compositeCtx = {};
         if (rowType === "Span" && spanDetail)

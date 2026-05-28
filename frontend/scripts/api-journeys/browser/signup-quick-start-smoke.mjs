@@ -892,6 +892,154 @@ async function main() {
     );
     await expectVisibleText(page, "Rerun eval", { timeout: 45000 });
     const evalSourceFixUrl = page.url();
+    const evalRunResponsesBeforeRerun = evidence.evalPlaygroundResponses.length;
+    await clickVisibleButtonText(page, "Rerun eval", 45000);
+    await page.waitForFunction(
+      ({ evalId: expectedEvalId, previousRunId, projectId }) => {
+        const params = new URLSearchParams(window.location.search);
+        return (
+          window.location.pathname ===
+            `/dashboard/evaluations/create/${expectedEvalId}` &&
+          params.get("source") === "onboarding" &&
+          params.get("step") === "run" &&
+          params.get("source_type") === "trace_project" &&
+          params.get("source_id") === projectId &&
+          params.get("rerun_from") === "source_fix" &&
+          params.get("previous_run_id") === previousRunId
+        );
+      },
+      { timeout: 60000 },
+      {
+        evalId,
+        previousRunId: firstEvalRunId,
+        projectId: realProject.projectId,
+      },
+    );
+    const evalFixRerunUrl = page.url();
+    await waitForCondition(
+      () =>
+        evidence.activationEventPosts.some(
+          (payload) =>
+            payload?.event_name ===
+              "onboarding_eval_source_fix_rerun_clicked" &&
+            payload?.primary_path === "evals" &&
+            payload?.stage === "eval_next_loop" &&
+            payload?.source === "eval_review_onboarding" &&
+            payload?.artifact_type === "observe_project" &&
+            payload?.metadata?.run_id === firstEvalRunId &&
+            payload?.metadata?.rerun_route?.includes(
+              "/dashboard/evaluations/create/",
+            ),
+        ),
+      "Expected source-fix rerun clicked activation event.",
+      45000,
+    );
+    await expectVisibleText(page, "Rerun the eval", { timeout: 45000 });
+    await expectVisibleText(page, "Rerun eval", { timeout: 45000 });
+    await clickVisibleButtonText(page, "Rerun eval", 45000);
+    await waitForCondition(
+      () =>
+        evidence.evalPlaygroundResponses.length > evalRunResponsesBeforeRerun &&
+        evidence.evalPlaygroundResponses.some(
+          (item, index) =>
+            index >= evalRunResponsesBeforeRerun &&
+            item.status < 400 &&
+            item.body?.status === true &&
+            item.body?.result?.log_id &&
+            item.body.result.log_id !== firstEvalRunId,
+        ),
+      "Expected repair rerun eval playground response with a new log id.",
+      60000,
+    );
+    const repairEvalRun = evidence.evalPlaygroundResponses.find(
+      (item, index) =>
+        index >= evalRunResponsesBeforeRerun &&
+        item.status < 400 &&
+        item.body?.status === true &&
+        item.body?.result?.log_id &&
+        item.body.result.log_id !== firstEvalRunId,
+    );
+    const repairEvalRunId = repairEvalRun?.body?.result?.log_id;
+    await page.waitForFunction(
+      ({ previousRunId, runId }) => {
+        const params = new URLSearchParams(window.location.search);
+        return (
+          /^\/dashboard\/evaluations\/[^/]+$/.test(window.location.pathname) &&
+          params.get("tab") === "usage" &&
+          params.get("source") === "onboarding" &&
+          params.get("step") === "review" &&
+          params.get("run_id") === runId &&
+          params.get("rerun_from") === "source_fix" &&
+          params.get("previous_run_id") === previousRunId
+        );
+      },
+      { timeout: 60000 },
+      { previousRunId: firstEvalRunId, runId: repairEvalRunId },
+    );
+    await expectVisibleText(page, "Review the repair attempt", {
+      timeout: 45000,
+    });
+    await waitForCondition(
+      () =>
+        evidence.evalUsageResponses.some((item) =>
+          item.body?.logs?.items?.some((log) => log.id === repairEvalRunId),
+        ),
+      "Expected usage API response to include the repair rerun.",
+      60000,
+    );
+    await waitForCondition(
+      () =>
+        evidence.activationEventPosts.some(
+          (payload) =>
+            payload?.event_name === "onboarding_eval_route_focus_viewed" &&
+            payload?.primary_path === "evals" &&
+            payload?.stage === "review_eval_failures" &&
+            payload?.source === "eval_review_onboarding" &&
+            payload?.artifact_type === "eval_run" &&
+            payload?.artifact_id === repairEvalRunId &&
+            payload?.metadata?.run_id === repairEvalRunId &&
+            payload?.metadata?.previous_run_id === firstEvalRunId &&
+            payload?.metadata?.rerun_from === "source_fix",
+        ),
+      "Expected repair rerun review focus activation event.",
+      45000,
+    );
+    await waitForCondition(
+      () =>
+        evidence.activationEventPosts.some(
+          (payload) =>
+            payload?.event_name === "onboarding_eval_fix_rerun_completed" &&
+            payload?.primary_path === "evals" &&
+            payload?.stage === "eval_next_loop" &&
+            payload?.source === "eval_review_onboarding" &&
+            payload?.artifact_type === "eval_run" &&
+            payload?.artifact_id === repairEvalRunId &&
+            payload?.metadata?.run_id === repairEvalRunId &&
+            payload?.metadata?.previous_run_id === firstEvalRunId &&
+            payload?.metadata?.rerun_from === "source_fix",
+        ),
+      "Expected repair rerun completed activation event.",
+      45000,
+    );
+    await waitForCondition(
+      () =>
+        evidence.activationEventPosts.some(
+          (payload) =>
+            payload?.event_name === "onboarding_eval_fix_rerun_reviewed" &&
+            payload?.primary_path === "evals" &&
+            payload?.stage === "review_eval_failures" &&
+            payload?.source === "eval_review_onboarding" &&
+            payload?.artifact_type === "eval_run" &&
+            payload?.artifact_id === repairEvalRunId &&
+            payload?.metadata?.run_id === repairEvalRunId &&
+            payload?.metadata?.previous_run_id === firstEvalRunId &&
+            payload?.metadata?.rerun_from === "source_fix" &&
+            payload?.metadata?.step === "review",
+        ),
+      "Expected repair rerun reviewed activation event.",
+      60000,
+    );
+    const evalRepairReviewUrl = page.url();
 
     assert(evidence.signupPosts.length === 1, "Expected one signup POST.");
     assert(evidence.tokenPosts.length === 1, "Expected one token POST.");
@@ -1052,6 +1200,34 @@ async function main() {
             ),
             eval_review_onboarding_url: evalReviewOnboardingUrl,
             eval_source_fix_url: evalSourceFixUrl,
+            eval_fix_rerun_url: evalFixRerunUrl,
+            eval_source_fix_rerun_clicked_event:
+              evidence.activationEventPosts.find(
+                (payload) =>
+                  payload?.event_name ===
+                    "onboarding_eval_source_fix_rerun_clicked" &&
+                  payload?.metadata?.run_id === firstEvalRunId,
+              ),
+            eval_fix_rerun_review_focus_event:
+              evidence.activationEventPosts.find(
+                (payload) =>
+                  payload?.event_name ===
+                    "onboarding_eval_route_focus_viewed" &&
+                  payload?.artifact_id === repairEvalRunId &&
+                  payload?.metadata?.rerun_from === "source_fix",
+              ),
+            eval_fix_rerun_completed_event: evidence.activationEventPosts.find(
+              (payload) =>
+                payload?.event_name === "onboarding_eval_fix_rerun_completed" &&
+                payload?.metadata?.run_id === repairEvalRunId,
+            ),
+            eval_fix_rerun_reviewed_event: evidence.activationEventPosts.find(
+              (payload) =>
+                payload?.event_name === "onboarding_eval_fix_rerun_reviewed" &&
+                payload?.metadata?.run_id === repairEvalRunId,
+            ),
+            eval_repair_review_url: evalRepairReviewUrl,
+            eval_repair_run_id: repairEvalRunId,
             eval_source_fix_cta_event: evidence.activationEventPosts.find(
               (payload) =>
                 payload?.event_name ===
@@ -1382,7 +1558,11 @@ async function clickVisibleButtonText(page, text, timeout = 30000) {
   );
   const element = handle.asElement();
   assert(element, `Expected visible button for ${text}.`);
-  await element.click();
+  await element.evaluate((button) => {
+    button.scrollIntoView({ block: "center", inline: "center" });
+    button.click();
+  });
+  await handle.dispose();
 }
 
 function parseJsonPostData(requestOrData) {
@@ -1444,7 +1624,7 @@ async function createSmokeTrace(headers, projectId, runId) {
       prompt: "Summarize onboarding smoke",
     },
     output: {
-      response: "Real trace created for onboarding proof",
+      response: "OK",
     },
     tags: ["onboarding-smoke", runId],
   });
