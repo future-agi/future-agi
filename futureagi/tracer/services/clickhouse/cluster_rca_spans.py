@@ -221,6 +221,196 @@ def aggregate_span_field(
     return buckets, sum(b["count"] for b in buckets)
 
 
+def trace_roots(
+    project_id: str, trace_ids: Iterable[str]
+) -> dict[str, dict[str, Any]]:
+    """Per-trace representative (root) I/O + context, keyed by trace_id.
+
+    The trace's I/O is its earliest span's I/O (argMin on start_time). Used
+    for list(traces) snippets, read(session) member previews, etc. — a single
+    batched query instead of N per-trace fetches.
+    """
+    ids = _ids_list(trace_ids)
+    if not ids or not is_clickhouse_enabled():
+        return {}
+    query = """
+        SELECT
+            trace_id,
+            argMin(input, start_time)  AS input,
+            argMin(output, start_time) AS output,
+            any(trace_name)            AS trace_name,
+            toString(any(trace_session_id)) AS trace_session_id,
+            any(trace_external_id)     AS trace_external_id,
+            max(status = 'ERROR')      AS has_error,
+            min(start_time)            AS first_start
+        FROM (
+            SELECT trace_id, input, output, trace_name, trace_session_id,
+                   trace_external_id, status, start_time, id
+            FROM spans
+            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+              AND toString(trace_id) IN %(tids)s
+            LIMIT 1 BY id
+        )
+        GROUP BY trace_id
+    """
+    rows = _run(query, {"pid": str(project_id), "tids": ids})
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        out[str(r[0])] = {
+            "input": r[1], "output": r[2], "trace_name": r[3],
+            "trace_session_id": r[4] or None, "trace_external_id": r[5],
+            "has_error": bool(r[6]), "first_start": str(r[7]) if r[7] else None,
+        }
+    return out
+
+
+# group_by token → CH trace-level column for trace_count aggregation.
+_TRACE_AGG_FIELDS: dict[str, str] = {
+    "version": "toString(project_version_id)",
+    "session_id": "toString(trace_session_id)",
+}
+
+
+def aggregate_trace_field(
+    project_id: str, trace_ids: Iterable[str], group_by: str
+) -> Optional[tuple[list[dict[str, Any]], int]]:
+    """trace_count grouped by a CH trace-level field (version / session_id).
+    Counts distinct traces per value. Returns (buckets, total) or None if
+    group_by isn't a CH trace field (caller falls back to PG/relational)."""
+    field = _TRACE_AGG_FIELDS.get(group_by)
+    if field is None:
+        return None
+    ids = _ids_list(trace_ids)
+    if not ids or not is_clickhouse_enabled():
+        return [], 0
+    query = f"""
+        SELECT k, uniqExact(trace_id) AS c
+        FROM (
+            SELECT toString(trace_id) AS trace_id, {field} AS k, id
+            FROM spans
+            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+              AND toString(trace_id) IN %(tids)s
+            LIMIT 1 BY id
+        )
+        GROUP BY k ORDER BY c DESC
+    """
+    rows = _run(query, {"pid": str(project_id), "tids": ids})
+    buckets = [{"key": r[0] or "(none)", "count": r[1]} for r in rows]
+    return buckets, len(ids)
+
+
+def timeline_trace_counts(
+    project_id: str, trace_ids: Iterable[str], bucket: str = "hour"
+) -> list[dict[str, Any]]:
+    """Distinct-trace count per time bucket (trace's earliest span time)."""
+    bucket_fn = {
+        "minute": "toStartOfMinute",
+        "hour": "toStartOfHour",
+        "day": "toStartOfDay",
+    }.get(bucket)
+    ids = _ids_list(trace_ids)
+    if not bucket_fn or not ids or not is_clickhouse_enabled():
+        return []
+    query = f"""
+        SELECT {bucket_fn}(first_start) AS b, count() AS c
+        FROM (
+            SELECT trace_id, min(start_time) AS first_start
+            FROM (
+                SELECT trace_id, start_time, id FROM spans
+                WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+                  AND toString(trace_id) IN %(tids)s
+                LIMIT 1 BY id
+            )
+            GROUP BY trace_id
+        )
+        GROUP BY b ORDER BY b
+    """
+    rows = _run(query, {"pid": str(project_id), "tids": ids})
+    return [
+        {"bucket_start": str(r[0]) if r[0] else None, "count": r[1]}
+        for r in rows
+    ]
+
+
+def search_trace_ids(
+    project_id: str, trace_ids: Iterable[str], query_text: str, *, limit: int = 50
+) -> list[str]:
+    """Distinct trace_ids whose any span matches the text (input/output/name)."""
+    ids = _ids_list(trace_ids)
+    if not ids or not query_text or not is_clickhouse_enabled():
+        return []
+    query = """
+        SELECT DISTINCT toString(trace_id)
+        FROM spans
+        WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+          AND toString(trace_id) IN %(tids)s
+          AND (positionCaseInsensitive(input, %(q)s) > 0
+            OR positionCaseInsensitive(output, %(q)s) > 0
+            OR positionCaseInsensitive(name, %(q)s) > 0)
+        LIMIT %(limit)s
+    """
+    rows = _run(
+        query,
+        {"pid": str(project_id), "tids": ids, "q": query_text, "limit": limit},
+    )
+    return [r[0] for r in rows]
+
+
+def distinct_sessions(
+    project_id: str, trace_ids: Iterable[str]
+) -> list[str]:
+    """Distinct trace_session_id values across a trace set (non-empty)."""
+    ids = _ids_list(trace_ids)
+    if not ids or not is_clickhouse_enabled():
+        return []
+    query = """
+        SELECT DISTINCT toString(trace_session_id)
+        FROM spans
+        WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+          AND toString(trace_id) IN %(tids)s
+          AND trace_session_id IS NOT NULL
+          AND toString(trace_session_id) != ''
+    """
+    rows = _run(query, {"pid": str(project_id), "tids": ids})
+    return [r[0] for r in rows if r[0]]
+
+
+def traces_in_session(
+    project_id: str, session_id: str
+) -> dict[str, dict[str, Any]]:
+    """Per-trace root info for all traces in one session (chronological via
+    first_start). Powers read(session). Returns {trace_id: root-info}."""
+    if not session_id or not is_clickhouse_enabled():
+        return {}
+    query = """
+        SELECT
+            trace_id,
+            argMin(input, start_time)  AS input,
+            argMin(output, start_time) AS output,
+            any(trace_name)            AS trace_name,
+            max(status = 'ERROR')      AS has_error,
+            min(start_time)            AS first_start
+        FROM (
+            SELECT trace_id, input, output, trace_name, status, start_time, id
+            FROM spans
+            WHERE project_id = %(pid)s AND _peerdb_is_deleted = 0
+              AND toString(trace_session_id) = %(sid)s
+            LIMIT 1 BY id
+        )
+        GROUP BY trace_id
+        ORDER BY first_start
+    """
+    rows = _run(query, {"pid": str(project_id), "sid": str(session_id)})
+    out: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        out[str(r[0])] = {
+            "input": r[1], "output": r[2], "trace_name": r[3],
+            "has_error": bool(r[4]),
+            "first_start": str(r[5]) if r[5] else None,
+        }
+    return out
+
+
 def error_messages_in_traces(
     project_id: str,
     trace_ids: Iterable[str],
