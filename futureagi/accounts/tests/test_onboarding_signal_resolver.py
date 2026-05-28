@@ -6,6 +6,7 @@ from accounts.models.workspace import Workspace
 from accounts.services.onboarding.activation_events import record_event
 from accounts.services.onboarding.signal_resolver import collect_onboarding_signals
 from accounts.tests.onboarding_model_factories import (
+    create_custom_eval,
     create_observe_project,
     create_trace,
 )
@@ -61,6 +62,91 @@ def test_collect_signals_is_workspace_scoped(organization, workspace, user):
 
     assert signals.observe_project_exists is False
     assert signals.trace_exists is False
+
+
+@pytest.mark.django_db
+def test_demo_observe_project_does_not_count_as_real_setup(
+    organization,
+    workspace,
+    user,
+):
+    create_observe_project(
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source="demo",
+    )
+
+    signals = collect_onboarding_signals(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+    )
+
+    assert signals.observe_project_exists is False
+    assert signals.observe_projects == 0
+    assert signals.first_observe_id is None
+
+
+@pytest.mark.django_db
+def test_demo_observe_trace_does_not_count_as_real_trace(
+    organization,
+    workspace,
+    user,
+):
+    project = create_observe_project(
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source="demo",
+    )
+    create_trace(project=project)
+
+    signals = collect_onboarding_signals(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+    )
+
+    assert signals.observe_project_exists is False
+    assert signals.trace_exists is False
+    assert signals.first_trace_id is None
+
+
+@pytest.mark.django_db
+def test_demo_observe_project_cannot_complete_real_activation(
+    organization,
+    workspace,
+    user,
+):
+    project = create_observe_project(
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source="demo",
+    )
+    create_trace(project=project)
+    create_custom_eval(organization=organization, workspace=workspace, project=project)
+    record_event(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        event_name="trace_reviewed",
+        source="demo_project",
+        product_path="observe",
+        is_sample=False,
+    )
+
+    signals = collect_onboarding_signals(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+    )
+
+    assert signals.trace_reviewed is True
+    assert signals.observe_project_exists is False
+    assert signals.trace_exists is False
+    assert signals.first_loop_completed is False
 
 
 @pytest.mark.django_db

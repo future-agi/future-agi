@@ -29,7 +29,7 @@ from tracer.models.trace import Trace
 
 
 def create_observe_project(
-    *, organization, workspace, user=None, name=None, metadata=None
+    *, organization, workspace, user=None, name=None, metadata=None, source="prototype"
 ):
     return Project.no_workspace_objects.create(
         name=name or f"Observe {uuid.uuid4().hex[:8]}",
@@ -39,6 +39,7 @@ def create_observe_project(
         model_type=AIModel.ModelTypes.GENERATIVE_LLM,
         trace_type="observe",
         metadata=metadata,
+        source=source,
     )
 
 

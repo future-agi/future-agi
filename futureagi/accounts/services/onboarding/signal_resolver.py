@@ -28,6 +28,8 @@ from accounts.services.onboarding.voice_signals import (
     collect_voice_onboarding_signals,
 )
 
+NON_REAL_OBSERVE_PROJECT_SOURCES = ("sample", "demo")
+
 
 @dataclass(frozen=True)
 class OnboardingSignals:
@@ -366,7 +368,7 @@ def _observe_project_queryset(organization, workspace):
             workspace=workspace,
             trace_type="observe",
         )
-        .exclude(source="sample")
+        .exclude(source__in=NON_REAL_OBSERVE_PROJECT_SOURCES)
         .filter(Q(metadata__is_sample__isnull=True) | Q(metadata__is_sample=False))
     )
 
@@ -380,7 +382,7 @@ def _trace_queryset(organization, workspace):
             project__workspace=workspace,
             project__trace_type="observe",
         )
-        .exclude(project__source="sample")
+        .exclude(project__source__in=NON_REAL_OBSERVE_PROJECT_SOURCES)
         .filter(
             Q(project__metadata__is_sample__isnull=True)
             | Q(project__metadata__is_sample=False)

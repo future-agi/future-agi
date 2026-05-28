@@ -8,12 +8,32 @@ from accounts.services.onboarding.activation_events import (
 logger = structlog.get_logger(__name__)
 
 
+def _user_can_access_project_workspace(project, user):
+    if user is None or getattr(user, "is_authenticated", True) is False:
+        return False
+    if not getattr(project, "workspace_id", None):
+        return False
+    try:
+        return user.can_access_workspace(project.workspace)
+    except Exception:
+        logger.warning(
+            "observe_project_created_user_scope_check_failed",
+            project_id=str(getattr(project, "id", "")),
+            workspace_id=str(getattr(project, "workspace_id", "")),
+            user_id=str(getattr(user, "id", "")),
+            exc_info=True,
+        )
+        return False
+
+
 def record_observe_project_created(*, project, user=None, source="observe_project"):
     if not project or project.trace_type != "observe":
         return None
     if not project.organization_id or not project.workspace_id:
         return None
     if project.source == "demo" or (project.metadata or {}).get("is_sample") is True:
+        return None
+    if not _user_can_access_project_workspace(project, user):
         return None
 
     try:
