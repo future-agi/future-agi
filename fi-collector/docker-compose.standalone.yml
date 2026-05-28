@@ -55,10 +55,12 @@ services:
     environment:
       FI_CH_URL: http://clickhouse:8123
       FI_GRPC_ADDR: ":4317"
+      FI_HTTP_ADDR: ":4318"
       FI_ADMIN_ADDR: ":9464"
       FI_DEAD_LETTER_FILE: /var/lib/fi-collector/dead_letter.jsonl
     ports:
       - "4317:4317"
+      - "4318:4318"
       - "9464:9464"
     volumes:
       - fi-dead-letter:/var/lib/fi-collector

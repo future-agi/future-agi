@@ -10,7 +10,8 @@
 // Config priority (later overrides earlier):
 //   1. Defaults coded into chwriter.New / server.New
 //   2. YAML file path from --config (or /etc/fi-collector/config.yaml)
-//   3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_DEAD_LETTER_FILE)
+//   3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
+//      FI_DEAD_LETTER_FILE)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -73,8 +74,12 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	log.Info("starting", "grpc_addr", cfg.Server.GRPCAddr, "ch_url", cfg.Writer.URL,
-		"admin_addr", cfg.Admin.Addr)
+	log.Info("starting",
+		"grpc_addr", cfg.Server.GRPCAddr,
+		"http_addr", cfg.Server.HTTPAddr,
+		"ch_url", cfg.Writer.URL,
+		"admin_addr", cfg.Admin.Addr,
+	)
 	if err := srv.Run(ctx); err != nil && ctx.Err() == nil {
 		log.Error("server exited with error", "err", err)
 		os.Exit(1)
@@ -117,6 +122,19 @@ func applyEnvOverrides(c *rootConfig) {
 	}
 	if v := os.Getenv("FI_GRPC_ADDR"); v != "" {
 		c.Server.GRPCAddr = v
+	}
+	if v := os.Getenv("FI_HTTP_ADDR"); v != "" {
+		// `FI_HTTP_ADDR=disable` (or `off`) turns the OTLP/HTTP listener
+		// off entirely. Useful when deploying behind an external HTTP
+		// gateway that strips OTLP/HTTP at the edge. The string `disable`
+		// is more obvious in compose env lines than an empty value, which
+		// docker compose silently swallows.
+		switch v {
+		case "disable", "off":
+			c.Server.HTTPAddr = ""
+		default:
+			c.Server.HTTPAddr = v
+		}
 	}
 	if v := os.Getenv("FI_DEAD_LETTER_FILE"); v != "" {
 		c.Writer.DeadLetterFile = v

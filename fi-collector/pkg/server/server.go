@@ -17,7 +17,9 @@ package server
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"sync"
 	"time"
 
@@ -29,18 +31,25 @@ import (
 
 // Config is what main() passes us. Public fields = YAML wire format.
 type Config struct {
-	GRPCAddr      string        `yaml:"grpc_addr"`        // :4317 default
-	BatchMaxRows  int           `yaml:"batch_max_rows"`   // flush after N rows
-	BatchMaxAge   time.Duration `yaml:"batch_max_age"`    // flush after X time
+	GRPCAddr     string        `yaml:"grpc_addr"`      // :4317 default
+	HTTPAddr     string        `yaml:"http_addr"`      // :4318 default; empty disables
+	BatchMaxRows int           `yaml:"batch_max_rows"` // flush after N rows
+	BatchMaxAge  time.Duration `yaml:"batch_max_age"`  // flush after X time
 }
 
-// Server owns the gRPC listener and the batch flusher goroutine.
+// Server owns the gRPC + HTTP OTLP listeners and the batch flusher goroutine.
+//
+// gRPC and HTTP both decode an OTLP ExportTraceServiceRequest, run the same
+// converter, and push rows onto the same `pending` buffer. The wire layer is
+// the only difference: gRPC uses the generated stub; HTTP accepts
+// `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
 	cfg    Config
 	writer *chwriter.Writer
 	grpc   *grpc.Server
+	httpd  *http.Server
 
-	// Batching: the gRPC handler pushes converted rows onto `pending` and
+	// Batching: the receiver handler pushes converted rows onto `pending` and
 	// signals via `pendCh`. A single flusher goroutine drains it on either
 	// the row-count or age trigger. One channel/one goroutine keeps lock
 	// contention minimal at 100K spans/sec.
@@ -53,9 +62,21 @@ type Server struct {
 }
 
 // New wires up the server but does NOT start serving. Call Run().
+//
+// Defaults:
+//   - GRPCAddr ":4317" (OTLP gRPC). Set to "" to disable.
+//   - HTTPAddr ":4318" (OTLP/HTTP). Set to "" to disable.
+//   - BatchMaxRows 5000, BatchMaxAge 5s.
+//
+// At least one of GRPCAddr / HTTPAddr must be non-empty or Run returns an
+// error. We default both ON because every supported SDK picks one of them;
+// disabling either is an opt-in deployment choice.
 func New(cfg Config, writer *chwriter.Writer) *Server {
 	if cfg.GRPCAddr == "" {
 		cfg.GRPCAddr = ":4317"
+	}
+	if cfg.HTTPAddr == "" {
+		cfg.HTTPAddr = ":4318"
 	}
 	if cfg.BatchMaxRows <= 0 {
 		cfg.BatchMaxRows = 5000
@@ -78,32 +99,80 @@ func New(cfg Config, writer *chwriter.Writer) *Server {
 // the in-flight batch (DECISIONS: in-flight loss bounded to last 5 s as
 // the deliberate at-least-once boundary).
 func (s *Server) Run(ctx context.Context) error {
-	lis, err := net.Listen("tcp", s.cfg.GRPCAddr)
-	if err != nil {
-		return fmt.Errorf("listen %s: %w", s.cfg.GRPCAddr, err)
+	if s.cfg.GRPCAddr == "" && s.cfg.HTTPAddr == "" {
+		return fmt.Errorf("at least one of GRPCAddr / HTTPAddr must be set")
 	}
-	s.grpc = grpc.NewServer()
-	ptraceotlp.RegisterGRPCServer(s.grpc, &otlpHandler{s: s})
+
+	// One error channel sized for both listeners — first error wins, the
+	// other listener is shut down by the select-case below.
+	serveErr := make(chan error, 2)
+
+	if s.cfg.GRPCAddr != "" {
+		lis, err := net.Listen("tcp", s.cfg.GRPCAddr)
+		if err != nil {
+			return fmt.Errorf("listen grpc %s: %w", s.cfg.GRPCAddr, err)
+		}
+		s.grpc = grpc.NewServer()
+		ptraceotlp.RegisterGRPCServer(s.grpc, &otlpHandler{s: s})
+		go func() { serveErr <- s.grpc.Serve(lis) }()
+	}
+
+	if s.cfg.HTTPAddr != "" {
+		mux := http.NewServeMux()
+		// OTLP/HTTP wire spec: a single endpoint per signal. `/v1/traces` is
+		// the trace signal — POST only, body is a serialised
+		// ExportTraceServiceRequest in one of two media types:
+		//   application/x-protobuf  (preferred — every server-side SDK)
+		//   application/json        (browser SDKs, lightweight clients)
+		// Any other method or content-type is rejected with 415 / 405 per
+		// the spec.
+		mux.HandleFunc("/v1/traces", s.handleHTTPTraces)
+		s.httpd = &http.Server{
+			Addr:              s.cfg.HTTPAddr,
+			Handler:           mux,
+			ReadHeaderTimeout: 10 * time.Second,
+		}
+		lis, err := net.Listen("tcp", s.cfg.HTTPAddr)
+		if err != nil {
+			if s.grpc != nil {
+				s.grpc.GracefulStop()
+			}
+			return fmt.Errorf("listen http %s: %w", s.cfg.HTTPAddr, err)
+		}
+		go func() { serveErr <- s.httpd.Serve(lis) }()
+	}
 
 	s.wg.Add(1)
 	go s.flushLoop()
 
-	serveErr := make(chan error, 1)
-	go func() { serveErr <- s.grpc.Serve(lis) }()
-
 	select {
 	case <-ctx.Done():
-		s.grpc.GracefulStop()
-		close(s.stopCh)
-		s.wg.Wait()
-		s.drainNow(context.Background())
+		s.shutdown()
 		return ctx.Err()
 	case err := <-serveErr:
-		close(s.stopCh)
-		s.wg.Wait()
-		s.drainNow(context.Background())
+		s.shutdown()
+		// http.ErrServerClosed is the expected return when we call Shutdown,
+		// not a real failure — but here we got the error BEFORE shutdown so
+		// it's a genuine listener crash.
 		return err
 	}
+}
+
+// shutdown stops both listeners, waits for the flusher to exit, drains the
+// in-flight batch. Called once from Run on either ctx cancel or a serve
+// error. Safe to call when one of grpc/httpd is nil.
+func (s *Server) shutdown() {
+	if s.grpc != nil {
+		s.grpc.GracefulStop()
+	}
+	if s.httpd != nil {
+		shCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = s.httpd.Shutdown(shCtx)
+	}
+	close(s.stopCh)
+	s.wg.Wait()
+	s.drainNow(context.Background())
 }
 
 // otlpHandler implements ptraceotlp.GRPCServer. Stateless per call.
@@ -122,6 +191,117 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 	h.s.enqueue(rows)
 	// Per OTLP spec, ExportResponse is empty on full success.
 	return ptraceotlp.NewExportResponse(), nil
+}
+
+// Cap the body size we will read from an OTLP/HTTP request. 16 MiB matches
+// the conservative default in the upstream OTel collector receiver and
+// covers a 5000-span batch carrying ~3 KiB of attrs each. Larger bodies
+// almost certainly indicate a misconfigured exporter (no batching) and
+// would let a single client consume memory unboundedly.
+const maxOTLPHTTPBodyBytes = 16 << 20
+
+// handleHTTPTraces implements POST /v1/traces per the OTLP/HTTP wire spec
+// (https://opentelemetry.io/docs/specs/otlp/#otlphttp). Accepts both
+// `application/x-protobuf` and `application/json`. Any other method or
+// content type is rejected with the canonical status code.
+//
+// Success is HTTP 200 + an empty (or near-empty) ExportTraceServiceResponse
+// in the response media type that matches the request — the spec requires
+// echoing the content-type so client SDKs can decode the partial-success
+// field. We always return the fully-successful response since our pipeline
+// is at-least-once + dead-letter for failed inserts.
+func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	ct := r.Header.Get("Content-Type")
+	// Strip any `;charset=...` suffix. The spec only mentions the two base
+	// types but charset is allowed and common (esp. from JSON clients).
+	if i := indexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	ct = trimSpace(ct)
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxOTLPHTTPBodyBytes+1))
+	if err != nil {
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if len(body) > maxOTLPHTTPBodyBytes {
+		http.Error(w, "payload too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	req := ptraceotlp.NewExportRequest()
+	switch ct {
+	case "application/x-protobuf":
+		if err := req.UnmarshalProto(body); err != nil {
+			http.Error(w, "decode protobuf: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	case "application/json":
+		if err := req.UnmarshalJSON(body); err != nil {
+			http.Error(w, "decode json: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	default:
+		// The spec is explicit: unsupported media types return 415.
+		w.Header().Set("Accept", "application/x-protobuf, application/json")
+		http.Error(w, "unsupported content type: "+ct, http.StatusUnsupportedMediaType)
+		return
+	}
+
+	rows, err := chexp.Convert(req.Traces())
+	if err != nil {
+		// 4xx — the SDK shouldn't retry a malformed conversion.
+		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	s.enqueue(rows)
+
+	// Empty ExportTraceServiceResponse — same wire shape, encoded to match
+	// the request's content-type. The spec requires the response media type
+	// to match the request.
+	resp := ptraceotlp.NewExportResponse()
+	var out []byte
+	switch ct {
+	case "application/json":
+		out, err = resp.MarshalJSON()
+	default:
+		out, err = resp.MarshalProto()
+	}
+	if err != nil {
+		http.Error(w, "encode response: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", ct)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(out)
+}
+
+// indexByte and trimSpace are lifted here so the file doesn't grow a
+// strings import just for content-type parsing. Inline 5-line helpers are
+// cheaper than a stdlib pull when we already share package boundaries.
+func indexByte(s string, c byte) int {
+	for i := 0; i < len(s); i++ {
+		if s[i] == c {
+			return i
+		}
+	}
+	return -1
+}
+
+func trimSpace(s string) string {
+	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t') {
+		s = s[1:]
+	}
+	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t') {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // enqueue parks rows on the pending buffer and signals the flusher.
