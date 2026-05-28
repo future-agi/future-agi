@@ -33,10 +33,7 @@ import { generateNameFromEmail } from "./common";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import SvgColor from "src/components/svg-color";
 import { useSearchParams } from "react-router-dom";
-import {
-  isSafeSetupReturnTo,
-  resolveSetupCompletionHref,
-} from "./setup-org-routing";
+import { resolveSetupCompletionHref } from "./setup-org-routing";
 
 const DotsStepper = styled(MobileStepper)(({ theme }) => ({
   background: "transparent",
@@ -241,16 +238,11 @@ const SetupOrganization = ({ getStarted = false }) => {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeStep = parseInt(searchParams.get("step") || "0", 10);
-  // Honor an internal return target, otherwise enter the first-run home.
-  const returnTo = (() => {
-    const rt = localStorage.getItem("redirectUrl");
-    return isSafeSetupReturnTo(rt) ? rt : null;
-  })();
   const finishSetup = useCallback(() => {
     localStorage.setItem("initial-render", "done");
     localStorage.removeItem("redirectUrl");
-    window.location.href = resolveSetupCompletionHref(returnTo);
-  }, [returnTo]);
+    window.location.href = resolveSetupCompletionHref();
+  }, []);
 
   const setActiveStep = useCallback(
     (newStep) => {

@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { paths } from "src/routes/paths";
 
 import {
-  isSafeSetupReturnTo,
   resolveSetupCompletionHref,
   setupCompletionHomeHref,
 } from "./setup-org-routing";
@@ -16,17 +15,19 @@ describe("setup org completion routing", () => {
     expect(resolveSetupCompletionHref(null)).toBe(setupCompletionHomeHref());
   });
 
-  it("preserves safe internal dashboard return targets", () => {
-    expect(isSafeSetupReturnTo("/dashboard/observe?project=1")).toBe(true);
+  it("ignores internal return targets after setup so activation can resolve", () => {
     expect(resolveSetupCompletionHref("/dashboard/observe?project=1")).toBe(
-      "/dashboard/observe?project=1",
+      setupCompletionHomeHref(),
     );
   });
 
-  it("rejects external, protocol-relative, and auth return targets", () => {
-    expect(isSafeSetupReturnTo("https://example.com/dashboard")).toBe(false);
-    expect(isSafeSetupReturnTo("//example.com/dashboard")).toBe(false);
-    expect(isSafeSetupReturnTo("/auth/jwt/login")).toBe(false);
+  it("ignores external, protocol-relative, and auth return targets", () => {
+    expect(resolveSetupCompletionHref("https://example.com/dashboard")).toBe(
+      setupCompletionHomeHref(),
+    );
+    expect(resolveSetupCompletionHref("//example.com/dashboard")).toBe(
+      setupCompletionHomeHref(),
+    );
     expect(resolveSetupCompletionHref("/auth/jwt/login")).toBe(
       setupCompletionHomeHref(),
     );
