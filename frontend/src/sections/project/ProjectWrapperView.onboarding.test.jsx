@@ -1,7 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "src/utils/test-utils";
-import userEvent from "@testing-library/user-event";
-
 import { renderWithRouter } from "src/utils/test-utils";
 import ProjectWrapperView from "./ProjectWrapperView";
 
@@ -98,8 +96,6 @@ describe("ProjectWrapperView observe setup onboarding", () => {
   });
 
   it("shows setup focus on the observe setup onboarding route", async () => {
-    const user = userEvent.setup();
-
     renderWithRouter(<ProjectWrapperView />, {
       route: "/dashboard/observe?setup=true&source=onboarding",
     });
@@ -122,9 +118,9 @@ describe("ProjectWrapperView observe setup onboarding", () => {
       );
     });
 
-    await user.click(screen.getByRole("button", { name: /open setup/i }));
-
-    expect(screen.getByText("Observe setup drawer")).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByText("Observe setup drawer")).toBeVisible();
+    });
   });
 
   it("does not show setup focus on the normal observe list route", () => {

@@ -65,6 +65,7 @@ const ProjectWrapperView = () => {
   const location = useLocation();
   const gridRef = useRef(null);
   const recordedObserveSetupFocusRef = useRef(false);
+  const autoOpenedObserveSetupDrawerRef = useRef(false);
   const currentTab = location.pathname.split("/").pop();
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
@@ -117,6 +118,19 @@ const ProjectWrapperView = () => {
       }),
     );
   }, [recordActivationEvent, showObserveSetupFocus]);
+
+  useEffect(() => {
+    if (
+      !showObserveSetupFocus ||
+      isLoading ||
+      !isProjectCount ||
+      autoOpenedObserveSetupDrawerRef.current
+    ) {
+      return;
+    }
+    autoOpenedObserveSetupDrawerRef.current = true;
+    setSetupDrawerOpen(true);
+  }, [isLoading, isProjectCount, showObserveSetupFocus]);
 
   const handleObserveSetupPrimaryAction = useCallback(() => {
     if (isProjectCount) {
