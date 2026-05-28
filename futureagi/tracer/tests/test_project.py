@@ -7,9 +7,11 @@ Tests for /tracer/project/ endpoints.
 import pytest
 from rest_framework import status
 
+from accounts.models import OnboardingActivationEvent
 from accounts.models.user import OrgApiKey
 from model_hub.models.ai_model import AIModel
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
+from tracer.utils.otel import get_or_create_project
 
 
 def get_result(response):
@@ -224,6 +226,63 @@ class TestProjectCreateAPI:
 
         project = Project.objects.get(id=project_id)
         assert project.metadata == {"env": "production", "team": "ml"}
+
+    def test_get_or_create_observe_project_records_onboarding_event(
+        self, organization, workspace, user
+    ):
+        project = get_or_create_project(
+            project_name="SDK Observe Project",
+            organization_id=str(organization.id),
+            project_type="observe",
+            user_id=str(user.id),
+            workspace_id=str(workspace.id),
+            source="prototype",
+        )
+        same_project = get_or_create_project(
+            project_name="SDK Observe Project",
+            organization_id=str(organization.id),
+            project_type="observe",
+            user_id=str(user.id),
+            workspace_id=str(workspace.id),
+            source="prototype",
+        )
+
+        assert same_project.id == project.id
+        event = OnboardingActivationEvent.no_workspace_objects.get(
+            event_name="observe_project_created"
+        )
+        assert event.user == user
+        assert event.organization == organization
+        assert event.workspace == workspace
+        assert event.product_path == "observe"
+        assert event.activation_stage == "connect_observability"
+        assert event.source == "project_prototype"
+        assert event.metadata == {
+            "project_id": str(project.id),
+            "project_source": "prototype",
+            "project_type": "observe",
+        }
+
+    def test_sample_observe_project_does_not_record_real_onboarding_event(
+        self, organization, workspace, user
+    ):
+        Project.objects.create(
+            name="Sample Observe Project",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            source=ProjectSourceChoices.DEMO.value,
+            metadata={"is_sample": True},
+        )
+
+        assert (
+            OnboardingActivationEvent.no_workspace_objects.filter(
+                event_name="observe_project_created"
+            ).count()
+            == 0
+        )
 
     def test_create_project_missing_required_fields(self, auth_client):
         """Create project fails with missing required fields."""

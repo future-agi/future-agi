@@ -7,3 +7,4 @@ class AccountsConfig(AppConfig):
 
     def ready(self):
         import accounts.signals.membership_signals  # noqa: F401
+        import accounts.signals.onboarding_project_signals  # noqa: F401
