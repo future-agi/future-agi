@@ -795,6 +795,17 @@ class TestRequestLogExport:
         lines = content.strip().split("\n")
         assert len(lines) == 2  # header + 1 data row
 
+    def test_export_with_search_param(self, auth_client, sample_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/export/?export_format=csv&search=req-003",
+        )
+        assert response.status_code == status.HTTP_200_OK
+        content = b"".join(response.streaming_content).decode()
+        lines = content.strip().split("\n")
+        assert len(lines) == 2  # header + 1 data row
+        assert "req-003" in lines[1]
+        assert "req-001" not in content
+
     def test_export_empty(self, auth_client, sample_logs):
         response = auth_client.get(
             "/agentcc/request-logs/export/?model=nonexistent-model"

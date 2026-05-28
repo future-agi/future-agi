@@ -48,6 +48,22 @@ def _parse_int(value, default=None):
         return default
 
 
+def _apply_search(queryset, raw_query):
+    """Apply request-log search semantics shared by list/search/export paths."""
+    q = (raw_query or "").strip()
+    if len(q) < 2:
+        return queryset
+
+    return queryset.filter(
+        Q(model__icontains=q)
+        | Q(provider__icontains=q)
+        | Q(error_message__icontains=q)
+        | Q(request_id__icontains=q)
+        | Q(user_id__icontains=q)
+        | Q(session_id__icontains=q)
+    )
+
+
 class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelViewSet):
     permission_classes = [IsAuthenticated]
     serializer_class = AgentccRequestLogSerializer
@@ -185,6 +201,9 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
         if max_tokens is not None:
             queryset = queryset.filter(total_tokens__lte=max_tokens)
 
+        search_query = params.get("q") or params.get("search")
+        queryset = _apply_search(queryset, search_query)
+
         # Ordering
         ordering = params.get("ordering")
         if ordering:
@@ -239,14 +258,6 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                 )
 
             queryset = self.get_queryset()
-            queryset = queryset.filter(
-                Q(model__icontains=q)
-                | Q(provider__icontains=q)
-                | Q(error_message__icontains=q)
-                | Q(request_id__icontains=q)
-                | Q(user_id__icontains=q)
-                | Q(session_id__icontains=q)
-            )
 
             page = self.paginate_queryset(queryset)
             if page is not None:
