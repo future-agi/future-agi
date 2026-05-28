@@ -2,10 +2,11 @@ import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Drawer } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useLocation, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { paths } from "src/routes/paths";
 import {
   EvalPickerDrawer,
   serializeEvalConfig,
@@ -25,15 +26,22 @@ import {
   getVoiceOnboardingParams,
   VOICE_ONBOARDING_MODES,
 } from "./onboardingVoiceRouteEvents";
-import { isEvalOnboardingMode } from "./testOnboardingModes";
+import {
+  buildAgentEvalCoveragePayload,
+  isEvalOnboardingMode,
+} from "./testOnboardingModes";
 
 const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
   const { openTestEvaluation, setOpenTestEvaluation } =
     useTestEvaluationStore();
   const { testId } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { mutate: recordActivationEvent } = useRecordActivationEvent();
+  const {
+    mutate: recordActivationEvent,
+    mutateAsync: recordActivationEventAsync,
+  } = useRecordActivationEvent();
   const voiceParams = getVoiceOnboardingParams(location.search);
   const routeMode = new URLSearchParams(location.search).get("onboarding");
   const isSuccessCriteriaMode =
@@ -135,6 +143,33 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
             }),
           );
         }
+        if (evalOnboardingMode) {
+          const eventPayload = buildAgentEvalCoveragePayload({
+            mode: evalOnboardingMode,
+            testId,
+            executionIds,
+            evalConfig: {
+              ...payload,
+              id: editing?.id,
+            },
+          });
+          try {
+            if (recordActivationEventAsync) {
+              await recordActivationEventAsync(eventPayload);
+            } else {
+              recordActivationEvent?.(eventPayload);
+            }
+            navigate(
+              `${paths.dashboard.home}?mode=daily-quality&source=onboarding&target_event=${eventPayload.eventName}`,
+              { replace: true },
+            );
+          } catch {
+            enqueueSnackbar(
+              "Eval saved, but onboarding could not be completed. Please try again.",
+              { variant: "error" },
+            );
+          }
+        }
         handleRefresh();
         setEditingEvalItem(null);
       } catch (error) {
@@ -150,8 +185,12 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
       handleRefresh,
       testId,
       editingEvalItem,
+      evalOnboardingMode,
+      executionIds,
       isSuccessCriteriaMode,
+      navigate,
       recordActivationEvent,
+      recordActivationEventAsync,
       voiceParams.callId,
     ],
   );
