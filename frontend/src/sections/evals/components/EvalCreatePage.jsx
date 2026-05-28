@@ -304,6 +304,8 @@ const EvalCreatePage = () => {
           buildEvalReviewStepHref({
             evalId: draftId,
             runId: completedRunId,
+            sourceId: onboardingParams.sourceId,
+            sourceType: onboardingParams.sourceType,
           }),
         );
       }

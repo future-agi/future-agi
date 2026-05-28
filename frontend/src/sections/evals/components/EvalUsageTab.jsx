@@ -21,7 +21,7 @@ import React, {
 } from "react";
 import Editor from "@monaco-editor/react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
@@ -41,6 +41,8 @@ import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/use
 import {
   buildEvalFailuresReviewedPayload,
   buildEvalFailureActionCreatedPayload,
+  buildEvalSourceFixCtaClickedPayload,
+  buildEvalSourceFixHref,
   evalUsageLogMatchesRun,
   getEvalUsageLogId,
   getEvalUsageReviewOutcome,
@@ -403,6 +405,7 @@ const EvalUsageTab = ({
   const isDark = theme.palette.mode === "dark";
   const queryClient = useQueryClient();
   const location = useLocation();
+  const navigate = useNavigate();
   const { mutate: recordActivationEvent } = useRecordActivationEvent();
 
   const [dateOption, setDateOption] = useState("30D");
@@ -420,6 +423,25 @@ const EvalUsageTab = ({
     () => getEvalFailureActionOnboardingParams(location.search),
     [location.search],
   );
+  const sourceFixHref = useMemo(() => {
+    if (
+      !failureActionOnboardingParams.isOnboarding ||
+      failureActionOnboardingParams.step !== "review"
+    ) {
+      return null;
+    }
+    return buildEvalSourceFixHref({
+      runId: failureActionOnboardingParams.runId,
+      sourceId: failureActionOnboardingParams.sourceId,
+      sourceType: failureActionOnboardingParams.sourceType,
+    });
+  }, [
+    failureActionOnboardingParams.isOnboarding,
+    failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.sourceId,
+    failureActionOnboardingParams.sourceType,
+    failureActionOnboardingParams.step,
+  ]);
 
   // Split queries
   const { data: chartData, isLoading: chartLoading } = useEvalUsageChart(
@@ -434,7 +456,7 @@ const EvalUsageTab = ({
 
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
-  const logItems = logsData?.items || [];
+  const logItems = useMemo(() => logsData?.items || [], [logsData?.items]);
   const totalLogs = logsData?.total || 0;
 
   const filteredLogs = useMemo(() => {
@@ -533,13 +555,48 @@ const EvalUsageTab = ({
           evalId: templateId,
           evalLogId: logId || row?.id,
           feedbackId,
+          fixRoute: sourceFixHref,
           rowSource: row?.source,
           runId: failureActionOnboardingParams.runId,
+          sourceId: failureActionOnboardingParams.sourceId,
+          sourceType: failureActionOnboardingParams.sourceType,
           step: failureActionOnboardingParams.step,
         }),
       );
     },
-    [failureActionOnboardingParams, recordActivationEvent, templateId],
+    [
+      failureActionOnboardingParams,
+      recordActivationEvent,
+      sourceFixHref,
+      templateId,
+    ],
+  );
+  const handleSourceFixClicked = useCallback(
+    ({ row } = {}) => {
+      if (!sourceFixHref) return;
+
+      recordActivationEvent?.(
+        buildEvalSourceFixCtaClickedPayload({
+          evalId: templateId,
+          evalLogId: getEvalUsageLogId(row),
+          fixRoute: sourceFixHref,
+          rowSource: row?.source,
+          runId: failureActionOnboardingParams.runId,
+          sourceId: failureActionOnboardingParams.sourceId,
+          sourceType: failureActionOnboardingParams.sourceType,
+        }),
+      );
+      navigate(sourceFixHref);
+    },
+    [
+      failureActionOnboardingParams.runId,
+      failureActionOnboardingParams.sourceId,
+      failureActionOnboardingParams.sourceType,
+      navigate,
+      recordActivationEvent,
+      sourceFixHref,
+      templateId,
+    ],
   );
 
   // Keyboard shortcuts for prev/next when panel is open
@@ -880,6 +937,10 @@ const EvalUsageTab = ({
               evalType={evalType}
               onFeedbackSubmitted={handleFeedbackSubmitted}
               onFailureActionSubmitted={handleFailureActionSubmitted}
+              onSourceFixClick={() =>
+                handleSourceFixClicked({ row: detailRow })
+              }
+              sourceFixHref={sourceFixHref}
             />
           )}
         </Box>
@@ -896,11 +957,13 @@ const DetailPanelContent = ({
   evalType = "llm",
   onFailureActionSubmitted,
   onFeedbackSubmitted,
+  onSourceFixClick,
+  sourceFixHref,
 }) => {
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
-  const detail = row.detail || {};
+  const detail = useMemo(() => row.detail || {}, [row.detail]);
   const warnings = row.warnings || detail.warnings || [];
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
 
@@ -1127,6 +1190,61 @@ const DetailPanelContent = ({
           <CompositeChildrenSection row={row} />
         ) : (
           <>
+            {sourceFixHref && (
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 1.5,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  fontWeight={600}
+                  sx={{ mb: 0.5, display: "block" }}
+                >
+                  Next action
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ mb: 1.5, display: "block", lineHeight: 1.5 }}
+                >
+                  Fix the source tied to this result, then rerun the eval.
+                </Typography>
+                <Box
+                  component="button"
+                  onClick={onSourceFixClick}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    px: 2,
+                    py: 0.75,
+                    border: "1px solid",
+                    borderColor: "primary.main",
+                    borderRadius: "8px",
+                    backgroundColor: "transparent",
+                    color: "primary.main",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    width: "100%",
+                    "&:hover": {
+                      backgroundColor: (t) =>
+                        t.palette.mode === "dark"
+                          ? "rgba(124,77,255,0.08)"
+                          : "rgba(124,77,255,0.05)",
+                    },
+                  }}
+                >
+                  <Iconify icon="mingcute:external-link-line" width={14} />
+                  Open source fix
+                </Box>
+              </Box>
+            )}
+
             {/* Feedback section — hidden for code evals (deterministic, no few-shot learning) */}
             {evalType !== "code" && (
               <Box

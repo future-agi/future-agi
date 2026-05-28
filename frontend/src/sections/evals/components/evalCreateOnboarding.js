@@ -261,6 +261,8 @@ export const getEvalReviewOnboardingParams = (search = "") => {
     isOnboarding:
       params.get("source") === "onboarding" && step === EVAL_REVIEW_STEP,
     runId: params.get("run_id"),
+    sourceId: params.get("source_id"),
+    sourceType: params.get("source_type"),
     step,
     tab,
   };
@@ -275,13 +277,20 @@ export const getEvalFailureActionOnboardingParams = (search = "") => {
       params.get("source") === "onboarding" &&
       [EVAL_REVIEW_STEP, EVAL_FIX_STEP].includes(step),
     runId: params.get("run_id"),
+    sourceId: params.get("source_id"),
+    sourceType: params.get("source_type"),
     step,
   };
 };
 
 export const getEvalReviewOnboardingCopy = () => EVAL_REVIEW_COPY;
 
-export const buildEvalReviewStepHref = ({ evalId, runId } = {}) => {
+export const buildEvalReviewStepHref = ({
+  evalId,
+  runId,
+  sourceId,
+  sourceType,
+} = {}) => {
   const basePath = evalId
     ? `/dashboard/evaluations/${evalId}`
     : "/dashboard/evaluations/usage";
@@ -290,6 +299,8 @@ export const buildEvalReviewStepHref = ({ evalId, runId } = {}) => {
   params.set("source", "onboarding");
   params.set("step", EVAL_REVIEW_STEP);
   if (runId) params.set("run_id", runId);
+  if (sourceType) params.set("source_type", sourceType);
+  if (sourceId) params.set("source_id", sourceId);
 
   return `${basePath}?${params.toString()}`;
 };
@@ -300,7 +311,37 @@ export const buildEvalReviewDetailHref = (evalId, search = "") => {
 
   if (!reviewParams.isOnboarding) return basePath;
 
-  return buildEvalReviewStepHref({ evalId, runId: reviewParams.runId });
+  return buildEvalReviewStepHref({
+    evalId,
+    runId: reviewParams.runId,
+    sourceId: reviewParams.sourceId,
+    sourceType: reviewParams.sourceType,
+  });
+};
+
+export const buildEvalSourceFixHref = ({
+  runId,
+  sourceId,
+  sourceType,
+} = {}) => {
+  if (!sourceId || !sourceType) return null;
+
+  let basePath = null;
+  if (sourceType === "dataset") {
+    basePath = `/dashboard/develop/${sourceId}`;
+  } else if (["trace", "trace_project"].includes(sourceType)) {
+    basePath = `/dashboard/observe/${sourceId}`;
+  }
+  if (!basePath) return null;
+
+  const params = new URLSearchParams();
+  params.set("source", "onboarding");
+  params.set("step", EVAL_FIX_STEP);
+  params.set("source_type", sourceType);
+  params.set("source_id", sourceId);
+  if (runId) params.set("run_id", runId);
+
+  return `${basePath}?${params.toString()}`;
 };
 
 export const evalCreateOnboardingStage = (step) =>
@@ -559,8 +600,11 @@ export const buildEvalFailureActionCreatedPayload = ({
   evalId,
   evalLogId,
   feedbackId,
+  fixRoute,
   rowSource,
   runId,
+  sourceId,
+  sourceType,
   step,
 } = {}) => {
   const artifactId = safeKeyPart(
@@ -580,13 +624,56 @@ export const buildEvalFailureActionCreatedPayload = ({
       eval_id: evalId,
       eval_log_id: evalLogId,
       feedback_id: feedbackId,
+      fix_route: fixRoute,
       row_source: rowSource,
       run_id: runId,
+      source_id: sourceId,
+      source_type: sourceType,
       step: step || EVAL_FIX_STEP,
     }),
     idempotencyKey: [
       "eval_failure_action_created",
       safeKeyPart(feedbackId || evalLogId, "no-feedback"),
+      safeKeyPart(evalId, "no-eval"),
+    ].join(":"),
+    isSample: false,
+  };
+};
+
+export const buildEvalSourceFixCtaClickedPayload = ({
+  evalId,
+  evalLogId,
+  fixRoute,
+  rowSource,
+  runId,
+  sourceId,
+  sourceType,
+} = {}) => {
+  const artifactId = safeKeyPart(
+    sourceId || evalLogId || runId || evalId,
+    EVAL_FIX_ARTIFACT_ID,
+  );
+
+  return {
+    eventName: "onboarding_eval_source_fix_cta_clicked",
+    primaryPath: "evals",
+    stage: "fix_eval_source",
+    source: "eval_review_onboarding",
+    artifactType: "eval_source_fix_route",
+    artifactId,
+    metadata: compactMetadata({
+      eval_id: evalId,
+      eval_log_id: evalLogId,
+      fix_route: fixRoute,
+      row_source: rowSource,
+      run_id: runId,
+      source_id: sourceId,
+      source_type: sourceType,
+      step: EVAL_FIX_STEP,
+    }),
+    idempotencyKey: [
+      "onboarding_eval_source_fix_cta_clicked",
+      safeKeyPart(sourceId || evalLogId, "no-source"),
       safeKeyPart(evalId, "no-eval"),
     ].join(":"),
     isSample: false,

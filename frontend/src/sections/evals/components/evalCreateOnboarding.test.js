@@ -12,6 +12,8 @@ import {
   buildEvalRunCompletedPayload,
   buildEvalScorerCreatedPayload,
   buildEvalScorerSourceHref,
+  buildEvalSourceFixCtaClickedPayload,
+  buildEvalSourceFixHref,
   buildEvalSourceSelectedPayload,
   buildEvalSourceSetupHref,
   EVAL_CREATE_ONBOARDING_STEPS,
@@ -289,11 +291,13 @@ describe("evalCreateOnboarding", () => {
   it("parses eval review onboarding query params", () => {
     expect(
       getEvalReviewOnboardingParams(
-        "?tab=usage&source=onboarding&step=review&run_id=run-1",
+        "?tab=usage&source=onboarding&step=review&run_id=run-1&source_type=dataset&source_id=data-1",
       ),
     ).toEqual({
       isOnboarding: true,
       runId: "run-1",
+      sourceId: "data-1",
+      sourceType: "dataset",
       step: "review",
       tab: "usage",
     });
@@ -313,8 +317,15 @@ describe("evalCreateOnboarding", () => {
   });
 
   it("preserves review onboarding params when moving from usage list to detail", () => {
-    expect(buildEvalReviewStepHref({ evalId: "eval-1", runId: "run-1" })).toBe(
-      "/dashboard/evaluations/eval-1?tab=usage&source=onboarding&step=review&run_id=run-1",
+    expect(
+      buildEvalReviewStepHref({
+        evalId: "eval-1",
+        runId: "run-1",
+        sourceId: "data-1",
+        sourceType: "dataset",
+      }),
+    ).toBe(
+      "/dashboard/evaluations/eval-1?tab=usage&source=onboarding&step=review&run_id=run-1&source_type=dataset&source_id=data-1",
     );
     expect(buildEvalReviewStepHref({ runId: "run-1" })).toBe(
       "/dashboard/evaluations/usage?tab=usage&source=onboarding&step=review&run_id=run-1",
@@ -323,15 +334,43 @@ describe("evalCreateOnboarding", () => {
     expect(
       buildEvalReviewDetailHref(
         "eval-1",
-        "?tab=usage&source=onboarding&step=review&run_id=run-1",
+        "?tab=usage&source=onboarding&step=review&run_id=run-1&source_type=dataset&source_id=data-1",
       ),
     ).toBe(
-      "/dashboard/evaluations/eval-1?tab=usage&source=onboarding&step=review&run_id=run-1",
+      "/dashboard/evaluations/eval-1?tab=usage&source=onboarding&step=review&run_id=run-1&source_type=dataset&source_id=data-1",
     );
 
     expect(buildEvalReviewDetailHref("eval-1", "?tab=usage")).toBe(
       "/dashboard/evaluations/eval-1",
     );
+  });
+
+  it("builds source-fix routes only when source context is actionable", () => {
+    expect(
+      buildEvalSourceFixHref({
+        runId: "run-1",
+        sourceId: "data-1",
+        sourceType: "dataset",
+      }),
+    ).toBe(
+      "/dashboard/develop/data-1?source=onboarding&step=fix-eval-failure&source_type=dataset&source_id=data-1&run_id=run-1",
+    );
+    expect(
+      buildEvalSourceFixHref({
+        runId: "run-1",
+        sourceId: "project-1",
+        sourceType: "trace_project",
+      }),
+    ).toBe(
+      "/dashboard/observe/project-1?source=onboarding&step=fix-eval-failure&source_type=trace_project&source_id=project-1&run_id=run-1",
+    );
+    expect(
+      buildEvalSourceFixHref({
+        runId: "run-1",
+        sourceId: "unknown-1",
+        sourceType: "unknown",
+      }),
+    ).toBeNull();
   });
 
   it("extracts the safest available run id from eval run results", () => {
@@ -452,17 +491,21 @@ describe("evalCreateOnboarding", () => {
   it("parses eval failure action onboarding query params", () => {
     expect(
       getEvalFailureActionOnboardingParams(
-        "?source=onboarding&step=fix-eval-failure&run_id=run-1",
+        "?source=onboarding&step=fix-eval-failure&run_id=run-1&source_type=dataset&source_id=data-1",
       ),
     ).toEqual({
       isOnboarding: true,
       runId: "run-1",
+      sourceId: "data-1",
+      sourceType: "dataset",
       step: "fix-eval-failure",
     });
 
     expect(getEvalFailureActionOnboardingParams("?source=onboarding")).toEqual({
       isOnboarding: false,
       runId: null,
+      sourceId: null,
+      sourceType: null,
       step: null,
     });
   });
@@ -473,8 +516,11 @@ describe("evalCreateOnboarding", () => {
       evalId: "eval-1",
       evalLogId: "log-1",
       feedbackId: "feedback-1",
+      fixRoute: "/dashboard/develop/data-1?source=onboarding",
       rowSource: "eval_playground",
       runId: "run-1",
+      sourceId: "data-1",
+      sourceType: "dataset",
       step: "review",
     });
 
@@ -490,14 +536,51 @@ describe("evalCreateOnboarding", () => {
         eval_id: "eval-1",
         eval_log_id: "log-1",
         feedback_id: "feedback-1",
+        fix_route: "/dashboard/develop/data-1?source=onboarding",
         row_source: "eval_playground",
         run_id: "run-1",
+        source_id: "data-1",
+        source_type: "dataset",
         step: "review",
       },
       idempotencyKey: "eval_failure_action_created:feedback-1:eval-1",
     });
     expect(payload.metadata).not.toHaveProperty("value");
     expect(payload.metadata).not.toHaveProperty("explanation");
+    expect(payload.metadata).not.toHaveProperty("reason");
+  });
+
+  it("builds a source-fix CTA payload without row content", () => {
+    const payload = buildEvalSourceFixCtaClickedPayload({
+      evalId: "eval-1",
+      evalLogId: "log-1",
+      fixRoute: "/dashboard/develop/data-1?source=onboarding",
+      rowSource: "dataset_evaluation",
+      runId: "run-1",
+      sourceId: "data-1",
+      sourceType: "dataset",
+    });
+
+    expect(payload).toMatchObject({
+      eventName: "onboarding_eval_source_fix_cta_clicked",
+      primaryPath: "evals",
+      stage: "fix_eval_source",
+      source: "eval_review_onboarding",
+      artifactType: "eval_source_fix_route",
+      artifactId: "data-1",
+      metadata: {
+        eval_id: "eval-1",
+        eval_log_id: "log-1",
+        fix_route: "/dashboard/develop/data-1?source=onboarding",
+        row_source: "dataset_evaluation",
+        run_id: "run-1",
+        source_id: "data-1",
+        source_type: "dataset",
+        step: "fix-eval-failure",
+      },
+      idempotencyKey: "onboarding_eval_source_fix_cta_clicked:data-1:eval-1",
+    });
+    expect(payload.metadata).not.toHaveProperty("output");
     expect(payload.metadata).not.toHaveProperty("reason");
   });
 });
