@@ -24,14 +24,24 @@ async function main() {
   const graphName = `browser agent versions ${marker}`;
   const sourceNodeName = `version_source_${marker}`.slice(0, 80);
   const targetNodeName = `version_target_${marker}`.slice(0, 80);
+  const browserEditedSourceNodeName = `version_source_${marker}_edited`.slice(
+    0,
+    80,
+  );
   const restoreNodeName = `version_restore_${marker}`.slice(0, 80);
   const sourcePromptText = "Write one versioned fact about {{topic}}.";
   const firstCommitMessage = `browser save v1 ${auth.runId}`;
-  const secondCommitMessage = `api activate v2 ${auth.runId}`;
+  const restoreCommitMessage = `api activate v3 ${auth.runId}`;
   const graphNames = [graphName];
-  const promptNames = [sourceNodeName, targetNodeName, restoreNodeName];
+  const promptNames = [
+    sourceNodeName,
+    targetNodeName,
+    browserEditedSourceNodeName,
+    restoreNodeName,
+  ];
   let graphId = null;
-  let secondVersionId = null;
+  let browserCreatedVersionId = null;
+  let restoreVersionId = null;
   let cleanupAudit = null;
 
   try {
@@ -103,6 +113,13 @@ async function main() {
       if (!["POST", "PATCH", "PUT", "DELETE"].includes(method)) return;
 
       if (
+        method === "POST" &&
+        pathName.endsWith(`/agent-playground/graphs/${graphId}/versions/`)
+      ) {
+        expectedMutations.push(`browser-create-v2 ${method} ${url}`);
+        return;
+      }
+      if (
         method === "PUT" &&
         pathName.endsWith(
           `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/`,
@@ -168,12 +185,107 @@ async function main() {
         "Saving Version 1 did not persist the commit message.",
       );
       await waitForNoVisibleText(page, "Draft", { exact: true });
+      await waitForNoVisibleText(page, "Commit Message", { exact: true });
 
-      logStep("create temporary active version 2 through API");
+      logStep("create browser draft version 2 from active prompt edit");
+      const sourceNodeDetailResponse = page
+        .waitForResponse(
+          (response) =>
+            response.request().method() === "GET" &&
+            response
+              .url()
+              .includes(
+                `/agent-playground/graphs/${graphId}/versions/${setup.draftVersionId}/nodes/${setup.sourceNode.id}/`,
+              ) &&
+            response.status() < 400,
+          { timeout: 10000 },
+        )
+        .catch(() => null);
+      await clickCanvasNode(page, sourceNodeName);
+      await waitForVisibleText(page, "Prompt Name");
+      const sourceNodeDetailResult = await sourceNodeDetailResponse;
+      evidence.browser_source_node_detail_status =
+        sourceNodeDetailResult?.status() || "cached_or_inline";
+      logStep("source prompt drawer loaded");
+      await waitForInputValue(page, sourceNodeName);
+      await waitForVisibleText(page, "gpt-4o-mini");
+      await replaceInputValue(
+        page,
+        sourceNodeName,
+        browserEditedSourceNodeName,
+      );
+      logStep("source prompt name edited");
+
+      const browserDraftCreateResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === "POST" &&
+          response
+            .url()
+            .endsWith(`/agent-playground/graphs/${graphId}/versions/`) &&
+          response.status() < 400,
+        { timeout: 60000 },
+      );
+      await waitForEnabledButton(page, "Save prompt");
+      logStep("click save prompt for browser draft create");
+      await clickVisibleText(page, "Save prompt", { exact: true });
+      const browserCreatedVersion = unwrapBrowserResult(
+        await browserDraftCreateResponse.then((response) => response.json()),
+      );
+      logStep("browser draft create response received");
+      browserCreatedVersionId = browserCreatedVersion?.id;
+      assert(
+        isUuid(browserCreatedVersionId),
+        "Browser draft create returned no version id.",
+      );
+      assert(
+        browserCreatedVersion.status === "draft",
+        "Browser draft create did not return draft status.",
+      );
+      assert(
+        versionNodesContain(browserCreatedVersion, browserEditedSourceNodeName),
+        "Browser draft create response did not include the edited prompt node.",
+      );
+      const browserVersionLabel = `Version ${
+        browserCreatedVersion.version_number || 2
+      }`;
+      await page.waitForFunction(
+        ({ graphId: expectedGraphId, versionId }) =>
+          window.location.pathname.endsWith(
+            `/dashboard/agents/playground/${expectedGraphId}/build`,
+          ) && window.location.search.includes(`version=${versionId}`),
+        { timeout: 30000 },
+        { graphId, versionId: browserCreatedVersionId },
+      );
+      await waitForVisibleText(page, browserVersionLabel, { exact: true });
+      await waitForVisibleText(page, "Draft", { exact: true });
+      await waitForVisibleText(page, browserEditedSourceNodeName, {
+        exact: true,
+      });
+      evidence.browser_created_draft = {
+        version_id: browserCreatedVersionId,
+        status: browserCreatedVersion.status,
+        version_number: browserCreatedVersion.version_number,
+        edited_source_node_name: browserEditedSourceNodeName,
+      };
+
+      const activeV1AfterBrowserCreate = await loadAgentVersion({
+        auth,
+        graphId,
+        versionId: setup.draftVersionId,
+      });
+      assert(
+        activeV1AfterBrowserCreate.status === "active",
+        "Browser-created draft should leave Version 1 active until another version is promoted.",
+      );
+      evidence.version_1_status_after_browser_draft_create =
+        activeV1AfterBrowserCreate.status;
+
+      // Keep browser draft creation isolated from later promotion behavior.
+      logStep("create temporary active version 3 through API");
       const createdDraft = await auth.client.post(
         apiPath("/agent-playground/graphs/{id}/versions/", { id: graphId }),
         {
-          commit_message: secondCommitMessage,
+          commit_message: restoreCommitMessage,
           nodes: [
             {
               id: randomUUID(),
@@ -205,9 +317,9 @@ async function main() {
           ],
         },
       );
-      secondVersionId = createdDraft?.id;
+      restoreVersionId = createdDraft?.id;
       assert(
-        isUuid(secondVersionId),
+        isUuid(restoreVersionId),
         "Temporary version create returned no id.",
       );
       assert(
@@ -219,36 +331,39 @@ async function main() {
         "Temporary version create response did not include the restore node.",
       );
       evidence.api_created_restore_setup = {
-        version_id: secondVersionId,
+        version_id: restoreVersionId,
         status: createdDraft.status,
         restore_node_name: restoreNodeName,
       };
 
-      logStep("activate temporary version 2 for restore setup");
+      logStep("activate temporary version 3 for restore setup");
       const secondSavedVersion = await auth.client.patch(
         apiPath("/agent-playground/graphs/{id}/versions/{version_id}/", {
           id: graphId,
-          version_id: secondVersionId,
+          version_id: restoreVersionId,
         }),
         {
           status: "active",
-          commit_message: secondCommitMessage,
+          commit_message: restoreCommitMessage,
         },
       );
       assert(
-        secondSavedVersion?.id === secondVersionId &&
+        secondSavedVersion?.id === restoreVersionId &&
           secondSavedVersion.status === "active",
-        "Saving Version 2 did not return the active second version.",
+        "Saving Version 3 did not return the active restore setup version.",
       );
       assert(
-        secondSavedVersion.commit_message === secondCommitMessage,
-        "Activating Version 2 did not persist the commit message.",
+        secondSavedVersion.commit_message === restoreCommitMessage,
+        "Activating Version 3 did not persist the commit message.",
       );
+      const restoreVersionLabel = `Version ${
+        secondSavedVersion.version_number || 3
+      }`;
       await openBuilderVersion(page, {
         graphId,
-        versionId: secondVersionId,
+        versionId: restoreVersionId,
       });
-      await waitForVisibleText(page, "Version 2", { exact: true });
+      await waitForVisibleText(page, restoreVersionLabel, { exact: true });
       await waitForNoVisibleText(page, "Draft", { exact: true });
       await waitForVisibleText(page, restoreNodeName, { exact: true });
 
@@ -259,7 +374,7 @@ async function main() {
       });
       assert(
         inactiveV1Detail.status === "inactive",
-        "Saving Version 2 did not demote Version 1.",
+        "Saving Version 3 did not keep Version 1 inactive.",
       );
 
       logStep("restore version 1 from changelog");
@@ -268,7 +383,7 @@ async function main() {
           response
             .url()
             .includes(`/agent-playground/graphs/${graphId}/versions/`) &&
-          !response.url().includes(`/${secondVersionId}/`) &&
+          !response.url().includes(`/${restoreVersionId}/`) &&
           response.status() < 400,
         { timeout: 60000 },
       );
@@ -278,10 +393,10 @@ async function main() {
         () => window.location.pathname.endsWith("/changelog"),
         { timeout: 30000 },
       );
-      await waitForVisibleText(page, "Version 2", { exact: true });
+      await waitForVisibleText(page, restoreVersionLabel, { exact: true });
       await waitForVisibleText(page, "Version 1", { exact: true });
       await waitForVisibleText(page, firstCommitMessage);
-      await waitForVisibleText(page, secondCommitMessage);
+      await waitForVisibleText(page, restoreCommitMessage);
 
       const versionOneDetailResponse = page.waitForResponse(
         (response) =>
@@ -329,6 +444,9 @@ async function main() {
       await waitForVisibleText(page, "Version 1", { exact: true });
       await waitForVisibleText(page, sourceNodeName, { exact: true });
       await waitForVisibleText(page, targetNodeName, { exact: true });
+      await waitForNoVisibleText(page, browserEditedSourceNodeName, {
+        exact: true,
+      });
       await waitForRenderedEdgeCount(page, 1);
 
       const finalV1Detail = await loadAgentVersion({
@@ -336,24 +454,54 @@ async function main() {
         graphId,
         versionId: setup.draftVersionId,
       });
-      const finalV2Detail = await loadAgentVersion({
+      const finalBrowserVersionDetail = await loadAgentVersion({
         auth,
         graphId,
-        versionId: secondVersionId,
+        versionId: browserCreatedVersionId,
+      });
+      const finalRestoreVersionDetail = await loadAgentVersion({
+        auth,
+        graphId,
+        versionId: restoreVersionId,
       });
       assert(
         finalV1Detail.status === "active" &&
-          finalV2Detail.status === "inactive",
-        "Version restore readback did not leave Version 1 active and Version 2 inactive.",
+          ["draft", "inactive"].includes(finalBrowserVersionDetail.status) &&
+          finalRestoreVersionDetail.status === "inactive",
+        "Version restore readback did not leave Version 1 active, the browser-created version non-active, and the restore setup version inactive.",
+      );
+      assert(
+        versionNodesContain(
+          finalBrowserVersionDetail,
+          browserEditedSourceNodeName,
+        ),
+        "Browser-created Version 2 readback lost the edited source node.",
       );
       evidence.browser_version_lifecycle = {
         version_1_id: setup.draftVersionId,
-        version_2_id: secondVersionId,
+        browser_version_id: browserCreatedVersionId,
+        restore_setup_version_id: restoreVersionId,
         version_1_status_after_restore: finalV1Detail.status,
-        version_2_status_after_restore: finalV2Detail.status,
+        browser_version_status_after_restore: finalBrowserVersionDetail.status,
+        restore_setup_version_status_after_restore:
+          finalRestoreVersionDetail.status,
         version_1_commit_message: finalV1Detail.commit_message,
-        version_2_commit_message: finalV2Detail.commit_message,
+        restore_setup_commit_message: finalRestoreVersionDetail.commit_message,
       };
+      const preGraphDeleteAudit = await loadAgentGraphDbAudit({ graphId });
+      assert(
+        preGraphDeleteAudit.version_visible === 3,
+        "Agent graph should have three visible versions before graph delete.",
+      );
+      assert(
+        preGraphDeleteAudit.node_visible === 5,
+        "Agent graph should have five visible nodes before graph delete.",
+      );
+      assert(
+        preGraphDeleteAudit.node_connection_visible === 2,
+        "Agent graph should have two visible node connections before graph delete.",
+      );
+      evidence.pre_graph_delete_audit = preGraphDeleteAudit;
 
       logStep("capture screenshot");
       await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
@@ -370,8 +518,8 @@ async function main() {
         `Agent playground version smoke fired unexpected mutations: ${unexpectedMutations.join("; ")}`,
       );
       assert(
-        expectedMutations.length === 2,
-        `Expected save-v1 and restore-v1 mutations, saw ${expectedMutations.length}.`,
+        expectedMutations.length === 3,
+        `Expected save-v1, browser-create-v2, and restore-v1 mutations, saw ${expectedMutations.length}.`,
       );
       evidence.expected_mutations = expectedMutations;
     } finally {
@@ -762,6 +910,27 @@ async function replaceInputByLabel(page, label, nextValue) {
   await waitForInputValue(page, nextValue);
 }
 
+async function replaceInputValue(page, currentValue, nextValue) {
+  await waitForInputValue(page, currentValue);
+  await page.evaluate(
+    ({ currentValue: expectedValue, nextValue: replacementValue }) => {
+      const input = Array.from(document.querySelectorAll("input")).find(
+        (candidate) => candidate.value === expectedValue,
+      );
+      if (!input) throw new Error("Input value not found.");
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      valueSetter.call(input, replacementValue);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    },
+    { currentValue, nextValue },
+  );
+  await waitForInputValue(page, nextValue);
+}
+
 async function waitForEnabledButton(page, text, timeout = 30000) {
   await page.waitForFunction(
     (expectedText) =>
@@ -772,6 +941,26 @@ async function waitForEnabledButton(page, text, timeout = 30000) {
     { timeout },
     text,
   );
+}
+
+async function clickCanvasNode(page, nodeLabel) {
+  const point = await page.evaluate((expectedLabel) => {
+    const node = Array.from(
+      document.querySelectorAll(".react-flow__node"),
+    ).find(
+      (candidate) =>
+        window.isVisibleElement(candidate) &&
+        String(candidate.textContent || "").includes(expectedLabel),
+    );
+    if (!node) return null;
+    const rect = node.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+    };
+  }, nodeLabel);
+  assert(point, `Could not find canvas node ${nodeLabel}.`);
+  await page.mouse.click(point.x, point.y);
 }
 
 async function waitForRenderedEdgeCount(page, minimumCount, timeout = 30000) {
