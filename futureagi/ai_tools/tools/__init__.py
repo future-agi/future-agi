@@ -9,20 +9,17 @@
 import accounts.views.workspace_management  # noqa: F401
 import tracer.views.project  # noqa: F401  — registers tracing_* bridge tools
 from ai_tools.tools.agents import (
-    get_agent,  # noqa: F401
     get_call_execution,  # noqa: F401
     get_test_execution,  # noqa: F401
     list_agent_versions,  # noqa: F401
     list_agents,  # noqa: F401
     list_scenarios,  # noqa: F401
     list_test_executions,  # noqa: F401
-    run_agent_test,  # noqa: F401
 )
 
 # Annotation Queue tools (8)
 from ai_tools.tools.annotation_queues import (
     add_queue_items,  # noqa: F401
-    create_annotation_queue,  # noqa: F401
     delete_annotation_queue,  # noqa: F401
     get_annotation_queue,  # noqa: F401
     get_queue_progress,  # noqa: F401
@@ -33,18 +30,11 @@ from ai_tools.tools.annotation_queues import (
 
 # Annotation tools (13)
 from ai_tools.tools.annotations import (
-    annotation_summary,  # noqa: F401
-    create_annotation,  # noqa: F401
     create_annotation_label,  # noqa: F401
-    delete_annotation,  # noqa: F401
     delete_label,  # noqa: F401
-    get_annotate_row,  # noqa: F401
     get_annotation,  # noqa: F401
     list_annotation_labels,  # noqa: F401
     list_annotations,  # noqa: F401
-    reset_annotations,  # noqa: F401
-    submit_annotation,  # noqa: F401
-    update_annotation,  # noqa: F401
     update_label,  # noqa: F401
 )
 
@@ -65,33 +55,21 @@ from ai_tools.tools.context import (
 # Dataset tools (29)
 from ai_tools.tools.datasets import (
     add_columns,  # noqa: F401
-    add_dataset_eval,  # noqa: F401
     add_dataset_rows,  # noqa: F401
     add_rows_from_existing,  # noqa: F401
-    add_run_prompt_column,  # noqa: F401
     clone_dataset,  # noqa: F401
     create_dataset,  # noqa: F401
     delete_column,  # noqa: F401
     delete_dataset,  # noqa: F401
-    delete_dataset_eval,  # noqa: F401
     delete_rows,  # noqa: F401
     duplicate_dataset,  # noqa: F401
     duplicate_rows,  # noqa: F401
-    edit_dataset_eval,  # noqa: F401
-    edit_run_prompt_column,  # noqa: F401
-    get_dataset,  # noqa: F401
-    get_dataset_eval_stats,  # noqa: F401
-    get_dataset_rows,  # noqa: F401
-    get_run_prompt_column_config,  # noqa: F401
     list_dataset_evals,  # noqa: F401
     list_datasets,  # noqa: F401
     list_knowledge_bases,  # noqa: F401
     merge_datasets,  # noqa: F401
-    preview_run_prompt_column,  # noqa: F401
-    run_dataset_evals,  # noqa: F401
     run_prompt_for_rows,  # noqa: F401
     update_cell_value,  # noqa: F401
-    update_column,  # noqa: F401
     update_dataset,  # noqa: F401
 )
 
@@ -106,9 +84,7 @@ from ai_tools.tools.docs import (
 from ai_tools.tools.evaluations import (
     compare_evaluations,  # noqa: F401
     create_composite_eval,  # noqa: F401
-    create_eval_template,  # noqa: F401
     delete_eval_logs,  # noqa: F401
-    delete_eval_template,  # noqa: F401
     duplicate_eval_template,  # noqa: F401
     evaluate_with_agent,  # noqa: F401
     execute_composite_eval,  # noqa: F401
@@ -120,32 +96,25 @@ from ai_tools.tools.evaluations import (
     get_evaluation,  # noqa: F401
     list_eval_templates,  # noqa: F401
     list_evaluations,  # noqa: F401
-    run_evaluation,  # noqa: F401
-    submit_eval_feedback,  # noqa: F401
     test_eval_template,  # noqa: F401
-    update_eval_template,  # noqa: F401
 )
 
 # Experiment tools (11)
 from ai_tools.tools.experiments import (
-    add_experiment_eval,  # noqa: F401
     compare_experiments,  # noqa: F401
     create_experiment,  # noqa: F401
     delete_experiment,  # noqa: F401
     get_experiment_comparison,  # noqa: F401
-    get_experiment_data,  # noqa: F401
     get_experiment_results,  # noqa: F401
     get_experiment_stats,  # noqa: F401
     list_experiments,  # noqa: F401
     rerun_experiment,  # noqa: F401
-    run_experiment_evals,  # noqa: F401
 )
 
 # Optimization tools (10)
 from ai_tools.tools.optimization import (
     create_optimization_run,  # noqa: F401
     get_optimization_graph,  # noqa: F401
-    get_optimization_run,  # noqa: F401
     get_optimization_steps,  # noqa: F401
     get_optimization_trial,  # noqa: F401
     get_trial_evaluations,  # noqa: F401
@@ -162,22 +131,18 @@ from ai_tools.tools.optimization import (
 from ai_tools.tools.prompts import (
     commit_prompt_version,  # noqa: F401
     compare_prompt_versions,  # noqa: F401
-    create_prompt_simulation,  # noqa: F401
     create_prompt_version,  # noqa: F401
     delete_prompt_simulation,  # noqa: F401
     execute_prompt_simulation,  # noqa: F401
     get_prompt_eval_configs,  # noqa: F401
     get_prompt_execution_results,  # noqa: F401
-    get_prompt_simulation,  # noqa: F401
     get_prompt_version,  # noqa: F401
     list_prompt_folders,  # noqa: F401
     list_prompt_labels,  # noqa: F401
     list_prompt_scenarios,  # noqa: F401
-    list_prompt_simulations,  # noqa: F401
     list_prompt_versions,  # noqa: F401
     run_prompt,  # noqa: F401
     run_prompt_evals,  # noqa: F401
-    set_eval_config_for_prompt,  # noqa: F401
     update_prompt_simulation,  # noqa: F401
 )
 
@@ -185,16 +150,9 @@ from ai_tools.tools.prompts import (
 # Simulation tools (38)
 from ai_tools.tools.simulation import (
     activate_agent_version,  # noqa: F401
-    add_scenario_columns,  # noqa: F401
-    add_scenario_rows,  # noqa: F401
     cancel_test_execution,  # noqa: F401
     compare_agent_versions,  # noqa: F401
-    create_agent_definition,  # noqa: F401
-    create_agent_version,  # noqa: F401
     create_persona,  # noqa: F401
-    create_run_test,  # noqa: F401
-    create_scenario,  # noqa: F401
-    create_simulate_eval_config,  # noqa: F401
     create_simulator_agent,  # noqa: F401
     delete_agent_definition,  # noqa: F401
     delete_persona,  # noqa: F401
@@ -208,7 +166,6 @@ from ai_tools.tools.simulation import (
     get_call_logs,  # noqa: F401
     get_call_transcript,  # noqa: F401
     get_persona,  # noqa: F401
-    get_run_test_analytics,  # noqa: F401
     get_scenario,  # noqa: F401
     get_test_execution_analytics,  # noqa: F401
     list_eval_mapping_options,  # noqa: F401
@@ -216,11 +173,7 @@ from ai_tools.tools.simulation import (
     list_simulate_eval_configs,  # noqa: F401
     list_simulator_agents,  # noqa: F401
     rerun_call_execution,  # noqa: F401
-    rerun_test_execution,  # noqa: F401
-    run_new_evals,  # noqa: F401
-    update_agent_definition,  # noqa: F401
     update_persona,  # noqa: F401
-    update_run_test,  # noqa: F401
     update_scenario,  # noqa: F401
     update_simulate_eval_config,  # noqa: F401
     update_simulator_agent,  # noqa: F401
@@ -245,24 +198,15 @@ from ai_tools.tools.simulation import (
 from ai_tools.tools.tracing import (
     add_trace_tags,  # noqa: F401
     analyze_error_cluster,  # noqa: F401
-    analyze_errors,  # noqa: F401
-    analyze_project_traces,  # noqa: F401
     check_eval_config_exists,  # noqa: F401
-    create_alert_monitor,  # noqa: F401
-    create_custom_eval_config,  # noqa: F401
     create_eval_task,  # noqa: F401
-    create_score,  # noqa: F401
     delete_alert_monitor,  # noqa: F401
-    delete_eval_tasks,  # noqa: F401
-    delete_project,  # noqa: F401
     explore_trace,  # noqa: F401
     get_error_cluster_detail,  # noqa: F401
     get_eval_task,  # noqa: F401
     get_eval_task_logs,  # noqa: F401
     get_eval_template_by_name,  # noqa: F401
     get_project_eval_attributes,  # noqa: F401
-    get_session,  # noqa: F401
-    get_session_analytics,  # noqa: F401
     get_span,  # noqa: F401
     get_span_tree,  # noqa: F401
     get_trace,  # noqa: F401
@@ -286,8 +230,6 @@ from ai_tools.tools.tracing import (
     search_trace_spans,  # noqa: F401
     search_traces,  # noqa: F401
     submit_trace_finding,  # noqa: F401
-    submit_trace_scores,  # noqa: F401
-    unpause_eval_task,  # noqa: F401
     update_alert_monitor,  # noqa: F401
     update_eval_task,  # noqa: F401
 )
@@ -302,10 +244,8 @@ from ai_tools.tools.usage import get_cost_breakdown  # noqa: F401
 from ai_tools.tools.users import (
     add_workspace_member,  # noqa: F401
     create_api_key,  # noqa: F401
-    create_workspace,  # noqa: F401
     deactivate_user,  # noqa: F401
     get_organization,  # noqa: F401
-    get_user,  # noqa: F401
     get_user_permissions,  # noqa: F401
     invite_users,  # noqa: F401
     list_api_keys,  # noqa: F401
@@ -313,7 +253,6 @@ from ai_tools.tools.users import (
     list_organizations,  # noqa: F401
     # list_users — replaced by DRF bridge on UserListAPIView
     list_workspace_members,  # noqa: F401
-    remove_user,  # noqa: F401
     revoke_api_key,  # noqa: F401
     update_user_role,  # noqa: F401
     update_workspace,  # noqa: F401
