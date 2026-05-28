@@ -36,6 +36,7 @@ def test_trace_detail_route_requires_owned_ids():
     routes = resolve_route_availability(
         context=_context(),
         flags={
+            "onboarding_observe_route_modes": True,
             "onboarding_sample_project": False,
             "onboarding_daily_quality_home": False,
         },
@@ -44,6 +45,7 @@ def test_trace_detail_route_requires_owned_ids():
 
     assert routes["observe_trace_detail"]["is_available"] is False
     assert routes["observe_trace_detail"]["reason"] == "missing_id"
+    assert routes["observe_trace_detail"]["href"] == "/dashboard/observe"
 
 
 def test_trace_detail_route_uses_signal_ids():
@@ -64,6 +66,33 @@ def test_trace_detail_route_uses_signal_ids():
 
     assert routes["observe_trace_detail"] == {
         "href": f"/dashboard/observe/{observe_id}/trace/{trace_id}",
+        "is_available": True,
+        "reason": None,
+    }
+
+
+def test_trace_detail_route_adds_onboarding_params_when_route_modes_enabled():
+    observe_id = uuid4()
+    trace_id = uuid4()
+    routes = resolve_route_availability(
+        context=_context(),
+        flags={
+            "onboarding_observe_route_modes": True,
+            "onboarding_sample_project": False,
+            "onboarding_daily_quality_home": False,
+        },
+        signals=OnboardingSignals(
+            first_checks={},
+            first_observe_id=str(observe_id),
+            first_trace_id=str(trace_id),
+        ),
+    )
+
+    assert routes["observe_trace_detail"] == {
+        "href": (
+            f"/dashboard/observe/{observe_id}/trace/{trace_id}?"
+            "source=onboarding&onboarding=review-first-trace"
+        ),
         "is_available": True,
         "reason": None,
     }

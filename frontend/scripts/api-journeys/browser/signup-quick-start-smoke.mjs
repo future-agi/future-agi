@@ -395,7 +395,7 @@ async function main() {
     );
     assert(
       realTraceReviewState.recommended_action?.href ===
-        `/dashboard/observe/${realProject.projectId}/trace/${realTrace.traceId}`,
+        `/dashboard/observe/${realProject.projectId}/trace/${realTrace.traceId}?source=onboarding&onboarding=review-first-trace`,
       `Expected Review trace href for created trace, got ${realTraceReviewState.recommended_action?.href}`,
     );
     assert(
@@ -429,9 +429,15 @@ async function main() {
       45000,
     );
     await page.waitForFunction(
-      ({ projectId, traceId }) =>
-        window.location.pathname ===
-        `/dashboard/observe/${projectId}/trace/${traceId}`,
+      ({ projectId, traceId }) => {
+        const params = new URLSearchParams(window.location.search);
+        return (
+          window.location.pathname ===
+            `/dashboard/observe/${projectId}/trace/${traceId}` &&
+          params.get("source") === "onboarding" &&
+          params.get("onboarding") === "review-first-trace"
+        );
+      },
       { timeout: 45000 },
       {
         projectId: realProject.projectId,
@@ -462,6 +468,12 @@ async function main() {
       45000,
     );
     const realTraceReviewUrl = page.url();
+    await expectVisibleText(page, "Trace reviewed", { timeout: 45000 });
+    await expectVisibleText(
+      page,
+      "Turn this trace into a repeatable evaluator so future regressions are caught.",
+      { timeout: 45000 },
+    );
     const postReviewState = await waitForSmokeActivationStage(
       apiHeaders,
       "real_trace_reviewed",
@@ -480,70 +492,6 @@ async function main() {
         `/dashboard/observe/${realProject.projectId}/llm-tracing?source=onboarding&onboarding=create-evaluator`,
       `Expected focused evaluator route, got ${postReviewState.recommended_action?.href}`,
     );
-    await page.goto(`${APP_BASE}/dashboard/home?source=real_trace_reviewed`, {
-      waitUntil: "domcontentloaded",
-    });
-    await expectVisibleTestId(page, "onboarding-home-view", {
-      timeout: 45000,
-    });
-    await expectVisibleTestId(page, "first-signal-panel", { timeout: 45000 });
-    await expectVisibleText(page, "Create an evaluator", { timeout: 45000 });
-    await expectVisibleText(page, "Reviewed", { timeout: 45000 });
-    await expectVisibleActionHref(
-      page,
-      "Create evaluator",
-      postReviewState.recommended_action.href,
-      { timeout: 45000 },
-    );
-    const postReviewHomeUrl = page.url();
-    await clickVisibleActionHref(
-      page,
-      "Create evaluator",
-      postReviewState.recommended_action.href,
-      45000,
-    );
-    await page.waitForFunction(
-      ({ projectId }) => {
-        const params = new URLSearchParams(window.location.search);
-        return (
-          window.location.pathname ===
-            `/dashboard/observe/${projectId}/llm-tracing` &&
-          params.get("source") === "onboarding" &&
-          params.get("onboarding") === "create-evaluator"
-        );
-      },
-      { timeout: 45000 },
-      { projectId: realProject.projectId },
-    );
-    await expectVisibleTestId(page, "observe-onboarding-focus", {
-      timeout: 45000,
-    });
-    await expectVisibleText(page, "Observe onboarding", { timeout: 45000 });
-    await expectVisibleText(page, "Evaluator", { timeout: 45000 });
-    await expectVisibleText(page, "Create an evaluator", { timeout: 45000 });
-    await expectVisibleText(
-      page,
-      "Turn the reviewed trace into a repeatable quality check for future runs.",
-      { timeout: 45000 },
-    );
-    await expectVisibleText(page, "Trace review", { timeout: 45000 });
-    await waitForCondition(
-      () =>
-        evidence.activationEventPosts.some(
-          (payload) =>
-            payload?.event_name === "onboarding_observe_route_focus_viewed" &&
-            payload?.primary_path === "observe" &&
-            payload?.stage === "create_trace_evaluator" &&
-            payload?.source === "observe_project_onboarding" &&
-            payload?.artifact_type === "observe_project" &&
-            payload?.artifact_id === realProject.projectId &&
-            payload?.project_id === realProject.projectId &&
-            payload?.metadata?.route_mode === "create-evaluator",
-        ),
-      "Expected focused observe create-evaluator activation event.",
-      45000,
-    );
-    const createEvaluatorFocusUrl = page.url();
     await clickVisibleButtonText(page, "Create evaluator", 45000);
     await page.waitForFunction(
       ({ projectId }) => {
@@ -751,6 +699,9 @@ async function main() {
     );
     const evalRunOnboardingUrl = page.url();
     await expectVisibleText(page, "Run first eval", { timeout: 45000 });
+    await expectNoVisibleText(page, "Span data not loaded yet", {
+      timeout: 60000,
+    });
     await clickVisibleButtonText(page, "Run first eval", 45000);
     await waitForCondition(
       () =>
@@ -936,6 +887,9 @@ async function main() {
     );
     await expectVisibleText(page, "Rerun the eval", { timeout: 45000 });
     await expectVisibleText(page, "Rerun eval", { timeout: 45000 });
+    await expectNoVisibleText(page, "Span data not loaded yet", {
+      timeout: 60000,
+    });
     await clickVisibleButtonText(page, "Rerun eval", 45000);
     await waitForCondition(
       () =>
@@ -1180,14 +1134,6 @@ async function main() {
             onboarding_post: evidence.onboardingPosts[0],
             observe_cta_href: observeCtaHref,
             observe_setup_url: observeSetupUrl,
-            create_evaluator_focus_url: createEvaluatorFocusUrl,
-            create_evaluator_focus_event: evidence.activationEventPosts.find(
-              (payload) =>
-                payload?.event_name ===
-                  "onboarding_observe_route_focus_viewed" &&
-                payload?.stage === "create_trace_evaluator" &&
-                payload?.artifact_id === realProject.projectId,
-            ),
             eval_create_onboarding_url: evalCreateOnboardingUrl,
             eval_create_focus_event: evidence.activationEventPosts.find(
               (payload) =>
@@ -1289,7 +1235,6 @@ async function main() {
                 payload?.metadata?.run_id === firstEvalRunId,
             ),
             eval_usage_responses: evidence.evalUsageResponses,
-            post_review_home_url: postReviewHomeUrl,
             post_review_state: summarizeActivationState(postReviewState),
             real_observe_project: realProject,
             real_trace: realTrace,

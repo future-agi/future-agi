@@ -114,7 +114,8 @@ async function main() {
       rootSelector: '[data-testid="first-signal-panel"]',
     });
     assert(
-      reviewTraceHref === "/dashboard/observe/observe-1/trace/trace-1",
+      reviewTraceHref ===
+        "/dashboard/observe/observe-1/trace/trace-1?source=onboarding&onboarding=review-first-trace",
       `Unexpected review trace href: ${reviewTraceHref}`,
     );
 
@@ -122,9 +123,15 @@ async function main() {
       rootSelector: '[data-testid="first-signal-panel"]',
     });
     await page.waitForFunction(
-      () =>
-        window.location.pathname ===
-        "/dashboard/observe/observe-1/trace/trace-1",
+      () => {
+        const params = new URLSearchParams(window.location.search);
+        return (
+          window.location.pathname ===
+            "/dashboard/observe/observe-1/trace/trace-1" &&
+          params.get("source") === "onboarding" &&
+          params.get("onboarding") === "review-first-trace"
+        );
+      },
       { timeout: 30000 },
     );
 
@@ -143,6 +150,8 @@ async function main() {
     );
     await expectVisibleText(page, "Trace", { exact: true });
     await expectVisibleText(page, "trace-1");
+    await expectVisibleText(page, "Trace reviewed", { exact: true });
+    await expectVisibleText(page, "Create evaluator", { exact: true });
 
     assert(
       activationStateResponses
@@ -358,8 +367,32 @@ function stubbedActivationState(
   const selectedFixture =
     fixtureName ||
     (firstTraceReady ? "observeFirstTraceReady" : "observeWaitingForTrace");
+  const activationState = getActivationStateFixture(selectedFixture);
+  const firstTraceReviewHref =
+    "/dashboard/observe/observe-1/trace/trace-1?source=onboarding&onboarding=review-first-trace";
+  const recommendedAction =
+    selectedFixture === "observeFirstTraceReady" &&
+    activationState.recommended_action
+      ? {
+          ...activationState.recommended_action,
+          href: firstTraceReviewHref,
+        }
+      : activationState.recommended_action;
+  const routeAvailability =
+    selectedFixture === "observeFirstTraceReady"
+      ? {
+          ...activationState.route_availability,
+          observe_trace_detail: {
+            ...activationState.route_availability?.observe_trace_detail,
+            href: firstTraceReviewHref,
+          },
+        }
+      : activationState.route_availability;
+
   return {
-    ...getActivationStateFixture(selectedFixture),
+    ...activationState,
+    recommended_action: recommendedAction,
+    route_availability: routeAvailability,
     request_id: `first_trace_review_smoke_${selectedFixture}`,
     organization_id: auth.organizationId,
     workspace_id: auth.workspaceId,

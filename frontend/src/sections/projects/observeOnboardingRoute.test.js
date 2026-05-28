@@ -3,9 +3,11 @@ import {
   buildObserveEvaluatorCreateHref,
   buildObserveProjectOnboardingHref,
   buildObserveRouteFocusPayload,
+  buildObserveTraceReviewHref,
   getObserveOnboardingCopy,
   getObserveOnboardingParams,
   getObserveSetupOnboardingParams,
+  getObserveTraceReviewOnboardingParams,
   observeOnboardingStage,
   OBSERVE_ONBOARDING_MODES,
   OBSERVE_ONBOARDING_SOURCES,
@@ -52,6 +54,28 @@ describe("observeOnboardingRoute", () => {
     });
   });
 
+  it("reads observe trace-review onboarding route params", () => {
+    expect(
+      getObserveTraceReviewOnboardingParams(
+        "?source=onboarding&onboarding=review-first-trace",
+      ),
+    ).toEqual({
+      isOnboarding: true,
+      mode: OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE,
+    });
+  });
+
+  it("drops unsupported trace-review modes", () => {
+    expect(
+      getObserveTraceReviewOnboardingParams(
+        "?source=onboarding&onboarding=create-evaluator",
+      ),
+    ).toEqual({
+      isOnboarding: true,
+      mode: null,
+    });
+  });
+
   it("builds observe project route-mode hrefs", () => {
     expect(
       buildObserveProjectOnboardingHref({
@@ -60,6 +84,17 @@ describe("observeOnboardingRoute", () => {
       }),
     ).toBe(
       "/dashboard/observe/project-1/llm-tracing?source=onboarding&onboarding=create-evaluator",
+    );
+  });
+
+  it("builds observe trace review hrefs", () => {
+    expect(
+      buildObserveTraceReviewHref({
+        observeId: "project-1",
+        traceId: "trace-1",
+      }),
+    ).toBe(
+      "/dashboard/observe/project-1/trace/trace-1?source=onboarding&onboarding=review-first-trace",
     );
   });
 
@@ -76,6 +111,9 @@ describe("observeOnboardingRoute", () => {
     expect(
       observeOnboardingStage(OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR),
     ).toBe("create_trace_evaluator");
+    expect(
+      observeOnboardingStage(OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE),
+    ).toBe("review_first_trace");
     expect(
       observeOnboardingStage(OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE),
     ).toBe("waiting_for_first_trace");

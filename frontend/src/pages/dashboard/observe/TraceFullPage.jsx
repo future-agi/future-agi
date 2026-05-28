@@ -1,8 +1,13 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import { Helmet } from "react-helmet-async";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  buildObserveEvaluatorCreateHref,
+  getObserveTraceReviewOnboardingParams,
+  OBSERVE_ONBOARDING_MODES,
+} from "src/sections/projects/observeOnboardingRoute";
 
 export default function TraceFullPage() {
   const { observeId, traceId } = useParams();
@@ -12,6 +17,14 @@ export default function TraceFullPage() {
   const recordedTraceRef = useRef(null);
   const isSampleTrace =
     new URLSearchParams(location.search).get("sample") === "true";
+  const traceReviewOnboardingParams = useMemo(
+    () => getObserveTraceReviewOnboardingParams(location.search),
+    [location.search],
+  );
+  const isTraceReviewOnboarding =
+    !isSampleTrace &&
+    traceReviewOnboardingParams.mode ===
+      OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE;
 
   const handleConnectRealApp = useCallback(() => {
     recordActivationEvent({
@@ -31,6 +44,10 @@ export default function TraceFullPage() {
     });
     navigate("/dashboard/observe?setup=true&source=sample_trace_review");
   }, [navigate, observeId, recordActivationEvent, traceId]);
+
+  const handleCreateEvaluator = useCallback(() => {
+    navigate(buildObserveEvaluatorCreateHref({ observeId }));
+  }, [navigate, observeId]);
 
   const handleClose = useCallback(() => {
     if (window.history.length > 1) {
@@ -67,6 +84,39 @@ export default function TraceFullPage() {
     });
   }, [isSampleTrace, observeId, recordActivationEvent, traceId]);
 
+  const onboardingBanner = useMemo(() => {
+    if (isSampleTrace) {
+      return {
+        title: "Sample trace review",
+        description:
+          "This is the review surface. Connect your app next to send the first real trace.",
+        primaryAction: {
+          label: "Connect your app",
+          onClick: handleConnectRealApp,
+        },
+      };
+    }
+
+    if (isTraceReviewOnboarding) {
+      return {
+        title: "Trace reviewed",
+        description:
+          "Turn this trace into a repeatable evaluator so future regressions are caught.",
+        primaryAction: {
+          label: "Create evaluator",
+          onClick: handleCreateEvaluator,
+        },
+      };
+    }
+
+    return undefined;
+  }, [
+    handleConnectRealApp,
+    handleCreateEvaluator,
+    isSampleTrace,
+    isTraceReviewOnboarding,
+  ]);
+
   return (
     <>
       <Helmet>
@@ -80,19 +130,7 @@ export default function TraceFullPage() {
         hasPrev={false}
         hasNext={false}
         initialFullscreen
-        onboardingBanner={
-          isSampleTrace
-            ? {
-                title: "Sample trace review",
-                description:
-                  "This is the review surface. Connect your app next to send the first real trace.",
-                primaryAction: {
-                  label: "Connect your app",
-                  onClick: handleConnectRealApp,
-                },
-              }
-            : undefined
-        }
+        onboardingBanner={onboardingBanner}
       />
     </>
   );

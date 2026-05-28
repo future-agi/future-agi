@@ -399,6 +399,19 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
             else {}
         ),
     )
+    observe_trace_detail_base = (
+        f"/dashboard/observe/{first_observe_id}/trace/{first_trace_id}"
+        if first_observe_id and first_trace_id
+        else "/dashboard/observe"
+    )
+    observe_trace_detail_href = _with_query(
+        observe_trace_detail_base,
+        (
+            {"source": "onboarding", "onboarding": "review-first-trace"}
+            if observe_route_modes_enabled and first_observe_id and first_trace_id
+            else {}
+        ),
+    )
 
     routes = {
         "home": route_entry("/dashboard/home"),
@@ -429,11 +442,7 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
             reason="missing_id",
         ),
         "observe_trace_detail": route_entry(
-            (
-                f"/dashboard/observe/{first_observe_id}/trace/{first_trace_id}"
-                if first_observe_id and first_trace_id
-                else "/dashboard/observe"
-            ),
+            observe_trace_detail_href,
             is_available=bool(first_observe_id and first_trace_id),
             reason="missing_id",
         ),

@@ -2,6 +2,7 @@ const DEFAULT_ARTIFACT_ID = "observe-onboarding";
 
 export const OBSERVE_ONBOARDING_MODES = {
   CREATE_EVALUATOR: "create-evaluator",
+  REVIEW_FIRST_TRACE: "review-first-trace",
   SEND_FIRST_TRACE: "send-first-trace",
   SETUP_OBSERVE: "setup-observe",
 };
@@ -15,7 +16,11 @@ const projectModeSet = new Set([
   OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR,
   OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
 ]);
-const routeFocusModeSet = new Set(Object.values(OBSERVE_ONBOARDING_MODES));
+const routeFocusModeSet = new Set([
+  OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR,
+  OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
+  OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE,
+]);
 const setupSourceSet = new Set(Object.values(OBSERVE_ONBOARDING_SOURCES));
 
 const safeKeyPart = (value, fallback = DEFAULT_ARTIFACT_ID) =>
@@ -58,9 +63,26 @@ export const getObserveSetupOnboardingParams = (search = "") => {
   };
 };
 
+export const getObserveTraceReviewOnboardingParams = (search = "") => {
+  const params = new URLSearchParams(search);
+  const isOnboarding =
+    params.get("source") === OBSERVE_ONBOARDING_SOURCES.ONBOARDING;
+  const rawMode = params.get("onboarding");
+  return {
+    isOnboarding,
+    mode:
+      isOnboarding && rawMode === OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE
+        ? rawMode
+        : null,
+  };
+};
+
 export const observeOnboardingStage = (mode) => {
   if (mode === OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE) {
     return "connect_observability";
+  }
+  if (mode === OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE) {
+    return "review_first_trace";
   }
   if (mode === OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR) {
     return "create_trace_evaluator";
@@ -142,6 +164,14 @@ export const buildObserveProjectOnboardingHref = ({ observeId, mode } = {}) => {
   params.set("source", "onboarding");
   if (projectModeSet.has(mode)) params.set("onboarding", mode);
   return `/dashboard/observe/${observeId}/llm-tracing?${params.toString()}`;
+};
+
+export const buildObserveTraceReviewHref = ({ observeId, traceId } = {}) => {
+  if (!observeId || !traceId) return "/dashboard/observe";
+  const params = new URLSearchParams();
+  params.set("source", "onboarding");
+  params.set("onboarding", OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE);
+  return `/dashboard/observe/${observeId}/trace/${traceId}?${params.toString()}`;
 };
 
 export const buildObserveEvaluatorCreateHref = ({ observeId } = {}) => {

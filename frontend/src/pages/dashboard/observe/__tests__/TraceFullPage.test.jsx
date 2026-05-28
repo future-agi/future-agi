@@ -125,4 +125,23 @@ describe("TraceFullPage", () => {
       "/dashboard/observe?setup=true&source=sample_trace_review",
     );
   });
+
+  it("routes onboarding trace reviews directly to evaluator creation", async () => {
+    mocks.locationSearch = "?source=onboarding&onboarding=review-first-trace";
+
+    const { getByRole, getByText } = render(<TraceFullPage />);
+
+    expect(getByText("Trace reviewed")).toBeVisible();
+    expect(
+      getByText(
+        "Turn this trace into a repeatable evaluator so future regressions are caught.",
+      ),
+    ).toBeVisible();
+
+    getByRole("button", { name: /create evaluator/i }).click();
+
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=observe-1",
+    );
+  });
 });
