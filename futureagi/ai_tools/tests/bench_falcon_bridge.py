@@ -203,6 +203,32 @@ TASKS = [
         "msg": "Show me what variables my prompt templates use",
         "expected_tools": ["list_prompt_templates"],
     },
+    # --- APIView bridge tools (read-only, accounts) ---
+    {
+        "id": 33,
+        "msg": "List all my workspaces",
+        "expected_tools": ["list_workspaces"],
+    },
+    {
+        "id": 34,
+        "msg": "Show me the workspaces in my organization",
+        "expected_tools": ["list_workspaces"],
+    },
+    {
+        "id": 35,
+        "msg": "List the users in my org",
+        "expected_tools": ["list_users"],
+    },
+    {
+        "id": 36,
+        "msg": "Show me everyone on my team",
+        "expected_tools": ["list_users"],
+    },
+    {
+        "id": 37,
+        "msg": "Find workspaces matching 'falcon' in the name",
+        "expected_tools": ["list_workspaces"],
+    },
 ]
 
 
@@ -389,6 +415,8 @@ async def main():
                 "create_prompt_template",
                 "update_prompt_template",
                 "delete_prompt_template",
+                "list_workspaces",
+                "list_users",
             ]
             else ""
         )

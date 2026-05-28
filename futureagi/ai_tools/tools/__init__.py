@@ -46,12 +46,16 @@ from ai_tools.tools.annotations import (
 )
 
 # list_prompt_templates — replaced by DRF bridge on PromptTemplateViewSet
-from ai_tools.tools.bridge import _prompt_templates  # noqa: F401
+# list_workspaces, list_users — replaced by DRF bridge on accounts APIViews
+from ai_tools.tools.bridge import (
+    _prompt_templates,  # noqa: F401
+    _workspace_management,  # noqa: F401
+)
 
 # Context tools (5) — memory tools (save/list/delete) are EE and registered
 # via ee.falcon_ai.apps.FalconAIConfig.ready().
 from ai_tools.tools.context import (
-    list_workspaces,  # noqa: F401
+    # list_workspaces — replaced by DRF bridge on WorkspaceListAPIView
     read_schema,  # noqa: F401
     read_taxonomy,  # noqa: F401
     search,  # noqa: F401
@@ -307,7 +311,7 @@ from ai_tools.tools.users import (
     list_api_keys,  # noqa: F401
     list_org_members,  # noqa: F401
     list_organizations,  # noqa: F401
-    list_users,  # noqa: F401
+    # list_users — replaced by DRF bridge on UserListAPIView
     list_workspace_members,  # noqa: F401
     remove_user,  # noqa: F401
     revoke_api_key,  # noqa: F401

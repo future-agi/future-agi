@@ -158,6 +158,34 @@ def _instantiate_view(viewset_class, action: str, method: str, request, kwargs: 
     return view
 
 
+def _is_apiview_class(cls) -> bool:
+    """True if the class is a bare APIView (no ViewSet semantics)."""
+    try:
+        from rest_framework.views import APIView
+        from rest_framework.viewsets import ViewSetMixin
+    except ImportError:
+        return False
+    if not isinstance(cls, type):
+        return False
+    try:
+        return issubclass(cls, APIView) and not issubclass(cls, ViewSetMixin)
+    except TypeError:
+        return False
+
+
+def _resolve_apiview_handler(view, method: str, action_name: str):
+    """Find the right callable on an APIView for a given HTTP method.
+
+    APIViews expose handlers as `.get()`, `.post()`, `.put()`, `.patch()`,
+    `.delete()`. The bridge config's `action` is treated as a hint:
+      - if the APIView has a method matching `action_name`, use it
+      - otherwise fall back to the HTTP method name (get/post/put/etc.)
+    """
+    if hasattr(view, action_name) and callable(getattr(view, action_name)):
+        return getattr(view, action_name)
+    return getattr(view, method.lower(), None)
+
+
 def _unwrap_response(response) -> tuple[Any, bool]:
     data = getattr(response, "data", None) or {}
     status_code = getattr(response, "status_code", 200)
@@ -328,10 +356,46 @@ def _serializer_to_pydantic(serializer_cls, include_fields=None, exclude_fields=
     return model
 
 
+def _extract_serializer_from_validated_request(action_method):
+    """Pull the serializer class out of a @validated_request wrapper's closure.
+
+    `@validated_request(request_serializer=X)` produces a `wrapper(*args, **kwargs)`
+    closure that captures `X` (and optionally `query_serializer=Y`) as free variables.
+    Inspecting `wrapper.__closure__` lets us recover those classes without the
+    bridge config repeating them.
+    """
+    from rest_framework.serializers import SerializerMetaclass
+
+    if not getattr(action_method, "__closure__", None):
+        return None
+
+    serializers_in_closure = []
+    for cell in action_method.__closure__:
+        try:
+            val = cell.cell_contents
+        except ValueError:
+            continue
+        if isinstance(val, SerializerMetaclass):
+            serializers_in_closure.append(val)
+
+    if not serializers_in_closure:
+        return None
+    return serializers_in_closure[0]
+
+
 def _get_action_serializer(
     viewset_cls, action_name: str, serializer_override: str = None
 ):
-    """Find the serializer for a given action, checking @validated_request metadata."""
+    """Find the serializer for an action.
+
+    Resolution order:
+      1. Explicit `serializer` config key in @expose_to_mcp.
+      2. drf-yasg `_swagger_auto_schema` metadata on the method
+         (the dict form attached by @swagger_auto_schema directly).
+      3. Closure inspection of @validated_request — pulls the
+         SerializerMetaclass from the wrapper's free variables.
+      4. Fall back to viewset.serializer_class.
+    """
     if serializer_override:
         module_path = viewset_cls.__module__.rsplit(".", 1)[0]
         serializer_module = module_path.replace(".views", ".serializers")
@@ -341,6 +405,9 @@ def _get_action_serializer(
             for base_module in [
                 f"{serializer_module}.project",
                 f"{serializer_module}.dataset",
+                f"{serializer_module}.user",
+                f"{serializer_module}.workspace",
+                f"{serializer_module}.prompt_template",
                 serializer_module,
             ]:
                 try:
@@ -351,13 +418,17 @@ def _get_action_serializer(
     action_method = getattr(viewset_cls, action_name, None)
     if action_method:
         swagger_data = getattr(action_method, "_swagger_auto_schema", None)
-        if swagger_data:
+        if isinstance(swagger_data, dict):
             request_body = swagger_data.get("request_body")
-            if request_body:
+            if isinstance(request_body, type):
                 return request_body
             query_serializer = swagger_data.get("query_serializer")
-            if query_serializer:
+            if isinstance(query_serializer, type):
                 return query_serializer
+
+        from_closure = _extract_serializer_from_validated_request(action_method)
+        if from_closure is not None:
+            return from_closure
 
     return getattr(viewset_cls, "serializer_class", None)
 
@@ -393,7 +464,17 @@ class DRFBridgeTool(BaseTool):
         )
 
         try:
-            action_method = getattr(view, self.binding.action)
+            if _is_apiview_class(viewset_cls):
+                action_method = _resolve_apiview_handler(
+                    view, method, self.binding.action
+                )
+                if action_method is None:
+                    return ToolResult.error(
+                        f"APIView {viewset_cls.__name__} has no handler for "
+                        f"method '{method}' or action '{self.binding.action}'."
+                    )
+            else:
+                action_method = getattr(view, self.binding.action)
             response = action_method(request, **kwargs)
         except Exception as e:
             logger.exception("drf_bridge_call_failed", tool=self.name)

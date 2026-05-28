@@ -204,12 +204,37 @@ class SwitchWorkspaceSerializer(serializers.Serializer):
 
 
 class PaginationSerializer(serializers.Serializer):
-    """Base serializer for paginated requests"""
+    """Base serializer for paginated list requests.
 
-    page = serializers.IntegerField(min_value=1, default=1)
-    limit = serializers.IntegerField(min_value=1, max_value=100, default=10)
-    search = serializers.CharField(required=False, allow_blank=True, default="")
-    sort = serializers.CharField(required=False, allow_blank=True, default="")
+    All list endpoints accept these standard query parameters.
+    """
+
+    page = serializers.IntegerField(
+        min_value=1,
+        default=1,
+        help_text="Page number, 1-indexed. Default 1. Use page=2 for the second page of results.",
+    )
+    limit = serializers.IntegerField(
+        min_value=1,
+        max_value=100,
+        default=10,
+        help_text="Number of items per page. Range 1-100. Default 10.",
+    )
+    search = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text="Optional case-insensitive substring filter on the entity's primary name/display field.",
+    )
+    sort = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text=(
+            "Optional sort field. Prefix with '-' for descending. "
+            "Examples: 'name', '-name', 'created_at', '-created_at'."
+        ),
+    )
 
 
 class WorkspaceListRequestSerializer(PaginationSerializer):
@@ -356,6 +381,7 @@ class UserListRequestSerializer(PaginationSerializer):
             sort_items.setdefault(index, {})[sort_key] = data.get(key)
 
         return [sort_items[index] for index in sorted(sort_items.keys())]
+
     filter_role = serializers.ListField(
         child=serializers.ChoiceField(choices=OrganizationRoles.choices),
         required=False,
