@@ -1602,6 +1602,8 @@ class ActivationEventRequestSerializer(serializers.Serializer):
         choices=choices(
             (
                 "trace",
+                "observe_project",
+                "observe_setup",
                 "project",
                 "agent",
                 "graph_execution",

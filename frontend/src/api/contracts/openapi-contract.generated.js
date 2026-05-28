@@ -42524,6 +42524,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "enum": [
             "trace",
+            "observe_project",
+            "observe_setup",
             "project",
             "agent",
             "graph_execution",

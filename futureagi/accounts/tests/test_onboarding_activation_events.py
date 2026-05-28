@@ -103,6 +103,36 @@ def test_observe_route_focus_event_records_safe_metadata(
 
 
 @pytest.mark.django_db
+def test_observe_setup_route_focus_event_records_safe_metadata(
+    organization,
+    workspace,
+    user,
+):
+    event = record_event(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        event_name="onboarding_observe_route_focus_viewed",
+        source="observe_setup_onboarding",
+        product_path="observe",
+        activation_stage="connect_observability",
+        metadata={
+            "route_mode": "setup-observe",
+            "setup": True,
+        },
+        idempotency_key="observe:focus:setup",
+    )
+
+    assert event.event_name == "onboarding_observe_route_focus_viewed"
+    assert event.product_path == "observe"
+    assert event.activation_stage == "connect_observability"
+    assert event.metadata == {
+        "route_mode": "setup-observe",
+        "setup": True,
+    }
+
+
+@pytest.mark.django_db
 def test_event_defaults_timestamp_when_omitted(organization, workspace, user):
     before = timezone.now() - timedelta(seconds=1)
     event = record_event(

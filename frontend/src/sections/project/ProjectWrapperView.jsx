@@ -10,7 +10,13 @@ import {
 import { styled } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import React, { useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import axios, { endpoints } from "src/utils/axios";
 import { useLocation } from "react-router";
 import { Helmet } from "react-helmet-async";
@@ -28,6 +34,15 @@ import ProjectExperimentContextProvider from "./context/ProjectExperimentContext
 import ProjectRightSection from "./RightSection/ProjectRightSection";
 import ProjectFtux from "./ProjectFtux";
 import ProjectFilterPanel from "./ProjectFilterPanel";
+import NewProjectDrawer from "./NewProject/NewProjectDrawer";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import ObserveOnboardingFocusPanel from "src/sections/projects/ObserveOnboardingFocusPanel";
+import {
+  buildObserveRouteFocusPayload,
+  getObserveOnboardingCopy,
+  getObserveSetupOnboardingParams,
+  OBSERVE_ONBOARDING_MODES,
+} from "src/sections/projects/observeOnboardingRoute";
 
 export const SearchFieldBox = styled(Box)(({ theme }) => ({
   display: "flex",
@@ -46,11 +61,14 @@ const ProjectWrapperView = () => {
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [observeFilters, setObserveFilters] = useState(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [setupDrawerOpen, setSetupDrawerOpen] = useState(false);
   const location = useLocation();
   const gridRef = useRef(null);
+  const recordedObserveSetupFocusRef = useRef(false);
   const currentTab = location.pathname.split("/").pop();
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const { data, isLoading } = useQuery({
     queryKey: [`project-${currentTab}-list`],
     queryFn: () =>
@@ -73,6 +91,50 @@ const ProjectWrapperView = () => {
     currentTab === "observe"
       ? data?.result?.metadata?.total_rows > 0
       : data?.result?.projects?.length > 0;
+
+  const observeSetupOnboardingParams = useMemo(
+    () => getObserveSetupOnboardingParams(location.search),
+    [location.search],
+  );
+  const showObserveSetupFocus =
+    currentTab === "observe" &&
+    observeSetupOnboardingParams.mode ===
+      OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE;
+  const observeSetupCopy = useMemo(
+    () =>
+      showObserveSetupFocus
+        ? getObserveOnboardingCopy(OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE)
+        : null,
+    [showObserveSetupFocus],
+  );
+
+  useEffect(() => {
+    if (!showObserveSetupFocus || recordedObserveSetupFocusRef.current) return;
+    recordedObserveSetupFocusRef.current = true;
+    recordActivationEvent?.(
+      buildObserveRouteFocusPayload({
+        mode: OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE,
+      }),
+    );
+  }, [recordActivationEvent, showObserveSetupFocus]);
+
+  const handleObserveSetupPrimaryAction = useCallback(() => {
+    if (isProjectCount) {
+      setSetupDrawerOpen(true);
+      return;
+    }
+    document
+      .getElementById("observe-setup-instructions")
+      ?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [isProjectCount]);
+
+  const observeSetupPrimaryAction = useMemo(() => {
+    if (!observeSetupCopy) return null;
+    return {
+      label: isProjectCount ? "Open setup" : observeSetupCopy.primaryLabel,
+      onClick: handleObserveSetupPrimaryAction,
+    };
+  }, [handleObserveSetupPrimaryAction, isProjectCount, observeSetupCopy]);
 
   const handleSearchChange = (e) => {
     setSearchQuery(e.target.value);
@@ -160,7 +222,12 @@ const ProjectWrapperView = () => {
   }
 
   if (!isProjectCount) {
-    return <ProjectFtux />;
+    return (
+      <ProjectFtux
+        observeSetupCopy={observeSetupCopy}
+        observeSetupPrimaryAction={observeSetupPrimaryAction}
+      />
+    );
   }
 
   return (
@@ -179,6 +246,16 @@ const ProjectWrapperView = () => {
             gap: (theme) => theme.spacing(2),
           }}
         >
+          {showObserveSetupFocus && observeSetupCopy ? (
+            <ObserveOnboardingFocusPanel
+              currentStep={observeSetupCopy.currentStep}
+              description={observeSetupCopy.description}
+              primaryAction={observeSetupPrimaryAction}
+              steps={observeSetupCopy.steps}
+              sx={{ mb: 0 }}
+              title={observeSetupCopy.title}
+            />
+          ) : null}
           <Box
             sx={{
               display: "flex",
@@ -368,6 +445,10 @@ const ProjectWrapperView = () => {
                 </Typography>
               </LoadingButton>
             }
+          />
+          <NewProjectDrawer
+            open={setupDrawerOpen}
+            onClose={() => setSetupDrawerOpen(false)}
           />
         </Box>
       </ProjectObserveContextProvider>

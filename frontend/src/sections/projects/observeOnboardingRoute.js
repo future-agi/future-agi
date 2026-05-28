@@ -3,9 +3,14 @@ const DEFAULT_ARTIFACT_ID = "observe-onboarding";
 export const OBSERVE_ONBOARDING_MODES = {
   CREATE_EVALUATOR: "create-evaluator",
   SEND_FIRST_TRACE: "send-first-trace",
+  SETUP_OBSERVE: "setup-observe",
 };
 
-const modeSet = new Set(Object.values(OBSERVE_ONBOARDING_MODES));
+const projectModeSet = new Set([
+  OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR,
+  OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
+]);
+const routeFocusModeSet = new Set(Object.values(OBSERVE_ONBOARDING_MODES));
 
 const safeKeyPart = (value, fallback = DEFAULT_ARTIFACT_ID) =>
   String(value || fallback)
@@ -25,11 +30,29 @@ export const getObserveOnboardingParams = (search = "") => {
   const rawMode = params.get("onboarding");
   return {
     isOnboarding,
-    mode: isOnboarding && modeSet.has(rawMode) ? rawMode : null,
+    mode: isOnboarding && projectModeSet.has(rawMode) ? rawMode : null,
+  };
+};
+
+export const getObserveSetupOnboardingParams = (search = "") => {
+  const params = new URLSearchParams(search);
+  const isOnboarding = params.get("source") === "onboarding";
+  const isSetupRoute =
+    params.get("setup") === "true" ||
+    params.get("onboarding") === OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE;
+  return {
+    isOnboarding,
+    mode:
+      isOnboarding && isSetupRoute
+        ? OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE
+        : null,
   };
 };
 
 export const observeOnboardingStage = (mode) => {
+  if (mode === OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE) {
+    return "connect_observability";
+  }
   if (mode === OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR) {
     return "create_trace_evaluator";
   }
@@ -37,6 +60,22 @@ export const observeOnboardingStage = (mode) => {
 };
 
 export const getObserveOnboardingCopy = (mode) => {
+  if (mode === OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE) {
+    return {
+      currentStep: "Setup",
+      description:
+        "Install tracing, load your keys, and send one real or test request.",
+      primaryLabel: "Review setup",
+      secondaryLabel: null,
+      steps: [
+        { label: "Install", complete: false },
+        { label: "Trace", complete: false },
+        { label: "Review", complete: false },
+      ],
+      title: "Connect Observe to your app",
+    };
+  }
+
   if (mode === OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE) {
     return {
       currentStep: "First trace",
@@ -76,7 +115,7 @@ export const buildObserveProjectOnboardingHref = ({ observeId, mode } = {}) => {
   if (!observeId) return "/dashboard/observe";
   const params = new URLSearchParams();
   params.set("source", "onboarding");
-  if (modeSet.has(mode)) params.set("onboarding", mode);
+  if (projectModeSet.has(mode)) params.set("onboarding", mode);
   return `/dashboard/observe/${observeId}/llm-tracing?${params.toString()}`;
 };
 
@@ -90,22 +129,28 @@ export const buildObserveEvaluatorCreateHref = ({ observeId } = {}) => {
 };
 
 export const buildObserveRouteFocusPayload = ({ observeId, mode } = {}) => {
-  const normalizedMode = modeSet.has(mode)
+  const normalizedMode = routeFocusModeSet.has(mode)
     ? mode
     : OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE;
-  const artifactId = safeKeyPart(observeId, DEFAULT_ARTIFACT_ID);
+  const isSetupMode = normalizedMode === OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE;
+  const artifactId = isSetupMode
+    ? "observe-setup"
+    : safeKeyPart(observeId, DEFAULT_ARTIFACT_ID);
 
   return {
     eventName: "onboarding_observe_route_focus_viewed",
     primaryPath: "observe",
     stage: observeOnboardingStage(normalizedMode),
-    source: "observe_project_onboarding",
-    artifactType: "observe_project",
+    source: isSetupMode
+      ? "observe_setup_onboarding"
+      : "observe_project_onboarding",
+    artifactType: isSetupMode ? "observe_setup" : "observe_project",
     artifactId,
-    projectId: observeId,
+    projectId: isSetupMode ? undefined : observeId,
     metadata: compactMetadata({
-      project_id: observeId,
+      project_id: isSetupMode ? undefined : observeId,
       route_mode: normalizedMode,
+      setup: isSetupMode ? true : undefined,
     }),
     idempotencyKey: [
       "onboarding_observe_route_focus_viewed",
