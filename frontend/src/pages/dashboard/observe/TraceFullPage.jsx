@@ -13,6 +13,25 @@ export default function TraceFullPage() {
   const isSampleTrace =
     new URLSearchParams(location.search).get("sample") === "true";
 
+  const handleConnectRealApp = useCallback(() => {
+    recordActivationEvent({
+      eventName: "sample_to_real_setup_clicked",
+      primaryPath: "sample",
+      stage: "connect_real_data",
+      source: "sample_trace_full_page",
+      artifactType: "trace",
+      artifactId: traceId,
+      projectId: observeId,
+      isSample: true,
+      metadata: {
+        entry: "trace_full_page",
+        target_route:
+          "/dashboard/observe?setup=true&source=sample_trace_review",
+      },
+    });
+    navigate("/dashboard/observe?setup=true&source=sample_trace_review");
+  }, [navigate, observeId, recordActivationEvent, traceId]);
+
   const handleClose = useCallback(() => {
     if (window.history.length > 1) {
       navigate(-1);
@@ -61,6 +80,19 @@ export default function TraceFullPage() {
         hasPrev={false}
         hasNext={false}
         initialFullscreen
+        onboardingBanner={
+          isSampleTrace
+            ? {
+                title: "Sample trace review",
+                description:
+                  "This is the review surface. Connect your app next to send the first real trace.",
+                primaryAction: {
+                  label: "Connect your app",
+                  onClick: handleConnectRealApp,
+                },
+              }
+            : undefined
+        }
       />
     </>
   );

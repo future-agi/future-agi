@@ -209,6 +209,12 @@ async function main() {
       { timeout: 45000 },
     );
     await expectVisibleText(page, "Trace", { exact: true, timeout: 45000 });
+    const sampleTraceUrl = page.url();
+    await expectVisibleText(page, "Sample trace review", { timeout: 45000 });
+    await expectVisibleText(page, "Connect your app", {
+      exact: true,
+      timeout: 45000,
+    });
     await waitForCondition(
       () => evidence.sampleProjectPosts.length === 1,
       "Expected one sample-project POST.",
@@ -216,6 +222,15 @@ async function main() {
     await waitForCondition(
       () => evidence.traceDetailRequests.length >= 1,
       "Expected trace detail request for sample trace.",
+    );
+    await clickVisibleButtonText(page, "Connect your app", 45000);
+    await page.waitForFunction(
+      () =>
+        window.location.pathname === "/dashboard/observe" &&
+        new URLSearchParams(window.location.search).get("setup") === "true" &&
+        new URLSearchParams(window.location.search).get("source") ===
+          "sample_trace_review",
+      { timeout: 45000 },
     );
 
     const browserState = await page.evaluate(() => ({
@@ -259,6 +274,16 @@ async function main() {
           payload?.is_sample === true,
       ),
       "Expected sample trace detail activation event.",
+    );
+    assert(
+      evidence.activationEventPosts.some(
+        (payload) =>
+          payload?.event_name === "sample_to_real_setup_clicked" &&
+          payload?.primary_path === "sample" &&
+          payload?.stage === "connect_real_data" &&
+          payload?.is_sample === true,
+      ),
+      "Expected sample to real setup activation event.",
     );
     assert(
       evidence.activationStateRequests.some(
@@ -306,7 +331,12 @@ async function main() {
             sample_trace_activation_event: evidence.activationEventPosts.find(
               (payload) => payload?.event_name === "sample_trace_detail_opened",
             ),
-            sample_trace_url: page.url(),
+            sample_to_real_setup_event: evidence.activationEventPosts.find(
+              (payload) =>
+                payload?.event_name === "sample_to_real_setup_clicked",
+            ),
+            sample_trace_url: sampleTraceUrl,
+            real_setup_return_url: page.url(),
             screenshot: SCREENSHOT_PATH,
             setup_post: evidence.setupPosts[0],
             signup_post: evidence.signupPosts[0],

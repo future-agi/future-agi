@@ -24,7 +24,22 @@ vi.mock("react-helmet-async", () => ({
 }));
 
 vi.mock("src/components/traceDetail/TraceDetailDrawerV2", () => ({
-  default: () => <div data-testid="trace-detail-drawer" />,
+  default: ({ onboardingBanner }) => (
+    <div data-testid="trace-detail-drawer">
+      {onboardingBanner ? (
+        <div data-testid="trace-onboarding-banner">
+          <span>{onboardingBanner.title}</span>
+          <span>{onboardingBanner.description}</span>
+          <button
+            type="button"
+            onClick={onboardingBanner.primaryAction.onClick}
+          >
+            {onboardingBanner.primaryAction.label}
+          </button>
+        </div>
+      ) : null}
+    </div>
+  ),
 }));
 
 vi.mock("src/sections/onboarding-home/hooks/useRecordActivationEvent", () => ({
@@ -80,6 +95,34 @@ describe("TraceFullPage", () => {
           is_sample_route: true,
         },
       }),
+    );
+  });
+
+  it("routes sample trace users back to real setup", async () => {
+    mocks.locationSearch = "?sample=true&from=onboarding";
+
+    const { getByRole, getByText } = render(<TraceFullPage />);
+
+    expect(getByText("Sample trace review")).toBeVisible();
+    getByRole("button", { name: /connect your app/i }).click();
+
+    expect(mocks.mutate).toHaveBeenCalledWith({
+      eventName: "sample_to_real_setup_clicked",
+      primaryPath: "sample",
+      stage: "connect_real_data",
+      source: "sample_trace_full_page",
+      artifactType: "trace",
+      artifactId: "trace-1",
+      projectId: "observe-1",
+      isSample: true,
+      metadata: {
+        entry: "trace_full_page",
+        target_route:
+          "/dashboard/observe?setup=true&source=sample_trace_review",
+      },
+    });
+    expect(mocks.navigate).toHaveBeenCalledWith(
+      "/dashboard/observe?setup=true&source=sample_trace_review",
     );
   });
 });

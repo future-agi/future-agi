@@ -186,7 +186,7 @@ const ProjectWrapperView = () => {
     }
   }, [enqueueSnackbar, navigate, openSampleProject]);
 
-  const observeSetupPrimaryAction = useMemo(() => {
+  const reviewObserveSetupAction = useMemo(() => {
     if (!observeSetupCopy) return null;
     return {
       label: isProjectCount ? "Open setup" : observeSetupCopy.primaryLabel,
@@ -194,14 +194,8 @@ const ProjectWrapperView = () => {
     };
   }, [handleObserveSetupPrimaryAction, isProjectCount, observeSetupCopy]);
 
-  const observeSetupSecondaryAction = useMemo(() => {
-    if (
-      !observeSetupCopy ||
-      !showObserveSetupFocus ||
-      !canOpenObserveSetupSample
-    ) {
-      return null;
-    }
+  const openSampleTraceAction = useMemo(() => {
+    if (!observeSetupCopy || !canOpenObserveSetupSample) return null;
     return {
       disabled: isOpeningSampleTrace,
       label: isOpeningSampleTrace ? "Opening sample..." : "Open sample trace",
@@ -212,6 +206,25 @@ const ProjectWrapperView = () => {
     handleOpenSampleTrace,
     isOpeningSampleTrace,
     observeSetupCopy,
+  ]);
+
+  const observeSetupPrimaryAction =
+    openSampleTraceAction || reviewObserveSetupAction;
+
+  const observeSetupSecondaryAction = useMemo(() => {
+    if (
+      !observeSetupCopy ||
+      !showObserveSetupFocus ||
+      !canOpenObserveSetupSample ||
+      !reviewObserveSetupAction
+    ) {
+      return null;
+    }
+    return reviewObserveSetupAction;
+  }, [
+    canOpenObserveSetupSample,
+    observeSetupCopy,
+    reviewObserveSetupAction,
     showObserveSetupFocus,
   ]);
 
