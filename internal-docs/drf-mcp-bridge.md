@@ -219,3 +219,68 @@ for t in registry.list_all():
 4. Run tests: `pytest ai_tools/tests/test_drf_bridge.py`
 
 No hand-written tool file, no Pydantic model, no changes to MCP or Falcon code.
+
+---
+
+# Migration Status & Verification (2026-05-28)
+
+## Verified working count — the number that matters
+
+"Registered" ≠ "works." A bridge tool can register, appear in Falcon, and
+dispatch — yet error at call time (wrong input schema, wrong pk kwarg).
+`ai_tools/tests/verify_bridges.py` runs every list/get bridge tool against
+the **live DB** (read-only) and reports the true count:
+
+```bash
+docker exec ws1-backend python -m ai_tools.tests.verify_bridges
+```
+
+Latest sweep: **244 bridge tools registered; of the testable ones, 85 working,
+3 failing, 16 untestable (empty tables in this workspace — bridge dispatches
+fine, no row to fetch).** The 3 failures are ws1 DB schema drift
+(`agentcc_prompt_template` table and `model_hub_score.value_history` column
+not migrated in this workspace) plus one tracer span-lookup edge — NOT bridge
+bugs; they work against a migrated DB.
+
+## Bridge bugs found & fixed via the live sweep
+
+The first sweep found only 20/94 working. Root causes (all fixed):
+
+1. **List actions inherited required create-fields.** A `list` action without
+   explicit `query_params` was given the model serializer as its input schema,
+   so `list_datasets({})` failed validation demanding `name`. Fix: list/GET
+   collection actions take only optional `search`/`page`/`page_size`.
+2. **Detail actions only set `kwargs["pk"]`.** DRF `get_object()` reads
+   `self.kwargs[lookup_url_kwarg or lookup_field]`. ViewSets with
+   `lookup_field="id"` raised "expected kwarg 'pk'". Fix: set the id under
+   `pk` AND the viewset's lookup names.
+3. **Acronym entity names.** `APIKey → a_p_i_key`. Fix: collapse capital runs.
+
+Lesson: **always run verify_bridges.py after adding bridges.** Unit tests mock
+the ViewSet and stay green even when the real call is broken.
+
+## Remaining hand-written tools (126) — classified backlog
+
+A per-tool classification (reading each tool + its candidate views) bucketed
+the remaining hand-written tools:
+
+| Bucket                  | Count | Meaning                                                                                  | Action                                                               |
+| ----------------------- | ----: | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| KEEP                    |    16 | Custom keepers (context, web, docs, usage, viz, falcon memory)                           | Stay hand-written — no REST analogue / external services             |
+| BRIDGE_APIVIEW          |    52 | Maps to a distinct APIView get/post; id often a view-specific URL kwarg                  | Bridgeable; each detail tool needs `pk_kwarg` config + a verify pass |
+| CUSTOM_ACTION / @action |   ~39 | Maps to an `@action` method (commit, pause, apply, trial\_\*, graph) — NOT standard CRUD | Bridgeable via explicit action+serializer config + verify            |
+| NEW_ENDPOINT_NEEDED     |    19 | No Django view exposes the operation (tool does direct ORM)                              | Needs a new APIView+serializer built first                           |
+
+The 91 bridgeable (52 + 39) are real per-tool work: each needs its exact
+target action, id-kwarg, and serializer wired, then verified against the live
+DB. They are NOT a safe batch operation — blind registration produces
+call-time-broken stubs (see the 20/94 lesson above).
+
+## The 16 custom keepers (final)
+
+- **context/**: `whoami`, `search`, `read_schema`, `read_taxonomy`
+- **web/**: `brave_search`, `ground_truth_search`, `kb_search`, `trace_explorer`
+- **docs/**: `ask_docs`, `search_docs`, `get_page`
+- **usage/**: `get_cost_breakdown`
+- **visualization/**: `render_widget`
+- **falcon EE memory**: `save_memory`, `list_memories`, `delete_memory`
