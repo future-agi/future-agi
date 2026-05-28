@@ -38,6 +38,7 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { getCreatedDatasetCopyId } from "./existingDatasetResponse";
 
 // Helper functions remain unchanged
 const getConfigtValues = (column, dataset) => {
@@ -263,7 +264,7 @@ const ExistingDatasetModal = ({
 
       setCheckboxHandle(checkboxState);
     }
-  }, [selectedDatasetColumn]);
+  }, [dataset, selectedDatasetColumn, setValue]);
 
   const performClose = () => {
     onClose();
@@ -325,8 +326,6 @@ const ExistingDatasetModal = ({
             )
           : axios.post(endpoints.develop.createFromExistingDataset, data),
       onSuccess: (data, variables) => {
-        const result = data?.data?.result;
-
         trackEvent(Events.addRowsSuccess, {
           [PropertyName.method]:
             "add from existing model dataset or experiment",
@@ -348,8 +347,9 @@ const ExistingDatasetModal = ({
           [PropertyName.name]: datasetName,
         });
 
-        if (result?.datasetId) {
-          navigate(`/dashboard/develop/${result.datasetId}?tab=data`);
+        const createdDatasetId = getCreatedDatasetCopyId(data);
+        if (createdDatasetId) {
+          navigate(`/dashboard/develop/${createdDatasetId}?tab=data`);
         }
       },
       onError: (error) => {
