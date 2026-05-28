@@ -222,6 +222,8 @@ const TracingTestMode = React.forwardRef(
       // Signals to EvalPickerConfigFull that all variables are mapped so
       // it can enable the Test Evaluation / Add Evaluation buttons.
       onReadyChange,
+      // When true, runtime context comes from data injection — no sample row needed.
+      hasDataInjection = false,
       // Optional: pre-select project + row type and hide the project picker
       // and the row type toggle. Used by the task flow's Add Evaluation
       // drawer so the user sees the exact same data their task will run on.
@@ -908,20 +910,16 @@ const TracingTestMode = React.forwardRef(
       });
     }, [variables, fieldNames]);
 
-    // Signal ready state to parent: ready when every template variable
-    // has a non-empty mapped field AND we have a current row to test
-    // against. This enables the Test Evaluation / Add Evaluation buttons
-    // in EvalPickerConfigFull.
+    // Mapping is always required; a sample row only when not using data injection.
     useEffect(() => {
       if (!onReadyChange) return;
-      // Evals with zero variables (e.g. some code evals) are always ready
-      // as long as we have a loaded row to run against.
       const allMapped =
         variables.length === 0 ||
         variables.every((v) => mapping[v] && String(mapping[v]).length > 0);
       const hasRow = !!currentRow;
-      onReadyChange(allMapped && hasRow, mapping);
-    }, [variables, mapping, currentRow, onReadyChange]);
+      const ready = hasDataInjection ? allMapped : allMapped && hasRow;
+      onReadyChange(ready, mapping);
+    }, [variables, mapping, currentRow, hasDataInjection, onReadyChange]);
 
     // ── Run test ──
     const handleRunTest = useCallback(async () => {
@@ -1953,6 +1951,7 @@ TracingTestMode.propTypes = {
   onColumnsLoaded: PropTypes.func,
   onClearResult: PropTypes.func,
   onReadyChange: PropTypes.func,
+  hasDataInjection: PropTypes.bool,
   initialProjectId: PropTypes.string,
   initialRowType: PropTypes.string,
   initialMapping: PropTypes.object,
