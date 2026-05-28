@@ -427,7 +427,7 @@ const EvalCreatePage = () => {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => {
+  const handleOnboardingFocusViewed = useCallback(() => {
     if (!onboardingParams.isOnboarding || recordedOnboardingFocusRef.current) {
       return;
     }
@@ -883,6 +883,7 @@ const EvalCreatePage = () => {
         currentStep={onboardingCopy.currentStep}
         description={onboardingCopy.description}
         hidden={!onboardingParams.isOnboarding}
+        onViewed={handleOnboardingFocusViewed}
         sourceSummary={onboardingSourceSummary}
         steps={onboardingCopy.steps}
         title={onboardingCopy.title}

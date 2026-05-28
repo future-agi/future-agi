@@ -199,7 +199,7 @@ describe("evalCreateOnboarding", () => {
       primaryPath: "evals",
       stage: "add_eval_scorer",
       source: "eval_create_onboarding",
-      artifactType: "eval_route",
+      artifactType: "eval",
       artifactId: "data-1",
       metadata: {
         draft_id: "eval-1",

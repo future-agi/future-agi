@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Chip from "@mui/material/Chip";
@@ -10,10 +10,17 @@ export default function EvalOnboardingFocusPanel({
   currentStep,
   description,
   hidden = false,
+  onViewed,
   sourceSummary = null,
   steps = [],
   title,
 }) {
+  useEffect(() => {
+    if (!hidden) {
+      onViewed?.();
+    }
+  }, [hidden, onViewed]);
+
   if (hidden) return null;
 
   return (
@@ -97,6 +104,7 @@ EvalOnboardingFocusPanel.propTypes = {
   currentStep: PropTypes.string,
   description: PropTypes.string.isRequired,
   hidden: PropTypes.bool,
+  onViewed: PropTypes.func,
   sourceSummary: PropTypes.shape({
     description: PropTypes.string,
     label: PropTypes.string.isRequired,

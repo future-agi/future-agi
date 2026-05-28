@@ -221,6 +221,7 @@ if os.environ.get("ONBOARDING_TEST_FLAGS_ENABLED", "").lower() in {
         "onboarding_lifecycle_email_dry_run": False,
         "onboarding_lifecycle_send_enabled": False,
         "onboarding_observe_mvp_enabled": True,
+        "onboarding_observe_route_modes": True,
         "onboarding_path_cards": True,
         "onboarding_sample_project": True,
         "onboarding_sample_project_enabled": True,

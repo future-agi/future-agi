@@ -359,6 +359,11 @@ async function main() {
       postReviewState.recommended_action?.cta_label === "Create evaluator",
       `Expected Create evaluator CTA, got ${postReviewState.recommended_action?.cta_label}`,
     );
+    assert(
+      postReviewState.recommended_action?.href ===
+        `/dashboard/observe/${realProject.projectId}/llm-tracing?source=onboarding&onboarding=create-evaluator`,
+      `Expected focused evaluator route, got ${postReviewState.recommended_action?.href}`,
+    );
     await page.goto(`${APP_BASE}/dashboard/home?source=real_trace_reviewed`, {
       waitUntil: "domcontentloaded",
     });
@@ -375,6 +380,105 @@ async function main() {
       { timeout: 45000 },
     );
     const postReviewHomeUrl = page.url();
+    await clickVisibleActionHref(
+      page,
+      "Create evaluator",
+      postReviewState.recommended_action.href,
+      45000,
+    );
+    await page.waitForFunction(
+      ({ projectId }) => {
+        const params = new URLSearchParams(window.location.search);
+        return (
+          window.location.pathname ===
+            `/dashboard/observe/${projectId}/llm-tracing` &&
+          params.get("source") === "onboarding" &&
+          params.get("onboarding") === "create-evaluator"
+        );
+      },
+      { timeout: 45000 },
+      { projectId: realProject.projectId },
+    );
+    await expectVisibleTestId(page, "observe-onboarding-focus", {
+      timeout: 45000,
+    });
+    await expectVisibleText(page, "Observe onboarding", { timeout: 45000 });
+    await expectVisibleText(page, "Evaluator", { timeout: 45000 });
+    await expectVisibleText(page, "Create an evaluator", { timeout: 45000 });
+    await expectVisibleText(
+      page,
+      "Turn the reviewed trace into a repeatable quality check for future runs.",
+      { timeout: 45000 },
+    );
+    await expectVisibleText(page, "Trace review", { timeout: 45000 });
+    await waitForCondition(
+      () =>
+        evidence.activationEventPosts.some(
+          (payload) =>
+            payload?.event_name === "onboarding_observe_route_focus_viewed" &&
+            payload?.primary_path === "observe" &&
+            payload?.stage === "create_trace_evaluator" &&
+            payload?.source === "observe_project_onboarding" &&
+            payload?.artifact_type === "observe_project" &&
+            payload?.artifact_id === realProject.projectId &&
+            payload?.project_id === realProject.projectId &&
+            payload?.metadata?.route_mode === "create-evaluator",
+        ),
+      "Expected focused observe create-evaluator activation event.",
+      45000,
+    );
+    const createEvaluatorFocusUrl = page.url();
+    await clickVisibleButtonText(page, "Create evaluator", 45000);
+    await page.waitForFunction(
+      ({ projectId }) => {
+        const params = new URLSearchParams(window.location.search);
+        const isEvalCreateRoute =
+          window.location.pathname === "/dashboard/evaluations/create" ||
+          /^\/dashboard\/evaluations\/create\/[^/]+$/.test(
+            window.location.pathname,
+          );
+        return (
+          isEvalCreateRoute &&
+          params.get("source") === "onboarding" &&
+          params.get("step") === "data" &&
+          params.get("source_type") === "trace_project" &&
+          params.get("source_id") === projectId
+        );
+      },
+      { timeout: 45000 },
+      { projectId: realProject.projectId },
+    );
+    await expectVisibleTestId(page, "eval-onboarding-focus", {
+      timeout: 45000,
+    });
+    await expectVisibleText(page, "Eval onboarding", { timeout: 45000 });
+    await expectVisibleText(page, "Source", { timeout: 45000 });
+    await expectVisibleText(page, "Create the eval source", {
+      timeout: 45000,
+    });
+    await expectVisibleText(
+      page,
+      "Choose the data or trace source before adding the scorer.",
+      { timeout: 45000 },
+    );
+    await waitForCondition(
+      () =>
+        evidence.activationEventPosts.some(
+          (payload) =>
+            payload?.event_name === "onboarding_eval_route_focus_viewed" &&
+            payload?.primary_path === "evals" &&
+            payload?.stage === "create_eval_dataset" &&
+            payload?.source === "eval_create_onboarding" &&
+            payload?.artifact_type === "eval" &&
+            payload?.artifact_id === realProject.projectId &&
+            payload?.metadata?.source_id === realProject.projectId &&
+            payload?.metadata?.source_type === "trace_project" &&
+            payload?.metadata?.step === "data",
+        ),
+      "Expected focused eval source activation event.",
+      45000,
+    );
+    const evalCreateOnboardingUrl = page.url();
 
     assert(evidence.signupPosts.length === 1, "Expected one signup POST.");
     assert(evidence.tokenPosts.length === 1, "Expected one token POST.");
@@ -474,6 +578,21 @@ async function main() {
             onboarding_post: evidence.onboardingPosts[0],
             observe_cta_href: observeCtaHref,
             observe_setup_url: observeSetupUrl,
+            create_evaluator_focus_url: createEvaluatorFocusUrl,
+            create_evaluator_focus_event: evidence.activationEventPosts.find(
+              (payload) =>
+                payload?.event_name ===
+                  "onboarding_observe_route_focus_viewed" &&
+                payload?.stage === "create_trace_evaluator" &&
+                payload?.artifact_id === realProject.projectId,
+            ),
+            eval_create_onboarding_url: evalCreateOnboardingUrl,
+            eval_create_focus_event: evidence.activationEventPosts.find(
+              (payload) =>
+                payload?.event_name === "onboarding_eval_route_focus_viewed" &&
+                payload?.stage === "create_eval_dataset" &&
+                payload?.artifact_id === realProject.projectId,
+            ),
             post_review_home_url: postReviewHomeUrl,
             post_review_state: summarizeActivationState(postReviewState),
             real_observe_project: realProject,

@@ -483,7 +483,7 @@ export const buildEvalRouteFocusPayload = ({
     primaryPath: "evals",
     stage: evalCreateOnboardingStage(normalizedStep),
     source: "eval_create_onboarding",
-    artifactType: "eval_route",
+    artifactType: "eval",
     artifactId,
     metadata: compactMetadata({
       draft_id: draftId,
