@@ -45,6 +45,7 @@ class ModelHubConfig(AppConfig):
         from tracer.services.clickhouse.client import get_clickhouse_client
         from tracer.services.clickhouse.schema import (
             POST_DDL_ALTERS,
+            detect_spans_table_shape,
             get_all_schema_ddl,
             get_legacy_chain_drop_statements,
             should_drop_legacy_chain,
@@ -57,6 +58,13 @@ class ModelHubConfig(AppConfig):
         # stale tables in place; explicit `DROP IF EXISTS` cleans them.
         # No-op when the env flag is unset (prod default).
         if should_drop_legacy_chain():
+            # First check whether `spans` itself is the v1 shape (from
+            # an older CH 24.x volume / legacy SPANS_TABLE registry
+            # entry). If so we have to drop it before the legacy chain
+            # because `spans_mv` references it, and reapply v2 schema.
+            # The detector is idempotent: a v2 or absent table no-ops.
+            self._migrate_v1_spans_if_needed(ch, detect_spans_table_shape)
+
             for name, drop_sql in get_legacy_chain_drop_statements():
                 try:
                     ch.execute(drop_sql)
@@ -93,6 +101,58 @@ class ModelHubConfig(AppConfig):
             threading.Thread(
                 target=self._warm_ch_cache, args=(ch,), daemon=True
             ).start()
+
+    @staticmethod
+    def _migrate_v1_spans_if_needed(ch, detect_fn):
+        """Drop a v1 ``spans`` table and re-apply v2 schema if v1 detected.
+
+        Runs only when ``CH25_DROP_LEGACY_CDC_CHAIN`` is set (caller-gated).
+        Idempotent: no-op when the table is already v2 or doesn't exist.
+
+        Why this is needed: ``CREATE TABLE IF NOT EXISTS`` doesn't fail
+        when the existing table has a different shape. A dev box that
+        used to run CH 24.x with the legacy ``SPANS_TABLE`` definition
+        keeps that v1 ``spans`` table forever — and every v2 read
+        (``spans.attrs_string`` etc.) silently 500s.
+
+        The fix:
+          1. Detect: read ``system.columns`` for the typed-Map marker.
+          2. If v1: drop the table (cascades to dependent MVs).
+          3. Tell ``apply_schema`` to re-run the v2 SQL via
+             ``ch25_apply_schema --force`` so the schema_versions sha
+             check doesn't skip the (now missing) v2 file.
+
+        The schema_versions row for ``002_spans_v2.sql`` is not deleted
+        here; ``--force`` is the documented way to bypass drift checks
+        and is harmless on a fresh table.
+        """
+        shape = detect_fn(ch.execute)
+        if shape != "v1":
+            logger.info("CH25 v1-spans check: %s — no v1 → v2 migration needed", shape)
+            return
+
+        logger.warning(
+            "CH25 v1-spans detected — dropping v1 `spans` and re-applying "
+            "v2 schema. This is one-time per dev environment; the legacy "
+            "table predated typed-JSON columns."
+        )
+        try:
+            ch.execute("DROP TABLE IF EXISTS spans SYNC")
+        except Exception as e:
+            logger.error("CH25 v1-spans DROP failed: %s", e)
+            return
+
+        try:
+            from django.core.management import call_command
+
+            call_command("ch25_apply_schema", "--force", verbosity=1)
+            logger.info("CH25 v2 schema re-applied after v1 drop")
+        except Exception as e:
+            logger.error(
+                "CH25 v2 schema re-apply failed after v1 drop: %s. Run "
+                "`python manage.py ch25_apply_schema --force` manually.",
+                e,
+            )
 
     @staticmethod
     def _warm_ch_cache(ch):

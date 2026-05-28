@@ -2032,6 +2032,58 @@ def should_drop_legacy_chain() -> bool:
     return _DROP_LEGACY_CDC_CHAIN
 
 
+def detect_spans_table_shape(execute_fn) -> str:
+    """Classify the existing ``spans`` table as v1, v2, absent, or unknown.
+
+    The two schemas use different typed-attribute Map column names:
+
+    - v1 (legacy ``SPANS_TABLE`` in this module): ``span_attr_str``,
+      ``span_attr_num``, ``span_attr_bool``.
+    - v2 (``v2/schema/002_spans_v2.sql``): ``attrs_string``,
+      ``attrs_number``, ``attrs_bool``, plus ``attributes_extra JSON``.
+
+    ``CREATE TABLE IF NOT EXISTS`` silently no-ops on shape drift, so a
+    dev box upgrading from an old CH 24.x volume keeps the v1 table and
+    every v2 read fails with "column doesn't exist". This detector lets
+    the boot hook notice and migrate.
+
+    Args:
+        execute_fn: Callable that takes a SQL string and returns rows
+            (list of tuples). Threads through ``ClickHouseClient.execute``
+            without coupling this module to the client class — also makes
+            the detector unit-testable with a stub.
+
+    Returns:
+        ``"v2"`` — the v2 column ``attrs_string`` is present.
+        ``"v1"`` — only the v1 column ``span_attr_str`` is present.
+        ``"absent"`` — the table doesn't exist (fresh CH).
+        ``"unknown"`` — the table exists but matches neither shape;
+            don't auto-migrate, let the operator decide.
+    """
+    rows = execute_fn(
+        """
+        SELECT name FROM system.columns
+        WHERE database = currentDatabase()
+          AND table = 'spans'
+          AND name IN ('attrs_string', 'span_attr_str')
+        """
+    )
+    names = {r[0] for r in rows}
+    if "attrs_string" in names:
+        return "v2"
+    if "span_attr_str" in names:
+        return "v1"
+    exists_rows = execute_fn(
+        """
+        SELECT count() FROM system.tables
+        WHERE database = currentDatabase() AND name = 'spans'
+        """
+    )
+    if exists_rows and exists_rows[0][0] > 0:
+        return "unknown"
+    return "absent"
+
+
 def get_drop_statements() -> list[str]:
     """Return DROP statements in reverse dependency order for clean teardown.
 

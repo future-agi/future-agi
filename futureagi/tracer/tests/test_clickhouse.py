@@ -372,6 +372,70 @@ class TestClickHouseSchema:
             "_LEGACY_CDC_CHAIN_NAMES in schema.py and the cutover doc."
         )
 
+    # ------------------------------------------------------------------
+    # v1 → v2 spans shape detection (dev-upgrade boot hook)
+    # ------------------------------------------------------------------
+    # CREATE TABLE IF NOT EXISTS silently no-ops on shape drift. Dev
+    # boxes upgrading from an old CH 24.x volume need an explicit
+    # detector so the boot hook can drop the v1 spans + re-apply v2.
+
+    def test_detect_spans_v2(self):
+        """v2 marker column ``attrs_string`` → result is ``v2``."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return [("attrs_string",)]
+            return [(1,)]
+
+        assert detect_spans_table_shape(stub) == "v2"
+
+    def test_detect_spans_v1(self):
+        """v1 marker ``span_attr_str`` → result is ``v1``."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return [("span_attr_str",)]
+            return [(1,)]
+
+        assert detect_spans_table_shape(stub) == "v1"
+
+    def test_detect_spans_absent(self):
+        """No table at all → ``absent`` (boot hook skips the drop)."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return []
+            return [(0,)]
+
+        assert detect_spans_table_shape(stub) == "absent"
+
+    def test_detect_spans_unknown(self):
+        """Table exists but neither marker → ``unknown``; refuse to migrate."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return []
+            return [(1,)]
+
+        assert detect_spans_table_shape(stub) == "unknown"
+
+    def test_detect_prefers_v2_when_both_markers_appear(self):
+        """When v2 + v1 column names coexist (unlikely but explicit),
+        treat as v2 — don't trigger a destructive drop on a table that
+        already has the v2 column."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return [("attrs_string",), ("span_attr_str",)]
+            return [(1,)]
+
+        assert detect_spans_table_shape(stub) == "v2"
+
 
 # ============================================================================
 # 2. Filter Builder Tests
