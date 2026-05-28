@@ -227,6 +227,7 @@ const TracingTestMode = React.forwardRef(
       codeParams = {},
       onTestResult,
       onColumnsLoaded,
+      onSourceSelected,
       onClearResult,
       // Signals to EvalPickerConfigFull that all variables are mapped so
       // it can enable the Test Evaluation / Add Evaluation buttons.
@@ -1187,7 +1188,18 @@ const TracingTestMode = React.forwardRef(
               options={projects}
               getOptionLabel={(opt) => opt?.name || opt?.id || ""}
               value={projects.find((p) => p.id === selectedProjectId) || null}
-              onChange={(_, val) => setSelectedProjectId(val?.id || "")}
+              onChange={(_, val) => {
+                const nextProjectId = val?.id || "";
+                setSelectedProjectId(nextProjectId);
+                if (nextProjectId) {
+                  onSourceSelected?.({
+                    rowType,
+                    sourceId: nextProjectId,
+                    sourceType: "trace_project",
+                    surface: "tracing",
+                  });
+                }
+              }}
               loading={loadingProjects}
               openOnFocus
               renderInput={(params) => (
@@ -1918,6 +1930,7 @@ TracingTestMode.propTypes = {
   codeParams: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
+  onSourceSelected: PropTypes.func,
   onClearResult: PropTypes.func,
   onReadyChange: PropTypes.func,
   initialProjectId: PropTypes.string,

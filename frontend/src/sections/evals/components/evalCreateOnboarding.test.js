@@ -8,6 +8,7 @@ import {
   buildEvalRouteFocusPayload,
   buildEvalRunCompletedPayload,
   buildEvalScorerCreatedPayload,
+  buildEvalSourceSelectedPayload,
   EVAL_CREATE_ONBOARDING_STEPS,
   EVAL_CREATE_SOURCE_TABS,
   evalCreateOnboardingStage,
@@ -106,6 +107,38 @@ describe("evalCreateOnboarding", () => {
       },
       idempotencyKey: "onboarding_eval_route_focus_viewed:scorer:data-1",
     });
+  });
+
+  it("builds a source-selected payload without source content", () => {
+    const payload = buildEvalSourceSelectedPayload({
+      draftId: "eval-1",
+      rowType: "Span",
+      sourceId: "project-1",
+      sourceType: "trace_project",
+      step: EVAL_CREATE_ONBOARDING_STEPS.DATA,
+      surface: "tracing",
+    });
+
+    expect(payload).toMatchObject({
+      eventName: "onboarding_eval_source_selected",
+      primaryPath: "evals",
+      stage: "create_eval_dataset",
+      source: "eval_create_onboarding",
+      artifactType: "eval_source",
+      artifactId: "project-1",
+      metadata: {
+        draft_id: "eval-1",
+        row_type: "Span",
+        source_id: "project-1",
+        source_type: "trace_project",
+        step: "data",
+        surface: "tracing",
+      },
+      idempotencyKey: "onboarding_eval_source_selected:trace_project:project-1",
+    });
+    expect(payload.metadata).not.toHaveProperty("rows");
+    expect(payload.metadata).not.toHaveProperty("trace");
+    expect(payload.metadata).not.toHaveProperty("prompt");
   });
 
   it("builds a scorer-created payload without source content", () => {

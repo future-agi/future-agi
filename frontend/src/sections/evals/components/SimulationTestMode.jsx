@@ -176,6 +176,7 @@ const SimulationTestMode = React.forwardRef(
       codeParams = {},
       onTestResult,
       onColumnsLoaded,
+      onSourceSelected,
       onClearResult,
       onReadyChange,
       errorLocalizerEnabled = false,
@@ -1008,7 +1009,17 @@ const SimulationTestMode = React.forwardRef(
             options={runTests}
             getOptionLabel={getRunTestLabel}
             value={runTests.find((rt) => rt.id === selectedRunTestId) || null}
-            onChange={(_, val) => setSelectedRunTestId(val?.id || "")}
+            onChange={(_, val) => {
+              const nextRunTestId = val?.id || "";
+              setSelectedRunTestId(nextRunTestId);
+              if (nextRunTestId) {
+                onSourceSelected?.({
+                  sourceId: nextRunTestId,
+                  sourceType: "simulation",
+                  surface: "simulation",
+                });
+              }
+            }}
             loading={loadingRunTests || loadingMoreRunTests}
             disabled={!!initialRunTestId}
             openOnFocus
@@ -1774,6 +1785,7 @@ SimulationTestMode.propTypes = {
   codeParams: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
+  onSourceSelected: PropTypes.func,
   onClearResult: PropTypes.func,
   initialMapping: PropTypes.object,
   initialRunTestId: PropTypes.string,

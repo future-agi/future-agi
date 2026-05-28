@@ -51,6 +51,7 @@ import {
   buildEvalRouteFocusPayload,
   buildEvalRunCompletedPayload,
   buildEvalScorerCreatedPayload,
+  buildEvalSourceSelectedPayload,
   EVAL_CREATE_ONBOARDING_STEPS,
   getEvalCreateInitialSourceTab,
   getEvalCreateOnboardingCopy,
@@ -162,6 +163,7 @@ const EvalCreatePage = () => {
   const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const testPlaygroundRef = useRef(null);
   const recordedOnboardingFocusRef = useRef(false);
+  const recordedSourceSelectionRef = useRef(new Set());
   const onboardingParams = useMemo(
     () => getEvalCreateOnboardingParams(location.search),
     [location.search],
@@ -386,6 +388,36 @@ const EvalCreatePage = () => {
       }),
     );
   }, [draftId, onboardingParams, recordActivationEvent]);
+
+  const handleOnboardingSourceSelected = useCallback(
+    ({ rowType, sourceId, sourceType, surface } = {}) => {
+      if (!onboardingParams.isOnboarding || !sourceId || !sourceType) return;
+      if (
+        ![
+          EVAL_CREATE_ONBOARDING_STEPS.DATA,
+          EVAL_CREATE_ONBOARDING_STEPS.RUN,
+        ].includes(onboardingParams.step)
+      ) {
+        return;
+      }
+
+      const selectionKey = `${sourceType}:${sourceId}`;
+      if (recordedSourceSelectionRef.current.has(selectionKey)) return;
+      recordedSourceSelectionRef.current.add(selectionKey);
+
+      recordActivationEvent?.(
+        buildEvalSourceSelectedPayload({
+          draftId,
+          rowType,
+          sourceId,
+          sourceType,
+          step: onboardingParams.step,
+          surface,
+        }),
+      );
+    },
+    [draftId, onboardingParams, recordActivationEvent],
+  );
 
   // Auto-save config to draft (debounced, skip initial load)
   const autoSaveTimer = useRef(null);
@@ -1356,6 +1388,7 @@ const EvalCreatePage = () => {
                     mode === "composite" ? false : errorLocalizerEnabled
                   }
                   initialSourceTab={onboardingInitialSourceTab}
+                  onSourceSelected={handleOnboardingSourceSelected}
                   templateFormat={templateFormat}
                 />
               </Box>

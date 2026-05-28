@@ -222,6 +222,43 @@ export const buildEvalRouteFocusPayload = ({
   };
 };
 
+export const buildEvalSourceSelectedPayload = ({
+  draftId,
+  rowType,
+  sourceId,
+  sourceType,
+  step,
+  surface,
+} = {}) => {
+  const normalizedStep = validSteps.has(step)
+    ? step
+    : EVAL_CREATE_ONBOARDING_STEPS.DATA;
+  const artifactId = safeKeyPart(sourceId, "eval-source");
+
+  return {
+    eventName: "onboarding_eval_source_selected",
+    primaryPath: "evals",
+    stage: evalCreateOnboardingStage(normalizedStep),
+    source: "eval_create_onboarding",
+    artifactType: "eval_source",
+    artifactId,
+    metadata: compactMetadata({
+      draft_id: draftId,
+      row_type: rowType,
+      source_id: sourceId,
+      source_type: sourceType,
+      step: normalizedStep,
+      surface,
+    }),
+    idempotencyKey: [
+      "onboarding_eval_source_selected",
+      safeKeyPart(sourceType, "source"),
+      artifactId,
+    ].join(":"),
+    isSample: false,
+  };
+};
+
 export const buildEvalScorerCreatedPayload = ({
   evalId,
   evalType,

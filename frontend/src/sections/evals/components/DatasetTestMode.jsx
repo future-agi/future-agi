@@ -577,6 +577,7 @@ const DatasetTestMode = React.forwardRef(
       codeParams = {},
       onTestResult,
       onColumnsLoaded,
+      onSourceSelected,
       initialDatasetId = "",
       onReadyChange,
       onClearResult,
@@ -1327,8 +1328,16 @@ const DatasetTestMode = React.forwardRef(
               onClose={() => setDatasetOpen(false)}
               value={selectedDataset}
               onChange={(_, newValue) => {
+                const nextDatasetId = newValue?.id || "";
                 setSelectedDataset(newValue);
-                setSelectedDatasetId(newValue?.id || "");
+                setSelectedDatasetId(nextDatasetId);
+                if (nextDatasetId) {
+                  onSourceSelected?.({
+                    sourceId: nextDatasetId,
+                    sourceType: "dataset",
+                    surface: "dataset",
+                  });
+                }
               }}
               onInputChange={(_, newInput, reason) => {
                 if (reason === "input") setDatasetSearch(newInput);
@@ -1820,6 +1829,7 @@ DatasetTestMode.propTypes = {
   codeParams: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
+  onSourceSelected: PropTypes.func,
   initialDatasetId: PropTypes.string,
   onReadyChange: PropTypes.func,
   onClearResult: PropTypes.func,

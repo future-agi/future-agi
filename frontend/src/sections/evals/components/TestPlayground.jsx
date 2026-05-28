@@ -626,6 +626,7 @@ const TestPlayground = React.forwardRef(
       onColumnsLoaded,
       onVersionSelect,
       onSourceTabChange,
+      onSourceSelected,
       onClearResult,
       errorLocalizerEnabled = false,
       isComposite = false,
@@ -1385,6 +1386,7 @@ const TestPlayground = React.forwardRef(
                   codeParams={codeParams}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
+                  onSourceSelected={onSourceSelected}
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleDatasetReady}
@@ -1402,6 +1404,7 @@ const TestPlayground = React.forwardRef(
                   codeParams={codeParams}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
+                  onSourceSelected={onSourceSelected}
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleTracingReady}
@@ -1420,6 +1423,7 @@ const TestPlayground = React.forwardRef(
                   codeParams={codeParams}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
+                  onSourceSelected={onSourceSelected}
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleSimulationReady}
@@ -1879,6 +1883,7 @@ TestPlayground.propTypes = {
   compositeAdhocConfig: PropTypes.object,
   templateFormat: PropTypes.string,
   onSourceTabChange: PropTypes.func,
+  onSourceSelected: PropTypes.func,
   onClearResult: PropTypes.func,
   model: PropTypes.string,
   functionParamsSchema: PropTypes.object,
