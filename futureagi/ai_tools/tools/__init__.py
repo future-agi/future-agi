@@ -4,6 +4,9 @@
 # Agent tools (8)
 # DRF Bridge tools — auto-registered via @expose_to_mcp on ViewSet classes.
 # Importing the views module triggers registration.
+# list_workspaces, list_users — @expose_to_mcp lives directly on
+# WorkspaceListAPIView / UserListAPIView in accounts/views/workspace_management.py
+import accounts.views.workspace_management  # noqa: F401
 import tracer.views.project  # noqa: F401  — registers tracing_* bridge tools
 from ai_tools.tools.agents import (
     get_agent,  # noqa: F401
@@ -46,11 +49,8 @@ from ai_tools.tools.annotations import (
 )
 
 # list_prompt_templates — replaced by DRF bridge on PromptTemplateViewSet
-# list_workspaces, list_users — replaced by DRF bridge on accounts APIViews
-from ai_tools.tools.bridge import (
-    _prompt_templates,  # noqa: F401
-    _workspace_management,  # noqa: F401
-)
+#   (prompt_template.py is legacy/lint-debt, registered programmatically here)
+from ai_tools.tools.bridge import _prompt_templates  # noqa: F401
 
 # Context tools (5) — memory tools (save/list/delete) are EE and registered
 # via ee.falcon_ai.apps.FalconAIConfig.ready().

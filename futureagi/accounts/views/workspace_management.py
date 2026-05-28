@@ -62,6 +62,7 @@ from accounts.serializers.workspace import (
     WorkspaceListSerializer,
 )
 from accounts.utils import generate_password, resolve_org, resolve_org_role
+from ai_tools.drf_bridge import expose_to_mcp
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -69,6 +70,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
 from tfc.middleware.workspace_context import get_current_workspace
@@ -81,8 +83,6 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
-
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
     from ee.usage.models.usage import (
@@ -150,6 +150,7 @@ def clear_user_redis_cache(user_id):
         return False
 
 
+@expose_to_mcp(category="users", tools=["get"])
 class WorkspaceListAPIView(APIView):
     """API for getting paginated list of workspaces"""
 
@@ -634,6 +635,7 @@ class WorkspaceInviteAPIView(APIView):
             return self._gm.bad_request("Error in inviting users to workspace")
 
 
+@expose_to_mcp(category="users", tools=["get"])
 class UserListAPIView(APIView):
     """API for getting paginated list of users with filtering at workspace level"""
 
