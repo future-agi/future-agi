@@ -13,12 +13,14 @@ import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { CREATE_PROMPT_OPTIONS } from "../common";
 import { useNavigate, useParams } from "react-router";
+import { useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { createDraftPayload } from "src/sections/workbench/constant";
 import { usePromptStore } from "../store/usePromptStore";
+import { buildPromptCreatedHref } from "src/sections/workbench/createPrompt/promptActions/promptOnboardingRoute";
 
 function PromptItem({ name, desc, icon, onClick }) {
   const theme = useTheme();
@@ -79,6 +81,7 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
   const theme = useTheme();
   const { folder } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [selectedOption, setSelectedOption] = useState(null);
   const { setSelectTemplateDrawerOpen, selectTemplateDrawerOpen } =
     usePromptStore();
@@ -93,12 +96,10 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
       trackEvent(Events.promptCreateClicked, {
         [PropertyName.click]: true,
       });
-      navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
-        {
-          state: { fromOption: selectedOption },
-        },
-      );
+      const promptId = data?.data?.result?.rootTemplate;
+      navigate(buildPromptCreatedHref({ promptId, search: searchParams }), {
+        state: { fromOption: selectedOption },
+      });
       onClose();
       setSelectTemplateDrawerOpen(false);
     },

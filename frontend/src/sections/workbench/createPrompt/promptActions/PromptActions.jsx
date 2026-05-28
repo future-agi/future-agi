@@ -50,6 +50,7 @@ import VersionStyle from "./VersionStyle";
 import MoreActions from "./MoreActions";
 import { getColorMap as getTagColorMap } from "../VersionHistory/common";
 import PromptOnboardingFocusPanel from "./PromptOnboardingFocusPanel";
+import { buildPromptCreatedHref } from "./promptOnboardingRoute";
 
 const PromptActions = () => {
   const theme = useTheme();
@@ -118,10 +119,10 @@ const PromptActions = () => {
         [PropertyName.click]: true,
         [PropertyName.promptId]: data?.data?.result?.rootTemplate,
       });
-      navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
-        { replace: true },
-      );
+      const promptId = data?.data?.result?.rootTemplate;
+      navigate(buildPromptCreatedHref({ promptId, search: searchParams }), {
+        replace: true,
+      });
     },
   });
   useEffect(() => {
