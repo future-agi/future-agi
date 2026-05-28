@@ -21,8 +21,13 @@ class ListOrgMembersInput(PydanticBaseModel):
 class ListOrgMembersTool(BaseTool):
     name = "list_org_members"
     description = (
-        "Lists all members in the current organization with their roles, "
-        "status, and last login time."
+        "Lightweight org-scoped listing of organization members, sorted by "
+        "active status then role then email. Returns id, email, name, "
+        "organization_role, active flag, and last_login time. **No filters, "
+        "no search, no workspace scoping** — for richer queries with "
+        "workspace_id/role/status filters and search, use `list_users` instead. "
+        "Best fit: 'who is in this org overall?', 'when did people last log in?', "
+        "or as a fast fallback when list_users isn't needed."
     )
     category = "users"
     input_model = ListOrgMembersInput
