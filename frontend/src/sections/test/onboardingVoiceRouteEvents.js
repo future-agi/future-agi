@@ -146,3 +146,13 @@ export const buildVoiceMonitorOpenedPayload = ({ testId, source }) => ({
   idempotencyKey: ["voice_call_monitor_opened", testId].join(":"),
   isSample: false,
 });
+
+export const buildVoiceOnboardingReturnHref = ({
+  eventName = "voice_success_criteria_added",
+} = {}) => {
+  const params = new URLSearchParams();
+  params.set("source", "onboarding");
+  params.set("target_event", eventName);
+
+  return `/dashboard/home?${params.toString()}`;
+};

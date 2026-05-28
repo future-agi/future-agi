@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildVoiceCallReviewedPayload,
   buildVoiceMonitorOpenedPayload,
+  buildVoiceOnboardingReturnHref,
   buildVoiceRouteFocusPayload,
   buildVoiceSuccessCriteriaAddedPayload,
   getVoiceOnboardingParams,
@@ -117,5 +118,11 @@ describe("onboardingVoiceRouteEvents", () => {
       idempotencyKey: "voice_call_monitor_opened:test-1",
       isSample: false,
     });
+  });
+
+  it("builds the voice onboarding home return destination", () => {
+    expect(buildVoiceOnboardingReturnHref()).toBe(
+      "/dashboard/home?source=onboarding&target_event=voice_success_criteria_added",
+    );
   });
 });

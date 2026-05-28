@@ -22,6 +22,7 @@ import { AGENT_TYPES } from "../agents/constants";
 import { SourceType } from "../scenarios/common";
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import {
+  buildVoiceOnboardingReturnHref,
   buildVoiceSuccessCriteriaAddedPayload,
   getVoiceOnboardingParams,
   VOICE_ONBOARDING_MODES,
@@ -132,16 +133,29 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
           enqueueSnackbar("Eval added successfully", { variant: "success" });
         }
         if (isSuccessCriteriaMode) {
-          recordActivationEvent?.(
-            buildVoiceSuccessCriteriaAddedPayload({
-              testId,
-              callId: voiceParams.callId,
-              evalConfig: {
-                ...payload,
-                id: editing?.id,
-              },
-            }),
-          );
+          const eventPayload = buildVoiceSuccessCriteriaAddedPayload({
+            testId,
+            callId: voiceParams.callId,
+            evalConfig: {
+              ...payload,
+              id: editing?.id,
+            },
+          });
+          try {
+            if (recordActivationEventAsync) {
+              await recordActivationEventAsync(eventPayload);
+            } else {
+              recordActivationEvent?.(eventPayload);
+            }
+            navigate(buildVoiceOnboardingReturnHref(eventPayload), {
+              replace: true,
+            });
+          } catch {
+            enqueueSnackbar(
+              "Success criteria saved, but onboarding could not be updated. Please try again.",
+              { variant: "error" },
+            );
+          }
         }
         if (evalOnboardingMode) {
           const eventPayload = buildAgentEvalCoveragePayload({
