@@ -2,13 +2,10 @@
 import {
   Autocomplete,
   Box,
-  Button,
   Chip,
   CircularProgress,
   IconButton,
   InputAdornment,
-  MenuItem,
-  Select,
   Tab,
   Tabs,
   TextField,
@@ -55,6 +52,7 @@ import EvalResultDisplay from "./EvalResultDisplay";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import CustomTooltip from "src/components/tooltip";
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -1567,11 +1565,13 @@ const TracingTestMode = React.forwardRef(
                         "&:hover": { backgroundColor: "action.hover" },
                       }}
                     >
-                      <Tooltip
+                      <CustomTooltip
+                        show
                         title={key}
                         placement="top-start"
                         enterDelay={300}
                         arrow
+                        size="small"
                       >
                         <Typography
                           variant="caption"
@@ -1585,7 +1585,7 @@ const TracingTestMode = React.forwardRef(
                         >
                           {key}
                         </Typography>
-                      </Tooltip>
+                      </CustomTooltip>
                       <DraggableColResizer
                         getCurrentWidth={() => keyColWidthRef.current}
                         onResize={setKeyColWidth}

@@ -1048,7 +1048,6 @@ const RowDetailTable = ({
                 <CustomTooltip
                   title={key}
                   show
-                  type="default"
                   placement="top-start"
                   arrow
                   size="small"
