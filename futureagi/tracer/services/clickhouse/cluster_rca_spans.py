@@ -16,7 +16,7 @@ on PG and migrate here when needed.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 import structlog
 
