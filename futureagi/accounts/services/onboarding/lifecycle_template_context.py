@@ -7,23 +7,16 @@ from django.conf import settings
 from django.template.loader import render_to_string
 from django.utils.html import strip_tags
 
+from accounts.services.onboarding.lifecycle_template_contract import (
+    LIFECYCLE_CAMPAIGN_SUBJECTS,
+    TEMPLATE_PREFIX,
+)
 from accounts.services.onboarding.lifecycle_tokens import sign_lifecycle_token
 
-TEMPLATE_PREFIX = "onboarding_lifecycle"
 SUPPORT_URL = "/dashboard/settings/support"
 
 
-SUBJECTS = {
-    "welcome": "Pick the first FutureAGI setup path",
-    "recovery": "Continue your FutureAGI setup",
-    "sample": "Use a sample trace while you connect data",
-    "first_signal": "Your first trace is ready to review",
-    "prompt": "Continue your prompt quality loop",
-    "agent": "Continue your agent quality loop",
-    "gateway": "Continue your gateway request loop",
-    "next_loop": "Turn the trace review into coverage",
-    "activation_success": "Review today's AI quality signal",
-}
+SUBJECTS = LIFECYCLE_CAMPAIGN_SUBJECTS
 
 
 def _base_url():

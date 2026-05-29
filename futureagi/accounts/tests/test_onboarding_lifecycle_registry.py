@@ -10,6 +10,10 @@ from accounts.services.onboarding.lifecycle_registry import (
     get_lifecycle_registry_config,
     lifecycle_campaigns,
 )
+from accounts.services.onboarding.lifecycle_template_contract import (
+    SUPPORTED_LIFECYCLE_TEMPLATE_KEYS,
+    template_file_path,
+)
 
 
 def _valid_lifecycle_config():
@@ -111,3 +115,40 @@ def test_lifecycle_registry_rejects_unsupported_campaign_feature_flags():
 
     with pytest.raises(ImproperlyConfigured):
         _validate_config(config)
+
+
+def test_lifecycle_registry_rejects_unknown_template_key():
+    config = _valid_lifecycle_config()
+    campaign = _campaign(config, "prompt_create_first")
+    campaign["template_key"] = "prompt_create_missing_v1"
+
+    with pytest.raises(ImproperlyConfigured):
+        _validate_config(config)
+
+
+def test_lifecycle_registry_rejects_campaign_group_without_subject():
+    config = _valid_lifecycle_config()
+    campaign = _campaign(config, "prompt_create_first")
+    campaign["campaign_group"] = "unknown_group"
+
+    with pytest.raises(ImproperlyConfigured):
+        _validate_config(config)
+
+
+def test_lifecycle_registry_rejects_digest_template_without_preview_requirement():
+    config = _valid_lifecycle_config()
+    campaign = _campaign(config, "daily_quality_open_actions")
+    campaign.pop("requires_digest_preview", None)
+
+    with pytest.raises(ImproperlyConfigured):
+        _validate_config(config)
+
+
+def test_lifecycle_template_contract_files_exist():
+    missing = [
+        template_key
+        for template_key in SUPPORTED_LIFECYCLE_TEMPLATE_KEYS
+        if not template_file_path(template_key).is_file()
+    ]
+
+    assert missing == []

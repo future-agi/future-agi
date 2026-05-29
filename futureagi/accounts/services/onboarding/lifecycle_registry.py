@@ -14,6 +14,9 @@ from accounts.services.onboarding.feature_flag_contract import (
     SUPPORTED_ONBOARDING_FLAG_NAMES,
 )
 from accounts.services.onboarding.flow_config import get_activation_flow_config
+from accounts.services.onboarding.lifecycle_template_contract import (
+    lifecycle_template_contract_errors,
+)
 
 CONFIG_PATH = Path(__file__).with_name("lifecycle_campaigns.yml")
 
@@ -113,6 +116,8 @@ def _validate_campaign(campaign: dict, path: str, activation_config: dict) -> No
         raise _config_error(f"{path}.template_key must include a version suffix.")
     _required_text(campaign, "template_version", path)
     _required_text(campaign, "campaign_group", path)
+    for error in lifecycle_template_contract_errors(campaign):
+        raise _config_error(f"{path}.{error}")
     primary_path = _required_text(campaign, "primary_path", path)
     configured_paths = set(activation_config["paths"])
     if primary_path not in configured_paths and primary_path != "any":

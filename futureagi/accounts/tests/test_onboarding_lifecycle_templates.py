@@ -14,6 +14,9 @@ from accounts.services.onboarding.lifecycle_registry import (
 from accounts.services.onboarding.lifecycle_template_context import (
     render_lifecycle_email_preview,
 )
+from accounts.services.onboarding.lifecycle_template_contract import (
+    required_context_keys_for_template,
+)
 
 CAMPAIGN_KEYS = tuple(campaign["campaign_key"] for campaign in lifecycle_campaigns())
 
@@ -120,6 +123,9 @@ def test_lifecycle_email_template_renders_for_campaign(
     assert preview["subject"]
     assert (
         preview["template"] == f"onboarding_lifecycle/{campaign['template_key']}.html"
+    )
+    assert required_context_keys_for_template(campaign["template_key"]) <= set(
+        preview["context"]
     )
     assert "FutureAGI onboarding" in preview["html"]
     assert preview["context"]["primary_action_url"] in preview["html"]
