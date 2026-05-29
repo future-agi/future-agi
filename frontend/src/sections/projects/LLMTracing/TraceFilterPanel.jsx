@@ -242,12 +242,14 @@ const normalizeFieldType = (rawType) => {
   return "string";
 };
 
-const isValidNumericInput = (v) => {
+export const isValidNumericInput = (v) => {
   if (v === "" || v === undefined || v === null) return true;
   return /^-?\d*\.?\d*$/.test(String(v));
 };
 
-const isCompleteNumericValue = (v) => {
+// Empty values pass — handleApply already drops empty rows before submit,
+// so this only guards against partial inputs like "-" or "1.5.6" leaking through.
+export const isCompleteNumericValue = (v) => {
   if (v === "" || v === undefined || v === null) return true;
   const str = String(v).trim();
   if (!/^-?(\d+\.?\d*|\.\d+)$/.test(str)) return false;
@@ -1223,6 +1225,12 @@ function FilterRow({
       ? freeSoloValues(filter)
       : freeSoloValues;
 
+  const rowHasInvalidNumeric =
+    isNumber &&
+    (Array.isArray(filter.value)
+      ? filter.value.some((v) => !isValidNumericInput(v))
+      : !isValidNumericInput(filter.value));
+
   const handlePropertySelect = useCallback(
     (prop) => {
       // Preserve custom annotation types (categorical, thumbs, text) —
@@ -1527,7 +1535,12 @@ function FilterRow({
       direction="row"
       alignItems="center"
       gap={0.5}
-      sx={{ width: "100%", minWidth: 0, flexWrap: "wrap" }}
+      sx={{
+        width: "100%",
+        minWidth: 0,
+        flexWrap: "wrap",
+        mb: rowHasInvalidNumeric ? 1.5 : 0,
+      }}
     >
       <CustomTooltip
         show={!!selectedProp?.name}
@@ -1830,17 +1843,13 @@ const TraceFilterPanel = ({
     setRows((prev) => prev.map((r, i) => (i === idx ? updated : r)));
   }, []);
 
-  const hasInvalidNumericRow = useMemo(
-    () =>
-      rows.some((r) => {
-        if (normalizeFieldType(r.fieldType) !== "number") return false;
-        if (Array.isArray(r.value)) {
-          return r.value.some((v) => !isCompleteNumericValue(v));
-        }
-        return !isCompleteNumericValue(r.value);
-      }),
-    [rows],
-  );
+  const hasInvalidNumericRow = rows.some((r) => {
+    if (normalizeFieldType(r.fieldType) !== "number") return false;
+    if (Array.isArray(r.value)) {
+      return r.value.some((v) => !isCompleteNumericValue(v));
+    }
+    return !isCompleteNumericValue(r.value);
+  });
 
   const handleRemove = useCallback(
     (idx) => {
