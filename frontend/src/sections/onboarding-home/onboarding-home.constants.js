@@ -191,6 +191,59 @@ export const ONBOARDING_STAGE_COPY = {
     title: "Add a gateway policy",
     description: "Add a policy that keeps the request path controlled.",
   },
+  create_eval_dataset: {
+    eyebrow: "Eval",
+    title: "Create the eval source",
+    description:
+      "Add a focused dataset or trace source before adding a scorer.",
+  },
+  add_eval_scorer: {
+    eyebrow: "Eval scorer",
+    title: "Add the eval scorer",
+    description: "Define the quality signal before running the first eval.",
+  },
+  run_eval: {
+    eyebrow: "Eval run",
+    title: "Run the first eval",
+    description: "Run the eval once so the first result is reviewable.",
+  },
+  review_eval_failures: {
+    eyebrow: "Eval review",
+    title: "Review eval failures",
+    description: "Inspect the first failed result and decide the next fix.",
+  },
+  eval_next_loop: {
+    eyebrow: "Eval loop",
+    title: "Improve from the eval result",
+    description: "Turn the reviewed failure into the next quality-loop change.",
+  },
+  create_voice_agent: {
+    eyebrow: "Voice",
+    title: "Create a voice agent",
+    description:
+      "Create or connect one voice agent before running a test call.",
+  },
+  run_voice_test_call: {
+    eyebrow: "Voice test call",
+    title: "Run a voice test call",
+    description: "Run one call so the transcript and outcome are reviewable.",
+  },
+  review_voice_call: {
+    eyebrow: "Voice call",
+    title: "Review the voice call",
+    description:
+      "Inspect the call transcript and find the first quality signal.",
+  },
+  add_voice_success_criteria: {
+    eyebrow: "Voice criteria",
+    title: "Add voice success criteria",
+    description: "Define what a good call should satisfy before monitoring.",
+  },
+  voice_monitor_calls: {
+    eyebrow: "Voice monitor",
+    title: "Monitor voice calls",
+    description: "Review live calls against the saved criteria.",
+  },
   connect_observability: {
     eyebrow: "Observe",
     title: "Connect observability",

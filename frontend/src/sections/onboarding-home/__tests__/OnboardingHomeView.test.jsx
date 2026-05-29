@@ -69,6 +69,100 @@ const normalizedFixture = (name) =>
 const renderView = (route = "/dashboard/home") =>
   renderWithRouter(<OnboardingHomeView />, { route });
 
+const pathAction = ({
+  completionEvent = null,
+  ctaLabel,
+  description,
+  href,
+  id,
+  kind = "setup",
+  routeAvailable = true,
+  targetPath,
+  title,
+}) => ({
+  id,
+  kind,
+  title,
+  description,
+  href,
+  ctaLabel,
+  estimatedMinutes: 3,
+  priority: 100,
+  blocked: false,
+  blockedReason: null,
+  requiresPermission: null,
+  completionEvent,
+  isSample: false,
+  routeAvailable,
+  fallbackHref: "/dashboard/get-started",
+  analytics: {
+    eventName: "onboarding_recommended_action_clicked",
+    source: "home",
+    targetPath,
+  },
+});
+
+const pathState = ({
+  action,
+  goal,
+  pathDescription,
+  pathLabel,
+  primaryPath,
+  stage,
+}) => {
+  const state = normalizedFixture("observeNoSetup");
+  const pathHref = `/dashboard/home?path=${primaryPath}`;
+
+  return {
+    ...state,
+    availablePaths: [
+      {
+        id: primaryPath,
+        label: pathLabel,
+        description: pathDescription,
+        status: "selected",
+        href: pathHref,
+        isAvailable: true,
+        blockedReason: null,
+        requiresPermission: null,
+        firstActionId: action.id,
+      },
+    ],
+    featureFlags: {
+      ...state.featureFlags,
+      [`onboarding_${primaryPath}_path`]: true,
+    },
+    goal,
+    primaryPath,
+    progress: {
+      build: "complete",
+      test: "selected",
+      observe: "not_started",
+      ship: "not_started",
+      improve: "not_started",
+    },
+    recommendedAction: action,
+    routeAvailability: {
+      ...state.routeAvailability,
+      [`path_${primaryPath}`]: {
+        href: pathHref,
+        isAvailable: true,
+        reason: null,
+      },
+      [action.id]: {
+        href: action.href,
+        isAvailable: action.routeAvailable,
+        reason: action.routeAvailable ? null : "route_not_available",
+      },
+    },
+    sampleProject: {
+      ...state.sampleProject,
+      available: false,
+    },
+    stage,
+  };
+};
+
 describe("OnboardingHomeView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -775,6 +869,111 @@ describe("OnboardingHomeView", () => {
     ).toHaveAttribute("href", "/dashboard/gateway?onboarding=test-request");
     expect(screen.getByText("Selected path")).toBeVisible();
     expect(screen.getAllByText("gateway").length).toBeGreaterThan(0);
+  });
+
+  it("renders eval onboarding with path-specific hero and focused panel copy", () => {
+    const href = "/dashboard/evaluations/create?source=onboarding&step=run";
+    mocks.useActivationState.mockReturnValue({
+      state: pathState({
+        action: pathAction({
+          id: "run_eval",
+          kind: "test",
+          title: "Run eval",
+          description: "Run the first eval and review the result.",
+          href,
+          ctaLabel: "Run eval",
+          completionEvent: "eval_run_completed",
+          targetPath: "evals",
+        }),
+        goal: "evaluate_quality",
+        pathDescription: "Create a small eval and review the first failure.",
+        pathLabel: "Evaluate quality",
+        primaryPath: "evals",
+        stage: "run_eval",
+      }),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("path-focus-panel-evals");
+    const cta = within(panel).getByRole("link", { name: /run eval/i });
+    expect(screen.getByText("Eval run")).toBeVisible();
+    expect(screen.getByText("Run the first eval")).toBeVisible();
+    expect(
+      screen.getByText("Run the eval once so the first result is reviewable."),
+    ).toBeVisible();
+    expect(within(panel).getByText("Eval loop")).toBeVisible();
+    expect(
+      within(panel).getByText("Create one eval and review the first failure"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "Add a small dataset, attach a scorer, run the eval, and inspect what failed.",
+      ),
+    ).toBeVisible();
+    expect(within(panel).getByText("Run eval: run eval")).toBeVisible();
+    expect(screen.queryByText("Open Get Started")).not.toBeInTheDocument();
+    expect(cta).toHaveAttribute("href", href);
+    expect(cta.getAttribute("href")).not.toMatch(/^\/\//);
+  });
+
+  it("renders voice onboarding with path-specific hero and disabled unavailable CTA", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: pathState({
+        action: pathAction({
+          id: "review_voice_call",
+          kind: "review",
+          title: "Review call",
+          description: "Review the transcript and call outcome.",
+          href: "/dashboard/simulate/test/voice-test-1/run/execution-1?onboarding=review-voice-call",
+          ctaLabel: "Review call",
+          routeAvailable: false,
+          targetPath: "voice",
+        }),
+        goal: "connect_voice_ai_agent",
+        pathDescription: "Run or review a call with clear success criteria.",
+        pathLabel: "Connect a voice AI agent",
+        primaryPath: "voice",
+        stage: "review_voice_call",
+      }),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("path-focus-panel-voice");
+    const cta = within(panel).getByRole("button", { name: /review call/i });
+    expect(screen.getByText("Voice call")).toBeVisible();
+    expect(screen.getByText("Review the voice call")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Inspect the call transcript and find the first quality signal.",
+      ),
+    ).toBeVisible();
+    expect(within(panel).getByText("Voice loop")).toBeVisible();
+    expect(
+      within(panel).getByText("Connect a voice agent quality loop"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "Create or connect a voice agent, run one call, review it, and add success criteria.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText("Review call: review voice call"),
+    ).toBeVisible();
+    expect(screen.queryByText("Open Get Started")).not.toBeInTheDocument();
+    expect(cta).toBeDisabled();
+    expect(cta).not.toHaveAttribute("href");
   });
 
   it("saves a selected goal through the goal mutation", async () => {
