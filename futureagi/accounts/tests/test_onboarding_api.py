@@ -46,7 +46,16 @@ def test_self_host_defaults_enable_core_onboarding_flags(
     assert flags["onboarding_goal_picker"] is True
     assert flags["onboarding_path_cards"] is True
     assert flags["onboarding_sample_project"] is True
+    assert flags["onboarding_prompt_path"] is True
+    assert flags["onboarding_prompt_route_modes"] is True
+    assert flags["onboarding_agent_path"] is True
+    assert flags["onboarding_agent_route_modes"] is True
+    assert flags["onboarding_gateway_path"] is True
+    assert flags["onboarding_gateway_route_modes"] is True
     assert flags["onboarding_eval_path"] is True
+    assert flags["onboarding_eval_route_modes"] is True
+    assert flags["onboarding_voice_path"] is True
+    assert flags["onboarding_voice_route_modes"] is True
     assert flags["onboarding_lifecycle_send_enabled"] is False
 
 
@@ -73,7 +82,11 @@ def test_cloud_defaults_keep_core_first_run_onboarding_enabled(
     assert flags["onboarding_goal_picker"] is True
     assert flags["onboarding_path_cards"] is True
     assert flags["onboarding_observe_route_modes"] is True
+    assert flags["onboarding_prompt_path"] is True
+    assert flags["onboarding_agent_path"] is True
+    assert flags["onboarding_gateway_path"] is True
     assert flags["onboarding_eval_path"] is True
+    assert flags["onboarding_voice_path"] is True
     assert flags["onboarding_lifecycle_send_enabled"] is False
 
 
@@ -92,7 +105,6 @@ def test_cloud_flags_fetch_optional_onboarding_flags_in_one_batch(
         captured["user_id"] = str(user_id)
         captured["groups"] = groups
         return {
-            "onboarding_prompt_path": True,
             "onboarding_email_prompt_enabled": True,
         }
 
@@ -112,12 +124,49 @@ def test_cloud_flags_fetch_optional_onboarding_flags_in_one_batch(
     assert flags["onboarding_email_prompt_enabled"] is True
     assert "onboarding_activation_state_api" not in captured["flag_names"]
     assert "onboarding_sample_project" not in captured["flag_names"]
-    assert "onboarding_prompt_path" in captured["flag_names"]
+    assert "onboarding_prompt_path" not in captured["flag_names"]
+    assert "onboarding_agent_path" not in captured["flag_names"]
+    assert "onboarding_gateway_path" not in captured["flag_names"]
+    assert "onboarding_eval_path" not in captured["flag_names"]
+    assert "onboarding_voice_path" not in captured["flag_names"]
+    assert "onboarding_email_prompt_enabled" in captured["flag_names"]
     assert captured["user_id"] == str(user.id)
     assert captured["groups"] == {
         "organization": str(organization.id),
         "workspace": str(workspace.id),
     }
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("goal", "expected_stage"),
+    [
+        ("monitor_production_ai_app", "connect_observability"),
+        ("improve_prompts", "start_prompt"),
+        ("build_ai_agent", "create_agent"),
+        ("control_model_traffic", "configure_gateway_provider"),
+        ("evaluate_quality", "create_eval_dataset"),
+        ("connect_voice_ai_agent", "create_voice_agent"),
+        ("explore_sample_data", "open_sample_project"),
+    ],
+)
+@override_settings(CLOUD_DEPLOYMENT="")
+def test_self_host_goal_save_routes_each_product_loop_to_guidance(
+    auth_client,
+    goal,
+    expected_stage,
+):
+    response = auth_client.post(
+        "/accounts/onboarding/goal/",
+        {"goal": goal, "reason": "first_selection"},
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    payload = response.json()["result"]
+    assert payload["goal"] == goal
+    assert payload["stage"] == expected_stage
+    assert payload["stage"] != "selected_path_unavailable"
 
 
 @pytest.mark.django_db
@@ -347,7 +396,8 @@ def test_onboarding_goal_change_returns_new_path(
     payload = response.json()["result"]
     assert payload["goal"] == "improve_prompts"
     assert payload["primary_path"] == "prompt"
-    assert payload["stage"] == "selected_path_unavailable"
+    assert payload["stage"] == "start_prompt"
+    assert payload["recommended_action"]["id"] == "create_prompt"
     assert OnboardingActivationEvent.no_workspace_objects.filter(
         event_name="onboarding_goal_changed",
         workspace=workspace,

@@ -12,8 +12,16 @@ CORE_ONBOARDING_DEFAULTS = {
     "onboarding_path_cards": True,
     "onboarding_sample_project": True,
     "onboarding_observe_route_modes": True,
+    "onboarding_prompt_path": True,
+    "onboarding_prompt_route_modes": True,
+    "onboarding_agent_path": True,
+    "onboarding_agent_route_modes": True,
+    "onboarding_gateway_path": True,
+    "onboarding_gateway_route_modes": True,
     "onboarding_eval_path": True,
     "onboarding_eval_route_modes": True,
+    "onboarding_voice_path": True,
+    "onboarding_voice_route_modes": True,
 }
 
 SELF_HOST_ONBOARDING_DEFAULTS = CORE_ONBOARDING_DEFAULTS
