@@ -438,7 +438,7 @@ class TestClickHouseFilterBuilder:
         %(project_ids)s``, even for a single-element list. Earlier the
         single-element case fell through to ``project_id = %(project_id)s``
         which fails at execution because the outer query only binds
-        ``project_ids``. Regression guard for the Codex P1 finding.
+        ``project_ids``.
         """
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
@@ -2768,7 +2768,6 @@ class TestEvalMetricsQueryBuilder:
 
     def test_default_time_range(self):
         """When no start/end dates provided, should default to last 7 days."""
-        from datetime import datetime, timedelta
 
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
@@ -3161,7 +3160,7 @@ class TestBaseQueryBuilder:
 
     def test_parse_time_range_defaults(self):
         """Empty filters should default to a very wide window (10 years)."""
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 
@@ -3175,7 +3174,7 @@ class TestBaseQueryBuilder:
 
     def test_parse_time_range_ignores_non_date_filters(self):
         """parse_time_range should ignore filters on non-date columns."""
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 
@@ -5884,7 +5883,7 @@ class TestVoiceCallListQueryBuilderComprehensive:
 
     def test_build_uses_default_time_range_when_no_date_filter(self):
         """When no date filter, should default to a very wide window (10 years)."""
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         from tracer.services.clickhouse.query_builders.voice_call_list import (
             VoiceCallListQueryBuilder,
@@ -6199,9 +6198,9 @@ class TestVoiceCallListQueryBuilderComprehensive:
         # Each phone number is still recognised as a simulator call in Python.
         for phone in VAPI_PHONE_NUMBERS:
             span_attrs = {"raw_log": {"customer": {"number": phone}}}
-            assert VoiceCallListQueryBuilder.is_simulator_call(
-                span_attrs, "vapi"
-            ), f"Missing phone number: {phone}"
+            assert VoiceCallListQueryBuilder.is_simulator_call(span_attrs, "vapi"), (
+                f"Missing phone number: {phone}"
+            )
 
     def test_simulation_filter_uses_json_extract(self):
         """Simulation filtering is now Python-side against parsed raw_log.

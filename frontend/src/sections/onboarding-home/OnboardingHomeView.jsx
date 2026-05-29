@@ -30,6 +30,8 @@ import ObserveSetupPanel from "./components/ObserveSetupPanel";
 import OnboardingHomeError from "./components/OnboardingHomeError";
 import OnboardingHomeSkeleton from "./components/OnboardingHomeSkeleton";
 import PathCardGrid from "./components/PathCardGrid";
+import PathFocusPanel from "./components/PathFocusPanel";
+import { hasPathFocusPlan } from "./components/path-focus-plan";
 import ProductLoopStepper from "./components/ProductLoopStepper";
 import RecommendedActionCard from "./components/RecommendedActionCard";
 import SampleProjectPanel from "./components/SampleProjectPanel";
@@ -561,6 +563,17 @@ export default function OnboardingHomeView() {
       </>
     ) : null;
 
+  const pathFocusPanel =
+    renderedState.primaryPath !== "observe" &&
+    !["activated", "daily_review"].includes(renderedState.stage) &&
+    hasPathFocusPlan(renderedState.primaryPath) ? (
+      <PathFocusPanel
+        {...observePanelProps}
+        primaryPath={renderedState.primaryPath}
+        stage={renderedState.stage}
+      />
+    ) : null;
+
   const sampleProject = renderedState.sampleProject;
   const showSamplePanel =
     sampleProject?.available &&
@@ -661,6 +674,8 @@ export default function OnboardingHomeView() {
               />
             ) : null}
           </Stack>
+        ) : pathFocusPanel ? (
+          <Stack spacing={2}>{pathFocusPanel}</Stack>
         ) : firstLoopCompletePanel ? (
           <Stack spacing={2}>{firstLoopCompletePanel}</Stack>
         ) : dailyQualityPanel ? (

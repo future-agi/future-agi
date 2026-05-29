@@ -38,7 +38,6 @@ from model_hub.utils.annotation_queue_helpers import (
     is_automation_rule_due,
 )
 from tfc.constants.roles import OrganizationRoles
-from tfc.middleware.workspace_context import set_workspace_context
 from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
 
 QUEUE_URL = "/model-hub/annotation-queues/"
@@ -244,10 +243,13 @@ class TestAutomationRulesE2E:
                 }
             return response
 
-        with patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync",
-            side_effect=_inline_run,
-        ), patch.object(APIClient, "post", _post):
+        with (
+            patch(
+                "tfc.temporal.drop_in.runner.start_activity_sync",
+                side_effect=_inline_run,
+            ),
+            patch.object(APIClient, "post", _post),
+        ):
             yield
 
     # -----------------------------------------------------------------------
@@ -259,9 +261,9 @@ class TestAutomationRulesE2E:
         """Create 3 traces, evaluate a rule with no conditions, assert all 3
         are added as queue items."""
         project = _create_project(organization, workspace)
-        t1 = _create_trace(project, name="trace-1")
-        t2 = _create_trace(project, name="trace-2")
-        t3 = _create_trace(project, name="trace-3")
+        _create_trace(project, name="trace-1")
+        _create_trace(project, name="trace-2")
+        _create_trace(project, name="trace-3")
 
         queue_id = _create_queue(auth_client, name="Trace Q1")
         # Scope queue to this project so we only pick up our traces
@@ -518,7 +520,7 @@ class TestAutomationRulesE2E:
     ):
         """Soft-deleted traces must NOT be matched by evaluate_rule."""
         project = _create_project(organization, workspace, name="Del Project")
-        t1 = _create_trace(project, name="alive-trace")
+        _create_trace(project, name="alive-trace")
         t2 = _create_trace(project, name="dead-trace")
 
         # Soft-delete t2
@@ -594,7 +596,6 @@ class TestAutomationRulesE2E:
         never saw truncation and every filter-mode rule fell to the sync
         path — even huge ones.
         """
-        from datetime import datetime as _dt
 
         from unittest.mock import patch as _patch
 
@@ -1260,8 +1261,8 @@ class TestAutomationRulesE2E:
         from tracer.models.trace_session import TraceSession
 
         project = _create_project(organization, workspace, name="Session Project")
-        s1 = TraceSession.objects.create(project=project, name="session-1")
-        s2 = TraceSession.objects.create(project=project, name="session-2")
+        TraceSession.objects.create(project=project, name="session-1")
+        TraceSession.objects.create(project=project, name="session-2")
 
         queue_id = _create_queue(auth_client, name="Session Q1")
         AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
@@ -1620,9 +1621,7 @@ class TestAutomationRulesE2E:
         )
 
         queue_id = _create_queue(auth_client, name="Simulation eval filter Q")
-        AnnotationQueue.objects.filter(pk=queue_id).update(
-            agent_definition=agent_def
-        )
+        AnnotationQueue.objects.filter(pk=queue_id).update(agent_definition=agent_def)
 
         resp = auth_client.post(
             _rules_url(queue_id),
@@ -1784,7 +1783,9 @@ class TestAutomationRulesE2E:
         from tracer.models.observation_span import EvalLogger, ObservationSpan
 
         project = _create_project(organization, workspace, name="Trace Filter Rule")
-        label = _create_label(organization, workspace, name="trace_rule_quality", label_type="numeric")
+        label = _create_label(
+            organization, workspace, name="trace_rule_quality", label_type="numeric"
+        )
         template = EvalTemplate.objects.create(
             name="trace_rule_eval",
             organization=organization,
@@ -2193,7 +2194,9 @@ class TestAutomationRulesE2E:
 
         project = _create_project(organization, workspace, name="Span Filter Rule")
         trace = _create_trace(project, "span-rule-trace")
-        label = _create_label(organization, workspace, name="span_rule_quality", label_type="numeric")
+        label = _create_label(
+            organization, workspace, name="span_rule_quality", label_type="numeric"
+        )
         match = ObservationSpan.objects.create(
             id=str(uuid.uuid4()),
             project=project,
@@ -2407,11 +2410,14 @@ class TestAutomationRulesE2E:
                 "workspace_id", flat=True
             )
         ) == {workspace.id}
-        assert QueueItem.objects.filter(
-            queue_id=queue_id,
-            trace__project=project2,
-            deleted=False,
-        ).count() == 0
+        assert (
+            QueueItem.objects.filter(
+                queue_id=queue_id,
+                trace__project=project2,
+                deleted=False,
+            ).count()
+            == 0
+        )
 
     def test_evaluate_rule_dataset_filter_scope_without_filter_rows(
         self, auth_client, organization, workspace
@@ -2451,11 +2457,14 @@ class TestAutomationRulesE2E:
         result = resp.data.get("result", resp.data)
         assert result["matched"] == 2
         assert result["added"] == 2
-        assert QueueItem.objects.filter(
-            queue_id=queue_id,
-            dataset_row__dataset=ds2,
-            deleted=False,
-        ).count() == 0
+        assert (
+            QueueItem.objects.filter(
+                queue_id=queue_id,
+                dataset_row__dataset=ds2,
+                deleted=False,
+            ).count()
+            == 0
+        )
 
     # -----------------------------------------------------------------------
     # 24. Scheduled frequency evaluator
@@ -2797,12 +2806,12 @@ class TestAutomationRulesE2E:
         )
 
         for source_type in SOURCE_MODEL_MAP:
-            assert (
-                source_type in FIELD_MAPPING
-            ), f"FIELD_MAPPING missing for source_type={source_type}"
-            assert (
-                len(FIELD_MAPPING[source_type]) > 0
-            ), f"FIELD_MAPPING for {source_type} is empty"
+            assert source_type in FIELD_MAPPING, (
+                f"FIELD_MAPPING missing for source_type={source_type}"
+            )
+            assert len(FIELD_MAPPING[source_type]) > 0, (
+                f"FIELD_MAPPING for {source_type} is empty"
+            )
 
     # -----------------------------------------------------------------------
     # 31. Queue scope is authoritative — rule scope can't redirect inserts
@@ -3107,6 +3116,7 @@ class TestAutomationRulesE2E:
         Two simultaneous evaluations of the same rule are expected to add
         each matching row exactly once and not raise IntegrityError."""
         from threading import Thread
+
         from django.db import close_old_connections
 
         from model_hub.models.annotation_queues import AutomationRule, QueueItem
@@ -3153,9 +3163,7 @@ class TestAutomationRulesE2E:
         # added (because the locked-out runs hit "all matching items already
         # in queue"). The DB must end up with exactly 5 distinct queue
         # items either way.
-        item_count = QueueItem.objects.filter(
-            queue_id=queue_id, deleted=False
-        ).count()
+        item_count = QueueItem.objects.filter(queue_id=queue_id, deleted=False).count()
         assert item_count == 5, (
             f"expected 5 queue items, got {item_count}; results={results}"
         )
@@ -3227,22 +3235,26 @@ class TestAutomationRulesE2E:
             agent_definition=agent_def,
         )
         CallExecution.objects.create(
-            test_execution=test_exec, scenario=scenario,
-            status="completed", simulation_call_type="voice",
+            test_execution=test_exec,
+            scenario=scenario,
+            status="completed",
+            simulation_call_type="voice",
         )
         CallExecution.objects.create(
-            test_execution=test_exec, scenario=scenario,
-            status="failed", simulation_call_type="voice",
+            test_execution=test_exec,
+            scenario=scenario,
+            status="failed",
+            simulation_call_type="voice",
         )
         CallExecution.objects.create(
-            test_execution=test_exec, scenario=scenario,
-            status="completed", simulation_call_type="text",
+            test_execution=test_exec,
+            scenario=scenario,
+            status="completed",
+            simulation_call_type="text",
         )
 
         queue_id = _create_queue(auth_client, name="Filter Q")
-        AnnotationQueue.objects.filter(pk=queue_id).update(
-            agent_definition=agent_def
-        )
+        AnnotationQueue.objects.filter(pk=queue_id).update(agent_definition=agent_def)
 
         resp = auth_client.post(
             _rules_url(queue_id),
@@ -3294,9 +3306,7 @@ class TestAutomationRulesE2E:
             languages=["en"],
         )
         queue_id = _create_queue(auth_client, name="Unsup Q")
-        AnnotationQueue.objects.filter(pk=queue_id).update(
-            agent_definition=agent_def
-        )
+        AnnotationQueue.objects.filter(pk=queue_id).update(agent_definition=agent_def)
 
         resp = auth_client.post(
             _rules_url(queue_id),
@@ -3372,13 +3382,16 @@ class TestAutomationRuleEvaluateAsyncContract:
         )
         rule_id = resp.data["id"]
 
-        with patch(
-            "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
-            0,
-        ), patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync",
-            return_value="wf-test-12345",
-        ) as mock_start:
+        with (
+            patch(
+                "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
+                0,
+            ),
+            patch(
+                "tfc.temporal.drop_in.runner.start_activity_sync",
+                return_value="wf-test-12345",
+            ) as mock_start,
+        ):
             resp = auth_client.post(
                 f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
                 format="json",
@@ -3394,9 +3407,7 @@ class TestAutomationRuleEvaluateAsyncContract:
         assert call_kwargs["activity_name"] == "evaluate_rule_manual_async"
         assert call_kwargs["queue"] == "tasks_l"
         assert call_kwargs["kwargs"]["rule_id"] == rule_id
-        assert call_kwargs["task_id"].startswith(
-            f"automation-rule-eval-{rule_id}-"
-        )
+        assert call_kwargs["task_id"].startswith(f"automation-rule-eval-{rule_id}-")
 
     def test_evaluate_small_run_returns_200_inline(
         self, auth_client, organization, workspace
@@ -3423,9 +3434,7 @@ class TestAutomationRuleEvaluateAsyncContract:
         )
         rule_id = resp.data["id"]
 
-        with patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync"
-        ) as mock_start:
+        with patch("tfc.temporal.drop_in.runner.start_activity_sync") as mock_start:
             resp = auth_client.post(
                 f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
                 format="json",
@@ -3533,8 +3542,7 @@ class TestAutomationRuleEvaluateAsyncContract:
         """For async runs, ``last_triggered_at`` must be bumped *before* the
         workflow is scheduled, not later inside the activity. Otherwise two
         clicks arriving within the worker's pickup window both pass the 30s
-        multi-click guard and spawn duplicate workflows/emails. Regression
-        guard for Codex P2 finding.
+        multi-click guard and spawn duplicate workflows/emails.
         """
         project = _create_project(organization, workspace, name="Reserve Project")
         _create_trace(project, name="reserve-trace")
@@ -3557,12 +3565,15 @@ class TestAutomationRuleEvaluateAsyncContract:
         rule_before = AutomationRule.objects.get(pk=rule_id)
         assert rule_before.last_triggered_at is None
 
-        with patch(
-            "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
-            0,
-        ), patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync",
-            return_value="wf-async",
+        with (
+            patch(
+                "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
+                0,
+            ),
+            patch(
+                "tfc.temporal.drop_in.runner.start_activity_sync",
+                return_value="wf-async",
+            ),
         ):
             resp = auth_client.post(
                 f"{_rule_detail_url(queue_id, rule_id)}evaluate/",
@@ -3599,12 +3610,15 @@ class TestAutomationRuleEvaluateAsyncContract:
         )
         rule_id = resp.data["id"]
 
-        with patch(
-            "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
-            0,
-        ), patch(
-            "tfc.temporal.drop_in.runner.start_activity_sync",
-            side_effect=RuntimeError("temporal unreachable"),
+        with (
+            patch(
+                "model_hub.utils.annotation_queue_helpers.RULE_RUN_SYNC_THRESHOLD",
+                0,
+            ),
+            patch(
+                "tfc.temporal.drop_in.runner.start_activity_sync",
+                side_effect=RuntimeError("temporal unreachable"),
+            ),
         ):
             resp = auth_client.post(
                 f"{_rule_detail_url(queue_id, rule_id)}evaluate/",

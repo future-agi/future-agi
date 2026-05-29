@@ -177,6 +177,37 @@ describe("OnboardingHomeView", () => {
     expect(screen.getByText("Connect one observe project")).toBeVisible();
   });
 
+  it("renders a focused setup panel for non-Observe product paths", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("promptNoPrompt"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("path-focus-panel-prompt");
+    expect(panel).toBeVisible();
+    expect(screen.queryByTestId("observe-setup-panel")).toBeNull();
+    expect(
+      within(panel).getByText("Build a prompt quality loop"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "Create one prompt, test it, save a baseline, and compare the next version.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /create prompt/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/workbench/all?source=onboarding&action=create-prompt",
+    );
+  });
+
   it("renders the post-aha screen after the first observe quality loop", () => {
     mocks.useActivationState.mockReturnValue({
       state: normalizedFixture("observeFirstLoopComplete"),
@@ -609,7 +640,7 @@ describe("OnboardingHomeView", () => {
     );
   });
 
-  it("renders prompt onboarding as one recommended prompt action", () => {
+  it("renders prompt onboarding as a focused prompt path panel", () => {
     mocks.useActivationState.mockReturnValue({
       state: normalizedFixture("promptCreatedNoRun"),
       isLoading: false,
@@ -621,11 +652,14 @@ describe("OnboardingHomeView", () => {
 
     renderView();
 
-    const primaryAction = screen.getByTestId("onboarding-primary-action");
+    const panel = screen.getByTestId("path-focus-panel-prompt");
     expect(screen.getByText("Run a prompt test")).toBeVisible();
-    expect(within(primaryAction).getByText("Run prompt test")).toBeVisible();
     expect(
-      within(primaryAction).getByRole("link", { name: /run test/i }),
+      within(panel).getByText("Build a prompt quality loop"),
+    ).toBeVisible();
+    expect(within(panel).getByText("Run test: run prompt test")).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /run test/i }),
     ).toHaveAttribute(
       "href",
       "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=run-test",
@@ -634,7 +668,7 @@ describe("OnboardingHomeView", () => {
     expect(screen.getAllByText("prompt").length).toBeGreaterThan(0);
   });
 
-  it("renders agent onboarding as one recommended agent action", () => {
+  it("renders agent onboarding as a focused agent path panel", () => {
     mocks.useActivationState.mockReturnValue({
       state: normalizedFixture("agentCreatedNoRun"),
       isLoading: false,
@@ -646,11 +680,16 @@ describe("OnboardingHomeView", () => {
 
     renderView();
 
-    const primaryAction = screen.getByTestId("onboarding-primary-action");
+    const panel = screen.getByTestId("path-focus-panel-agent");
     expect(screen.getByText("Run a scenario")).toBeVisible();
-    expect(within(primaryAction).getByText("Run one scenario")).toBeVisible();
     expect(
-      within(primaryAction).getByRole("link", { name: /run scenario/i }),
+      within(panel).getByText("Prototype an agent with a quality check"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText("Run scenario: run agent scenario"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /run scenario/i }),
     ).toHaveAttribute(
       "href",
       "/dashboard/agents/playground/agent-1/build?onboarding=run-scenario",
@@ -659,7 +698,7 @@ describe("OnboardingHomeView", () => {
     expect(screen.getAllByText("agent").length).toBeGreaterThan(0);
   });
 
-  it("renders gateway onboarding as one recommended gateway action", () => {
+  it("renders gateway onboarding as a focused gateway path panel", () => {
     mocks.useActivationState.mockReturnValue({
       state: normalizedFixture("gatewayKeyNoRequest"),
       isLoading: false,
@@ -671,13 +710,14 @@ describe("OnboardingHomeView", () => {
 
     renderView();
 
-    const primaryAction = screen.getByTestId("onboarding-primary-action");
+    const panel = screen.getByTestId("path-focus-panel-gateway");
     expect(screen.getByText("Run a gateway request")).toBeVisible();
+    expect(within(panel).getByText("Route one request safely")).toBeVisible();
     expect(
-      within(primaryAction).getByText("Send first gateway request"),
+      within(panel).getByText("Send request: run gateway request"),
     ).toBeVisible();
     expect(
-      within(primaryAction).getByRole("link", { name: /send request/i }),
+      within(panel).getByRole("link", { name: /send request/i }),
     ).toHaveAttribute("href", "/dashboard/gateway?onboarding=test-request");
     expect(screen.getByText("Selected path")).toBeVisible();
     expect(screen.getAllByText("gateway").length).toBeGreaterThan(0);

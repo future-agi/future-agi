@@ -7,24 +7,24 @@ Branch: `dev`.
 
 ## What shipped in this pass
 
-| Item | Files | Status |
-|---|---|---|
-| P0 #1 — Score side-effects use `transaction.on_commit` | `model_hub/views/scores.py` (+`_safe_*` wrappers) | ✅ Shipped + 2 regression tests |
-| P0 #2 — BulkAnnotationView "cartesian" | `tracer/views/annotation.py:497` | DOWNGRADED — verified perf-only, not correctness; deferred |
-| P0 #3 — InlineAnnotator inspect `errors[]` | `src/api/scores/scores.js`, `src/components/InlineAnnotator/InlineAnnotator.jsx` | ✅ Shipped + 1 regression test |
-| P0 #4 — AG Grid refresh after inline save | `LLMTracingTraceDetailDrawer.jsx`, `TraceDetailDrawerV2.jsx` | ✅ Shipped (trace-grid path; other drawer surfaces follow same pattern) |
-| P1 #5/6/7 — permission boundaries | (verified already-protected) | ✅ Verified — no code changes needed; cross-org tests added |
-| P2 #8 — annotate form reset on item change | `label-panel.jsx` | ✅ Shipped |
-| P2 #9 — surface submit/next errors | `annotate-workspace-view.jsx` | ✅ Shipped |
-| P2 #11 — `?include_archived=true` on labels | `develop_annotations.py:50` | ✅ Shipped |
-| P2 #10 — React `shrink:true` console flood | (5 hook-form files) | DEFERRED — needs MUI investigation |
-| P2 #12 — falsy `0/False/""` rejection | (legacy `Annotations` view) | SKIPPED — deprecation track |
-| P3 #13 — submit→next-item round-trip | new test in `test_annotation_e2e_gaps.py` | ✅ Shipped |
-| P3 #14 — CH-unavailable fallback test | (defer — needs CH service) | DEFERRED |
-| Phase 1 — migrate legacy readers | `tracer/utils/helper.py`, `tracer/views/project_version.py`, `ai_tools/tools/tracing/list_trace_scores.py` | ✅ Shipped |
-| Phase 2 — delete dual-write | 4 files, 5 call sites, 4 imports + Team A test updates | ✅ Shipped |
-| Phase 3 — drop legacy schema | (irreversible) | ⏸ DEFERRED — needs migration window |
-| Phase 4 — delete legacy model code | (post Phase 3) | ⏸ DEFERRED |
+| Item                                                   | Files                                                                                                      | Status                                                                  |
+| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| P0 #1 — Score side-effects use `transaction.on_commit` | `model_hub/views/scores.py` (+`_safe_*` wrappers)                                                          | ✅ Shipped + 2 regression tests                                         |
+| P0 #2 — BulkAnnotationView "cartesian"                 | `tracer/views/annotation.py:497`                                                                           | DOWNGRADED — verified perf-only, not correctness; deferred              |
+| P0 #3 — InlineAnnotator inspect `errors[]`             | `src/api/scores/scores.js`, `src/components/InlineAnnotator/InlineAnnotator.jsx`                           | ✅ Shipped + 1 regression test                                          |
+| P0 #4 — AG Grid refresh after inline save              | `LLMTracingTraceDetailDrawer.jsx`, `TraceDetailDrawerV2.jsx`                                               | ✅ Shipped (trace-grid path; other drawer surfaces follow same pattern) |
+| P1 #5/6/7 — permission boundaries                      | (verified already-protected)                                                                               | ✅ Verified — no code changes needed; cross-org tests added             |
+| P2 #8 — annotate form reset on item change             | `label-panel.jsx`                                                                                          | ✅ Shipped                                                              |
+| P2 #9 — surface submit/next errors                     | `annotate-workspace-view.jsx`                                                                              | ✅ Shipped                                                              |
+| P2 #11 — `?include_archived=true` on labels            | `develop_annotations.py:50`                                                                                | ✅ Shipped                                                              |
+| P2 #10 — React `shrink:true` console flood             | (5 hook-form files)                                                                                        | DEFERRED — needs MUI investigation                                      |
+| P2 #12 — falsy `0/False/""` rejection                  | (legacy `Annotations` view)                                                                                | SKIPPED — deprecation track                                             |
+| P3 #13 — submit→next-item round-trip                   | new test in `test_annotation_e2e_gaps.py`                                                                  | ✅ Shipped                                                              |
+| P3 #14 — CH-unavailable fallback test                  | (defer — needs CH service)                                                                                 | DEFERRED                                                                |
+| Phase 1 — migrate legacy readers                       | `tracer/utils/helper.py`, `tracer/views/project_version.py`, `ai_tools/tools/tracing/list_trace_scores.py` | ✅ Shipped                                                              |
+| Phase 2 — delete dual-write                            | 4 files, 5 call sites, 4 imports + Team A test updates                                                     | ✅ Shipped                                                              |
+| Phase 3 — drop legacy schema                           | (irreversible)                                                                                             | ⏸ DEFERRED — needs migration window                                    |
+| Phase 4 — delete legacy model code                     | (post Phase 3)                                                                                             | ⏸ DEFERRED                                                             |
 
 **Test counts:** 135 passed, 1 skipped (NLTK env), 0 failed. New tests added in this pass: 5.
 
@@ -57,8 +57,7 @@ and lays out a 4-phase deprecation roadmap for the legacy surface.
 - Team C broken-URL diagnosis (no bug; user expected unified read)
 - Team D Puppeteer browser sweep (27/30 flows, 5 new bugs)
 - My follow-up: Score-only annotation-summary rewrite + 21 e2e tests
-- Codex second-opinion (model: gpt-5.5, xhigh reasoning) on summary fix +
-  test priorities
+- Independent second-opinion review on summary fix and test priorities
 
 ## Sprint 1 — P0 unified-flow correctness
 
@@ -84,6 +83,7 @@ already saved (correct), and the failure is logged + re-tried via Celery /
 flagged for follow-up rather than dirtying the request transaction.
 
 **Tests:**
+
 - Concurrent Score POST when auto-create raises → Score still committed, error
   logged, response 200, no `TransactionManagementError` in subsequent calls.
 - Successful path → Score + QueueItem both present after request returns.
@@ -110,6 +110,7 @@ membership-check the tuple per record. Drop the cartesian filter.
 ### P0 #3 — InlineAnnotator inspect response `errors[]`
 
 **Files:**
+
 - Backend: `model_hub/views/scores.py` `bulk_create` action — confirm response
   includes per-label `errors[]` array with the failing label and reason.
 - Frontend: `src/api/scores/scores.js:114` (`useBulkCreateScores.onSuccess`)
@@ -301,6 +302,7 @@ Verify all tests still pass.
 ## Phase 3 — Drop legacy schema
 
 Single Django migration that drops:
+
 - `tracer_traceannotation` (and its indexes)
 - `model_hub_itemannotation`
 - `model_hub_annotations`, `model_hub_annotations_columns`,
@@ -315,6 +317,7 @@ zero rows in those tables across all envs before applying.
 ## Phase 4 — Remove legacy code
 
 Delete:
+
 - `tracer/models/trace_annotation.py`
 - `model_hub/models/develop_annotations.py:Annotations` model + serializer +
   view + URL route
@@ -346,17 +349,17 @@ Audit imports across the codebase to make sure nothing dangles.
 
 ## Effort estimates
 
-| Sprint / Phase | Days |
-|---|---|
-| Sprint 1 (P0 #1-4) | 3-4 |
-| Sprint 2 (P1 #5-7) | 2-3 |
-| Sprint 2b (P2 #8-12) | 1-2 |
-| Sprint 3 (P3 #13-14) | 0.5 |
-| Phase 1 (migrate readers) | 1-2 |
-| Phase 2 (delete dual-write) | 0.5 |
-| Phase 3 (schema drop) | 1 |
-| Phase 4 (remove code) | 0.5 |
-| **Total** | **9-13.5 days** |
+| Sprint / Phase              | Days            |
+| --------------------------- | --------------- |
+| Sprint 1 (P0 #1-4)          | 3-4             |
+| Sprint 2 (P1 #5-7)          | 2-3             |
+| Sprint 2b (P2 #8-12)        | 1-2             |
+| Sprint 3 (P3 #13-14)        | 0.5             |
+| Phase 1 (migrate readers)   | 1-2             |
+| Phase 2 (delete dual-write) | 0.5             |
+| Phase 3 (schema drop)       | 1               |
+| Phase 4 (remove code)       | 0.5             |
+| **Total**                   | **9-13.5 days** |
 
 ## Out of scope
 
