@@ -5,7 +5,7 @@ Regression tests for the per-attachment ``rule_prompt`` override in
 The override (``runtime_config['rule_prompt']`` from CustomEvalConfig.config /
 UserEvalMetric.config) must win over the template default. Critically it must be
 applied AFTER the function-eval ``config`` reassignments, otherwise a
-``function_eval`` template silently discards the customer's prompt.
+``function_eval`` template silently discards the saved per-attachment override.
 
 These exercise the real ``create_eval_instance`` (DB-touching helpers stubbed),
 so they fail if the override is ever moved back above the reassignment.
