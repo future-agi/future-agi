@@ -88,6 +88,9 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
 
             serializer.validated_data["mapping"] = mapping
             custom_eval_config = serializer.save()
+            # Reuse the already-fetched template so is_rule_prompt_customized
+            # doesn't fire an extra FK query for the response.
+            custom_eval_config.eval_template = eval_template
 
             return self._gm.success_response(
                 {
@@ -107,7 +110,9 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
         try:
             custom_eval_config_id = kwargs.get("pk")
             try:
-                custom_eval_config = CustomEvalConfig.objects.get(
+                custom_eval_config = CustomEvalConfig.objects.select_related(
+                    "eval_template"
+                ).get(
                     id=custom_eval_config_id,
                     project__organization=getattr(request, "organization", None)
                     or request.user.organization,

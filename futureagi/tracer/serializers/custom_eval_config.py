@@ -11,18 +11,27 @@ def is_rule_prompt_customized(custom_eval_config):
     """Return True when CustomEvalConfig.config.rule_prompt overrides the eval template default.
 
     Empty / whitespace-only overrides are treated as not-customized so the runtime falls back to
-    the template. Comparison against both `eval_template.config.rule_prompt` and
-    `eval_template.criteria` (the deterministic-eval slot) so saved-without-edit attachments
-    don't trip the flag.
+    the template. The saved value is compared against every slot the template default can live in:
+      - ``eval_template.config.rule_prompt`` (top level)
+      - ``eval_template.config.config.rule_prompt`` (nested — function_eval templates reassign
+        config to this dict in engine/instance.py)
+      - ``eval_template.criteria`` (the deterministic-eval slot)
+    so a saved-without-edit attachment doesn't trip the flag regardless of eval type.
     """
     config = getattr(custom_eval_config, "config", None) or {}
     saved = (config.get("rule_prompt") or "").strip()
     if not saved:
         return False
     tpl = custom_eval_config.eval_template
-    tpl_prompt = ((tpl.config or {}).get("rule_prompt") or "").strip()
-    tpl_criteria = (tpl.criteria or "").strip()
-    return saved != tpl_prompt and saved != tpl_criteria
+    tpl_config = tpl.config or {}
+    nested = tpl_config.get("config")
+    nested = nested if isinstance(nested, dict) else {}
+    template_defaults = {
+        (tpl_config.get("rule_prompt") or "").strip(),
+        (nested.get("rule_prompt") or "").strip(),
+        (tpl.criteria or "").strip(),
+    }
+    return saved not in template_defaults
 
 
 class CustomEvalConfigSerializer(serializers.ModelSerializer):
