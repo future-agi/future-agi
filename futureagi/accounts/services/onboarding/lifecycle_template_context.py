@@ -146,6 +146,17 @@ def _label_from_action(action_id, campaign_group):
         "gateway_add_policy": "Add control",
         "open_gateway_logs": "Open logs",
         "open_gateway_overview": "Open gateway",
+        "create_eval_dataset": "Add eval source",
+        "add_eval_scorer": "Add scorer",
+        "run_eval": "Run eval",
+        "review_eval_failures": "Review result",
+        "fix_eval_source": "Fix source",
+        "open_eval_usage": "Open eval results",
+        "create_voice_agent": "Create voice agent",
+        "run_voice_test_call": "Run test call",
+        "review_voice_call": "Review call",
+        "add_voice_success_criteria": "Add criteria",
+        "voice_monitor_calls": "Monitor calls",
         "review_daily_quality": "Review quality signal",
     }
     if action_id in labels:

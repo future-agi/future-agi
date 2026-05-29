@@ -14,12 +14,14 @@ SUPPORTED_LIFECYCLE_CAMPAIGN_GROUPS = frozenset(
     {
         "activation_success",
         "agent",
+        "eval",
         "first_signal",
         "gateway",
         "next_loop",
         "prompt",
         "recovery",
         "sample",
+        "voice",
         "welcome",
     }
 )
@@ -33,6 +35,11 @@ SUPPORTED_LIFECYCLE_TEMPLATE_KEYS = frozenset(
         "agent_sample_bridge_v1",
         "agent_save_scenario_v1",
         "daily_quality_open_actions_v1",
+        "eval_add_scorer_v1",
+        "eval_create_source_v1",
+        "eval_fix_source_v1",
+        "eval_review_failures_v1",
+        "eval_run_first_v1",
         "first_loop_complete_next_v1",
         "gateway_add_policy_v1",
         "gateway_add_provider_v1",
@@ -51,6 +58,10 @@ SUPPORTED_LIFECYCLE_TEMPLATE_KEYS = frozenset(
         "prompt_create_first_v1",
         "prompt_run_first_test_v1",
         "prompt_save_baseline_v1",
+        "voice_add_success_criteria_v1",
+        "voice_create_agent_v1",
+        "voice_review_call_v1",
+        "voice_run_test_call_v1",
         "welcome_choose_goal_v1",
         "welcome_resume_goal_v1",
     }

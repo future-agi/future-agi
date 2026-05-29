@@ -470,6 +470,8 @@ def _preference_suppression(evaluation_log, now, campaign):
             "prompt": "first_action_recovery_enabled",
             "agent": "first_action_recovery_enabled",
             "gateway": "first_action_recovery_enabled",
+            "eval": "first_action_recovery_enabled",
+            "voice": "first_action_recovery_enabled",
             "next_loop": "next_loop_enabled",
             "activation_success": "daily_digest_enabled",
         }.get(campaign.get("campaign_group") if campaign else None)

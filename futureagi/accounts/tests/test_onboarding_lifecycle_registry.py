@@ -46,8 +46,12 @@ def test_lifecycle_campaign_registry_is_editable_and_valid():
         "prompt_add_failure_example",
         "agent_create_first",
         "agent_create_eval",
+        "eval_create_source",
+        "eval_fix_source",
         "gateway_add_provider",
         "gateway_add_policy",
+        "voice_create_agent",
+        "voice_add_success_criteria",
         "daily_quality_open_actions",
     }.issubset(set(keys))
 
@@ -56,6 +60,8 @@ def test_lifecycle_campaign_registry_is_editable_and_valid():
     assert group_counts["prompt"] >= 5
     assert group_counts["agent"] >= 5
     assert group_counts["gateway"] >= 6
+    assert group_counts["eval"] >= 5
+    assert group_counts["voice"] >= 4
     assert group_counts["recovery"] >= 2
     assert group_counts["activation_success"] >= 2
 
@@ -90,6 +96,29 @@ def test_prompt_campaigns_are_configured_as_real_only():
         assert campaign["sample_policy"] == "real_only"
         assert campaign["route_strategy"] == "activation_recommendation"
         assert campaign["dry_run_flag"] == "onboarding_email_prompt_enabled"
+
+    assert len({campaign["email_subject"] for campaign in campaigns}) == len(campaigns)
+
+
+def test_eval_and_voice_campaigns_are_configured_as_real_only():
+    campaigns = [
+        campaign
+        for campaign in lifecycle_campaigns()
+        if campaign["campaign_group"] in {"eval", "voice"}
+    ]
+
+    assert len(campaigns) == 9
+    assert {campaign["primary_path"] for campaign in campaigns} == {
+        "evals",
+        "voice",
+    }
+    for campaign in campaigns:
+        assert campaign["sample_policy"] == "real_only"
+        assert campaign["send_flag"] == "onboarding_lifecycle_send_enabled"
+        assert campaign["dry_run_flag"] in {
+            "onboarding_email_eval",
+            "onboarding_email_voice",
+        }
 
     assert len({campaign["email_subject"] for campaign in campaigns}) == len(campaigns)
 

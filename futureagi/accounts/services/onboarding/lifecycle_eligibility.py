@@ -280,6 +280,85 @@ def _first_gateway_request_created_at(activation_state, organization, workspace)
     )
 
 
+def _first_eval_source_created_at(activation_state, workspace):
+    eval_state = activation_state.get("eval") or {}
+    source_id = eval_state.get("source_id") or (
+        activation_state.get("signals") or {}
+    ).get("eval_source_id")
+    source_type = eval_state.get("source_type") or (
+        activation_state.get("signals") or {}
+    ).get("eval_source_type")
+    if not source_id:
+        return None
+    if source_type == "dataset":
+        from model_hub.models.develop_dataset import Dataset
+
+        source = Dataset.no_workspace_objects.filter(
+            id=source_id,
+            workspace=workspace,
+        ).first()
+    elif source_type == "trace_project":
+        source = Project.no_workspace_objects.filter(
+            id=source_id,
+            workspace=workspace,
+        ).first()
+    else:
+        source = None
+    return getattr(source, "created_at", None) if source else None
+
+
+def _first_eval_scorer_created_at(activation_state, organization, workspace):
+    eval_state = activation_state.get("eval") or {}
+    scorer_id = eval_state.get("scorer_id") or (
+        activation_state.get("signals") or {}
+    ).get("eval_scorer_id")
+    scorer_template_id = eval_state.get("scorer_template_id") or (
+        activation_state.get("signals") or {}
+    ).get("eval_scorer_template_id")
+    if scorer_id:
+        from model_hub.models.evals_metric import UserEvalMetric
+
+        metric = UserEvalMetric.no_workspace_objects.filter(
+            id=scorer_id,
+            organization=organization,
+            workspace=workspace,
+        ).first()
+        if metric:
+            return metric.created_at
+    if scorer_template_id:
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        config = CustomEvalConfig.no_workspace_objects.filter(
+            eval_template_id=scorer_template_id,
+            project__organization=organization,
+            project__workspace=workspace,
+        ).first()
+        if config:
+            return config.created_at
+    return _latest_event_at(
+        organization,
+        workspace,
+        "eval_scorer_created",
+        is_sample=False,
+    )
+
+
+def _first_voice_agent_created_at(activation_state, workspace):
+    voice_state = activation_state.get("voice") or {}
+    agent_id = voice_state.get("agent_id") or (
+        activation_state.get("signals") or {}
+    ).get("voice_agent_id")
+    if not agent_id:
+        return None
+    from simulate.models.agent_definition import AgentDefinition
+
+    agent = AgentDefinition.no_workspace_objects.filter(
+        id=agent_id,
+        workspace=workspace,
+    ).first()
+    return agent.created_at if agent else None
+
+
 def _latest_event_at(organization, workspace, event_name, *, is_sample=False):
     event = (
         OnboardingActivationEvent.no_workspace_objects.filter(
@@ -423,6 +502,106 @@ def stage_started_at(*, activation_state, organization, workspace, now):
             organization,
             workspace,
             "gateway_log_opened",
+            is_sample=False,
+        )
+    if stage == "create_eval_dataset":
+        return _latest_goal_selected_at(organization, workspace) or getattr(
+            workspace,
+            "created_at",
+            None,
+        )
+    if stage == "add_eval_scorer":
+        return _first_eval_source_created_at(
+            activation_state,
+            workspace,
+        ) or _latest_event_at(
+            organization,
+            workspace,
+            "eval_dataset_created",
+            is_sample=False,
+        )
+    if stage == "run_eval":
+        return _first_eval_scorer_created_at(
+            activation_state,
+            organization,
+            workspace,
+        )
+    if stage == "review_eval_failures":
+        eval_state = activation_state.get("eval") or {}
+        return eval_state.get("run_completed_at") or _latest_event_at(
+            organization,
+            workspace,
+            "eval_run_completed",
+            is_sample=False,
+        )
+    if stage == "eval_next_loop":
+        eval_state = activation_state.get("eval") or {}
+        return eval_state.get("reviewed_at") or _latest_event_at(
+            organization,
+            workspace,
+            "eval_failures_reviewed",
+            is_sample=False,
+        )
+    if stage == "create_voice_agent":
+        return _latest_goal_selected_at(organization, workspace) or getattr(
+            workspace,
+            "created_at",
+            None,
+        )
+    if stage == "run_voice_test_call":
+        voice_state = activation_state.get("voice") or {}
+        if (
+            voice_state.get("call_failed")
+            and voice_state.get("has_review")
+            and voice_state.get("has_success_criteria")
+        ):
+            return (
+                voice_state.get("success_criteria_at")
+                or _latest_event_at(
+                    organization,
+                    workspace,
+                    "voice_success_criteria_added",
+                    is_sample=False,
+                )
+                or voice_state.get("reviewed_at")
+                or _latest_event_at(
+                    organization,
+                    workspace,
+                    "voice_call_reviewed",
+                    is_sample=False,
+                )
+            )
+        return _first_voice_agent_created_at(
+            activation_state,
+            workspace,
+        ) or _latest_event_at(
+            organization,
+            workspace,
+            "voice_agent_created",
+            is_sample=False,
+        )
+    if stage == "review_voice_call":
+        voice_state = activation_state.get("voice") or {}
+        return voice_state.get("call_completed_at") or _latest_event_at(
+            organization,
+            workspace,
+            "voice_test_call_completed",
+            is_sample=False,
+        )
+    if stage == "add_voice_success_criteria":
+        voice_state = activation_state.get("voice") or {}
+        return voice_state.get("reviewed_at") or _latest_event_at(
+            organization,
+            workspace,
+            "voice_call_reviewed",
+            is_sample=False,
+        )
+    if stage == "voice_monitor_calls":
+        voice_state = activation_state.get("voice") or {}
+        return voice_state.get("success_criteria_at") or _latest_event_at(
+            organization,
+            workspace,
+            "voice_success_criteria_added",
             is_sample=False,
         )
     if stage in {"activated", "daily_review"}:
@@ -606,6 +785,8 @@ def apply_lifecycle_suppressions(
                 "prompt": "first_action_recovery_enabled",
                 "agent": "first_action_recovery_enabled",
                 "gateway": "first_action_recovery_enabled",
+                "eval": "first_action_recovery_enabled",
+                "voice": "first_action_recovery_enabled",
                 "next_loop": "next_loop_enabled",
                 "activation_success": "daily_digest_enabled",
             }.get(campaign["campaign_group"])

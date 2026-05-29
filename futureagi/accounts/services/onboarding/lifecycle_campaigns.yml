@@ -421,6 +421,195 @@ campaigns:
     owner: product
     qa_fixture: gateway_sample_request_no_real_request
 
+  - campaign_key: eval_create_source
+    template_key: eval_create_source_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Add the examples for your first eval
+    email_preheader: Start with one dataset or trace source so FutureAGI can measure a quality signal.
+    primary_path: evals
+    entry_stages:
+      - create_eval_dataset
+    wait_window_minutes: 60
+    priority: 85
+    target_action_id: create_eval_dataset
+    target_success_event: eval_dataset_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_no_source_after_wait
+
+  - campaign_key: eval_add_scorer
+    template_key: eval_add_scorer_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Add the scorer that defines quality
+    email_preheader: Attach one scorer so the eval can decide whether the output is good enough.
+    primary_path: evals
+    entry_stages:
+      - add_eval_scorer
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: add_eval_scorer
+    target_success_event: eval_scorer_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_source_no_scorer_after_wait
+
+  - campaign_key: eval_run_first
+    template_key: eval_run_first_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Run the eval once before changing it
+    email_preheader: Generate the first result so the next step can show failures and summary quality.
+    primary_path: evals
+    entry_stages:
+      - run_eval
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: run_eval
+    target_success_event: eval_run_completed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_scorer_no_run_after_wait
+
+  - campaign_key: eval_review_failures
+    template_key: eval_review_failures_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Review the first eval result
+    email_preheader: Inspect the result before deciding which source, scorer, or prompt needs work.
+    primary_path: evals
+    entry_stages:
+      - review_eval_failures
+    wait_window_minutes: 15
+    priority: 90
+    target_action_id: review_eval_failures
+    target_success_event: eval_failures_reviewed
+    route_strategy: artifact_deep_link
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_run_not_reviewed
+
+  - campaign_key: eval_fix_source
+    template_key: eval_fix_source_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Turn the eval failure into the next fix
+    email_preheader: Use the reviewed failure to update the source or expected behavior.
+    primary_path: evals
+    entry_stages:
+      - eval_next_loop
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: fix_eval_source
+    target_success_event: eval_failure_action_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_review_no_source_fix_after_wait
+
+  - campaign_key: voice_create_agent
+    template_key: voice_create_agent_v1
+    template_version: "2026-05-30.1"
+    campaign_group: voice
+    email_subject: Create the voice agent you want to test
+    email_preheader: Start with one voice agent so the product can guide you to a test call.
+    primary_path: voice
+    entry_stages:
+      - create_voice_agent
+    wait_window_minutes: 60
+    priority: 85
+    target_action_id: create_voice_agent
+    target_success_event: voice_agent_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_voice
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: voice_no_agent_after_wait
+
+  - campaign_key: voice_run_test_call
+    template_key: voice_run_test_call_v1
+    template_version: "2026-05-30.1"
+    campaign_group: voice
+    email_subject: Run one test call before launch
+    email_preheader: Create a safe call signal so transcript, latency, and outcome can be reviewed.
+    primary_path: voice
+    entry_stages:
+      - run_voice_test_call
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: run_voice_test_call
+    target_success_event: voice_test_call_completed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_voice
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: voice_agent_no_call_after_wait
+
+  - campaign_key: voice_review_call
+    template_key: voice_review_call_v1
+    template_version: "2026-05-30.1"
+    campaign_group: voice
+    email_subject: Review the first voice call
+    email_preheader: Inspect transcript, response time, and interruptions before adding success criteria.
+    primary_path: voice
+    entry_stages:
+      - review_voice_call
+    wait_window_minutes: 15
+    priority: 90
+    target_action_id: review_voice_call
+    target_success_event: voice_call_reviewed
+    route_strategy: artifact_deep_link
+    dry_run_flag: onboarding_email_voice
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: voice_call_not_reviewed
+
+  - campaign_key: voice_add_success_criteria
+    template_key: voice_add_success_criteria_v1
+    template_version: "2026-05-30.1"
+    campaign_group: voice
+    email_subject: Define what a good voice call means
+    email_preheader: Add criteria so future calls can be monitored against the same quality target.
+    primary_path: voice
+    entry_stages:
+      - add_voice_success_criteria
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: add_voice_success_criteria
+    target_success_event: voice_success_criteria_added
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_voice
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: voice_review_no_success_criteria_after_wait
+
   - campaign_key: observe_connect_first
     template_key: observe_connect_first_v1
     template_version: "2026-05-27.1"

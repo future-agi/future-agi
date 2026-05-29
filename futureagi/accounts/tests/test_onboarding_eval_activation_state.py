@@ -218,7 +218,7 @@ def test_eval_run_requires_failure_or_summary_review(
 
 
 @pytest.mark.django_db
-def test_eval_review_activates_and_prompts_source_fix_for_failures(
+def test_eval_review_prompts_source_fix_before_activation_for_failures(
     organization,
     workspace,
     user,
@@ -259,8 +259,8 @@ def test_eval_review_activates_and_prompts_source_fix_for_failures(
 
     payload = _eval_state(user, organization, workspace)
 
-    assert payload["stage"] == "activated"
-    assert payload["is_activated"] is True
+    assert payload["stage"] == "eval_next_loop"
+    assert payload["is_activated"] is False
     assert payload["recommended_action"]["id"] == "fix_eval_source"
     assert f"/dashboard/develop/{dataset.id}" in payload["recommended_action"]["href"]
     assert payload["eval"]["has_review"] is True

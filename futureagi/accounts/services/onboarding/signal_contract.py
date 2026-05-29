@@ -10,6 +10,8 @@ SUPPORTED_ONBOARDING_STAGE_RULE_SIGNALS = frozenset(
         "dashboard_exists",
         "eval_first_loop_completed",
         "eval_has_completed_run",
+        "eval_has_failure_action",
+        "eval_has_failures",
         "eval_has_review",
         "eval_has_scorer",
         "eval_has_source",

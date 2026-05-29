@@ -1556,6 +1556,14 @@ stage_rules:
     when:
       context_equals:
         primary_path: gateway
+  - stage: eval_next_loop
+    when:
+      all:
+        - context_equals:
+            primary_path: evals
+        - signal: eval_has_review
+        - signal: eval_has_failures
+        - signal_not: eval_has_failure_action
   - stage: daily_review
     when:
       all:

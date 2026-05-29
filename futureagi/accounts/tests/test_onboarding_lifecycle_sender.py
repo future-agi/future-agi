@@ -70,6 +70,8 @@ def _flags(**overrides):
         "onboarding_email_next_loop_enabled": True,
         "onboarding_email_sample_bridge_enabled": False,
         "onboarding_email_daily_digest_enabled": False,
+        "onboarding_email_eval": True,
+        "onboarding_email_voice": True,
         "onboarding_lifecycle_send_enabled": True,
     }
     flags.update(overrides)
@@ -192,16 +194,35 @@ def _activated_observe_workspace(organization, workspace, user, *, now):
     return project
 
 
-def _eligible_log(user, organization, workspace, *, now=None):
+def _eligible_log(
+    user,
+    organization,
+    workspace,
+    *,
+    now=None,
+    campaign_key="welcome_resume_goal",
+    activation_stage=None,
+    primary_path=None,
+    target_url=None,
+):
     now = now or timezone.now()
-    campaign = lifecycle_campaign_by_key("welcome_resume_goal")
+    campaign = lifecycle_campaign_by_key(campaign_key)
+    primary_path = primary_path or (
+        "observe" if campaign["primary_path"] == "any" else campaign["primary_path"]
+    )
+    activation_stage = activation_stage or campaign["entry_stages"][0]
+    target_url = target_url or (
+        "/dashboard/observe?setup=true&source=onboarding"
+        if campaign_key == "welcome_resume_goal"
+        else "/dashboard/home?source=onboarding"
+    )
     _set_workspace_created_at(workspace, now - timedelta(minutes=30))
     OnboardingGoal.no_workspace_objects.create(
         user=user,
         organization=organization,
         workspace=workspace,
         goal="monitor_production_ai_app",
-        primary_path="observe",
+        primary_path=primary_path,
         selected_at=now - timedelta(minutes=20),
     )
     return OnboardingLifecycleEvaluationLog.no_workspace_objects.create(
@@ -213,20 +234,20 @@ def _eligible_log(user, organization, workspace, *, now=None):
         campaign_group=campaign["campaign_group"],
         template_key=campaign["template_key"],
         template_version=campaign["template_version"],
-        activation_stage="connect_observability",
-        primary_path="observe",
-        recommendation_id="create_observe_project",
+        activation_stage=activation_stage,
+        primary_path=primary_path,
+        recommendation_id=campaign["target_action_id"],
         target_action_id=campaign["target_action_id"],
         target_success_event=campaign["target_success_event"],
-        target_url="/dashboard/observe?setup=true&source=onboarding",
+        target_url=target_url,
         status=OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE,
         eligible_at=now - timedelta(minutes=15),
         evaluated_at=now - timedelta(minutes=1),
         registry_snapshot=campaign,
         activation_state_snapshot={
-            "stage": "connect_observability",
-            "primary_path": "observe",
-            "recommended_action_id": "create_observe_project",
+            "stage": activation_stage,
+            "primary_path": primary_path,
+            "recommended_action_id": campaign["target_action_id"],
         },
         metadata={"source": "test", "send_enabled": False},
     )
@@ -987,6 +1008,30 @@ def test_unsubscribed_user_suppresses_send(
         organization=organization,
         workspace=workspace,
         onboarding_enabled=False,
+    )
+
+    send_log = queue_onboarding_lifecycle_email(log)
+
+    assert send_log.status == OnboardingLifecycleSendLog.STATUS_SUPPRESSED
+    assert send_log.suppression_reason == "unsubscribed"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("campaign_key", ["eval_create_source", "voice_create_agent"])
+@override_settings(ONBOARDING_FEATURE_FLAGS=_flags())
+def test_product_loop_recovery_preference_suppresses_eval_and_voice_sends(
+    organization,
+    workspace,
+    user,
+    campaign_key,
+):
+    _allow_user(user)
+    log = _eligible_log(user, organization, workspace, campaign_key=campaign_key)
+    OnboardingLifecyclePreference.no_workspace_objects.create(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        first_action_recovery_enabled=False,
     )
 
     send_log = queue_onboarding_lifecycle_email(log)
