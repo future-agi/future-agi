@@ -584,6 +584,21 @@ export default function OnboardingHomeView() {
       "connect_observability",
       "waiting_for_first_trace_sample_available",
     ].includes(renderedState.stage);
+  const prioritizeSamplePanel =
+    showSamplePanel && renderedState.stage === "connect_observability";
+
+  const samplePanel = showSamplePanel ? (
+    <SampleProjectPanel
+      sampleProject={sampleProject}
+      activationStage={renderedState.stage}
+      selectedGoal={renderedState.goal}
+      onOpenSample={handleOpenSample}
+      onHideSample={handleHideSample}
+      onConnectRealData={handleConnectRealData}
+      isOpening={mutationPending(sampleProjectActions.openSampleProject)}
+      isHiding={mutationPending(sampleProjectActions.hideSampleProject)}
+    />
+  ) : null;
 
   return (
     <Box
@@ -656,23 +671,9 @@ export default function OnboardingHomeView() {
           </Box>
         ) : observePanel ? (
           <Stack spacing={2}>
+            {prioritizeSamplePanel ? samplePanel : null}
             {observePanel}
-            {showSamplePanel ? (
-              <SampleProjectPanel
-                sampleProject={sampleProject}
-                activationStage={renderedState.stage}
-                selectedGoal={renderedState.goal}
-                onOpenSample={handleOpenSample}
-                onHideSample={handleHideSample}
-                onConnectRealData={handleConnectRealData}
-                isOpening={mutationPending(
-                  sampleProjectActions.openSampleProject,
-                )}
-                isHiding={mutationPending(
-                  sampleProjectActions.hideSampleProject,
-                )}
-              />
-            ) : null}
+            {!prioritizeSamplePanel ? samplePanel : null}
           </Stack>
         ) : pathFocusPanel ? (
           <Stack spacing={2}>{pathFocusPanel}</Stack>

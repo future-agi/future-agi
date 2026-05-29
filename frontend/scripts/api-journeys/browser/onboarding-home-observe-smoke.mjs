@@ -26,6 +26,9 @@ const SCREENSHOT_PATH =
   }${EXISTING_TRACE ? "-first-trace" : ""}${
     POST_AHA_HOME ? "-post-aha-fallback" : ""
   }${FEATURE_DISABLED_HOME ? "-get-started-fallback" : ""}.png`;
+const HOME_SCREENSHOT_PATH =
+  process.env.ONBOARDING_HOME_SCREENSHOT ||
+  SCREENSHOT_PATH.replace(/\.png$/, "-home.png");
 const STUB_AUTH = envFlag("ONBOARDING_SMOKE_STUB_AUTH");
 const STUB_ONBOARDING = process.env.ONBOARDING_SMOKE_STUB_ONBOARDING !== "0";
 
@@ -253,12 +256,20 @@ async function main() {
     );
 
     await expectSelector(page, '[data-testid="observe-setup-panel"]');
+    await expectSelector(page, '[data-testid="sample-project-panel"]');
+    await expectVisibleText(page, "Fastest path to Aha", { exact: true });
+    await expectVisibleText(page, "Preview the quality loop first", {
+      exact: true,
+    });
+    await expectVisibleText(page, "Quality issue", { exact: true });
     await expectVisibleText(page, "Connect one observe project", {
       exact: true,
     });
     await expectVisibleText(page, "Create observe project", { exact: true });
     await expectVisibleText(page, "Send one trace", { exact: true });
     await expectVisibleText(page, "Review the signal", { exact: true });
+    await page.screenshot({ path: HOME_SCREENSHOT_PATH, fullPage: true });
+    evidence.home_screenshot = HOME_SCREENSHOT_PATH;
 
     const homeCtaHref = await visibleLinkHrefByText(
       page,

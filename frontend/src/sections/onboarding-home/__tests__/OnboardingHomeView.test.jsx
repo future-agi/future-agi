@@ -145,6 +145,9 @@ describe("OnboardingHomeView", () => {
 
     renderView("/dashboard/home?source=email&campaign_key=welcome");
 
+    expect(screen.getByTestId("sample-project-panel")).toBeVisible();
+    expect(screen.getByText("Fastest path to Aha")).toBeVisible();
+    expect(screen.getByText("Preview the quality loop first")).toBeVisible();
     expect(screen.getByTestId("observe-setup-panel")).toBeVisible();
     expect(
       screen.queryByTestId("onboarding-goal-picker"),
@@ -174,6 +177,7 @@ describe("OnboardingHomeView", () => {
     renderView();
 
     expect(screen.getByTestId("observe-setup-panel")).toBeVisible();
+    expect(screen.getByTestId("sample-project-panel")).toBeVisible();
     expect(screen.getByText("Connect one observe project")).toBeVisible();
   });
 

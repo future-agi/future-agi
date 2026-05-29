@@ -32,6 +32,11 @@ describe("SampleProjectPanel", () => {
     );
 
     expect(screen.getByTestId("sample-project-panel")).toBeVisible();
+    expect(screen.getByText("Fastest path to Aha")).toBeVisible();
+    expect(screen.getByText("Preview the quality loop first")).toBeVisible();
+    expect(screen.getByTestId("sample-project-aha-preview")).toBeVisible();
+    expect(screen.getByText("Quality issue")).toBeVisible();
+    expect(screen.getByText("Turn it into an evaluator")).toBeVisible();
     await userEvent.click(
       screen.getByRole("button", { name: /open sample trace/i }),
     );
