@@ -17,6 +17,7 @@ const VIEWPORT_NAME = process.env.ONBOARDING_SMOKE_VIEWPORT || "desktop";
 const EXISTING_PROJECT = envFlag("ONBOARDING_SMOKE_EXISTING_PROJECT");
 const EXISTING_TRACE =
   EXISTING_PROJECT && envFlag("ONBOARDING_SMOKE_EXISTING_TRACE");
+const OPEN_SAMPLE_HOME = envFlag("ONBOARDING_SMOKE_OPEN_SAMPLE");
 const POST_AHA_HOME = envFlag("ONBOARDING_SMOKE_POST_AHA_HOME");
 const FEATURE_DISABLED_HOME = envFlag("ONBOARDING_SMOKE_FEATURE_DISABLED_HOME");
 const SCREENSHOT_PATH =
@@ -24,6 +25,8 @@ const SCREENSHOT_PATH =
   `/tmp/onboarding-home-observe-smoke-${VIEWPORT_NAME}${
     EXISTING_PROJECT ? "-existing-project" : ""
   }${EXISTING_TRACE ? "-first-trace" : ""}${
+    OPEN_SAMPLE_HOME ? "-sample-open" : ""
+  }${
     POST_AHA_HOME ? "-post-aha-fallback" : ""
   }${FEATURE_DISABLED_HOME ? "-get-started-fallback" : ""}.png`;
 const HOME_SCREENSHOT_PATH =
@@ -40,6 +43,7 @@ async function main() {
   const pageErrors = [];
   const activationEventPosts = [];
   const activationStateRequests = [];
+  const sampleProjectPosts = [];
   const apiRequests = [];
   const consoleMessages = [];
   const networkRequests = [];
@@ -51,6 +55,7 @@ async function main() {
     viewport: VIEWPORT_NAME,
     existing_project: EXISTING_PROJECT,
     existing_trace: EXISTING_TRACE,
+    open_sample_home: OPEN_SAMPLE_HOME,
     post_aha_home: POST_AHA_HOME,
     feature_disabled_home: FEATURE_DISABLED_HOME,
   };
@@ -70,6 +75,7 @@ async function main() {
     activationStateRequests,
     apiRequests,
     networkRequests,
+    sampleProjectPosts,
     stubbedApiRequests,
   });
   await page.evaluateOnNewDocument(
@@ -271,6 +277,92 @@ async function main() {
     await page.screenshot({ path: HOME_SCREENSHOT_PATH, fullPage: true });
     evidence.home_screenshot = HOME_SCREENSHOT_PATH;
 
+    if (OPEN_SAMPLE_HOME) {
+      await clickVisibleText(page, "Open sample trace", {
+        rootSelector: '[data-testid="sample-project-panel"]',
+      });
+      await page.waitForFunction(
+        () => {
+          const params = new URLSearchParams(window.location.search);
+          return (
+            window.location.pathname ===
+              "/dashboard/observe/observe-smoke-project/trace/trace-smoke-1" &&
+            params.get("source") === "onboarding" &&
+            params.get("onboarding") === "review-sample-trace" &&
+            params.get("sample") === "true"
+          );
+        },
+        { timeout: 30000 },
+      );
+      await waitForCondition(
+        () =>
+          sampleProjectPosts.some(
+            (payload) =>
+              payload?.path === "observe" &&
+              payload?.source === "onboarding_home" &&
+              payload?.reason === "connect_observability" &&
+              payload?.open_after_create === true,
+          ),
+        "Sample project open request was not posted with the expected onboarding payload.",
+        30000,
+      );
+      await waitForCondition(
+        () =>
+          stubbedApiRequests.some((entry) =>
+            entry.includes("/tracer/trace/trace-smoke-1/"),
+          ),
+        "Sample trace detail was not requested after opening sample data.",
+        30000,
+      );
+      await waitForCondition(
+        () =>
+          activationEventPosts.some(
+            (payload) =>
+              payload?.event_name === "sample_trace_detail_opened" &&
+              payload?.primary_path === "sample" &&
+              payload?.artifact_id === "trace-smoke-1" &&
+              payload?.is_sample === true,
+          ),
+        "Sample trace detail activation event was not posted.",
+        30000,
+      );
+      await expectVisibleText(page, "Sample trace review", { exact: true });
+      await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
+      evidence.screenshot = SCREENSHOT_PATH;
+      evidence.sample_review_url = relativeUrl(page.url());
+      evidence.sample_project_posts = sampleProjectPosts;
+      evidence.activation_state_requests = activationStateRequests.length;
+      evidence.activation_event_posts = activationEventPosts.map((payload) => ({
+        event_name: payload.event_name,
+        primary_path: payload.primary_path,
+        stage: payload.stage,
+        is_sample: payload.is_sample,
+      }));
+      evidence.trace_detail_requests = stubbedApiRequests.filter((entry) =>
+        entry.includes("/tracer/trace/trace-smoke-1/"),
+      );
+      assert(
+        apiFailures.length === 0,
+        `API failures: ${apiFailures.join("; ")}`,
+      );
+      assert(pageErrors.length === 0, `Page errors: ${pageErrors.join("; ")}`);
+      console.log(
+        JSON.stringify(
+          {
+            status: "passed",
+            app_base: APP_BASE,
+            api_base: auth.apiBase,
+            organization_id: auth.organizationId,
+            workspace_id: auth.workspaceId,
+            evidence,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
     const homeCtaHref = await visibleLinkHrefByText(
       page,
       "Connect observability",
@@ -455,6 +547,7 @@ async function main() {
     const diagnostic = await captureFailureDiagnostic(page);
     diagnostic.activation_state_requests = activationStateRequests;
     diagnostic.activation_event_posts = activationEventPosts;
+    diagnostic.sample_project_posts = sampleProjectPosts;
     diagnostic.api_requests = apiRequests;
     diagnostic.network_requests = networkRequests.slice(-80);
     diagnostic.request_failures = requestFailures.slice(-20);
@@ -486,6 +579,7 @@ async function installRuntime(
     activationStateRequests,
     apiRequests,
     networkRequests,
+    sampleProjectPosts,
     stubbedApiRequests,
   },
 ) {
@@ -581,6 +675,17 @@ async function installRuntime(
           event_name: payload?.event_name || "onboarding_home_viewed",
           activation_state: stubbedActivationState(auth),
         },
+      });
+      return;
+    }
+
+    if (STUB_ONBOARDING && normalizedPath === "/accounts/sample-project/") {
+      stubbedApiRequests.push(`${request.method()} ${normalizedPath}`);
+      const payload = parseJsonPostData(request.postData());
+      sampleProjectPosts.push(payload);
+      await respondJson(request, {
+        status: true,
+        result: sampleProjectOpenResponse(auth),
       });
       return;
     }
@@ -820,6 +925,47 @@ function stubbedActivationState(auth, { firstTraceReady = false } = {}) {
       first_trace_id: firstTraceReady
         ? "trace-smoke-1"
         : activationState.signals?.first_trace_id,
+    },
+  };
+}
+
+function sampleProjectOpenResponse(auth) {
+  const activationState = getActivationStateFixture("observeWaitingWithSample");
+  const entryRoute =
+    "/dashboard/observe/observe-smoke-project/trace/trace-smoke-1?source=onboarding&onboarding=review-sample-trace&sample=true";
+
+  return {
+    sample_project: {
+      available: true,
+      created: true,
+      status: "ready_for_observe",
+      href: entryRoute,
+      version: "sample-observe-v1",
+      is_hidden: false,
+      hidden_reason: null,
+      manifest_id: "observe-quality-loop",
+      manifest_version: "2026-05-26.1",
+      label: "Sample",
+      entry_route: entryRoute,
+      entry_routes: [entryRoute],
+      missing_artifacts: [],
+      last_opened_at: "2026-05-29T05:00:00Z",
+      real_setup_href: "/dashboard/observe?setup=true&source=onboarding",
+    },
+    activation_state: {
+      ...activationState,
+      request_id: "onboarding_home_sample_open_smoke",
+      organization_id: auth.organizationId,
+      workspace_id: auth.workspaceId,
+      user_id: auth.user.id,
+      sample_project: {
+        ...activationState.sample_project,
+        created: true,
+        status: "ready_for_observe",
+        href: entryRoute,
+        entry_route: entryRoute,
+        entry_routes: [entryRoute],
+      },
     },
   };
 }

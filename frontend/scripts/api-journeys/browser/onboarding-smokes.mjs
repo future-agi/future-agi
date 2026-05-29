@@ -39,6 +39,17 @@ const SMOKES = [
     },
   },
   {
+    id: "onboarding-home-sample-open-controlled",
+    mode: "controlled",
+    file: "onboarding-home-observe-smoke.mjs",
+    description:
+      "Stubbed auth proof that Home sample Aha CTA opens the seeded trace route.",
+    env: {
+      ONBOARDING_SMOKE_STUB_AUTH: "1",
+      ONBOARDING_SMOKE_OPEN_SAMPLE: "1",
+    },
+  },
+  {
     id: "onboarding-observe-project-first-trace-controlled",
     mode: "controlled",
     file: "onboarding-home-observe-smoke.mjs",
@@ -101,6 +112,7 @@ const SMOKES = [
     sequence: [
       "setup-org-completion-controlled",
       "onboarding-home-observe-controlled",
+      "onboarding-home-sample-open-controlled",
       "onboarding-observe-project-first-trace-controlled",
       "onboarding-first-trace-review-controlled",
       "onboarding-post-aha-fallback-controlled",
@@ -115,6 +127,7 @@ const SMOKES = [
     sequence: [
       "setup-org-completion-controlled",
       "onboarding-home-observe-controlled",
+      "onboarding-home-sample-open-controlled",
       "onboarding-observe-project-first-trace-controlled",
       "onboarding-first-trace-review-controlled",
       "onboarding-post-aha-fallback-controlled",
