@@ -3,8 +3,9 @@ import json
 from django.db.models import Q
 from rest_framework import serializers
 
+from model_hub.models.choices import FeedbackActionType
 from tracer.constants.provider_logos import PROVIDER_LOGOS
-from tracer.models.observation_span import ObservationSpan
+from tracer.models.observation_span import EvalTargetType, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
@@ -239,17 +240,59 @@ class SpanObserveIndexQuerySerializer(StrictInputSerializer):
     filters = filter_list_query_param_field(required=False, default=list)
 
 
+def _validate_target_anchor_ids(attrs):
+    """Reject id-field combos that don't match the target_type."""
+    target_type = attrs["target_type"]
+    span_id = attrs.get("observation_span_id")
+    trace_id = attrs.get("trace_id")
+    session_id = attrs.get("trace_session_id")
+
+    if target_type == EvalTargetType.SESSION:
+        if span_id or trace_id:
+            raise serializers.ValidationError(
+                "target_type='session' must not set observation_span_id or "
+                "trace_id."
+            )
+        if not session_id:
+            raise serializers.ValidationError(
+                "target_type='session' requires trace_session_id."
+            )
+    else:
+        if session_id:
+            raise serializers.ValidationError(
+                f"target_type='{target_type}' must not set trace_session_id."
+            )
+        if not span_id:
+            raise serializers.ValidationError(
+                f"target_type='{target_type}' requires observation_span_id."
+            )
+    return attrs
+
+
 class SubmitFeedbackActionTypeSerializer(serializers.Serializer):
-    observation_span_id = serializers.CharField(required=True)
+    target_type = serializers.ChoiceField(
+        choices=EvalTargetType.choices, required=True
+    )
+    observation_span_id = serializers.CharField(required=False, allow_blank=True)
+    trace_id = serializers.UUIDField(required=False)
+    trace_session_id = serializers.UUIDField(required=False)
     action_type = serializers.ChoiceField(
-        choices=["retune", "recalculate"], required=True
+        choices=FeedbackActionType.get_choices(), required=True
     )
     custom_eval_config_id = serializers.UUIDField(required=True)
     feedback_id = serializers.UUIDField(required=True)
 
+    def validate(self, attrs):
+        return _validate_target_anchor_ids(attrs)
+
 
 class SubmitFeedbackSerializer(serializers.Serializer):
-    observation_span_id = serializers.CharField(required=True)
+    target_type = serializers.ChoiceField(
+        choices=EvalTargetType.choices, required=True
+    )
+    observation_span_id = serializers.CharField(required=False, allow_blank=True)
+    trace_id = serializers.UUIDField(required=False)
+    trace_session_id = serializers.UUIDField(required=False)
     custom_eval_config_id = serializers.UUIDField(required=True)
     feedback_value = serializers.CharField(required=True)
     feedback_explanation = serializers.CharField(
@@ -258,3 +301,19 @@ class SubmitFeedbackSerializer(serializers.Serializer):
     feedback_improvement = serializers.CharField(
         required=False, max_length=5000, allow_blank=True
     )
+
+    def validate(self, attrs):
+        return _validate_target_anchor_ids(attrs)
+
+
+class SubmitFeedbackResponseSerializer(serializers.Serializer):
+    feedback_id = serializers.UUIDField()
+
+
+class SubmitFeedbackActionTypeResponseSerializer(serializers.Serializer):
+    status = serializers.CharField()
+    feedback_id = serializers.UUIDField()
+    action_type = serializers.ChoiceField(choices=FeedbackActionType.get_choices())
+    target_type = serializers.ChoiceField(choices=EvalTargetType.choices)
+    # 0 for retune, 1 for recalculate, sibling EvalLogger count for retune_recalculate.
+    recalculated_count = serializers.IntegerField(required=False, default=0)

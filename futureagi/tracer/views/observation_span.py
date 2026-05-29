@@ -37,6 +37,7 @@ from litellm import cost_per_token
 from rest_framework import serializers
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.status import HTTP_400_BAD_REQUEST, HTTP_409_CONFLICT
 from rest_framework.viewsets import ModelViewSet
 
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
@@ -53,6 +54,7 @@ from analytics.utils import (
 from model_hub.models.choices import (
     AnnotationTypeChoices,
     DataTypeChoices,
+    FeedbackActionType,
     FeedbackSourceChoices,
 )
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
@@ -64,11 +66,20 @@ from model_hub.views.scores import (
     _auto_create_queue_items_for_default_queues,
 )
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import (
+    ApiDetailErrorResponseSerializer,
+    ApiErrorResponseSerializer,
+)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EndUser, EvalLogger, ObservationSpan
+from tracer.models.observation_span import (
+    EndUser,
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+)
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.span_notes import SpanNotes
@@ -87,7 +98,9 @@ from tracer.serializers.observation_span import (
     SpanListQuerySerializer,
     SpanObserveIndexQuerySerializer,
     SpanObserveListQuerySerializer,
+    SubmitFeedbackActionTypeResponseSerializer,
     SubmitFeedbackActionTypeSerializer,
+    SubmitFeedbackResponseSerializer,
     SubmitFeedbackSerializer,
 )
 from tracer.serializers.trace import TraceSerializer
@@ -303,6 +316,16 @@ def _project_workspace_scope_q(request, project_prefix="project__"):
         )
 
     return Q(**{workspace_field: workspace})
+
+
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    401: ApiDetailErrorResponseSerializer,
+    403: ApiDetailErrorResponseSerializer,
+    404: ApiErrorResponseSerializer,
+    409: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
 
 
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
@@ -1405,18 +1428,29 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the spans list {get_error_message('FAILED_TO_FETCH_TRACE_LIST')}"
             )
 
+    @validated_request(
+        request_serializer=SubmitFeedbackSerializer,
+        responses={200: SubmitFeedbackResponseSerializer, **ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["post"])
     def submit_feedback(self, request, *args, **kwargs):
         try:
-            serializer = SubmitFeedbackSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-            validated_data = serializer.validated_data
-            observation_span_id = validated_data.get("observation_span_id", None)
-            custom_eval_config_id = validated_data.get("custom_eval_config_id", None)
-            feedback_value = validated_data.get("feedback_value", None)
-            feedback_explanation = validated_data.get("feedback_explanation", None)
-            feedback_improvement = validated_data.get("feedback_improvement", None)
+            validated_data = request.validated_data
+            target_type = validated_data["target_type"]
+            observation_span_id = validated_data.get("observation_span_id") or None
+            custom_eval_config_id = validated_data.get("custom_eval_config_id")
+            feedback_value = validated_data.get("feedback_value")
+            feedback_explanation = validated_data.get("feedback_explanation")
+            feedback_improvement = validated_data.get("feedback_improvement")
+
+            # Trace + session anchors land in a follow-up; reject for now.
+            if target_type != EvalTargetType.SPAN:
+                return self._gm.custom_error_response(
+                    HTTP_400_BAD_REQUEST,
+                    f"target_type='{target_type}' feedback not yet supported",
+                    code="not_supported",
+                )
 
             try:
                 observation_span = ObservationSpan.objects.get(
@@ -1425,7 +1459,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     project__organization=_get_request_organization(request),
                 )
             except ObservationSpan.DoesNotExist:
-                raise Exception("Observation span not found")  # noqa: B904
+                return self._gm.not_found("Observation span not found")
 
             try:
                 custom_eval_config = CustomEvalConfig.objects.get(
@@ -1434,16 +1468,23 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     project__organization=_get_request_organization(request),
                 )
             except CustomEvalConfig.DoesNotExist:
-                raise Exception("Custom eval config not found")  # noqa: B904
+                return self._gm.not_found("Custom eval config not found")
 
             try:
-                EvalLogger.objects.get(
+                eval_logger = EvalLogger.objects.get(
                     observation_span=observation_span,
                     custom_eval_config_id=custom_eval_config_id,
                     deleted=False,
                 )
             except EvalLogger.DoesNotExist:
-                raise Exception("No eval associated with this span ")  # noqa: B904
+                return self._gm.not_found("No eval associated with this span")
+
+            if eval_logger.error:
+                return self._gm.custom_error_response(
+                    HTTP_409_CONFLICT,
+                    "Cannot submit feedback on an errored eval",
+                    code="errored_eval",
+                )
 
             eval_template = custom_eval_config.eval_template
 
@@ -1486,7 +1527,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response({"feedback_id": str(feedback.id)})
         except Exception as e:
             logger.exception(f"Error in submitting the feedback: {str(e)}")
-            return self._gm.bad_request(
+            return self._gm.internal_server_error_response(
                 f"Error submitting feedback: {get_error_message('FAILED_TO_CREATE_FEEDBACK')}"
             )
 
@@ -1516,17 +1557,37 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error updating span tags: {e}")
             return self._gm.bad_request("Error updating tags")
 
+    @validated_request(
+        request_serializer=SubmitFeedbackActionTypeSerializer,
+        responses={
+            200: SubmitFeedbackActionTypeResponseSerializer,
+            **ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=False, methods=["post"])
     def submit_feedback_action_type(self, request, *args, **kwargs):
         try:
-            serializer = SubmitFeedbackActionTypeSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-            validated_data = serializer.validated_data
-            observation_span_id = validated_data.get("observation_span_id", None)
-            action_type = validated_data.get("action_type", None)
-            custom_eval_config_id = validated_data.get("custom_eval_config_id", None)
-            feedback_id = validated_data.get("feedback_id", None)
+            validated_data = request.validated_data
+            target_type = validated_data["target_type"]
+            observation_span_id = validated_data.get("observation_span_id") or None
+            action_type = validated_data.get("action_type")
+            custom_eval_config_id = validated_data.get("custom_eval_config_id")
+            feedback_id = validated_data.get("feedback_id")
+
+            # Trace + session anchors land in a follow-up; reject for now.
+            if target_type != EvalTargetType.SPAN:
+                return self._gm.custom_error_response(
+                    HTTP_400_BAD_REQUEST,
+                    f"target_type='{target_type}' feedback not yet supported",
+                    code="not_supported",
+                )
+
+            # TODO(BE-3): batch path replaces this block.
+            # When action_type == FeedbackActionType.RETUNE_RECALCULATE,
+            # gather sibling EvalLoggers sharing eval_task_id, soft-delete
+            # them, start RecalculateEvalTaskWorkflow, return
+            # recalculated_count = len(siblings).
 
             try:
                 feedback = Feedback.objects.get(
@@ -1535,7 +1596,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 feedback.action_type = action_type
                 feedback.save(update_fields=["action_type"])
             except Feedback.DoesNotExist:
-                raise Exception("Feedback not found")  # noqa: B904
+                return self._gm.not_found("Feedback not found")
 
             try:
                 observation_span = ObservationSpan.objects.get(
@@ -1544,7 +1605,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     project__organization=_get_request_organization(request),
                 )
             except ObservationSpan.DoesNotExist:
-                raise Exception("Observation span not found")  # noqa: B904
+                return self._gm.not_found("Observation span not found")
 
             try:
                 custom_eval_config = CustomEvalConfig.objects.get(
@@ -1553,25 +1614,34 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     project__organization=_get_request_organization(request),
                 )
             except CustomEvalConfig.DoesNotExist:
-                raise Exception("Custom eval config not found")  # noqa: B904
+                return self._gm.not_found("Custom eval config not found")
 
-            if action_type == "retune":
+            recalculated_count = 0
+            if action_type == FeedbackActionType.RETUNE:
                 pass  ### This is coz we are using mapping_fields fxn in utils
 
-            elif action_type == "recalculate":
+            elif action_type == FeedbackActionType.RECALCULATE:
                 try:
                     eval_logger = EvalLogger.objects.get(
                         observation_span=observation_span,
                         custom_eval_config=custom_eval_config,
                         deleted=False,
                     )
-                    task_id = eval_logger.eval_task_id
-
-                    eval_logger.deleted = True
-                    eval_logger.deleted_at = timezone.now()
-                    eval_logger.save(update_fields=["deleted", "deleted_at"])
                 except EvalLogger.DoesNotExist:
-                    raise Exception("No eval associated with this span")  # noqa: B904
+                    return self._gm.not_found("No eval associated with this span")
+
+                if eval_logger.error:
+                    return self._gm.custom_error_response(
+                        HTTP_409_CONFLICT,
+                        "Cannot submit feedback on an errored eval",
+                        code="errored_eval",
+                    )
+
+                task_id = eval_logger.eval_task_id
+
+                eval_logger.deleted = True
+                eval_logger.deleted_at = timezone.now()
+                eval_logger.save(update_fields=["deleted", "deleted_at"])
 
                 properties = get_mixpanel_properties(
                     user=request.user,
@@ -1603,6 +1673,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 else:
                     failed = 1
                     count = 0
+                recalculated_count = count
                 properties = get_mixpanel_properties(
                     user=request.user,
                     span=observation_span,
@@ -1616,11 +1687,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             return self._gm.success_response(
-                {"message": "Action type submitted successfully"}
+                {
+                    "status": "Action type submitted successfully",
+                    "feedback_id": str(feedback_id),
+                    "action_type": action_type,
+                    "target_type": target_type,
+                    "recalculated_count": recalculated_count,
+                }
             )
         except Exception as e:
             logger.exception(f"Error in submitting the feedback action type: {str(e)}")
-            return self._gm.bad_request(
+            return self._gm.internal_server_error_response(
                 f"Error submitting feedback action type: {str(e)}"
             )
 

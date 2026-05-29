@@ -123,6 +123,8 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("accounts", "0019_merge_20260407_1927"),
+        ("model_hub", "0104_merge_20260526_0921"),
+        ("tracer", "0001_initial"),
     ]
 
     operations = [
