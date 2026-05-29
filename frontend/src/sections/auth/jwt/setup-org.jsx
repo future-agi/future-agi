@@ -348,6 +348,8 @@ const SetupOrganization = ({ getStarted = false }) => {
       errorHandled: true,
     },
     onSuccess: (data, variables) => {
+      const shouldFinishQuickStart = quickStartRequestedRef.current;
+      quickStartRequestedRef.current = false;
       enqueueSnackbar("Profile updated successfully", { variant: "success" });
       const provider = localStorage.getItem("signupProvider");
       trackEvent(Events.signUpCompleted, {
@@ -357,7 +359,7 @@ const SetupOrganization = ({ getStarted = false }) => {
         [PropertyName.method]: provider,
       });
       localStorage.removeItem("signupProvider");
-      if (isOwner) {
+      if (isOwner && !shouldFinishQuickStart) {
         setActiveStep(2);
       } else {
         finishSetup();
