@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import override_settings
 from django.utils import timezone
 
@@ -41,7 +42,7 @@ def _eligible_log(user, organization, workspace):
     Workspace.no_workspace_objects.filter(id=workspace.id).update(
         created_at=now - timedelta(minutes=30)
     )
-    campaign = lifecycle_campaign_by_key("welcome_choose_goal")
+    campaign = lifecycle_campaign_by_key("welcome_resume_goal")
     return OnboardingLifecycleEvaluationLog.no_workspace_objects.create(
         run_id="00000000-0000-0000-0000-000000000314",
         user=user,
@@ -51,9 +52,34 @@ def _eligible_log(user, organization, workspace):
         campaign_group=campaign["campaign_group"],
         template_key=campaign["template_key"],
         template_version=campaign["template_version"],
-        activation_stage="choose_goal",
+        activation_stage=campaign["entry_stages"][0],
         target_success_event=campaign["target_success_event"],
-        target_url="/dashboard/home?onboarding=choose-goal",
+        target_url="/dashboard/home?source=test",
+        status=OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE,
+        eligible_at=now - timedelta(minutes=15),
+        evaluated_at=now - timedelta(minutes=1),
+        registry_snapshot=campaign,
+    )
+
+
+def _eligible_campaign_log(user, organization, workspace, campaign_key):
+    now = timezone.now()
+    Workspace.no_workspace_objects.filter(id=workspace.id).update(
+        created_at=now - timedelta(minutes=30)
+    )
+    campaign = lifecycle_campaign_by_key(campaign_key)
+    return OnboardingLifecycleEvaluationLog.no_workspace_objects.create(
+        run_id=f"00000000-0000-0000-0000-000000000{len(campaign_key):03d}",
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        campaign_key=campaign["campaign_key"],
+        campaign_group=campaign["campaign_group"],
+        template_key=campaign["template_key"],
+        template_version=campaign["template_version"],
+        activation_stage=campaign["entry_stages"][0],
+        target_success_event=campaign["target_success_event"],
+        target_url="/dashboard/home?source=test",
         status=OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE,
         eligible_at=now - timedelta(minutes=15),
         evaluated_at=now - timedelta(minutes=1),
@@ -110,3 +136,79 @@ def test_send_command_respects_limit_and_sends_allowlisted(
     assert OnboardingLifecycleSendLog.no_workspace_objects.filter(
         status=OnboardingLifecycleSendLog.STATUS_SENT
     ).exists()
+
+
+@pytest.mark.django_db
+@override_settings(ONBOARDING_FEATURE_FLAGS=_flags())
+def test_welcome_email_beta_defaults_to_dry_run_and_welcome_group(
+    organization,
+    workspace,
+    user,
+):
+    _eligible_campaign_log(user, organization, workspace, "welcome_resume_goal")
+    _eligible_campaign_log(user, organization, workspace, "prompt_create_first")
+    output = StringIO()
+
+    call_command(
+        "run_onboarding_welcome_email_beta",
+        "--limit",
+        "10",
+        stdout=output,
+    )
+
+    value = output.getvalue()
+    assert "mode=dry_run" in value
+    assert "campaign_group=welcome" in value
+    assert "cohort=beta" in value
+    assert "evaluated=1" in value
+    assert "sent=0" in value
+    assert not OnboardingLifecycleSendLog.no_workspace_objects.exists()
+
+
+@pytest.mark.django_db
+@override_settings(ONBOARDING_FEATURE_FLAGS=_flags())
+def test_welcome_email_beta_send_requires_explicit_flag_and_allowlist(
+    organization,
+    workspace,
+    user,
+):
+    _eligible_campaign_log(user, organization, workspace, "welcome_resume_goal")
+    OnboardingLifecycleSendAllowlist.no_workspace_objects.create(
+        scope_type=OnboardingLifecycleSendAllowlist.SCOPE_USER,
+        scope_value=str(user.id),
+        environment="local",
+    )
+    output = StringIO()
+
+    with patch("accounts.services.onboarding.lifecycle_sender.email_helper"):
+        call_command(
+            "run_onboarding_welcome_email_beta",
+            "--send",
+            "--limit",
+            "1",
+            stdout=output,
+        )
+
+    value = output.getvalue()
+    assert "mode=send" in value
+    assert "cohort=beta" in value
+    assert "sent=1" in value
+    send_log = OnboardingLifecycleSendLog.no_workspace_objects.get(
+        campaign_group="welcome",
+        campaign_key="welcome_resume_goal",
+        status=OnboardingLifecycleSendLog.STATUS_SENT,
+    )
+    assert send_log.metadata["cohort"] == "beta"
+
+
+@pytest.mark.django_db
+def test_welcome_email_beta_rejects_unbounded_limit():
+    output = StringIO()
+
+    with pytest.raises(CommandError, match="--limit must be 100 or lower"):
+        call_command(
+            "run_onboarding_welcome_email_beta",
+            "--limit",
+            "101",
+            stdout=output,
+        )
