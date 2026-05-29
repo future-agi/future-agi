@@ -1,6 +1,9 @@
 from datetime import timedelta
+from io import StringIO
 
 import pytest
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.utils import timezone
 
 from accounts.models import (
@@ -141,3 +144,89 @@ def test_lifecycle_email_template_renders_for_campaign(
 
     if campaign.get("requires_digest_preview"):
         assert "Review trace regression" in preview["html"]
+
+
+def test_lifecycle_preview_command_writes_no_send_snapshot(tmp_path):
+    output = StringIO()
+
+    call_command(
+        "generate_onboarding_lifecycle_previews",
+        "--output-dir",
+        str(tmp_path),
+        "--campaign-key",
+        "welcome_resume_goal",
+        "--now",
+        "2026-05-29T10:00:00Z",
+        stdout=output,
+    )
+
+    assert "count=1" in output.getvalue()
+    html = (tmp_path / "welcome_resume_goal.html").read_text()
+    text = (tmp_path / "welcome_resume_goal.txt").read_text()
+    index = (tmp_path / "index.md").read_text()
+
+    assert "FutureAGI onboarding" in html
+    assert "Connect the first observe project" in html
+    assert "snooze onboarding emails for 7 days" in html
+    assert "Connect the first observe project" in text
+    assert "welcome_resume_goal" in index
+    assert "These previews are generated without sending email." in index
+
+
+def test_lifecycle_preview_command_writes_all_campaign_snapshots(tmp_path):
+    output = StringIO()
+
+    call_command(
+        "generate_onboarding_lifecycle_previews",
+        "--output-dir",
+        str(tmp_path),
+        "--now",
+        "2026-05-29T10:00:00Z",
+        stdout=output,
+    )
+
+    assert f"count={len(CAMPAIGN_KEYS)}" in output.getvalue()
+    index = (tmp_path / "index.md").read_text()
+    assert "daily_quality_open_actions" in index
+    assert (tmp_path / "daily_quality_open_actions.html").is_file()
+    digest_html = (tmp_path / "daily_quality_open_actions.html").read_text()
+    assert "Review trace regression" in digest_html
+    assert "Internal note intentionally omitted" not in digest_html
+    assert "api_token" not in digest_html
+    assert "redacted-preview-token" not in digest_html
+
+
+def test_lifecycle_preview_command_rejects_unknown_campaign(tmp_path):
+    output = StringIO()
+
+    with pytest.raises(CommandError, match="Unknown onboarding lifecycle campaign"):
+        call_command(
+            "generate_onboarding_lifecycle_previews",
+            "--output-dir",
+            str(tmp_path),
+            "--campaign-key",
+            "missing_campaign",
+            stdout=output,
+        )
+
+
+def test_lifecycle_preview_command_requires_force_for_existing_files(tmp_path):
+    output = StringIO()
+    call_command(
+        "generate_onboarding_lifecycle_previews",
+        "--output-dir",
+        str(tmp_path),
+        "--campaign-key",
+        "welcome_resume_goal",
+        stdout=output,
+    )
+
+    with pytest.raises(CommandError, match="Use --force to overwrite previews"):
+        call_command(
+            "generate_onboarding_lifecycle_previews",
+            "--output-dir",
+            str(tmp_path),
+            "--campaign-key",
+            "welcome_resume_goal",
+            stdout=output,
+        )
