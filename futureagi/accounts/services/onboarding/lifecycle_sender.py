@@ -21,6 +21,7 @@ from accounts.services.onboarding.activation_events import record_event
 from accounts.services.onboarding.activation_state import resolve_activation_state
 from accounts.services.onboarding.context import resolve_onboarding_context
 from accounts.services.onboarding.feature_flags import get_onboarding_flags
+from accounts.services.onboarding.lifecycle_completion import lifecycle_target_completed
 from accounts.services.onboarding.lifecycle_eligibility import (
     evaluate_lifecycle_decision,
 )
@@ -104,6 +105,20 @@ def _internal_route(route):
         return False
     parts = urlsplit(route)
     return not parts.scheme and not parts.netloc and route.startswith("/")
+
+
+def _target_success_event_completed(send_log):
+    campaign = send_log.evaluation_log.registry_snapshot or {
+        "campaign_key": send_log.campaign_key,
+        "target_success_event": send_log.target_success_event,
+        "sample_policy": "real_only",
+    }
+    return lifecycle_target_completed(
+        organization=send_log.organization,
+        workspace=send_log.workspace,
+        campaign=campaign,
+        target_success_event=send_log.target_success_event,
+    )
 
 
 def _groups(send_log):
@@ -567,6 +582,8 @@ def send_onboarding_lifecycle_email(send_log, *, now=None):
         return send_log
     if send_log.status == OnboardingLifecycleSendLog.STATUS_SUPPRESSED:
         return send_log
+    if _target_success_event_completed(send_log):
+        return _mark_suppressed(send_log, "target_success_event_completed", now)
     campaign = send_log.evaluation_log.registry_snapshot or {}
     if not campaign:
         send_log.status = OnboardingLifecycleSendLog.STATUS_FAILED

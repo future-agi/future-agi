@@ -785,6 +785,39 @@ def test_completed_target_suppresses_stale_send(
 
 @pytest.mark.django_db
 @override_settings(ONBOARDING_FEATURE_FLAGS=_flags())
+def test_completed_target_after_queue_suppresses_before_provider(
+    organization,
+    workspace,
+    user,
+):
+    _allow_user(user)
+    log = _eligible_log(user, organization, workspace)
+    send_log = queue_onboarding_lifecycle_email(log)
+    assert send_log.status == OnboardingLifecycleSendLog.STATUS_QUEUED
+    record_event(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        event_name=log.target_success_event,
+        source="test",
+        product_path="observe",
+    )
+
+    with patch("accounts.services.onboarding.lifecycle_sender.email_helper") as helper:
+        suppressed_log = send_onboarding_lifecycle_email(send_log)
+
+    assert suppressed_log.status == OnboardingLifecycleSendLog.STATUS_SUPPRESSED
+    assert suppressed_log.suppression_reason == "target_success_event_completed"
+    helper.assert_not_called()
+    assert NotificationDeliveryLog.no_workspace_objects.filter(
+        source_id=str(send_log.id),
+        status=NotificationDeliveryLog.STATUS_SUPPRESSED,
+        suppressed_reason="target_success_event_completed",
+    ).exists()
+
+
+@pytest.mark.django_db
+@override_settings(ONBOARDING_FEATURE_FLAGS=_flags())
 def test_completion_event_marks_send_completed(
     organization,
     workspace,

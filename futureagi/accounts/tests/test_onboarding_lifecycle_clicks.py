@@ -12,8 +12,17 @@ from accounts.services.onboarding.lifecycle_registry import lifecycle_campaign_b
 from accounts.services.onboarding.lifecycle_tokens import sign_lifecycle_token
 
 
-def _sent_log(user, organization, workspace, *, status=None):
-    campaign = lifecycle_campaign_by_key("welcome_choose_goal")
+def _sent_log(
+    user,
+    organization,
+    workspace,
+    *,
+    campaign_key="welcome_choose_goal",
+    status=None,
+    sent_at=None,
+):
+    campaign = lifecycle_campaign_by_key(campaign_key)
+    sent_at = sent_at or timezone.now() - timedelta(minutes=1)
     evaluation = OnboardingLifecycleEvaluationLog.no_workspace_objects.create(
         run_id="00000000-0000-0000-0000-000000000114",
         user=user,
@@ -44,7 +53,7 @@ def _sent_log(user, organization, workspace, *, status=None):
         target_success_event=campaign["target_success_event"],
         target_route="/dashboard/home?onboarding=choose-goal",
         status=status or OnboardingLifecycleSendLog.STATUS_SENT,
-        sent_at=timezone.now() - timedelta(minutes=1),
+        sent_at=sent_at,
     )
 
 
@@ -81,6 +90,8 @@ def test_stale_click_redirects_to_current_home(client, organization, workspace, 
     send_log.refresh_from_db()
     assert response.status_code == 302
     assert response["Location"].startswith("/dashboard/home?")
+    assert "status=stale" in response["Location"]
+    assert "stale_reason=target_complete" in response["Location"]
     assert send_log.metadata["stale_reason"] == "target_complete"
 
 
@@ -113,6 +124,67 @@ def test_sample_completion_does_not_stale_lifecycle_click(
 
 
 @pytest.mark.django_db
+def test_sample_campaign_completion_stales_lifecycle_click(
+    client,
+    organization,
+    workspace,
+    user,
+):
+    send_log = _sent_log(
+        user,
+        organization,
+        workspace,
+        campaign_key="observe_sample_bridge",
+    )
+    record_event(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        event_name="onboarding_sample_project_opened",
+        source="test",
+        product_path="sample",
+        is_sample=True,
+    )
+    token = sign_lifecycle_token(send_log=send_log, kind="click")
+
+    response = client.get(f"/accounts/onboarding/lifecycle/click/?token={token}")
+
+    send_log.refresh_from_db()
+    assert response.status_code == 302
+    assert response["Location"].startswith("/dashboard/home?")
+    assert send_log.metadata["stale_reason"] == "target_complete"
+
+
+@pytest.mark.django_db
+def test_prior_completion_does_not_stale_fresh_lifecycle_click(
+    client,
+    organization,
+    workspace,
+    user,
+):
+    sent_at = timezone.now()
+    send_log = _sent_log(user, organization, workspace, sent_at=sent_at)
+    record_event(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        event_name="onboarding_goal_selected",
+        source="test",
+        product_path="observe",
+        occurred_at=sent_at - timedelta(minutes=1),
+    )
+    token = sign_lifecycle_token(send_log=send_log, kind="click")
+
+    response = client.get(f"/accounts/onboarding/lifecycle/click/?token={token}")
+
+    send_log.refresh_from_db()
+    assert response.status_code == 302
+    assert response["Location"].startswith("/dashboard/home?onboarding=choose-goal")
+    assert send_log.metadata["click_status"] == "current"
+    assert "stale_reason" not in send_log.metadata
+
+
+@pytest.mark.django_db
 def test_unsafe_click_target_redirects_to_current_home(
     client,
     organization,
@@ -129,6 +201,8 @@ def test_unsafe_click_target_redirects_to_current_home(
     send_log.refresh_from_db()
     assert response.status_code == 302
     assert response["Location"].startswith("/dashboard/home?")
+    assert "status=stale" in response["Location"]
+    assert "stale_reason=route_unavailable" in response["Location"]
     assert send_log.metadata["stale_reason"] == "route_unavailable"
 
 

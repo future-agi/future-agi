@@ -3,12 +3,12 @@ from __future__ import annotations
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from accounts.models import OnboardingLifecycleSendLog
-from accounts.services.onboarding.activation_events import has_event
+from accounts.services.onboarding.lifecycle_completion import lifecycle_target_completed
 from accounts.services.onboarding.lifecycle_sender import mark_lifecycle_send_clicked
 from accounts.services.onboarding.lifecycle_tokens import verify_lifecycle_token
 
 
-def _append_source_params(route, send_log):
+def _append_source_params(route, send_log, extra_params=None):
     parts = urlsplit(route)
     params = dict(parse_qsl(parts.query, keep_blank_values=True))
     params.update(
@@ -20,9 +20,19 @@ def _append_source_params(route, send_log):
             "send_log_id": str(send_log.id),
         }
     )
+    if extra_params:
+        params.update(extra_params)
     return urlunsplit(
         (parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment)
     )
+
+
+def _campaign_for_send_log(send_log):
+    return send_log.evaluation_log.registry_snapshot or {
+        "campaign_key": send_log.campaign_key,
+        "target_success_event": send_log.target_success_event,
+        "sample_policy": "real_only",
+    }
 
 
 def resolve_lifecycle_click(token, *, now=None):
@@ -31,6 +41,7 @@ def resolve_lifecycle_click(token, *, now=None):
         return None, "/dashboard/home?source=onboarding_email&status=invalid"
     send_log = (
         OnboardingLifecycleSendLog.no_workspace_objects.select_related(
+            "evaluation_log",
             "user",
             "organization",
             "workspace",
@@ -43,11 +54,12 @@ def resolve_lifecycle_click(token, *, now=None):
 
     route = send_log.target_route or "/dashboard/home"
     stale_reason = None
-    if send_log.target_success_event and has_event(
+    if lifecycle_target_completed(
         organization=send_log.organization,
         workspace=send_log.workspace,
-        event_name=send_log.target_success_event,
-        is_sample=False,
+        campaign=_campaign_for_send_log(send_log),
+        target_success_event=send_log.target_success_event,
+        after=send_log.sent_at or send_log.queued_at or send_log.created_at,
     ):
         route = "/dashboard/home"
         stale_reason = "target_complete"
@@ -59,4 +71,7 @@ def resolve_lifecycle_click(token, *, now=None):
     if stale_reason:
         metadata["stale_reason"] = stale_reason
     mark_lifecycle_send_clicked(send_log, now=now, metadata=metadata)
-    return send_log, _append_source_params(route, send_log)
+    extra_params = None
+    if stale_reason:
+        extra_params = {"status": "stale", "stale_reason": stale_reason}
+    return send_log, _append_source_params(route, send_log, extra_params)

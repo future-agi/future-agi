@@ -11,8 +11,8 @@ from accounts.models import (
     OnboardingLifecycleEvaluationLog,
     OnboardingLifecyclePreference,
 )
-from accounts.services.onboarding.activation_events import has_event
 from accounts.services.onboarding.flow_config import configured_action
+from accounts.services.onboarding.lifecycle_completion import lifecycle_target_completed
 from accounts.services.onboarding.lifecycle_digest_preview import (
     build_lifecycle_digest_preview,
 )
@@ -447,18 +447,10 @@ def _preference_for(user, organization, workspace):
 
 
 def _target_event_complete(organization, workspace, campaign):
-    if not campaign:
-        return False
-    if campaign.get("frequency_cap_key") == "daily_digest":
-        return False
-    is_sample = campaign.get("sample_policy") == "sample_only"
-    if campaign.get("campaign_key") == "gateway_sample_bridge":
-        is_sample = False
-    return has_event(
+    return lifecycle_target_completed(
         organization=organization,
         workspace=workspace,
-        event_name=campaign["target_success_event"],
-        is_sample=is_sample,
+        campaign=campaign,
     )
 
 
@@ -709,9 +701,11 @@ def evaluate_lifecycle_decision(
     status = (
         OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE
         if reason is None
-        else OnboardingLifecycleEvaluationLog.STATUS_SKIPPED
-        if reason in {"no_matching_campaign", "workspace_inactive", "missing_email"}
-        else OnboardingLifecycleEvaluationLog.STATUS_SUPPRESSED
+        else (
+            OnboardingLifecycleEvaluationLog.STATUS_SKIPPED
+            if reason in {"no_matching_campaign", "workspace_inactive", "missing_email"}
+            else OnboardingLifecycleEvaluationLog.STATUS_SUPPRESSED
+        )
     )
     metadata = {
         "source": source,
