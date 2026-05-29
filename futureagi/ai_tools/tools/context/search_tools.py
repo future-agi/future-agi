@@ -94,6 +94,26 @@ _STOP = {
 }
 
 
+# Canonical action verbs — the leading token of most tool names — and the
+# query words that map to each. Lets search_tools align "create a knowledge
+# base" with create_knowledge_base instead of list_knowledge_bases.
+_VERB_TO_PREFIX = {
+    "create": "create", "make": "create", "new": "create", "build": "create",
+    "register": "create", "add": "create",
+    "list": "list", "show": "list", "view": "list", "all": "list", "find": "list",
+    "get": "get", "fetch": "get", "retrieve": "get", "read": "get",
+    "update": "update", "edit": "update", "change": "update", "modify": "update",
+    "rename": "update", "set": "update",
+    "delete": "delete", "remove": "delete", "destroy": "delete", "drop": "delete",
+    "search": "search",
+}
+# Leading verbs that actually occur in tool names (used to detect an action
+# mismatch worth demoting).
+_VERB_CANON = set(_VERB_TO_PREFIX) | {
+    "create", "list", "get", "update", "delete", "add", "submit", "search",
+}
+
+
 def _tokens(text: str) -> list[str]:
     return [t for t in re.split(r"[^a-z0-9]+", (text or "").lower()) if t]
 
@@ -138,9 +158,12 @@ class SearchToolsTool(BaseTool):
         "loaded. Searches the COMPLETE tool catalog (hundreds of tools spanning "
         "datasets, evaluations, traces, prompts, agents, annotations, alerts, "
         "dashboards, gateway, users, and more) and returns the best matches with "
-        "their exact names and parameters. After calling this, call the returned "
-        "tool by its exact name — it loads automatically. Never claim an action "
-        "is impossible without searching here first."
+        "their exact names and parameters. Matches on tool names, descriptions, "
+        "AND parameter names (so 'sampling rate' finds the tool whose parameter "
+        "is sampling_rate), and aligns your action verb (create/list/update/"
+        "delete) with the right tool. After calling this, call the returned tool "
+        "by its exact name — it loads automatically. Never claim an action is "
+        "impossible without searching here first."
     )
     category = "context"
     input_model = SearchToolsInput
@@ -152,6 +175,13 @@ class SearchToolsTool(BaseTool):
         q_tokens = _tokens(params.query)
         q_expanded = _expand(q_tokens)
         cat = (params.category or "").strip().lower() or None
+
+        # Detect the user's intended action verb so we can align it with the
+        # tool's leading verb (create_/list_/get_/update_/delete_…). This stops
+        # "create a dataset" from ranking list_datasets above create_dataset.
+        q_verb = next((t for t in q_tokens if t in _VERB_CANON), None)
+        if q_verb:
+            q_verb = _VERB_TO_PREFIX.get(q_verb, q_verb)
 
         scored = []
         for tool in registry.list_all():
@@ -168,6 +198,16 @@ class SearchToolsTool(BaseTool):
             score += 6.0 * len(q_expanded & name_tokens)
             # Medium: query words present in the description.
             score += 1.0 * len(q_expanded & desc_tokens)
+
+            # Parameter-name match: query words that hit a tool's PARAMETER
+            # names — e.g. "sampling rate" surfaces rename_trace_project (param
+            # `sampling_rate`) even though the tool name says nothing about it.
+            schema = tool.input_schema if isinstance(tool.input_schema, dict) else {}
+            param_tokens = set()
+            for pname in (schema.get("properties") or {}):
+                param_tokens |= set(_tokens(pname))
+            score += 2.5 * len(q_expanded & param_tokens)
+
             # Category token match (e.g. "eval" → category 'evaluations').
             if q_expanded & set(_tokens(tool.category)):
                 score += 2.0
@@ -178,6 +218,18 @@ class SearchToolsTool(BaseTool):
             for tok in q_tokens:
                 if len(tok) >= 4 and tok in tool.name:
                     score += 1.5
+
+            # Verb alignment: matching action verb on the tool's leading token.
+            tool_verb = next(iter(_tokens(tool.name)), "")
+            if q_verb and tool_verb:
+                if tool_verb == q_verb:
+                    score += 4.0
+                elif tool_verb in _SYNONYMS.get(q_verb, set()):
+                    score += 2.0
+                elif tool_verb in _VERB_CANON:
+                    # query wants one action but tool is a different action verb
+                    # (e.g. asked to "create" but this is delete_*) — slight demote
+                    score -= 1.5
 
             if score > 0:
                 scored.append((score, tool))
