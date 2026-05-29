@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import NAMESPACE_URL, uuid5
@@ -15,9 +17,14 @@ from accounts.services.onboarding.lifecycle_registry import (
 from accounts.services.onboarding.lifecycle_template_context import (
     render_lifecycle_email_preview,
 )
+from accounts.services.onboarding.lifecycle_template_contract import (
+    required_context_keys_for_template,
+)
 
 PREVIEW_SOURCE = "lifecycle_preview_snapshot"
 DEFAULT_TARGET_ROUTE = f"/dashboard/home?source={PREVIEW_SOURCE}"
+MANIFEST_SCHEMA_VERSION = "onboarding-lifecycle-preview-manifest-2026-05-29.v1"
+MANIFEST_FILENAME = "manifest.json"
 
 
 @dataclass(frozen=True)
@@ -135,6 +142,45 @@ def _markdown_index(rows):
     return "\n".join(lines)
 
 
+def _text_digest(value):
+    return sha256(value.encode("utf-8")).hexdigest()
+
+
+def _manifest_entry(*, campaign, preview, html_name, text_name, html, text, now):
+    return {
+        "campaign_key": campaign["campaign_key"],
+        "campaign_group": campaign["campaign_group"],
+        "template_key": campaign["template_key"],
+        "template_version": campaign["template_version"],
+        "primary_path": campaign["primary_path"],
+        "activation_stage": campaign["entry_stages"][0],
+        "target_action_id": campaign["target_action_id"],
+        "target_success_event": campaign["target_success_event"],
+        "route_strategy": campaign["route_strategy"],
+        "subject": preview["subject"],
+        "preheader": preview["preheader"],
+        "html_file": html_name,
+        "text_file": text_name,
+        "html_sha256": _text_digest(html),
+        "text_sha256": _text_digest(text),
+        "required_context_keys": sorted(
+            required_context_keys_for_template(campaign["template_key"])
+        ),
+        "digest_preview_required": campaign.get("requires_digest_preview") is True,
+        "generated_at": now.isoformat(),
+    }
+
+
+def _manifest(rows, *, now):
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "generated_at": now.isoformat(),
+        "source": PREVIEW_SOURCE,
+        "count": len(rows),
+        "campaigns": rows,
+    }
+
+
 def write_lifecycle_preview_snapshots(
     *,
     output_dir,
@@ -147,7 +193,7 @@ def write_lifecycle_preview_snapshots(
     output_path.mkdir(parents=True, exist_ok=True)
     campaigns = _campaigns_for_snapshot(campaign_key)
 
-    expected_files = [output_path / "index.md"]
+    expected_files = [output_path / "index.md", output_path / MANIFEST_FILENAME]
     for campaign in campaigns:
         expected_files.append(output_path / f"{campaign['campaign_key']}.html")
         expected_files.append(output_path / f"{campaign['campaign_key']}.txt")
@@ -159,6 +205,7 @@ def write_lifecycle_preview_snapshots(
                 )
 
     rows = []
+    manifest_rows = []
     files = []
     for campaign in campaigns:
         send_log = _preview_send_log(campaign, now=now)
@@ -172,9 +219,22 @@ def write_lifecycle_preview_snapshots(
         text_name = f"{campaign['campaign_key']}.txt"
         html_path = output_path / html_name
         text_path = output_path / text_name
-        html_path.write_text(preview["html"], encoding="utf-8")
-        text_path.write_text(preview["text"] + "\n", encoding="utf-8")
+        html = preview["html"]
+        text = preview["text"] + "\n"
+        html_path.write_text(html, encoding="utf-8")
+        text_path.write_text(text, encoding="utf-8")
         files.extend((html_name, text_name))
+        manifest_rows.append(
+            _manifest_entry(
+                campaign=campaign,
+                preview=preview,
+                html_name=html_name,
+                text_name=text_name,
+                html=html,
+                text=text,
+                now=now,
+            )
+        )
         rows.append(
             {
                 "campaign_key": campaign["campaign_key"],
@@ -190,6 +250,12 @@ def write_lifecycle_preview_snapshots(
     index_path = output_path / "index.md"
     index_path.write_text(_markdown_index(rows), encoding="utf-8")
     files.append("index.md")
+    manifest_path = output_path / MANIFEST_FILENAME
+    manifest_path.write_text(
+        json.dumps(_manifest(manifest_rows, now=now), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    files.append(MANIFEST_FILENAME)
     return LifecyclePreviewSnapshotResult(
         output_dir=str(output_path),
         count=len(rows),

@@ -1,4 +1,6 @@
+import json
 from datetime import timedelta
+from hashlib import sha256
 from io import StringIO
 
 import pytest
@@ -167,10 +169,13 @@ def test_lifecycle_preview_command_writes_no_send_snapshot(tmp_path):
         stdout=output,
     )
 
-    assert "count=1" in output.getvalue()
+    command_output = output.getvalue()
+    assert "count=1" in command_output
+    assert "manifest.json" in command_output
     html = (tmp_path / "welcome_resume_goal.html").read_text()
     text = (tmp_path / "welcome_resume_goal.txt").read_text()
     index = (tmp_path / "index.md").read_text()
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
 
     assert "FutureAGI onboarding" in html
     assert "Connect the first observe project" in html
@@ -182,6 +187,53 @@ def test_lifecycle_preview_command_writes_no_send_snapshot(tmp_path):
     )
     assert "Create the project that will receive your first trace" in index
     assert "These previews are generated without sending email." in index
+    assert set(manifest) == {
+        "schema_version",
+        "generated_at",
+        "source",
+        "count",
+        "campaigns",
+    }
+    assert manifest["schema_version"] == (
+        "onboarding-lifecycle-preview-manifest-2026-05-29.v1"
+    )
+    assert manifest["source"] == "lifecycle_preview_snapshot"
+    assert manifest["generated_at"] == "2026-05-29T10:00:00+00:00"
+    assert manifest["count"] == 1
+    entry = manifest["campaigns"][0]
+    assert set(entry) == {
+        "campaign_key",
+        "campaign_group",
+        "template_key",
+        "template_version",
+        "primary_path",
+        "activation_stage",
+        "target_action_id",
+        "target_success_event",
+        "route_strategy",
+        "subject",
+        "preheader",
+        "html_file",
+        "text_file",
+        "html_sha256",
+        "text_sha256",
+        "required_context_keys",
+        "digest_preview_required",
+        "generated_at",
+    }
+    assert entry["campaign_key"] == "welcome_resume_goal"
+    assert entry["subject"] == "Continue with your first observe project"
+    assert entry["preheader"] == (
+        "Create the project that will receive your first trace "
+        "and unlock the quality loop."
+    )
+    assert entry["html_sha256"] == sha256(html.encode("utf-8")).hexdigest()
+    assert entry["text_sha256"] == sha256(text.encode("utf-8")).hexdigest()
+    assert entry["required_context_keys"] == sorted(
+        required_context_keys_for_template("welcome_resume_goal_v1")
+    )
+    assert entry["digest_preview_required"] is False
+    assert entry["generated_at"] == "2026-05-29T10:00:00+00:00"
 
 
 def test_lifecycle_preview_command_writes_all_campaign_snapshots(tmp_path):
@@ -198,8 +250,28 @@ def test_lifecycle_preview_command_writes_all_campaign_snapshots(tmp_path):
 
     assert f"count={len(CAMPAIGN_KEYS)}" in output.getvalue()
     index = (tmp_path / "index.md").read_text()
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
     assert "daily_quality_open_actions" in index
     assert "Review, assign, or dismiss the open item" in index
+    assert manifest["count"] == len(CAMPAIGN_KEYS)
+    digest_entry = next(
+        campaign
+        for campaign in manifest["campaigns"]
+        if campaign["campaign_key"] == "daily_quality_open_actions"
+    )
+    assert digest_entry["digest_preview_required"] is True
+    assert digest_entry["required_context_keys"] == sorted(
+        required_context_keys_for_template("daily_quality_open_actions_v1")
+    )
+    manifest_text = json.dumps(manifest)
+    assert "Review trace regression" not in manifest_text
+    assert "preview-quality-action" not in manifest_text
+    assert "preview-trace" not in manifest_text
+    assert "Internal note intentionally omitted" not in manifest_text
+    assert "api_token" not in manifest_text
+    assert "redacted-preview-token" not in manifest_text
+    assert "metadata" not in digest_entry
+    assert "actions" not in digest_entry
     assert (tmp_path / "daily_quality_open_actions.html").is_file()
     digest_html = (tmp_path / "daily_quality_open_actions.html").read_text()
     assert "Review trace regression" in digest_html
