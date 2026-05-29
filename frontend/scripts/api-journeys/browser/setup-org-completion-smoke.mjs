@@ -255,6 +255,13 @@ async function installRuntime(
       if (request.method() === "POST") {
         const payload = parseJsonPostData(request.postData());
         onboardingPosts.push(payload);
+        if (
+          payload?.role &&
+          Array.isArray(payload?.goals) &&
+          payload.goals.length
+        ) {
+          onSetupComplete();
+        }
         await respondJson(request, {
           status: true,
           result: {

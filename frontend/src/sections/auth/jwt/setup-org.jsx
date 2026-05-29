@@ -290,7 +290,7 @@ const SetupOrganization = ({ getStarted = false }) => {
     [searchParams, setSearchParams],
   );
   const { enqueueSnackbar } = useSnackbar();
-  const { user } = useAuthContext();
+  const { updateUserData, user } = useAuthContext();
   const isOwner = user?.organization_role === "Owner";
   const { initialData, isLoading: isFetchingInitialData } =
     useOrganizationInitialData(isOwner, user);
@@ -373,6 +373,13 @@ const SetupOrganization = ({ getStarted = false }) => {
       ) {
         setActiveStep(2);
       } else {
+        updateUserData({
+          role: variables?.role,
+          goals: variables?.goals || [],
+          onboarding_completed: Boolean(
+            variables?.role && variables?.goals?.length,
+          ),
+        });
         finishSetup();
       }
     },
@@ -402,6 +409,8 @@ const SetupOrganization = ({ getStarted = false }) => {
 
   const customRoleValue = userForm.watch("customRole");
   const roleValue = userForm.watch("role");
+  const goalsValue = userForm.watch("goals");
+  const hasSelectedGoal = Array.isArray(goalsValue) && goalsValue.some(Boolean);
   const handleObserveQuickStart = useCallback(() => {
     if (isSavingUserData || quickStartRequestedRef.current) {
       return;
@@ -562,6 +571,7 @@ const SetupOrganization = ({ getStarted = false }) => {
       orgForm.reset();
 
       if (!getStarted) {
+        updateUserData({ onboarding_completed: true });
         finishSetup();
       }
     },
@@ -919,7 +929,11 @@ const SetupOrganization = ({ getStarted = false }) => {
               sx={{ borderRadius: 0.5 }}
               variant="outlined"
               loading={isSavingUserData}
-              disabled={isSavingUserData || (!roleValue && !customRoleValue)}
+              disabled={
+                isSavingUserData ||
+                (!roleValue && !customRoleValue) ||
+                !hasSelectedGoal
+              }
               onClick={handleSubmitUserData((data) =>
                 onSubmitUserData(data, false),
               )}
@@ -927,24 +941,6 @@ const SetupOrganization = ({ getStarted = false }) => {
             >
               Continue with selected goals
             </LoadingButton>
-
-            <Typography
-              textAlign="center"
-              onClick={
-                !isSavingUserData
-                  ? handleSubmitUserData((data) => onSubmitUserData(data, true))
-                  : undefined
-              }
-              sx={{
-                cursor: isSavingUserData ? "not-allowed" : "pointer",
-                opacity: isSavingUserData ? 0.6 : 1,
-              }}
-              color="primary.main"
-              variant="s1.2"
-              fontWeight={"fontWeightMedium"}
-            >
-              Skip for now
-            </Typography>
           </Stack>
         );
 

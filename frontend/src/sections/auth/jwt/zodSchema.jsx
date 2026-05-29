@@ -9,6 +9,10 @@ export const userDataSchema = z
   .refine((data) => data.role?.trim() || data.customRole?.trim(), {
     message: "Please select a role or enter your role",
     path: ["role"],
+  })
+  .refine((data) => data.goals?.some(Boolean), {
+    message: "Please select at least one goal",
+    path: ["goals"],
   });
 
 export const organizationSchema = z.object({
