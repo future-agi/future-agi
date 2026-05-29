@@ -1633,12 +1633,12 @@ class EvalTemplateBulkDeleteView(APIView):
                         # Bulk soft-delete cells
                         Cell.objects.filter(
                             column_id__in=all_col_ids, deleted=False
-                        ).update(deleted=True)
+                        ).update(deleted=True, deleted_at=timezone.now())
 
                         # Bulk soft-delete columns
                         Column.objects.filter(
                             id__in=all_col_ids
-                        ).update(deleted=True)
+                        ).update(deleted=True, deleted_at=timezone.now())
 
                         # Fix column_order per affected dataset
                         col_id_strs = {str(c) for c in all_col_ids}
