@@ -99,9 +99,9 @@ export default function TraceFullPage() {
 
     if (isTraceReviewOnboarding) {
       return {
-        title: "Trace reviewed",
+        title: "First trace received",
         description:
-          "Turn this trace into a repeatable evaluator so future regressions are caught.",
+          "Review spans, latency, cost, and model inputs here. When this signal looks right, create an evaluator.",
         primaryAction: {
           label: "Create evaluator",
           onClick: handleCreateEvaluator,

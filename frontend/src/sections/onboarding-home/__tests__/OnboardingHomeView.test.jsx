@@ -591,7 +591,7 @@ describe("OnboardingHomeView", () => {
 
     const panel = screen.getByTestId("first-signal-panel");
     expect(panel).toBeVisible();
-    expect(within(panel).getByText("Review the first trace")).toBeVisible();
+    expect(within(panel).getByText("First trace received")).toBeVisible();
     expect(within(panel).getByText("trace-1")).toBeVisible();
     expect(within(panel).getByText("Not reviewed")).toBeVisible();
     expect(

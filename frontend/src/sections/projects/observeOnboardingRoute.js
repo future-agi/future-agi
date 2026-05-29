@@ -159,9 +159,9 @@ export const getObserveOnboardingCopy = (mode, { source } = {}) => {
 
   if (mode === OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE) {
     return {
-      currentStep: "Review",
+      currentStep: "Trace received",
       description:
-        "Open the first trace and inspect latency, cost, and quality context.",
+        "Review it now to understand latency, cost, and quality context.",
       primaryLabel: "Review trace",
       secondaryLabel: "Refresh traces",
       steps: [
@@ -169,7 +169,7 @@ export const getObserveOnboardingCopy = (mode, { source } = {}) => {
         { label: "Trace", complete: true },
         { label: "Review", complete: false },
       ],
-      title: "Review the first trace",
+      title: "First trace received",
     };
   }
 

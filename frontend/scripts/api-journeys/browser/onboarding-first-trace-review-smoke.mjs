@@ -107,7 +107,7 @@ async function main() {
     await clickVisibleText(page, "Check again");
 
     await expectSelector(page, '[data-testid="first-signal-panel"]');
-    await expectVisibleText(page, "Review the first trace", { exact: true });
+    await expectVisibleText(page, "First trace received", { exact: true });
     await expectVisibleText(page, "trace-1", { exact: true });
     await expectVisibleText(page, "Not reviewed", { exact: true });
 
@@ -151,7 +151,7 @@ async function main() {
     );
     await expectVisibleText(page, "Trace", { exact: true });
     await expectVisibleText(page, "trace-1");
-    await expectVisibleText(page, "Trace reviewed", { exact: true });
+    await expectVisibleText(page, "First trace received", { exact: true });
     await expectVisibleText(page, "Create evaluator", { exact: true });
 
     assert(

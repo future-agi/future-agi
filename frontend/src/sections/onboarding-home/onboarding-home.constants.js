@@ -208,9 +208,8 @@ export const ONBOARDING_STAGE_COPY = {
   },
   review_first_trace: {
     eyebrow: "First signal",
-    title: "Review the first trace",
-    description:
-      "Inspect the first trace and capture the first quality signal.",
+    title: "First trace received",
+    description: "Review it now and capture the first quality signal.",
   },
   create_trace_evaluator: {
     eyebrow: "Quality loop",

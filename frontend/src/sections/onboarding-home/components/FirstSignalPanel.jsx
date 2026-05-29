@@ -34,12 +34,12 @@ export default function FirstSignalPanel({
           title={
             isImprovement
               ? "Turn the reviewed trace into a check"
-              : "Review the first trace"
+              : "First trace received"
           }
           description={
             isImprovement
               ? "The first trace has been reviewed. Create a repeatable evaluator or quality check next."
-              : "Open the trace detail and inspect latency, cost, and quality context."
+              : "Review it now to understand latency, cost, and quality context."
           }
           chips={["observe", isImprovement ? "improve" : "review"]}
         />

@@ -200,9 +200,9 @@ describe("observeOnboardingRoute", () => {
     expect(
       getObserveOnboardingCopy(OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE),
     ).toMatchObject({
-      currentStep: "Review",
+      currentStep: "Trace received",
       primaryLabel: "Review trace",
-      title: "Review the first trace",
+      title: "First trace received",
     });
     expect(
       getObserveOnboardingCopy(OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE, {

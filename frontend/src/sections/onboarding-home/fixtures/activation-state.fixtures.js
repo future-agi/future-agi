@@ -1155,8 +1155,9 @@ export const activationStateFixtures = {
     recommended_action: action({
       id: "review_first_trace",
       kind: "review",
-      title: "Review the first trace",
-      description: "Inspect latency, cost, and quality signal context.",
+      title: "First trace received",
+      description:
+        "Review it now to understand latency, cost, and quality context.",
       href: "/dashboard/observe/observe-1/trace/trace-1",
       cta_label: "Review trace",
       estimated_minutes: 3,
@@ -2653,8 +2654,9 @@ export const activationStateFixtures = {
     recommended_action: action({
       id: "review_first_trace",
       kind: "review",
-      title: "Review the first trace",
-      description: "Inspect latency, cost, and quality signal context.",
+      title: "First trace received",
+      description:
+        "Review it now to understand latency, cost, and quality context.",
       href: "/dashboard/observe/observe-1/trace/trace-1",
       cta_label: "Review trace",
       estimated_minutes: 3,

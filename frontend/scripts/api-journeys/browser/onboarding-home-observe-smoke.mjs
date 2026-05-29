@@ -178,7 +178,7 @@ async function main() {
       evidence.first_trace_step_url = relativeUrl(page.url());
       await expectSelector(page, '[data-testid="observe-onboarding-focus"]');
       if (EXISTING_TRACE) {
-        await expectVisibleText(page, "Review the first trace", {
+        await expectVisibleText(page, "First trace received", {
           exact: true,
         });
         await expectVisibleText(page, "Review trace", { exact: true });

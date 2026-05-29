@@ -410,7 +410,7 @@ async function main() {
     await expectVisibleTestId(page, "onboarding-home-view", {
       timeout: 45000,
     });
-    await expectVisibleText(page, "Review the first trace", {
+    await expectVisibleText(page, "First trace received", {
       timeout: 45000,
     });
     await expectVisibleTestId(page, "first-signal-panel", { timeout: 45000 });
@@ -469,10 +469,10 @@ async function main() {
       45000,
     );
     const realTraceReviewUrl = page.url();
-    await expectVisibleText(page, "Trace reviewed", { timeout: 45000 });
+    await expectVisibleText(page, "First trace received", { timeout: 45000 });
     await expectVisibleText(
       page,
-      "Turn this trace into a repeatable evaluator so future regressions are caught.",
+      "Review spans, latency, cost, and model inputs here. When this signal looks right, create an evaluator.",
       { timeout: 45000 },
     );
     const postReviewState = await waitForSmokeActivationStage(

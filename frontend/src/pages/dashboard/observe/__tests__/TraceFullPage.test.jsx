@@ -131,10 +131,10 @@ describe("TraceFullPage", () => {
 
     const { getByRole, getByText } = render(<TraceFullPage />);
 
-    expect(getByText("Trace reviewed")).toBeVisible();
+    expect(getByText("First trace received")).toBeVisible();
     expect(
       getByText(
-        "Turn this trace into a repeatable evaluator so future regressions are caught.",
+        "Review spans, latency, cost, and model inputs here. When this signal looks right, create an evaluator.",
       ),
     ).toBeVisible();
 

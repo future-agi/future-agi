@@ -583,8 +583,8 @@ actions:
     fallback_route_key: get_started
   review_first_trace:
     kind: review
-    title: Review the first trace
-    description: Inspect latency, cost, and quality signal context.
+    title: First trace received
+    description: Review it now to understand latency, cost, and quality context.
     route_key: observe_trace_detail
     cta_label: Review trace
     priority: 100
@@ -844,8 +844,8 @@ stages:
     home_mode: first_run
     copy:
       eyebrow: First signal
-      title: Review the first trace
-      description: Inspect the first trace and capture the first quality signal.
+      title: First trace received
+      description: Review it now and capture the first quality signal.
     progress:
       build: selected
       test: available
