@@ -118,8 +118,16 @@ def _activated_observe_workspace(organization, workspace, user, *, now):
 
 def _eligible_log(user, organization, workspace, *, now=None):
     now = now or timezone.now()
-    campaign = lifecycle_campaign_by_key("welcome_choose_goal")
+    campaign = lifecycle_campaign_by_key("welcome_resume_goal")
     _set_workspace_created_at(workspace, now - timedelta(minutes=30))
+    OnboardingGoal.no_workspace_objects.create(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        goal="monitor_production_ai_app",
+        primary_path="observe",
+        selected_at=now - timedelta(minutes=20),
+    )
     return OnboardingLifecycleEvaluationLog.no_workspace_objects.create(
         run_id="00000000-0000-0000-0000-000000000014",
         user=user,
@@ -129,20 +137,20 @@ def _eligible_log(user, organization, workspace, *, now=None):
         campaign_group=campaign["campaign_group"],
         template_key=campaign["template_key"],
         template_version=campaign["template_version"],
-        activation_stage="choose_goal",
+        activation_stage="connect_observability",
         primary_path="observe",
-        recommendation_id="choose_onboarding_goal",
+        recommendation_id="create_observe_project",
         target_action_id=campaign["target_action_id"],
         target_success_event=campaign["target_success_event"],
-        target_url="/dashboard/home?onboarding=choose-goal",
+        target_url="/dashboard/observe?setup=true&source=onboarding",
         status=OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE,
         eligible_at=now - timedelta(minutes=15),
         evaluated_at=now - timedelta(minutes=1),
         registry_snapshot=campaign,
         activation_state_snapshot={
-            "stage": "choose_goal",
+            "stage": "connect_observability",
             "primary_path": "observe",
-            "recommended_action_id": "choose_onboarding_goal",
+            "recommended_action_id": "create_observe_project",
         },
         metadata={"source": "test", "send_enabled": False},
     )
@@ -724,7 +732,7 @@ def test_completed_target_suppresses_stale_send(
         user=user,
         organization=organization,
         workspace=workspace,
-        event_name="onboarding_goal_selected",
+        event_name=log.target_success_event,
         source="test",
         product_path="observe",
     )
@@ -753,7 +761,7 @@ def test_completion_event_marks_send_completed(
         user=user,
         organization=organization,
         workspace=workspace,
-        event_name="onboarding_goal_selected",
+        event_name=log.target_success_event,
         source="test",
         product_path="observe",
         occurred_at=timezone.now() + timedelta(minutes=1),

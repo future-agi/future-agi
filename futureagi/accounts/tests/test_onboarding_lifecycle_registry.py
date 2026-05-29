@@ -1,3 +1,5 @@
+from collections import Counter
+
 from accounts.services.onboarding.constants import ONBOARDING_ACTIVATION_EVENTS
 from accounts.services.onboarding.lifecycle_registry import lifecycle_campaigns
 
@@ -6,12 +8,31 @@ def test_lifecycle_campaign_registry_is_editable_and_valid():
     campaigns = lifecycle_campaigns()
     keys = [campaign["campaign_key"] for campaign in campaigns]
 
-    assert len(campaigns) == 13
     assert len(keys) == len(set(keys))
-    assert "welcome_choose_goal" in keys
-    assert "observe_sample_bridge" in keys
-    assert "prompt_create_first" in keys
-    assert "prompt_add_failure_example" in keys
+    assert {
+        "welcome_choose_goal",
+        "observe_connect_first",
+        "observe_waiting_for_first_trace",
+        "observe_first_trace_ready",
+        "observe_next_loop",
+        "observe_sample_bridge",
+        "prompt_create_first",
+        "prompt_add_failure_example",
+        "agent_create_first",
+        "agent_create_eval",
+        "gateway_add_provider",
+        "gateway_add_policy",
+        "daily_quality_open_actions",
+    }.issubset(set(keys))
+
+    group_counts = Counter(campaign["campaign_group"] for campaign in campaigns)
+    assert group_counts["welcome"] >= 2
+    assert group_counts["prompt"] >= 5
+    assert group_counts["agent"] >= 5
+    assert group_counts["gateway"] >= 6
+    assert group_counts["recovery"] >= 2
+    assert group_counts["activation_success"] >= 2
+
     for campaign in campaigns:
         assert campaign["template_key"].endswith("_v1")
         assert campaign["send_flag"] == "onboarding_lifecycle_send_enabled"

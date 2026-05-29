@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from html import unescape
 from urllib.parse import urlencode
 
 from django.conf import settings
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
 
 from accounts.services.onboarding.lifecycle_tokens import sign_lifecycle_token
 
@@ -98,6 +101,25 @@ def build_lifecycle_template_context(*, send_log, campaign, target_route, now=No
         "support_url": absolute_lifecycle_url(SUPPORT_URL),
         "target_route": target_route,
         "digest_preview": (send_log.metadata or {}).get("digest_preview"),
+    }
+
+
+def render_lifecycle_email_preview(*, send_log, campaign, target_route, now=None):
+    template = template_path(send_log.template_key)
+    context = build_lifecycle_template_context(
+        send_log=send_log,
+        campaign=campaign,
+        target_route=target_route,
+        now=now,
+    )
+    html = render_to_string(template, context)
+    text = " ".join(unescape(strip_tags(html)).split())
+    return {
+        "subject": subject_for_campaign(campaign),
+        "template": template,
+        "context": context,
+        "html": html,
+        "text": text,
     }
 
 
