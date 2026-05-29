@@ -73,6 +73,9 @@ from model_hub.serializers.contracts import (
     EvalTemplateVersionResponseSerializer,
     EvalTemplateVersionRestoreResponseSerializer,
     EvalTemplateNamesResponseSerializer,
+    EvalUsageColumnConfigResponseSerializer,
+    EvalUsageColumnConfigUpdateRequestSerializer,
+    EvalUsageQuerySerializer,
     EvalUsageStatsResponseSerializer,
     EvalMetricRequestSerializer,
     EvalTemplateNamesRequestSerializer,
@@ -4955,6 +4958,100 @@ class GroundTruthTriggerEmbeddingView(APIView):
             return self._gm.bad_request(str(e))
 
 
+# ── Shared helpers for eval usage column config ─────────────────────
+
+_EVAL_USAGE_DEFAULT_COLUMNS = [
+    {"value": "score", "label": "Score", "enabled": True, "is_visible": True},
+    {"value": "result", "label": "Result", "enabled": True, "is_visible": True},
+    {"value": "input", "label": "Input", "enabled": True, "is_visible": True},
+    {"value": "reason", "label": "Reason", "enabled": True, "is_visible": True},
+    {"value": "source", "label": "Source", "enabled": True, "is_visible": True},
+    {"value": "version", "label": "Version", "enabled": True, "is_visible": True},
+    {"value": "feedback", "label": "Feedback", "enabled": True, "is_visible": True},
+    {"value": "created_at", "label": "Ran at", "enabled": True, "is_visible": True},
+]
+
+
+def _get_all_eval_required_keys(template):
+    """Union of required_keys across all versions + current template config."""
+    from model_hub.models.evals_metric import EvalTemplateVersion
+
+    all_keys = set()
+    for v in EvalTemplateVersion.objects.filter(
+        eval_template=template, deleted=False
+    ):
+        cs = v.config_snapshot or {}
+        all_keys.update(cs.get("required_keys", []))
+    all_keys.update((template.config or {}).get("required_keys", []))
+    return sorted(all_keys)
+
+
+def _get_or_create_eval_usage_column_config(template, organization):
+    """Get or create column config for an eval usage table.
+
+    On first call, builds defaults (static columns + input variable columns
+    from the union of required_keys across all versions). On subsequent calls,
+    reconciles — appends any new variables as hidden columns. Returns the
+    column config list with order_index, is_visible, and enabled normalized.
+    """
+    from model_hub.models.column_config import ColumnConfig
+
+    col_config_obj, created = ColumnConfig.objects.get_or_create(
+        table_name=ColumnConfig.TableName.EVAL_USAGE,
+        organization=organization,
+        identifier=str(template.id),
+    )
+
+    if created:
+        cols = [
+            {**c, "order_index": i}
+            for i, c in enumerate(_EVAL_USAGE_DEFAULT_COLUMNS)
+        ]
+        idx = len(cols)
+        for key in _get_all_eval_required_keys(template):
+            cols.append({
+                "value": f"input_var_{key}",
+                "label": key,
+                "enabled": False,
+                "is_visible": False,
+                "order_index": idx,
+            })
+            idx += 1
+        col_config_obj.columns = cols
+        col_config_obj.save()
+    else:
+        # Reconcile: append new required_keys not in saved config
+        existing_values = {
+            c["value"] for c in (col_config_obj.columns or [])
+        }
+        added = False
+        idx = len(col_config_obj.columns or [])
+        for key in _get_all_eval_required_keys(template):
+            col_id = f"input_var_{key}"
+            if col_id not in existing_values:
+                col_config_obj.columns.append({
+                    "value": col_id,
+                    "label": key,
+                    "enabled": False,
+                    "is_visible": False,
+                    "order_index": idx,
+                })
+                idx += 1
+                added = True
+        if added:
+            col_config_obj.save()
+
+    # Normalize: ensure order_index, is_visible, enabled are present
+    result = []
+    for i, c in enumerate(col_config_obj.columns or []):
+        col = dict(c)
+        col.setdefault("order_index", i)
+        col.setdefault("is_visible", col.get("enabled", True))
+        col.setdefault("enabled", col.get("is_visible", True))
+        result.append(col)
+    return result
+
+
 class EvalUsageStatsView(APIView):
     """
     GET /model-hub/eval-templates/<id>/usage/
@@ -4977,8 +5074,9 @@ class EvalUsageStatsView(APIView):
         "365d": timedelta(days=365),
     }
 
-    @swagger_auto_schema(
-        responses={200: EvalUsageStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    @validated_request(
+        query_serializer=EvalUsageQuerySerializer,
+        responses={200: EvalUsageStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, template_id, *args, **kwargs):
         try:
@@ -5230,14 +5328,12 @@ class EvalUsageStatsView(APIView):
                                     )
                                     else "[url]"
                                 )
-                            else:
-                                val_str = val_str[:100]
                             input_vars[k] = val_str
 
                 # Build input summary: "key1: val1, key2: val2"
                 if input_vars:
                     input_str = ", ".join(
-                        f"{k}: {v[:60]}" for k, v in list(input_vars.items())[:3]
+                        f"{k}: {v}" for k, v in list(input_vars.items())[:3]
                     )
                 else:
                     # Fallback to config.input
@@ -5248,10 +5344,10 @@ class EvalUsageStatsView(APIView):
                         parts = []
                         for k, v in input_data.items():
                             if v and k not in _skip_keys:
-                                parts.append(f"{k}: {str(v)[:60]}")
+                                parts.append(f"{k}: {str(v)}")
                         input_str = ", ".join(parts[:3])
                     elif isinstance(input_data, str):
-                        input_str = input_data[:200]
+                        input_str = input_data
                     else:
                         input_str = ""
 
@@ -5292,51 +5388,92 @@ class EvalUsageStatsView(APIView):
                     else None
                 )
 
-                log_item = {
-                    "id": str(log.log_id),
-                    "input": input_str[:200],
-                    "result": result_label,
-                    "score": score,
-                    "reason": ((reason[:150] + "...") if len(reason) > 150 else reason),
-                    "status": log.status,
-                    "source": source,
-                    "created_at": (
-                        log.created_at.isoformat() if log.created_at else ""
-                    ),
-                    "warnings": warnings or [],
-                    "detail": {
-                        "input_variables": input_vars or config.get("input", {}),
-                        "output": output_data,
-                        "warnings": warnings or [],
-                        "mappings": mappings,
-                        "model": (
-                            config.get("model") if isinstance(config, dict) else None
+                # Build row: static fields + flattened input variables
+                row_data = {
+                    "row_id": str(log.log_id),
+                    "score": {"cell_value": score},
+                    "result": {"cell_value": result_label},
+                    "input": {"cell_value": input_str},
+                    "reason": {"cell_value": reason},
+                    "source": {"cell_value": source},
+                    "version": {
+                        "cell_value": (
+                            config.get("version_number")
+                            if isinstance(config, dict)
+                            else None
                         ),
                     },
-                    "feedback": feedback_map.get(str(log.log_id)),
+                    "feedback": {
+                        "cell_value": feedback_map.get(str(log.log_id)),
+                    },
+                    "created_at": {
+                        "cell_value": (
+                            log.created_at.isoformat() if log.created_at else ""
+                        ),
+                    },
+                    "status": {"cell_value": log.status},
+                    "warnings": {"cell_value": warnings or []},
+                }
+
+                # Flatten input variables as individual columns
+                all_vars = input_vars or config.get("input", {})
+                if isinstance(all_vars, dict):
+                    for var_key, var_val in all_vars.items():
+                        row_data[f"input_var_{var_key}"] = {
+                            "cell_value": var_val,
+                        }
+
+                # Keep detail for the side panel
+                row_data["detail"] = {
+                    "input_variables": all_vars,
+                    "output": output_data,
+                    "warnings": warnings or [],
+                    "mappings": mappings,
+                    "model": (
+                        config.get("model")
+                        if isinstance(config, dict)
+                        else None
+                    ),
+                    "version_id": (
+                        config.get("version_id")
+                        if isinstance(config, dict)
+                        else None
+                    ),
+                    "version_number": (
+                        config.get("version_number")
+                        if isinstance(config, dict)
+                        else None
+                    ),
                 }
 
                 if is_composite_log:
                     children = config.get("children", [])
-                    log_item["composite"] = True
-                    log_item["aggregate_pass"] = (
+                    row_data["composite"] = True
+                    row_data["aggregate_pass"] = (
                         output_data.get("aggregate_pass")
                         if isinstance(output_data, dict)
                         else None
                     )
-                    log_item["detail"]["children"] = children
-                    log_item["detail"]["aggregation_function"] = config.get(
+                    row_data["detail"]["children"] = children
+                    row_data["detail"]["aggregation_function"] = config.get(
                         "aggregation_function"
                     )
-                    log_item["detail"]["total_children"] = config.get("total_children")
-                    log_item["detail"]["completed_children"] = config.get(
+                    row_data["detail"]["total_children"] = config.get(
+                        "total_children"
+                    )
+                    row_data["detail"]["completed_children"] = config.get(
                         "completed_children"
                     )
-                    log_item["detail"]["failed_children"] = config.get(
+                    row_data["detail"]["failed_children"] = config.get(
                         "failed_children"
                     )
 
-                log_items.append(log_item)
+                log_items.append(row_data)
+
+            # ── Column config (same pattern as dataset table) ────────
+            column_config = _get_or_create_eval_usage_column_config(
+                template, organization
+            )
 
             response = {
                 "template_id": str(template_id),
@@ -5351,8 +5488,9 @@ class EvalUsageStatsView(APIView):
                     ),
                 },
                 "chart": chart_data,
+                "column_config": column_config,
+                "table": log_items,
                 "logs": {
-                    "items": log_items,
                     "total": total_logs,
                     "page": page,
                     "page_size": page_size,
@@ -5364,6 +5502,75 @@ class EvalUsageStatsView(APIView):
             logger.error(
                 f"Error in EvalUsageStatsView: {str(e)}\n{traceback.format_exc()}"
             )
+            return self._gm.bad_request(str(e))
+
+
+class EvalUsageColumnConfigView(APIView):
+    """
+    GET/POST /model-hub/eval-templates/<id>/usage/column-config/
+
+    Manages column visibility and ordering for the eval usage table.
+    Stores config in the ColumnConfig model (same pattern as dataset columns).
+    """
+
+    _gm = GeneralMethods()
+    permission_classes = [IsAuthenticated]
+
+    @validated_request(
+        responses={
+            200: EvalUsageColumnConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+    )
+    def get(self, request, template_id, *args, **kwargs):
+        try:
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            template = EvalTemplate.no_workspace_objects.get(
+                id=template_id, deleted=False
+            )
+            columns = _get_or_create_eval_usage_column_config(
+                template, organization
+            )
+            return self._gm.success_response({"columns": columns})
+
+        except EvalTemplate.DoesNotExist:
+            return self._gm.not_found("Eval template not found.")
+        except Exception as e:
+            logger.error(f"Error in EvalUsageColumnConfigView.get: {e}")
+            return self._gm.bad_request(str(e))
+
+    @validated_request(
+        request_serializer=EvalUsageColumnConfigUpdateRequestSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+    )
+    def post(self, request, template_id, *args, **kwargs):
+        from model_hub.models.column_config import ColumnConfig
+
+        try:
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            EvalTemplate.no_workspace_objects.get(id=template_id, deleted=False)
+
+            column_config, _ = ColumnConfig.objects.get_or_create(
+                table_name=ColumnConfig.TableName.EVAL_USAGE,
+                organization=organization,
+                identifier=str(template_id),
+            )
+            column_config.columns = request.validated_data["columns"]
+            column_config.save()
+
+            return self._gm.success_response("Columns updated")
+
+        except EvalTemplate.DoesNotExist:
+            return self._gm.not_found("Eval template not found.")
+        except Exception as e:
+            logger.error(f"Error in EvalUsageColumnConfigView.post: {e}")
             return self._gm.bad_request(str(e))
 
 

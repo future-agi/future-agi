@@ -2936,3 +2936,42 @@ class ExperimentAdditionalEvaluationsRequestSerializer(serializers.Serializer):
         child=serializers.UUIDField(),
         allow_empty=False,
     )
+
+
+# ── Eval Usage Column Config ────────────────────────────────────────
+
+
+class EvalUsageColumnConfigItemSerializer(serializers.Serializer):
+    value = serializers.CharField()
+    label = serializers.CharField(allow_blank=True)
+    enabled = serializers.BooleanField()
+
+
+class EvalUsageColumnConfigUpdateRequestSerializer(serializers.Serializer):
+    columns = serializers.ListField(
+        child=EvalUsageColumnConfigItemSerializer(),
+    )
+
+
+class EvalUsageColumnConfigResponseResultSerializer(serializers.Serializer):
+    columns = serializers.ListField(child=serializers.DictField())
+
+
+class EvalUsageColumnConfigResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = EvalUsageColumnConfigResponseResultSerializer()
+
+
+# ── Eval Usage Stats ────────────────────────────────────────────────
+
+
+class EvalUsageQuerySerializer(serializers.Serializer):
+    page = serializers.IntegerField(required=False, default=0, min_value=0)
+    page_size = serializers.IntegerField(
+        required=False, default=25, min_value=1, max_value=100
+    )
+    period = serializers.ChoiceField(
+        choices=["30m", "6h", "1d", "7d", "30d", "90d", "180d", "365d"],
+        required=False,
+        default="30d",
+    )

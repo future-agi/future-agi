@@ -214,6 +214,7 @@ from model_hub.views.separate_evals import (
 from model_hub.views.separate_evals import (
     EvalTemplateVersionCreateView,
     EvalTemplateVersionListView,
+    EvalUsageColumnConfigView,
     EvalUsageStatsView,
     GetAPICallLogDetailsView,
     GetAPICallLogView,
@@ -1142,6 +1143,11 @@ urlpatterns = [
         "eval-templates/<uuid:template_id>/usage/",
         EvalUsageStatsView.as_view(),
         name="eval-template-usage",
+    ),
+    path(
+        "eval-templates/<uuid:template_id>/usage/column-config/",
+        EvalUsageColumnConfigView.as_view(),
+        name="eval-usage-column-config",
     ),
     path(
         "eval-templates/<uuid:template_id>/feedback-list/",

@@ -11471,6 +11471,21 @@ def run_evaluation_task(evaluation_data):
                             "dataset_id", str(metric.dataset_id)
                         )
                     runner_source_configs.setdefault("source", "dataset")
+                    # Track which eval version produced this result
+                    try:
+                        from model_hub.models.evals_metric import EvalTemplateVersion
+                        _default_ver = EvalTemplateVersion.objects.get_default(
+                            metric.template
+                        )
+                        if _default_ver:
+                            runner_source_configs.setdefault(
+                                "version_id", str(_default_ver.id)
+                            )
+                            runner_source_configs.setdefault(
+                                "version_number", _default_ver.version_number
+                            )
+                    except Exception:
+                        pass
                     runner_args["source_configs"] = runner_source_configs
 
                     evaluation_runner = EvaluationRunner(

@@ -13,7 +13,7 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.views.eval_runner import (
     EvaluationRunner,
     _extract_column_id_and_path,
@@ -212,6 +212,15 @@ def run_eval_func(
             source_config.update(config)
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
+
+        # Track which eval version produced this result
+        try:
+            default_version = EvalTemplateVersion.objects.get_default(template)
+            if default_version:
+                source_config["version_id"] = str(default_version.id)
+                source_config["version_number"] = default_version.version_number
+        except Exception:
+            pass
 
         try:
             from ee.usage.schemas.event_types import BillingEventType

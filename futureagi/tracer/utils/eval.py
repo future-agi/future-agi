@@ -13,7 +13,7 @@ from common.utils.data_injection import normalize as _di_normalize
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *
 from model_hub.models.choices import StatusType
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
@@ -1279,6 +1279,15 @@ def _execute_evaluation(
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
 
+    # Track which eval version produced this result
+    try:
+        _default_ver = EvalTemplateVersion.objects.get_default(eval_model)
+        if _default_ver:
+            source_config["version_id"] = str(_default_ver.id)
+            source_config["version_number"] = _default_ver.version_number
+    except Exception:
+        pass
+
     api_call_type = _get_api_call_type(custom_eval_config.model)
     workspace = observation_span.project.workspace
     if workspace is None:
@@ -2524,6 +2533,15 @@ def _execute_evaluation_for_trace(
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
 
+    # Track which eval version produced this result
+    try:
+        _default_ver = EvalTemplateVersion.objects.get_default(eval_template)
+        if _default_ver:
+            source_config["version_id"] = str(_default_ver.id)
+            source_config["version_number"] = _default_ver.version_number
+    except Exception:
+        pass
+
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None
     if log_and_deduct_cost_for_api_request is not None:
@@ -2746,6 +2764,15 @@ def _execute_evaluation_for_session(
     }
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
+
+    # Track which eval version produced this result
+    try:
+        _default_ver = EvalTemplateVersion.objects.get_default(eval_template)
+        if _default_ver:
+            source_config["version_id"] = str(_default_ver.id)
+            source_config["version_number"] = _default_ver.version_number
+    except Exception:
+        pass
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None

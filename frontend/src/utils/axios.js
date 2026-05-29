@@ -901,6 +901,10 @@ export const endpoints = {
         apiPath("/model-hub/eval-templates/{template_id}/usage/", {
           template_id: id,
         }),
+      getEvalUsageColumnConfig: (id) =>
+        apiPath("/model-hub/eval-templates/{template_id}/usage/column-config/", {
+          template_id: id,
+        }),
       getEvalFeedbackList: (id) =>
         apiPath("/model-hub/eval-templates/{template_id}/feedback-list/", {
           template_id: id,

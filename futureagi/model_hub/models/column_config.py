@@ -20,6 +20,7 @@ class ColumnConfig(models.Model):
             "OptimizeDatasetPromptTemplateExplore",
             "Optimize Dataset Prompt Template Explore",
         )
+        EVAL_USAGE = "EvalUsage", "Eval Usage"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     created_at = models.DateTimeField(default=timezone.now)
