@@ -32,6 +32,8 @@ def create_optimization_run(
     organization,
     workspace,
     eval_template_ids=None,
+    test_execution_id=None,
+    run_test_id=None,
 ):
     """Create a new optimization run.
 
@@ -55,6 +57,29 @@ def create_optimization_run(
 
     dataset = column.dataset
 
+    # Optional linkage to the source test execution / run test so the run shows
+    # under the test execution's Optimization tab — same as the UI's "Fix My
+    # Agent" flow (TH-5384). test_execution_id implies its run_test.
+    test_execution = None
+    run_test = None
+    if test_execution_id:
+        from simulate.models.test_execution import TestExecution
+
+        try:
+            test_execution = TestExecution.objects.get(id=test_execution_id)
+            run_test = test_execution.run_test
+        except TestExecution.DoesNotExist:
+            return ServiceError(
+                f"TestExecution {test_execution_id} not found.", "NOT_FOUND"
+            )
+    elif run_test_id:
+        from simulate.models.run_test import RunTest
+
+        try:
+            run_test = RunTest.objects.get(id=run_test_id)
+        except RunTest.DoesNotExist:
+            return ServiceError(f"RunTest {run_test_id} not found.", "NOT_FOUND")
+
     # Create optimization run
     opt_run = OptimizeDataset.objects.create(
         name=name,
@@ -64,6 +89,8 @@ def create_optimization_run(
         status="running",
         optimizer_algorithm=algorithm,
         optimizer_config=algorithm_config,
+        test_execution=test_execution,
+        run_test=run_test,
     )
 
     # Start workflow
