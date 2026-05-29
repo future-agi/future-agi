@@ -43,7 +43,10 @@ export default mergeConfig(
       include: [
         'src/**/*.{test,spec}.{js,jsx,ts,tsx}',
         'src/__tests__/**/*.{js,jsx,ts,tsx}',
-        'scripts/api-journeys/**/*.{test,spec}.{js,mjs}'
+        // api-journey UNIT tests only (*.test.*). The *.spec.js files under
+        // api-journeys are Playwright specs (import @playwright/test) and must
+        // NOT be collected by vitest.
+        'scripts/api-journeys/**/*.test.{js,mjs}'
       ],
       // Exclude patterns
       exclude: [
