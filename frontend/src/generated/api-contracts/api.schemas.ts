@@ -5132,6 +5132,7 @@ export interface GatewayPlaygroundTestResultApi {
   guardrail_headers: GatewayPlaygroundTestResultApiGuardrailHeaders;
   /** @minLength 1 */
   model: string;
+  request_id?: string;
   blocked: boolean;
   warned: boolean;
 }

@@ -31,6 +31,12 @@ import GettingStartedCard from "./components/GettingStartedCard";
 import GatewayOnboardingFocusPanel from "./components/GatewayOnboardingFocusPanel";
 import { useApiKeys } from "./keys/hooks/useApiKeys";
 import SvgColor from "src/components/svg-color";
+import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
+import {
+  buildGatewayRequestReviewHref,
+  buildGatewayRequestSeenPayload,
+  gatewayPlaygroundRequestId,
+} from "./gatewayOnboardingEvents";
 
 const STATUS_COLORS = {
   healthy: "success",
@@ -128,6 +134,48 @@ const GatewayOverviewSection = () => {
     },
   });
 
+  const firstRequestMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await axiosInstance.post(
+        endpoints.gateway.testPlayground(gatewayId),
+        {
+          prompt:
+            "Send a short gateway onboarding request and reply with one sentence.",
+        },
+      );
+      const result = data.result || data;
+      const eventPayload = buildGatewayRequestSeenPayload({
+        gatewayId,
+        result,
+      });
+      let nextState = null;
+      try {
+        nextState = await recordActivationEvent(eventPayload);
+      } catch {
+        // Keep the first request review path available if tracking is unavailable.
+      }
+      return { nextState, result };
+    },
+    onSuccess: ({ nextState, result }) => {
+      refreshGateways();
+      enqueueSnackbar("Gateway request sent", { variant: "success" });
+      const nextHref =
+        nextState?.recommendedAction?.href ||
+        buildGatewayRequestReviewHref({
+          requestId: gatewayPlaygroundRequestId(result),
+        });
+      navigate(nextHref);
+    },
+    onError: (requestError) => {
+      enqueueSnackbar(
+        requestError?.response?.data?.message ||
+          requestError?.message ||
+          "Gateway request failed",
+        { variant: "error" },
+      );
+    },
+  });
+
   // Provider summary
   const providers = providerHealth?.providers;
   let providerList = [];
@@ -156,10 +204,6 @@ const GatewayOverviewSection = () => {
     searchParams.get("onboarding") === "test-request" ||
     searchParams.get("source") === "onboarding";
 
-  const openGatewayDocs = () => {
-    window.open("https://docs.futureagi.com/docs/command-center", "_blank");
-  };
-
   const gatewayFocusPrimaryAction = (() => {
     if (!completionState.hasProviders) {
       return {
@@ -176,8 +220,11 @@ const GatewayOverviewSection = () => {
     }
     if (!completionState.hasRequests) {
       return {
-        label: "Open request docs",
-        onClick: openGatewayDocs,
+        label: firstRequestMutation.isPending
+          ? "Sending..."
+          : "Send test request",
+        onClick: () => firstRequestMutation.mutate(),
+        disabled: firstRequestMutation.isPending,
       };
     }
     return {

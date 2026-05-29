@@ -1,11 +1,73 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildGatewayRequestReviewHref,
+  buildGatewayRequestSeenPayload,
   buildGatewayFallbackPolicyCreatedPayload,
   buildGatewayOnboardingCompletionHref,
   buildGatewayPolicyCreatedPayload,
+  gatewayPlaygroundRequestId,
 } from "./gatewayOnboardingEvents";
 
 describe("gatewayOnboardingEvents", () => {
+  it("builds a gateway first-request payload from playground results", () => {
+    expect(
+      buildGatewayRequestSeenPayload({
+        gatewayId: "gateway-1",
+        result: {
+          status_code: 200,
+          body: { id: "chatcmpl-1" },
+          guardrail_headers: {
+            "x-agentcc-request-id": "req-123",
+          },
+          model: "gpt-4o-mini",
+          blocked: false,
+          warned: false,
+        },
+      }),
+    ).toMatchObject({
+      eventName: "gateway_request_seen",
+      primaryPath: "gateway",
+      stage: "run_gateway_request",
+      source: "gateway_request_onboarding",
+      artifactType: "gateway_request",
+      artifactId: "req-123",
+      metadata: {
+        gateway_id: "gateway-1",
+        request_id: "req-123",
+        response_id: "chatcmpl-1",
+        status_code: 200,
+        is_error: false,
+        model: "gpt-4o-mini",
+        blocked: false,
+        warned: false,
+      },
+      idempotencyKey: "gateway_request_seen:req-123:gateway-1",
+      isSample: false,
+    });
+  });
+
+  it("extracts request IDs from playground response shapes", () => {
+    expect(gatewayPlaygroundRequestId({ request_id: "req-top" })).toBe(
+      "req-top",
+    );
+    expect(
+      gatewayPlaygroundRequestId({
+        guardrailHeaders: {
+          "X-Request-ID": "req-header",
+        },
+      }),
+    ).toBe("req-header");
+  });
+
+  it("builds gateway request-review routes", () => {
+    expect(buildGatewayRequestReviewHref({ requestId: "req-123" })).toBe(
+      "/dashboard/gateway/logs?onboarding=review-request&request_id=req-123",
+    );
+    expect(buildGatewayRequestReviewHref()).toBe(
+      "/dashboard/gateway/logs?onboarding=review-request",
+    );
+  });
+
   it("builds a safe gateway fallback policy completion payload", () => {
     expect(
       buildGatewayFallbackPolicyCreatedPayload({

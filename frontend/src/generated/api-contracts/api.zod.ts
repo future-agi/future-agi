@@ -10660,6 +10660,7 @@ export const AgentccGatewaysTestPlaygroundResponse = zod.object({
 }).passthrough(),
   "guardrail_headers": zod.record(zod.string(), zod.string().min(1)),
   "model": zod.string().min(1),
+  "request_id": zod.string().optional(),
   "blocked": zod.boolean(),
   "warned": zod.boolean()
 })

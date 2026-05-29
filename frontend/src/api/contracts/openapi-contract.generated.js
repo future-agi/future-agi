@@ -82556,6 +82556,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "minLength": 1
         },
+        "request_id": {
+          "title": "Request id",
+          "type": "string"
+        },
         "blocked": {
           "title": "Blocked",
           "type": "boolean"
