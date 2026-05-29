@@ -109,6 +109,23 @@ const SMOKES = [
       "Composite controlled proof for the first-signup Aha screen sequence.",
   },
   {
+    id: "onboarding-first-signup-aha-coverage-mobile-controlled",
+    mode: "controlled",
+    suite: true,
+    sequence: [
+      "setup-org-completion-controlled",
+      "onboarding-home-observe-controlled",
+      "onboarding-observe-project-first-trace-controlled",
+      "onboarding-first-trace-review-controlled",
+      "onboarding-post-aha-fallback-controlled",
+    ],
+    description:
+      "Mobile composite controlled proof for the first-signup Aha screen sequence.",
+    env: {
+      ONBOARDING_SMOKE_VIEWPORT: "mobile",
+    },
+  },
+  {
     id: "signup-quick-start-real",
     mode: "real-signup",
     file: "signup-quick-start-smoke.mjs",
@@ -144,7 +161,7 @@ if (selected.length === 0) {
 }
 
 for (const smoke of selected) {
-  await runSmoke(smoke, []);
+  await runSmoke(smoke, [], {});
 }
 
 function parseArgs(argv) {
@@ -176,7 +193,12 @@ function parseArgs(argv) {
   return parsed;
 }
 
-async function runSmoke(smoke, stack) {
+async function runSmoke(smoke, stack, inheritedEnv) {
+  const env = {
+    ...inheritedEnv,
+    ...smoke.env,
+  };
+
   if (smoke.sequence) {
     if (stack.includes(smoke.id)) {
       throw new Error(`Onboarding smoke suite cycle: ${stack.join(" -> ")}`);
@@ -187,7 +209,7 @@ async function runSmoke(smoke, stack) {
       if (!child) {
         throw new Error(`Unknown onboarding smoke in suite: ${childId}`);
       }
-      await runSmoke(child, [...stack, smoke.id]);
+      await runSmoke(child, [...stack, smoke.id], env);
     }
     console.log(`PASS ${smoke.id}`);
     return;
@@ -200,7 +222,7 @@ async function runSmoke(smoke, stack) {
     const child = spawn(process.execPath, [scriptPath], {
       env: {
         ...process.env,
-        ...smoke.env,
+        ...env,
       },
       stdio: "inherit",
     });

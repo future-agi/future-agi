@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 import { Buffer } from "node:buffer";
 import { createRequire } from "node:module";
 import process from "node:process";
@@ -8,9 +9,10 @@ const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
+const VIEWPORT_NAME = process.env.ONBOARDING_SMOKE_VIEWPORT || "desktop";
 const SCREENSHOT_PATH =
   process.env.SETUP_ORG_COMPLETION_SCREENSHOT ||
-  "/tmp/setup-org-completion-smoke.png";
+  `/tmp/setup-org-completion-smoke-${VIEWPORT_NAME}.png`;
 const STUB_AUTH = envFlag("ONBOARDING_SMOKE_STUB_AUTH");
 
 async function main() {
@@ -27,7 +29,7 @@ async function main() {
   const browser = await puppeteer.launch({
     executablePath: browserExecutablePath(),
     headless: process.env.HEADLESS !== "0",
-    defaultViewport: { width: 1440, height: 950 },
+    defaultViewport: viewportForName(VIEWPORT_NAME),
     args: ["--no-sandbox"],
   });
 
@@ -148,6 +150,7 @@ async function main() {
             onboarding_post: onboardingPosts[0],
             screenshot: SCREENSHOT_PATH,
             setup_posts: setupPosts,
+            viewport: VIEWPORT_NAME,
           },
         },
         null,
@@ -528,6 +531,19 @@ function browserExecutablePath() {
   }
   if (process.platform === "linux") return "/usr/bin/google-chrome";
   return undefined;
+}
+
+function viewportForName(name) {
+  if (name === "mobile") {
+    return {
+      width: 390,
+      height: 844,
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 2,
+    };
+  }
+  return { width: 1440, height: 950 };
 }
 
 main().catch((error) => {

@@ -9,9 +9,10 @@ const require = createRequire(import.meta.url);
 const puppeteer = require("puppeteer-core");
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
+const VIEWPORT_NAME = process.env.ONBOARDING_SMOKE_VIEWPORT || "desktop";
 const SCREENSHOT_PATH =
   process.env.ONBOARDING_FIRST_TRACE_SCREENSHOT ||
-  "/tmp/onboarding-first-trace-review-smoke.png";
+  `/tmp/onboarding-first-trace-review-smoke-${VIEWPORT_NAME}.png`;
 const STUB_AUTH = envFlag("ONBOARDING_SMOKE_STUB_AUTH");
 
 async function main() {
@@ -32,7 +33,7 @@ async function main() {
   const browser = await puppeteer.launch({
     executablePath: browserExecutablePath(),
     headless: process.env.HEADLESS !== "0",
-    defaultViewport: { width: 1440, height: 950 },
+    defaultViewport: viewportForName(VIEWPORT_NAME),
     args: ["--no-sandbox"],
   });
 
@@ -248,6 +249,7 @@ async function main() {
           status: "passed",
           app_base: APP_BASE,
           api_base: auth.apiBase,
+          viewport: VIEWPORT_NAME,
           evidence: {
             activation_event_posts: activationEventPosts.map((payload) => ({
               artifact_id: payload.artifact_id,
@@ -853,6 +855,19 @@ function browserExecutablePath() {
   }
   if (process.platform === "linux") return "/usr/bin/google-chrome";
   return undefined;
+}
+
+function viewportForName(name) {
+  if (name === "mobile") {
+    return {
+      width: 390,
+      height: 844,
+      isMobile: true,
+      hasTouch: true,
+      deviceScaleFactor: 2,
+    };
+  }
+  return { width: 1440, height: 950 };
 }
 
 main().catch((error) => {
