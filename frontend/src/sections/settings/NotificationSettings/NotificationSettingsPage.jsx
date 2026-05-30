@@ -108,6 +108,9 @@ export default function NotificationSettingsPage() {
   const queryClient = useQueryClient();
   const [slackName, setSlackName] = useState("");
   const [slackWebhook, setSlackWebhook] = useState("");
+  const [webhookName, setWebhookName] = useState("");
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["notification-preferences"],
@@ -196,6 +199,36 @@ export default function NotificationSettingsPage() {
     );
   };
 
+  const handleAddWebhook = () => {
+    patchMutation.mutate(
+      {
+        channels: [
+          {
+            scope: "workspace",
+            type: "webhook",
+            display_name: webhookName || "Workspace webhook alerts",
+            config: {
+              url: webhookUrl,
+              ...(webhookSecret ? { secret: webhookSecret } : {}),
+            },
+            is_active: true,
+          },
+        ],
+      },
+      {
+        onSuccess: () => {
+          setWebhookName("");
+          setWebhookUrl("");
+          setWebhookSecret("");
+          enqueueSnackbar("Webhook channel saved", { variant: "success" });
+          queryClient.invalidateQueries({
+            queryKey: ["notification-preferences"],
+          });
+        },
+      },
+    );
+  };
+
   if (isLoading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
@@ -272,7 +305,9 @@ export default function NotificationSettingsPage() {
                         const decision = decisions.get(
                           decisionKey(family.id, channel),
                         );
-                        const checked = decision?.allowed !== false;
+                        const checked = decision
+                          ? decision.allowed !== false
+                          : false;
                         const isOptional =
                           !family.default_channels.includes(channel);
                         return (
@@ -408,37 +443,81 @@ export default function NotificationSettingsPage() {
               </Stack>
             )}
 
-            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
-              <TextField
-                label="Slack channel name"
-                value={slackName}
-                onChange={(event) => setSlackName(event.target.value)}
-                size="small"
-                fullWidth
-                disabled={!canManageWorkspace}
-              />
-              <TextField
-                label="Slack webhook URL"
-                value={slackWebhook}
-                onChange={(event) => setSlackWebhook(event.target.value)}
-                size="small"
-                fullWidth
-                disabled={!canManageWorkspace}
-                type="password"
-              />
-              <Button
-                variant="contained"
-                startIcon={<Iconify icon="mdi:plus" />}
-                onClick={handleAddSlack}
-                disabled={
-                  !canManageWorkspace ||
-                  !slackWebhook ||
-                  patchMutation.isPending
-                }
-                sx={{ whiteSpace: "nowrap" }}
-              >
-                Add Slack
-              </Button>
+            <Stack spacing={1.5}>
+              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+                <TextField
+                  label="Slack channel name"
+                  value={slackName}
+                  onChange={(event) => setSlackName(event.target.value)}
+                  size="small"
+                  fullWidth
+                  disabled={!canManageWorkspace}
+                />
+                <TextField
+                  label="Slack webhook URL"
+                  value={slackWebhook}
+                  onChange={(event) => setSlackWebhook(event.target.value)}
+                  size="small"
+                  fullWidth
+                  disabled={!canManageWorkspace}
+                  type="password"
+                />
+                <Button
+                  variant="contained"
+                  startIcon={<Iconify icon="mdi:plus" />}
+                  onClick={handleAddSlack}
+                  disabled={
+                    !canManageWorkspace ||
+                    !slackWebhook ||
+                    patchMutation.isPending
+                  }
+                  sx={{ whiteSpace: "nowrap" }}
+                >
+                  Add Slack
+                </Button>
+              </Stack>
+
+              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5}>
+                <TextField
+                  label="Webhook name"
+                  value={webhookName}
+                  onChange={(event) => setWebhookName(event.target.value)}
+                  size="small"
+                  fullWidth
+                  disabled={!canManageWorkspace}
+                />
+                <TextField
+                  label="Webhook URL"
+                  value={webhookUrl}
+                  onChange={(event) => setWebhookUrl(event.target.value)}
+                  size="small"
+                  fullWidth
+                  disabled={!canManageWorkspace}
+                  type="password"
+                />
+                <TextField
+                  label="Webhook token"
+                  value={webhookSecret}
+                  onChange={(event) => setWebhookSecret(event.target.value)}
+                  size="small"
+                  fullWidth
+                  disabled={!canManageWorkspace}
+                  type="password"
+                />
+                <Button
+                  variant="outlined"
+                  startIcon={<Iconify icon="mdi:plus" />}
+                  onClick={handleAddWebhook}
+                  disabled={
+                    !canManageWorkspace ||
+                    !webhookUrl ||
+                    patchMutation.isPending
+                  }
+                  sx={{ whiteSpace: "nowrap" }}
+                >
+                  Add Webhook
+                </Button>
+              </Stack>
             </Stack>
           </Stack>
         </Paper>

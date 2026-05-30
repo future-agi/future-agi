@@ -90,6 +90,12 @@ function settingsResult(overrides = {}) {
         reason: "channel_not_enabled",
       }),
       decision({
+        family: "daily_quality_digest",
+        channel: "webhook",
+        allowed: false,
+        reason: "channel_not_enabled",
+      }),
+      decision({
         family: "usage_budget",
         channel: "email",
         allowed: true,
@@ -98,6 +104,12 @@ function settingsResult(overrides = {}) {
         family: "usage_budget",
         channel: "in_app",
         allowed: true,
+      }),
+      decision({
+        family: "usage_budget",
+        channel: "webhook",
+        allowed: false,
+        reason: "channel_not_enabled",
       }),
     ],
     delivery_logs: [],
@@ -202,5 +214,81 @@ describe("NotificationSettingsPage", () => {
         ],
       },
     );
+  });
+
+  it("lets workspace admins add webhook notification channels", async () => {
+    const user = userEvent.setup();
+    mockGet.mockResolvedValue({
+      data: {
+        result: settingsResult(),
+      },
+    });
+
+    const { default: NotificationSettingsPage } = await import(
+      "../NotificationSettingsPage"
+    );
+    renderWithQuery(<NotificationSettingsPage />);
+
+    await user.type(await screen.findByLabelText("Webhook name"), "Lifecycle");
+    await user.type(
+      screen.getByLabelText("Webhook URL"),
+      "https://example.com/hooks/onboarding",
+    );
+    await user.type(screen.getByLabelText("Webhook token"), "delivery-token");
+    await user.click(screen.getByRole("button", { name: /add webhook/i }));
+
+    await waitFor(() => expect(mockPatch).toHaveBeenCalledTimes(1));
+    expect(mockPatch).toHaveBeenCalledWith(
+      "/accounts/notification-preferences/",
+      {
+        channels: [
+          {
+            scope: "workspace",
+            type: "webhook",
+            display_name: "Lifecycle",
+            config: {
+              url: "https://example.com/hooks/onboarding",
+              secret: "delivery-token",
+            },
+            is_active: true,
+          },
+        ],
+      },
+    );
+  });
+
+  it("shows webhook as opt-in after a workspace webhook channel exists", async () => {
+    mockGet.mockResolvedValue({
+      data: {
+        result: settingsResult({
+          channels: [
+            {
+              id: "webhook-channel-1",
+              type: "webhook",
+              display_name: "Lifecycle webhook",
+              target_identifier: "https://example.com/...ding",
+              is_active: true,
+            },
+          ],
+        }),
+      },
+    });
+
+    const { default: NotificationSettingsPage } = await import(
+      "../NotificationSettingsPage"
+    );
+    renderWithQuery(<NotificationSettingsPage />);
+
+    const dailyQuality = await screen.findByTestId(
+      "notification-family-daily_quality_digest",
+    );
+
+    expect(within(dailyQuality).getByText("Webhook")).toBeInTheDocument();
+    expect(
+      within(dailyQuality).getByRole("checkbox", {
+        name: "Daily quality digest Webhook",
+      }),
+    ).not.toBeChecked();
+    expect(within(dailyQuality).getByText("Opt-in")).toBeInTheDocument();
   });
 });
