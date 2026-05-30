@@ -49,6 +49,12 @@ def _with_query(path, params):
     return f"{path}?{urlencode(clean_params)}"
 
 
+PROMPT_ONBOARDING_ROUTE_TABS = {
+    "add-failure": "Evaluation",
+    "metrics": "Metrics",
+}
+
+
 def resolve_route_availability(*, context, flags, signals, sample_project=None):
     can_write = context.permissions["can_write"]
     first_observe_id = signals.first_observe_id
@@ -112,12 +118,19 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
                 is_available=False,
                 reason=fallback_reason,
             )
-        suffix = (
-            f"?source=onboarding&onboarding={mode}"
+        href = (
+            _with_query(
+                prompt_editor_href,
+                {
+                    "source": "onboarding",
+                    "onboarding": mode,
+                    "tab": PROMPT_ONBOARDING_ROUTE_TABS.get(mode),
+                },
+            )
             if prompt_route_modes_enabled
-            else ""
+            else prompt_editor_href
         )
-        return route_entry(f"{prompt_editor_href}{suffix}", is_available=True)
+        return route_entry(href, is_available=True)
 
     agent_create_href = (
         "/dashboard/agents?onboarding=create"

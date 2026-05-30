@@ -6,6 +6,7 @@ import {
   buildPromptFirstQualityLoopCompletedPayload,
   countCommittedPromptVersions,
   getPromptOnboardingRouteParams,
+  getSelectedPromptVersionsFromSearch,
   isPromptFailureCaptureOnboarding,
   PROMPT_ONBOARDING_JOURNEY_STEPS,
   PROMPT_ONBOARDING_MODES,
@@ -99,6 +100,22 @@ describe("promptOnboardingRoute", () => {
     expect(params.get("onboarding")).toBe(PROMPT_ONBOARDING_MODES.RUN_TEST);
   });
 
+  it("parses selected prompt versions from guided route state", () => {
+    const selectedVersions = [
+      { version: "v1", templateVersion: "v1", isDraft: false },
+      { version: "v2", templateVersion: "v2", isDraft: false },
+    ];
+    const params = new URLSearchParams();
+    params.set("selected-versions", JSON.stringify(selectedVersions));
+
+    expect(getSelectedPromptVersionsFromSearch(params)).toEqual(
+      selectedVersions,
+    );
+    expect(
+      getSelectedPromptVersionsFromSearch("?selected-versions=not-json"),
+    ).toEqual([]);
+  });
+
   it("adds destination tour anchors to each guided editor step", () => {
     expect(
       buildPromptEditorHref({
@@ -131,7 +148,15 @@ describe("promptOnboardingRoute", () => {
         mode: PROMPT_ONBOARDING_MODES.ADD_FAILURE,
       }),
     ).toBe(
-      "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=add-failure&tour_anchor=prompt_add_example_button&journey_step=prompt_next_loop",
+      "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=add-failure&tab=Evaluation&tour_anchor=prompt_add_example_button&journey_step=prompt_next_loop",
+    );
+    expect(
+      buildPromptEditorHref({
+        promptId: "prompt-1",
+        mode: PROMPT_ONBOARDING_MODES.METRICS,
+      }),
+    ).toBe(
+      "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
     );
   });
 

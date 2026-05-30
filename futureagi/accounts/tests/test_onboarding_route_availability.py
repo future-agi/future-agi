@@ -136,6 +136,40 @@ def test_observe_focus_routes_use_signal_ids():
     }
 
 
+def test_prompt_focus_routes_open_target_tabs_when_route_modes_enabled():
+    prompt_id = uuid4()
+    routes = resolve_route_availability(
+        context=_context(),
+        flags={
+            "onboarding_prompt_path": True,
+            "onboarding_prompt_route_modes": True,
+            "onboarding_sample_project": False,
+            "onboarding_daily_quality_home": False,
+        },
+        signals=OnboardingSignals(
+            first_checks={},
+            latest_prompt_id=str(prompt_id),
+        ),
+    )
+
+    assert routes["prompt_add_failure"] == {
+        "href": (
+            f"/dashboard/workbench/create/{prompt_id}?"
+            "source=onboarding&onboarding=add-failure&tab=Evaluation"
+        ),
+        "is_available": True,
+        "reason": None,
+    }
+    assert routes["prompt_metrics"] == {
+        "href": (
+            f"/dashboard/workbench/create/{prompt_id}?"
+            "source=onboarding&onboarding=metrics&tab=Metrics"
+        ),
+        "is_available": True,
+        "reason": None,
+    }
+
+
 def test_eval_source_fix_route_uses_trace_project_context():
     observe_id = uuid4()
     eval_id = uuid4()

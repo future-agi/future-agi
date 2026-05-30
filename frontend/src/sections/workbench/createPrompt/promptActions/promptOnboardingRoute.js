@@ -44,7 +44,11 @@ const PROMPT_ONBOARDING_MODE_DESTINATIONS = {
   },
   [PROMPT_ONBOARDING_MODES.ADD_FAILURE]: {
     journeyStep: "prompt_next_loop",
+    tab: "Evaluation",
     tourAnchor: "prompt_add_example_button",
+  },
+  [PROMPT_ONBOARDING_MODES.METRICS]: {
+    tab: "Metrics",
   },
 };
 
@@ -90,6 +94,20 @@ export const getPromptOnboardingRouteParams = (search = "") => {
   };
 };
 
+export const getSelectedPromptVersionsFromSearch = (search = "") => {
+  const params = toSearchParams(search);
+  const rawSelectedVersions = params.get("selected-versions");
+
+  if (!rawSelectedVersions) return [];
+
+  try {
+    const selectedVersions = JSON.parse(rawSelectedVersions);
+    return Array.isArray(selectedVersions) ? selectedVersions : [];
+  } catch {
+    return [];
+  }
+};
+
 export const buildPromptEditorHref = ({
   journeyStep,
   mode,
@@ -108,6 +126,9 @@ export const buildPromptEditorHref = ({
       PROMPT_ONBOARDING_JOURNEY_STEP_DESTINATIONS[journeyStep] ||
       PROMPT_ONBOARDING_MODE_DESTINATIONS[mode];
     params.set("onboarding", destination?.mode || mode);
+    if (destination?.tab) {
+      params.set("tab", destination.tab);
+    }
     if (destination?.tourAnchor) {
       params.set("tour_anchor", destination.tourAnchor);
     }

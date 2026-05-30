@@ -159,6 +159,7 @@ async function main() {
     );
     await clickVisibleText(page, "Compare", { exact: true });
     await waitForSearchParam(page, "onboarding", "add-failure");
+    await waitForSearchParam(page, "tab", "Evaluation");
     await waitForVisibleText(page, "Capture a failure example", {
       exact: true,
     });
@@ -168,6 +169,13 @@ async function main() {
       exact: true,
     });
     await waitForVisibleText(page, "Add Evaluation", { exact: true });
+    const selectedVersions = JSON.parse(
+      (await searchParamValue(page, "selected-versions")) || "[]",
+    );
+    assert(
+      selectedVersions.length === 2,
+      "Failure capture did not keep both compared prompt versions.",
+    );
     evidence.failure_capture_route = await currentRelativeUrl(page);
 
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });

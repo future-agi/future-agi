@@ -14,6 +14,7 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import {
   buildPromptEditorHref,
   getPromptOnboardingRouteParams,
+  getSelectedPromptVersionsFromSearch,
   isPromptFailureCaptureOnboarding,
   PROMPT_ONBOARDING_MODES,
 } from "../promptActions/promptOnboardingRoute";
@@ -207,6 +208,8 @@ const EvaluationActions = () => {
               buildPromptEditorHref({
                 promptId: id,
                 mode: PROMPT_ONBOARDING_MODES.METRICS,
+                selectedVersions:
+                  getSelectedPromptVersionsFromSearch(searchParams),
               }),
               { replace: true },
             );

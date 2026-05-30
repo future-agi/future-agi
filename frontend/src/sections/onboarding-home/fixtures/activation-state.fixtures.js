@@ -107,12 +107,12 @@ const routeAvailability = (overrides = {}) => ({
     reason: "missing_id",
   },
   prompt_add_failure: {
-    href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=add-failure",
+    href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=add-failure&tab=Evaluation",
     is_available: false,
     reason: "missing_id",
   },
   prompt_metrics: {
-    href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics",
+    href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
     is_available: false,
     reason: "missing_id",
   },
@@ -222,12 +222,12 @@ const promptRouteAvailability = (overrides = {}) =>
       reason: null,
     },
     prompt_add_failure: {
-      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=add-failure",
+      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=add-failure&tab=Evaluation",
       is_available: true,
       reason: null,
     },
     prompt_metrics: {
-      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics",
+      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
       is_available: true,
       reason: null,
     },
@@ -1472,7 +1472,7 @@ export const activationStateFixtures = {
       title: "Review prompt metrics",
       description:
         "Inspect prompt test output and decide the next prompt change.",
-      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics",
+      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
       cta_label: "Review prompt metrics",
       completion_event: null,
       analytics: {
@@ -1490,7 +1490,7 @@ export const activationStateFixtures = {
         label: "Review prompt metrics",
         body: "Inspect prompt test output and decide the next prompt change.",
         route:
-          "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics",
+          "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
         source_type: "prompt",
         source_id: "prompt-1",
         success_event: null,
@@ -1505,7 +1505,7 @@ export const activationStateFixtures = {
           metric: "0",
           change: "No new signal",
           route:
-            "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics",
+            "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
         },
       ],
       digest_eligible: false,
@@ -1870,7 +1870,7 @@ export const activationStateFixtures = {
       kind: "adjacent_loop",
       title: "Add a failing example",
       description: "Turn the comparison into a reusable example or evaluator.",
-      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=add-failure",
+      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=add-failure&tab=Evaluation",
       cta_label: "Add example",
       estimated_minutes: 4,
       completion_event: "dataset_example_added",
@@ -1917,7 +1917,7 @@ export const activationStateFixtures = {
       kind: "review",
       title: "Open prompt metrics",
       description: "Review prompt quality signals and continue improving.",
-      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics",
+      href: "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
       cta_label: "Open prompt metrics",
       estimated_minutes: null,
       completion_event: null,

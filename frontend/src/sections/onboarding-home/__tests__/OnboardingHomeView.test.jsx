@@ -719,7 +719,7 @@ describe("OnboardingHomeView", () => {
       within(panel).getByRole("link", { name: /open prompt metrics/i }),
     ).toHaveAttribute(
       "href",
-      "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics",
+      "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
     );
   });
 

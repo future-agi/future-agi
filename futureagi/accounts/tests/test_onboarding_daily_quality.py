@@ -464,6 +464,13 @@ def test_daily_quality_prompt_path_returns_path_specific_review_action(
         commit_message="Initial quality version",
         output=[{"role": "assistant", "content": "hello"}],
     )
+    create_prompt_version(
+        template=template,
+        version="v2",
+        is_draft=False,
+        commit_message="Safer quality version",
+        output=[{"role": "assistant", "content": "hello again"}],
+    )
     create_prompt_eval_config(
         organization=organization,
         workspace=workspace,
@@ -501,5 +508,8 @@ def test_daily_quality_prompt_path_returns_path_specific_review_action(
     assert daily_quality["mode"] == "no_new_signal"
     assert daily_quality["top_signal"] is None
     assert daily_quality["primary_action"]["id"] == "open_prompt_metrics"
+    assert daily_quality["primary_action"]["route"].endswith(
+        "source=onboarding&onboarding=metrics&tab=Metrics"
+    )
     assert payload["recommended_action"]["analytics"]["target_path"] == "prompt"
     assert daily_quality["product_cards"][0]["path"] == "prompt"

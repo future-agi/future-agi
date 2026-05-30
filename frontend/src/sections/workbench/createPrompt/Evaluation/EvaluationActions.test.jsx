@@ -139,9 +139,39 @@ describe("EvaluationActions prompt onboarding", () => {
 
     await waitFor(() =>
       expect(screen.getByTestId("location")).toHaveTextContent(
-        "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics",
+        "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
       ),
     );
+  });
+
+  it("keeps compared prompt versions when moving add-failure routes to metrics", async () => {
+    const selectedVersions = [
+      { version: "v1", templateVersion: "v1", isDraft: false },
+      { version: "v2", templateVersion: "v2", isDraft: false },
+    ];
+    const params = new URLSearchParams({
+      source: "onboarding",
+      onboarding: "add-failure",
+      "selected-versions": JSON.stringify(selectedVersions),
+    });
+
+    renderActions(`/dashboard/workbench/create/prompt-1?${params.toString()}`);
+
+    await userEvent.click(screen.getByText("simulate evaluation added"));
+
+    await waitFor(() => {
+      const [path, query] = screen
+        .getByTestId("location")
+        .textContent.split("?");
+      const nextParams = new URLSearchParams(query);
+
+      expect(path).toBe("/dashboard/workbench/create/prompt-1");
+      expect(nextParams.get("onboarding")).toBe("metrics");
+      expect(nextParams.get("tab")).toBe("Metrics");
+      expect(JSON.parse(nextParams.get("selected-versions"))).toEqual(
+        selectedVersions,
+      );
+    });
   });
 
   it("does not show the failure capture panel outside guided routes", () => {
