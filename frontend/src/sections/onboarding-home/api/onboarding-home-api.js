@@ -4,6 +4,7 @@ import {
   normalizeProductPath,
   normalizeSampleProject,
 } from "../activation-state-utils";
+import { normalizeSetupQuickStartAttribution } from "src/sections/auth/jwt/setup-org-quick-starts";
 
 export const ONBOARDING_HOME_QUERY_KEY = "onboarding-home";
 
@@ -118,6 +119,43 @@ const activationEventMetadata = (metadata) => {
   );
 };
 
+const activationAttributionMetadata = (payload = {}) => {
+  const attribution = normalizeSetupQuickStartAttribution({
+    quickStartGoal: payload.quickStartGoal ?? payload.quick_start_goal,
+    quickStartId: payload.quickStartId ?? payload.quick_start_id,
+    quickStartPrimaryPath:
+      payload.quickStartPrimaryPath ?? payload.quick_start_primary_path,
+  });
+  return compactObject({
+    quick_start_goal: attribution.quickStartGoal,
+    quick_start_id: attribution.quickStartId,
+    quick_start_primary_path: attribution.quickStartPrimaryPath,
+  });
+};
+
+const QUICK_START_METADATA_KEYS = new Set([
+  "quick_start_goal",
+  "quick_start_id",
+  "quick_start_primary_path",
+]);
+
+const removeQuickStartMetadata = (metadata = {}) =>
+  Object.fromEntries(
+    Object.entries(metadata).filter(
+      ([key]) => !QUICK_START_METADATA_KEYS.has(key),
+    ),
+  );
+
+const activationEventPayloadMetadata = (payload = {}) => {
+  const metadata = {
+    ...removeQuickStartMetadata(payload.metadata || {}),
+    ...activationAttributionMetadata(payload),
+  };
+  return Object.keys(metadata).length
+    ? activationEventMetadata(metadata)
+    : undefined;
+};
+
 export const fetchActivationState = async (params = {}) => {
   const response = await axios.get(endpoints.onboarding.activationState, {
     params: activationStateParams(params),
@@ -144,7 +182,7 @@ const activationEventPayload = (payload = {}) =>
     artifact_type: payload.artifactType ?? payload.artifact_type,
     artifact_id: payload.artifactId ?? payload.artifact_id,
     project_id: payload.projectId ?? payload.project_id,
-    metadata: activationEventMetadata(payload.metadata),
+    metadata: activationEventPayloadMetadata(payload),
     idempotency_key: payload.idempotencyKey ?? payload.idempotency_key,
     is_sample: payload.isSample ?? payload.is_sample,
     campaign_key: payload.campaignKey ?? payload.campaign_key,

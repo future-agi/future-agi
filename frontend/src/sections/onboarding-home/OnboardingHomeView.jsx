@@ -8,6 +8,7 @@ import Typography from "@mui/material/Typography";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
+import { normalizeSetupQuickStartAttribution } from "src/sections/auth/jwt/setup-org-quick-starts";
 import { shouldShowSampleAsPrimary } from "./activation-state-utils";
 import { useActivationState } from "./hooks/useActivationState";
 import { useRecordActivationEvent } from "./hooks/useRecordActivationEvent";
@@ -88,6 +89,17 @@ const activationPayloadEmailContext = (context = {}) =>
     contextStatus: context.context_status ?? context.contextStatus,
   });
 
+const activationPayloadAttributionContext = (context = {}) =>
+  compactEventMetadata({
+    ...activationPayloadEmailContext(context),
+    ...normalizeSetupQuickStartAttribution({
+      quickStartGoal: context.quick_start_goal ?? context.quickStartGoal,
+      quickStartId: context.quick_start_id ?? context.quickStartId,
+      quickStartPrimaryPath:
+        context.quick_start_primary_path ?? context.quickStartPrimaryPath,
+    }),
+  });
+
 const OBSERVE_PANEL_STAGES = new Set([
   "connect_observability",
   "waiting_for_first_trace",
@@ -121,6 +133,12 @@ export default function OnboardingHomeView() {
 
   const searchContext = useMemo(() => {
     const params = new URLSearchParams(location.search);
+    const quickStartAttribution = normalizeSetupQuickStartAttribution({
+      quickStartGoal: params.get("quick_start_goal"),
+      quickStartId: params.get("quick_start_id"),
+      quickStartPrimaryPath: params.get("quick_start_primary_path"),
+    });
+
     return {
       source: params.get("source") || "home",
       campaignKey: params.get("campaign_key"),
@@ -134,6 +152,7 @@ export default function OnboardingHomeView() {
       staleReason: params.get("stale_reason"),
       contextStatus: params.get("context_status"),
       mode: params.get("mode"),
+      ...quickStartAttribution,
     };
   }, [location.search]);
   const searchActivationEmailContext = useMemo(
@@ -152,7 +171,7 @@ export default function OnboardingHomeView() {
   const activationEmailContextFor = (context) =>
     compactEventMetadata({
       ...activationEmailContextRef.current,
-      ...activationPayloadEmailContext(context),
+      ...activationPayloadAttributionContext(context),
     });
 
   const workspaceId = currentWorkspaceId || user?.default_workspace_id || null;
@@ -198,6 +217,9 @@ export default function OnboardingHomeView() {
       link_issued_at: searchContext.linkIssuedAt,
       stale_reason: searchContext.staleReason,
       context_status: searchContext.contextStatus,
+      quick_start_goal: searchContext.quickStartGoal,
+      quick_start_id: searchContext.quickStartId,
+      quick_start_primary_path: searchContext.quickStartPrimaryPath,
       recommended_action_id: recommendedAction?.id,
       target_success_event: recommendedAction?.completionEvent,
       feature_flag_variant:
@@ -216,6 +238,9 @@ export default function OnboardingHomeView() {
     searchContext.emailKey,
     searchContext.emailStatus,
     searchContext.linkIssuedAt,
+    searchContext.quickStartGoal,
+    searchContext.quickStartId,
+    searchContext.quickStartPrimaryPath,
     searchContext.sendLogId,
     searchContext.source,
     searchContext.staleReason,

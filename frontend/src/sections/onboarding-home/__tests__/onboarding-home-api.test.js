@@ -179,6 +179,9 @@ describe("onboarding home API", () => {
       targetEvent: "daily_quality_item_reviewed",
       linkIssuedAt: "2026-05-29T08:00:00Z",
       contextStatus: "current",
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
       metadata: {
         entry: "trace_full_page",
         retry: 1,
@@ -205,6 +208,9 @@ describe("onboarding home API", () => {
       link_issued_at: "2026-05-29T08:00:00Z",
       context_status: "current",
       metadata: {
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
         entry: "trace_full_page",
         retry: "1",
         setup: "true",
@@ -212,6 +218,67 @@ describe("onboarding home API", () => {
       },
     });
     expect(state.stage).toBe("create_trace_evaluator");
+  });
+
+  it("drops unknown quick-start attribution from activation event metadata", async () => {
+    axios.post.mockResolvedValueOnce({
+      data: {
+        result: {
+          activation_state: getActivationStateFixture("observeNeedsEvaluator"),
+        },
+      },
+    });
+
+    await recordActivationEvent({
+      eventName: "trace_detail_opened",
+      primaryPath: "observe",
+      quickStartGoal: "secret",
+      quickStartId: "user@example.com",
+      quickStartPrimaryPath: "observe",
+      metadata: {
+        quick_start_goal: "secret",
+        quick_start_id: "user@example.com",
+        quick_start_primary_path: "observe",
+      },
+    });
+
+    expect(axios.post).toHaveBeenCalledWith("/accounts/activation-events/", {
+      event_name: "trace_detail_opened",
+      primary_path: "observe",
+    });
+  });
+
+  it("lets normalized top-level quick-start attribution override metadata", async () => {
+    axios.post.mockResolvedValueOnce({
+      data: {
+        result: {
+          activation_state: getActivationStateFixture("observeNeedsEvaluator"),
+        },
+      },
+    });
+
+    await recordActivationEvent({
+      eventName: "trace_detail_opened",
+      primaryPath: "observe",
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+      metadata: {
+        quick_start_goal: "secret",
+        quick_start_id: "user@example.com",
+        quick_start_primary_path: "voice",
+      },
+    });
+
+    expect(axios.post).toHaveBeenCalledWith("/accounts/activation-events/", {
+      event_name: "trace_detail_opened",
+      primary_path: "observe",
+      metadata: {
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+      },
+    });
   });
 
   it("returns a renderable feature-disabled state", async () => {

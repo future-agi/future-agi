@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS } from "./setup-org-quick-starts";
+import {
+  normalizeSetupQuickStartAttribution,
+  SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS,
+  setupQuickStartAttributionFromId,
+} from "./setup-org-quick-starts";
 
 describe("setup org product-loop quick starts", () => {
   it("covers each first-run product path with a canonical goal", () => {
@@ -39,5 +43,49 @@ describe("setup org product-loop quick starts", () => {
       ],
       ["voice", "connect_voice_ai_agent", "Connect a voice AI agent", "voice"],
     ]);
+  });
+
+  it("normalizes quick-start attribution from known quick-start ids", () => {
+    expect(setupQuickStartAttributionFromId("observe")).toEqual({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+    expect(
+      normalizeSetupQuickStartAttribution({
+        quickStartGoal: "monitor_production_ai_app",
+        quickStartId: "observe",
+        quickStartPrimaryPath: "observe",
+      }),
+    ).toEqual({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+  });
+
+  it("drops unknown or mismatched quick-start attribution", () => {
+    expect(setupQuickStartAttributionFromId("unknown")).toBeNull();
+    expect(
+      normalizeSetupQuickStartAttribution({
+        quickStartGoal: "monitor_production_ai_app",
+        quickStartId: "unknown",
+        quickStartPrimaryPath: "observe",
+      }),
+    ).toEqual({});
+    expect(
+      normalizeSetupQuickStartAttribution({
+        quickStartGoal: "connect_voice_ai_agent",
+        quickStartId: "observe",
+        quickStartPrimaryPath: "observe",
+      }),
+    ).toEqual({});
+    expect(
+      normalizeSetupQuickStartAttribution({
+        quickStartGoal: "monitor_production_ai_app",
+        quickStartId: "observe",
+        quickStartPrimaryPath: "voice",
+      }),
+    ).toEqual({});
   });
 });

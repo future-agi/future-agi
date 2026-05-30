@@ -16,6 +16,18 @@ describe("setup org completion routing", () => {
     expect(resolveSetupCompletionHref(null)).toBe(setupCompletionHomeHref());
   });
 
+  it("carries product-loop quick-start attribution to onboarding home", () => {
+    expect(
+      resolveSetupCompletionHref({
+        goal: "monitor_production_ai_app",
+        id: "observe",
+        primaryPath: "observe",
+      }),
+    ).toBe(
+      `${paths.dashboard.home}?source=setup_org&quick_start_id=observe&quick_start_goal=monitor_production_ai_app&quick_start_primary_path=observe`,
+    );
+  });
+
   it("ignores internal return targets after setup so activation can resolve", () => {
     expect(resolveSetupCompletionHref("/dashboard/observe?project=1")).toBe(
       setupCompletionHomeHref(),

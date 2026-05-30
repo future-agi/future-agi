@@ -3,9 +3,13 @@ import { trackPostHogEvent } from "src/utils/PostHog";
 import {
   buildSetupOrgInvitesSavedProperties,
   buildSetupOrgProfileSavedProperties,
+  buildSetupOrgQuickStartClickedProperties,
+  buildSetupOrgQuickStartsViewedProperties,
   SetupOrgEvents,
   trackSetupOrgInvitesSaved,
   trackSetupOrgProfileSaved,
+  trackSetupOrgQuickStartClicked,
+  trackSetupOrgQuickStartsViewed,
 } from "./setup-org-analytics";
 
 vi.mock("src/utils/PostHog", () => ({
@@ -64,7 +68,73 @@ describe("setup-org analytics", () => {
     });
   });
 
+  it("builds quick-start view analytics without user payloads", () => {
+    expect(
+      buildSetupOrgQuickStartsViewedProperties({
+        quickStarts: [
+          {
+            id: "observe",
+            goal: "monitor_production_ai_app",
+            primaryPath: "observe",
+            featured: true,
+          },
+          {
+            id: "prompt",
+            goal: "improve_prompts",
+            primaryPath: "prompt",
+            featured: false,
+          },
+          {
+            id: "prompt_retry",
+            goal: "improve_prompts",
+            primaryPath: "prompt",
+            featured: false,
+          },
+        ],
+      }),
+    ).toEqual({
+      quick_start_count: 3,
+      featured_quick_start_count: 1,
+      quick_start_ids: ["observe", "prompt", "prompt_retry"],
+      quick_start_goals: [
+        "monitor_production_ai_app",
+        "improve_prompts",
+        "improve_prompts",
+      ],
+      quick_start_primary_paths: ["observe", "prompt"],
+    });
+  });
+
+  it("builds quick-start click analytics", () => {
+    expect(
+      buildSetupOrgQuickStartClickedProperties({
+        quickStartGoal: "monitor_production_ai_app",
+        quickStartId: "observe",
+        quickStartPrimaryPath: "observe",
+      }),
+    ).toEqual({
+      quick_start_goal: "monitor_production_ai_app",
+      quick_start_id: "observe",
+      quick_start_primary_path: "observe",
+    });
+  });
+
   it("tracks setup events through PostHog", () => {
+    trackSetupOrgQuickStartsViewed({
+      quickStarts: [
+        {
+          id: "observe",
+          goal: "monitor_production_ai_app",
+          primaryPath: "observe",
+          featured: true,
+        },
+      ],
+    });
+    trackSetupOrgQuickStartClicked({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
     trackSetupOrgProfileSaved({
       goals: ["Monitor a production AI app"],
       quickStartGoal: "monitor_production_ai_app",
@@ -79,6 +149,26 @@ describe("setup-org analytics", () => {
 
     expect(trackPostHogEvent).toHaveBeenNthCalledWith(
       1,
+      SetupOrgEvents.quickStartsViewed,
+      {
+        quick_start_count: 1,
+        featured_quick_start_count: 1,
+        quick_start_ids: ["observe"],
+        quick_start_goals: ["monitor_production_ai_app"],
+        quick_start_primary_paths: ["observe"],
+      },
+    );
+    expect(trackPostHogEvent).toHaveBeenNthCalledWith(
+      2,
+      SetupOrgEvents.quickStartClicked,
+      {
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+      },
+    );
+    expect(trackPostHogEvent).toHaveBeenNthCalledWith(
+      3,
       SetupOrgEvents.profileSaved,
       {
         role: "AI Builder",
@@ -91,7 +181,7 @@ describe("setup-org analytics", () => {
       },
     );
     expect(trackPostHogEvent).toHaveBeenNthCalledWith(
-      2,
+      4,
       SetupOrgEvents.invitesSaved,
       {
         invited_member_count: 1,

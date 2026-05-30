@@ -1,6 +1,8 @@
 import { trackPostHogEvent } from "src/utils/PostHog";
 
 export const SetupOrgEvents = {
+  quickStartClicked: "setup_org_quick_start_clicked",
+  quickStartsViewed: "setup_org_quick_starts_viewed",
   profileSaved: "setup_org_profile_saved",
   invitesSaved: "setup_org_invites_saved",
 };
@@ -62,6 +64,57 @@ export const buildSetupOrgInvitesSavedProperties = ({ members } = {}) => {
     invited_member_count: membersToTrack.length,
     roles_assigned: roles,
   });
+};
+
+export const buildSetupOrgQuickStartsViewedProperties = ({
+  quickStarts,
+} = {}) => {
+  const options = Array.isArray(quickStarts) ? quickStarts : [];
+  const primaryPaths = [
+    ...new Set(
+      options
+        .map((option) => option?.primaryPath)
+        .filter((primaryPath) => Boolean(primaryPath)),
+    ),
+  ];
+
+  return compactProperties({
+    quick_start_count: options.length,
+    featured_quick_start_count: options.filter((option) => option?.featured)
+      .length,
+    quick_start_ids: options
+      .map((option) => option?.id)
+      .filter((id) => Boolean(id)),
+    quick_start_goals: options
+      .map((option) => option?.goal)
+      .filter((goal) => Boolean(goal)),
+    quick_start_primary_paths: primaryPaths,
+  });
+};
+
+export const buildSetupOrgQuickStartClickedProperties = ({
+  quickStartGoal,
+  quickStartId,
+  quickStartPrimaryPath,
+} = {}) =>
+  compactProperties({
+    quick_start_goal: quickStartGoal,
+    quick_start_id: quickStartId,
+    quick_start_primary_path: quickStartPrimaryPath,
+  });
+
+export const trackSetupOrgQuickStartsViewed = (properties) => {
+  trackPostHogEvent(
+    SetupOrgEvents.quickStartsViewed,
+    buildSetupOrgQuickStartsViewedProperties(properties),
+  );
+};
+
+export const trackSetupOrgQuickStartClicked = (properties) => {
+  trackPostHogEvent(
+    SetupOrgEvents.quickStartClicked,
+    buildSetupOrgQuickStartClickedProperties(properties),
+  );
 };
 
 export const trackSetupOrgProfileSaved = (properties) => {

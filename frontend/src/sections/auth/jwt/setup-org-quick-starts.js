@@ -75,3 +75,36 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     icon: "mdi:phone-in-talk-outline",
   }),
 ];
+
+export const setupQuickStartAttributionFromId = (id) => {
+  if (!id) return null;
+  const option = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.find(
+    (quickStartOption) => quickStartOption.id === id,
+  );
+
+  if (!option) return null;
+  return {
+    quickStartGoal: option.goal,
+    quickStartId: option.id,
+    quickStartPrimaryPath: option.primaryPath,
+  };
+};
+
+export const normalizeSetupQuickStartAttribution = ({
+  quickStartGoal,
+  quickStartId,
+  quickStartPrimaryPath,
+} = {}) => {
+  const attribution = setupQuickStartAttributionFromId(quickStartId);
+  if (!attribution) return {};
+  if (quickStartGoal && quickStartGoal !== attribution.quickStartGoal) {
+    return {};
+  }
+  if (
+    quickStartPrimaryPath &&
+    quickStartPrimaryPath !== attribution.quickStartPrimaryPath
+  ) {
+    return {};
+  }
+  return attribution;
+};

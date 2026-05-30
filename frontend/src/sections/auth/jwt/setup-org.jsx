@@ -46,6 +46,8 @@ import {
 import {
   trackSetupOrgInvitesSaved,
   trackSetupOrgProfileSaved,
+  trackSetupOrgQuickStartClicked,
+  trackSetupOrgQuickStartsViewed,
 } from "./setup-org-analytics";
 import { SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS } from "./setup-org-quick-starts";
 
@@ -284,13 +286,14 @@ const useOrganizationInitialData = (isOwner, user) => {
 const SetupOrganization = ({ getStarted = false }) => {
   const queryClient = useQueryClient();
   const quickStartOptionRef = useRef(null);
+  const quickStartsViewedRef = useRef(false);
   const [showRoleQuestions, setShowRoleQuestions] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeStep = parseInt(searchParams.get("step") || "0", 10);
-  const finishSetup = useCallback(() => {
+  const finishSetup = useCallback((quickStartOption) => {
     localStorage.setItem("initial-render", "done");
     localStorage.removeItem("redirectUrl");
-    window.location.href = resolveSetupCompletionHref();
+    window.location.href = resolveSetupCompletionHref(quickStartOption);
   }, []);
 
   const setActiveStep = useCallback(
@@ -396,7 +399,7 @@ const SetupOrganization = ({ getStarted = false }) => {
             variables?.role && variables?.goals?.length,
           ),
         });
-        finishSetup();
+        finishSetup(quickStartOption);
       }
     },
     onError: (error) => {
@@ -427,6 +430,17 @@ const SetupOrganization = ({ getStarted = false }) => {
   const roleValue = userForm.watch("role");
   const goalsValue = userForm.watch("goals");
   const hasSelectedGoal = Array.isArray(goalsValue) && goalsValue.some(Boolean);
+  useEffect(() => {
+    if (activeStep !== 0 || quickStartsViewedRef.current) {
+      return;
+    }
+
+    quickStartsViewedRef.current = true;
+    trackSetupOrgQuickStartsViewed({
+      quickStarts: SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS,
+    });
+  }, [activeStep]);
+
   const handleProductLoopQuickStart = useCallback(
     (option) => {
       if (isSavingUserData || quickStartOptionRef.current) {
@@ -434,6 +448,11 @@ const SetupOrganization = ({ getStarted = false }) => {
       }
 
       quickStartOptionRef.current = option;
+      trackSetupOrgQuickStartClicked({
+        quickStartGoal: option.goal,
+        quickStartId: option.id,
+        quickStartPrimaryPath: option.primaryPath,
+      });
       saveUserData({
         role: customRoleValue || roleValue || QUICK_START_ROLE,
         goals: [option.goalLabel],

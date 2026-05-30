@@ -562,12 +562,18 @@ describe("OnboardingHomeView", () => {
       refetch: vi.fn(),
     });
 
-    renderView();
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=observe&quick_start_goal=monitor_production_ai_app&quick_start_primary_path=observe",
+    );
 
     await waitFor(() =>
       expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
         "onboarding_home_viewed",
         expect.objectContaining({
+          source: "setup_org",
+          quick_start_goal: "monitor_production_ai_app",
+          quick_start_id: "observe",
+          quick_start_primary_path: "observe",
           workspace_id: "wrk_onboarding",
           organization_id: "org_onboarding",
           user_id: "usr_onboarding",
@@ -585,6 +591,32 @@ describe("OnboardingHomeView", () => {
         target_success_event: "observe_project_created",
         route_available: true,
       }),
+    );
+  });
+
+  it("drops unrecognized quick-start URL attribution before tracking", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=user@example.com&quick_start_goal=secret&quick_start_primary_path=observe",
+    );
+
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_home_viewed",
+        expect.not.objectContaining({
+          quick_start_goal: expect.any(String),
+          quick_start_id: expect.any(String),
+          quick_start_primary_path: expect.any(String),
+        }),
+      ),
     );
   });
 
