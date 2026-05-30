@@ -53,6 +53,7 @@ import {
   getEvalUsageReviewOutcome,
   getEvalFailureActionOnboardingParams,
 } from "./evalCreateOnboarding";
+import { shouldPollEvalOnboardingReviewRun } from "./evalUsageOnboarding";
 
 // ── Inline stat ──
 const StatPill = ({ label, value, color }) => (
@@ -480,6 +481,12 @@ const EvalUsageTab = ({
       failureActionOnboardingParams.step === "review" &&
       failureActionOnboardingParams.rerunFrom,
   );
+  const shouldPollForOnboardingReviewRun = shouldPollEvalOnboardingReviewRun({
+    autoOpenedRunId: autoOpenedReviewRunRef.current,
+    isOnboarding: failureActionOnboardingParams.isOnboarding,
+    runId: failureActionOnboardingParams.runId,
+    step: failureActionOnboardingParams.step,
+  });
 
   // Split queries
   const { data: chartData, isLoading: chartLoading } = useEvalUsageChart(
@@ -490,7 +497,12 @@ const EvalUsageTab = ({
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useEvalUsageLogs(templateId, { page, pageSize, period });
+  } = useEvalUsageLogs(templateId, {
+    page,
+    pageSize,
+    period,
+    refetchInterval: shouldPollForOnboardingReviewRun ? 2000 : false,
+  });
 
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
@@ -519,6 +531,18 @@ const EvalUsageTab = ({
   );
 
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
+  const hasOnboardingReviewRun = useMemo(() => {
+    const runId = failureActionOnboardingParams.runId;
+    if (!runId) return false;
+    return filteredLogs.some((log) => evalUsageLogMatchesRun(log, runId));
+  }, [failureActionOnboardingParams.runId, filteredLogs]);
+  const isWaitingForOnboardingReviewRun = Boolean(
+    failureActionOnboardingParams.isOnboarding &&
+      failureActionOnboardingParams.step === "review" &&
+      failureActionOnboardingParams.runId &&
+      !hasOnboardingReviewRun &&
+      detailIndex === null,
+  );
 
   useEffect(() => {
     if (!onReviewActionPreferenceChange) return undefined;
@@ -882,6 +906,34 @@ const EvalUsageTab = ({
             flexDirection: "column",
           }}
         >
+          {isWaitingForOnboardingReviewRun ? (
+            <Box
+              data-testid="eval-review-run-waiting"
+              sx={{
+                mb: 1,
+                border: "1px solid",
+                borderColor: "primary.main",
+                borderRadius: "6px",
+                bgcolor: (t) => alpha(t.palette.primary.main, 0.06),
+                px: 1.25,
+                py: 1,
+                display: "flex",
+                gap: 1,
+                alignItems: "center",
+                flexShrink: 0,
+              }}
+            >
+              <Iconify icon="mdi:progress-clock" width={18} />
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={600}>
+                  Opening first eval result
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Waiting for the run log to appear.
+                </Typography>
+              </Box>
+            </Box>
+          ) : null}
           <Box
             sx={{
               display: "flex",
