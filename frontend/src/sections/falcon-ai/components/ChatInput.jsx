@@ -93,9 +93,14 @@ export default function ChatInput({ onSend, onStop }) {
     return 1;
   }, [text]);
 
-  const placeholder = currentConversationId
-    ? "Ask a follow-up..."
-    : "Message Falcon AI...";
+  // While the assistant is streaming the textarea is disabled (see
+  // `disabled={isStreaming}` below). Reflect that in the placeholder so the
+  // field doesn't keep inviting input with no signal it's locked (TH-5232).
+  const placeholder = isStreaming
+    ? "Falcon is responding…"
+    : currentConversationId
+      ? "Ask a follow-up..."
+      : "Message Falcon AI...";
 
   const MAX_LENGTH = 10000;
 

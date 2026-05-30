@@ -25,9 +25,14 @@ export default function MessageList({ onQuickAction, onFeedback }) {
     isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 120;
   };
 
-  // Auto-scroll only when near bottom or streaming
+  // Auto-scroll to follow new output ONLY while the user is near the bottom.
+  // Previously this also fired on `|| isStreaming`, which snapped the view back
+  // down on every token even after the user scrolled up mid-generation, making
+  // it impossible to read earlier content (TH-3613). `isNearBottomRef` is kept
+  // current by `handleScroll`, so scrolling up now pauses auto-scroll and
+  // returning to the bottom resumes it.
   useEffect(() => {
-    if (scrollRef.current && (isNearBottomRef.current || isStreaming)) {
+    if (scrollRef.current && isNearBottomRef.current) {
       scrollRef.current.scrollTo({
         top: scrollRef.current.scrollHeight,
         behavior: isStreaming ? "auto" : "smooth",
