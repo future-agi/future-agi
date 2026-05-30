@@ -133,10 +133,16 @@ def compute_drain_state(eval_task, eval_task_logger=None):
     }
 
 
-def parsing_evaltask_filters(filters: dict) -> Q:
+def parsing_evaltask_filters(filters: dict, *, time_field: str = "created_at") -> Q:
     """
     Parses the input filters dictionary and returns a single combined Q object
     for Django ORM filtering.
+
+    ``time_field`` controls which column ``date_range`` / ``created_at`` keys
+    bind to. Defaults to ``created_at`` (matches the historical spans/traces/
+    sessions and monitor callers); the voice-call dispatcher passes
+    ``start_time`` so the window matches what ``list_voice_calls`` returns
+    (call timing, not ingest time).
     """
     combined_q = Q()
 
@@ -183,9 +189,9 @@ def parsing_evaltask_filters(filters: dict) -> Q:
         elif key == "date_range":
             if isinstance(value, list) and len(value) == 2:
                 start_date, end_date = value
-                combined_q &= Q(created_at__range=[start_date, end_date])
+                combined_q &= Q(**{f"{time_field}__range": [start_date, end_date]})
         elif key == "created_at":
-            combined_q &= Q(created_at__gte=value)
+            combined_q &= Q(**{f"{time_field}__gte": value})
         elif key == "project_id":
             combined_q &= Q(project_id=value)
 
@@ -252,19 +258,17 @@ def process_eval_task(eval_task_id: str):
                 eval_task=eval_task, status=EvalTaskStatus.RUNNING, spanids_processed=[]
             )
 
-        filters = Q()
-        if eval_task.filters is not None:
-            filters = parsing_evaltask_filters(eval_task.filters)
-
         # Branch the candidate queryset and dispatch activity on
         # row_type. The rest of the function operates on ``entity_qs``
         # (a Django queryset of the entities we'll evaluate) and
-        # ``dispatch`` (the activity to fan out to). The span path stays
-        # the original behaviour. The ``spanids_processed`` JSONField
-        # stores the processed entity ids generically — its name is
-        # historical (it once held only span ids); a future rename to
+        # ``dispatch`` (the activity to fan out to). The ``spanids_processed``
+        # JSONField stores the processed entity ids generically — its name
+        # is historical (it once held only span ids); a future rename to
         # ``processed_target_ids`` is intentionally deferred so this PR
         # stays focused on dispatcher behaviour.
+        raw_filters = eval_task.filters or {}
+        filters = parsing_evaltask_filters(raw_filters)
+
         if eval_task.row_type == RowType.TRACES:
             # A trace is in scope iff at least one of its spans matches
             # the existing span-level filters.
@@ -293,11 +297,26 @@ def process_eval_task(eval_task_id: str):
             )
             entity_qs = TraceSession.objects.filter(id__in=matching_session_ids)
             dispatch = evaluate_trace_session_observe
-        elif eval_task.row_type in (RowType.SPANS, RowType.VOICE_CALLS):
-            # Voice calls share the spans dispatch — the picker layer
-            # already aliases voiceCalls→spans (observation_span.py:2890),
-            # and any conversation-type narrowing the user wants comes
-            # through ``filters`` like every other span query.
+        elif eval_task.row_type == RowType.VOICE_CALLS:
+            # A voice call is the root conversation span of a trace.
+            # Mirrors list_voice_calls (CH ``VoiceCallListQueryBuilder``)
+            # so the eval evaluates exactly the population the user sees
+            # in the voice-call list view:
+            #   * ``parent_span_id IS NULL`` + ``observation_type='conversation'``
+            #     — root conversation span only
+            #   * ``date_range`` binds to ``start_time`` (call timing), not
+            #     ``created_at`` (ingest time)
+            # See ``futureagi/tracer/services/clickhouse/query_builders/
+            # voice_call_list.py:120-124`` for the canonical CH query.
+            filters = parsing_evaltask_filters(raw_filters, time_field="start_time")
+            entity_qs = ObservationSpan.objects.filter(
+                filters,
+                parent_span_id__isnull=True,
+                observation_type="conversation",
+            )
+            dispatch = evaluate_observation_span_observe
+        elif eval_task.row_type == RowType.SPANS:
+            # Every span matching ``filters`` — no observation_type narrowing.
             entity_qs = ObservationSpan.objects.filter(filters)
             dispatch = evaluate_observation_span_observe
         else:
