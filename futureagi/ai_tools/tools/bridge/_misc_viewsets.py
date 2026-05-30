@@ -49,6 +49,48 @@ expose_to_mcp(
 
 # Model hub
 expose_to_mcp(category="annotation_queues")(QueueItemViewSet)
+# assign_queue_items -> QueueItemViewSet.assign_items (POST .../queues/<queue_id>
+# /items/assign): assign queue items to one or more annotators — the action the
+# UI uses, which Falcon couldn't do (TH-5576). Detail-style on the queue id;
+# body carries item_ids + user_ids + action (add/set/remove).
+expose_to_mcp(
+    category="annotation_queues",
+    tools={
+        "assign_items": {
+            "name": "assign_queue_items",
+            "method": "POST",
+            "detail": True,
+            "pk_field": "queue_id",
+            "pk_kwarg": "queue_id",
+            "entity": "queue",
+            "description": (
+                "Assign annotation-queue items to one or more annotators (the "
+                "queue's 'assign' action). Provide queue_id, item_ids (UUIDs of "
+                "the queue items — get them from list_queue_items), and user_ids "
+                "(annotators to assign). action: 'add' (default) adds users, "
+                "'set' replaces all assignments, 'remove' removes the given "
+                "users. Requires queue-manager permission."
+            ),
+            "query_params": {
+                "item_ids": {
+                    "type": list,
+                    "required": True,
+                    "description": "List of queue item UUIDs to assign.",
+                },
+                "user_ids": {
+                    "type": list,
+                    "required": False,
+                    "description": "List of annotator (user) UUIDs to assign.",
+                },
+                "action": {
+                    "type": str,
+                    "required": False,
+                    "description": "'add' (default), 'set', or 'remove'.",
+                },
+            },
+        }
+    },
+)(QueueItemViewSet)
 expose_to_mcp(category="annotation_queues")(AutomationRuleViewSet)
 expose_to_mcp(category="datasets")(FeedbackViewSet)
 expose_to_mcp(category="datasets")(DatasetOptimizationViewSet)

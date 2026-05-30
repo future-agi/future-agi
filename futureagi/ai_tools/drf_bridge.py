@@ -622,10 +622,16 @@ class DRFBridgeTool(BaseTool):
                 # is view-specific (e.g. call_execution_id). Use the configured
                 # pk_kwarg, else fall back to "pk".
                 kwargs[self.binding.pk_kwarg or "pk"] = pk_value
+            elif self.binding.pk_kwarg:
+                # Custom ModelViewSet @action whose handler takes a named URL
+                # kwarg (e.g. assign_items(request, queue_id=...)). Route ONLY to
+                # that kwarg — the action signature won't accept a bare `pk`.
+                kwargs[self.binding.pk_kwarg] = pk_value
             else:
-                # ModelViewSet get_object() reads self.kwargs[lookup_url_kwarg
-                # or lookup_field]. Set every plausible name so retrieve/update/
-                # destroy resolve regardless of the viewset's lookup config.
+                # Standard ModelViewSet CRUD via get_object(), which reads
+                # self.kwargs[lookup_url_kwarg or lookup_field]. Set every
+                # plausible name so retrieve/update/destroy resolve regardless
+                # of the viewset's lookup config.
                 lookup_field = getattr(viewset_cls, "lookup_field", "pk") or "pk"
                 lookup_kwarg = (
                     getattr(viewset_cls, "lookup_url_kwarg", None) or lookup_field
