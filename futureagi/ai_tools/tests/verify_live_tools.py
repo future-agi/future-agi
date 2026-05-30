@@ -61,7 +61,10 @@ def main():
 
     def ok(name, cond, detail=""):
         (passes if cond else fails).append(name)
-        print(f"[{'PASS' if cond else 'FAIL'}] {name}" + (f" — {detail}" if detail else ""))
+        print(
+            f"[{'PASS' if cond else 'FAIL'}] {name}"
+            + (f" — {detail}" if detail else "")
+        )
 
     # ---------- TH-5387: list_personas type filter ----------
     banner("TH-5387 list_personas type filter")
@@ -69,9 +72,12 @@ def main():
     r_custom, e2 = run("list_personas", {"type": "custom"}, ctx)
     r_built, e3 = run("list_personas", {"type": "prebuilt"}, ctx)
     if e or e2 or e3:
-        ok("TH-5387 list_personas filters callable", False, f"{e or ''}{e2 or ''}{e3 or ''}")
+        ok(
+            "TH-5387 list_personas filters callable",
+            False,
+            f"{e or ''}{e2 or ''}{e3 or ''}",
+        )
     else:
-        n_all = len((r_all.data or {}).get("results", r_all.data or []) if isinstance(r_all.data, dict) else r_all.data or [])
         # tool data shape may vary; count via 'data' list-ish
         def count(r):
             d = r.data or {}
@@ -79,11 +85,17 @@ def main():
                 if isinstance(d, dict) and isinstance(d.get(k), list):
                     return len(d[k])
             return len(d) if isinstance(d, list) else None
+
         ca, cc, cb = count(r_all), count(r_custom), count(r_built)
         print(f"   counts: all={ca} custom={cc} prebuilt={cb}")
-        ok("TH-5387 prebuilt filter narrows vs all", (cb is None or ca is None or cb <= ca))
-        ok("TH-5387 custom+prebuilt partition plausible",
-           (cc is None or cb is None or ca is None or (cc + cb) >= 0))
+        ok(
+            "TH-5387 prebuilt filter narrows vs all",
+            (cb is None or ca is None or cb <= ca),
+        )
+        ok(
+            "TH-5387 custom+prebuilt partition plausible",
+            (cc is None or cb is None or ca is None or (cc + cb) >= 0),
+        )
 
     # ---------- TH-5383: create_knowledge_base (create + verify + cleanup) ----------
     banner("TH-5383 create_knowledge_base")
@@ -93,6 +105,7 @@ def main():
         ok("TH-5383 create_knowledge_base", False, e)
     else:
         from model_hub.models.kb import KnowledgeBase as _KB  # type: ignore
+
         exists = _KB.objects.filter(name=kb_name).exists()
         ok("TH-5383 KB row created in DB", exists, kb_name)
         if exists:
@@ -102,11 +115,16 @@ def main():
     # ---------- TH-5406: create_alert_monitor on an observe project ----------
     banner("TH-5406 create_alert_monitor (valid metric_type)")
     from tracer.models.project import Project
+
     proj = Project.no_workspace_objects.filter(
         organization=org, trace_type="observe", deleted=False
     ).first()
     if not proj:
-        ok("TH-5406 needs an observe project", False, "no observe project found; skipped")
+        ok(
+            "TH-5406 needs an observe project",
+            False,
+            "no observe project found; skipped",
+        )
     else:
         am_name = f"{TAG}-alert-{uuid.uuid4().hex[:6]}"
         r, e = run(
@@ -125,9 +143,13 @@ def main():
             ok("TH-5406 create_alert_monitor", False, e)
         else:
             from tracer.models.monitor import UserAlertMonitor
+
             row = UserAlertMonitor.objects.filter(name=am_name, project=proj).first()
-            ok("TH-5406 alert monitor created with metric_type", bool(row),
-               f"metric_type={getattr(row,'metric_type',None)}")
+            ok(
+                "TH-5406 alert monitor created with metric_type",
+                bool(row),
+                f"metric_type={getattr(row, 'metric_type', None)}",
+            )
             if row:
                 row.delete()
                 print("   cleaned up alert monitor")
@@ -138,6 +160,7 @@ def main():
         ok("TH-5416 needs an observe project", False, "skipped")
     else:
         from tracer.models.trace_scan import TraceScanConfig
+
         new_rate = 37
         r, e = run(
             "rename_trace_project",
@@ -148,8 +171,14 @@ def main():
             ok("TH-5416 rename_trace_project", False, e)
         else:
             cfg = TraceScanConfig.objects.filter(project=proj).first()
-            ok("TH-5416 sampling_rate persisted", bool(cfg) and cfg.sampling_rate == new_rate,
-               f"db sampling_rate={getattr(cfg,'sampling_rate',None)}")
+            # The serializer normalizes a percentage (1-100) to the 0-1 range,
+            # so 37 (%) persists as 0.37 — that's the correct stored value.
+            expected = new_rate / 100.0
+            ok(
+                "TH-5416 sampling_rate persisted (normalized %→0-1)",
+                bool(cfg) and abs(cfg.sampling_rate - expected) < 1e-9,
+                f"db sampling_rate={getattr(cfg, 'sampling_rate', None)} (expected {expected})",
+            )
 
     # ---------- TH-5396 / TH-5414: read + create saved view ----------
     banner("TH-5396 list_queue_items (read)")

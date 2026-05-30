@@ -137,6 +137,16 @@ def normalize_function_params(
                 raise ValueError(f"{name} must be <= {maximum}")
             normalized[name] = value
         elif field_type == "string":
+            # Lenient coercion: comma-separated string params (e.g. PII
+            # `detect_types`) are naturally supplied as a LIST by Falcon/MCP
+            # and the UI multi-select. Join a list into the comma-separated
+            # string the param expects instead of rejecting it with a
+            # confusing "must be a string" (TH-5409) — the runtime eval
+            # functions already split comma-separated strings back into lists.
+            if isinstance(raw_value, (list, tuple)):
+                raw_value = ",".join(
+                    str(v).strip() for v in raw_value if str(v).strip()
+                )
             if not isinstance(raw_value, str):
                 raise ValueError(f"{name} must be a string")
             normalized[name] = raw_value

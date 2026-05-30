@@ -565,10 +565,16 @@ def _get_action_serializer(
     if serializer_override:
         module_path = viewset_cls.__module__.rsplit(".", 1)[0]
         serializer_module = module_path.replace(".views", ".serializers")
+        # Serializers usually live in the submodule that mirrors the view's
+        # module name (e.g. simulate.views.agent_definition ->
+        # simulate.serializers.agent_definition), so try that first — that's
+        # where request serializers like AgentDefinitionSerializer live.
+        view_submodule = viewset_cls.__module__.rsplit(".", 1)[-1]
         try:
             return _resolve_class(f"{serializer_module}.{serializer_override}")
         except (ImportError, AttributeError):
             for base_module in [
+                f"{serializer_module}.{view_submodule}",
                 f"{serializer_module}.project",
                 f"{serializer_module}.dataset",
                 f"{serializer_module}.user",
@@ -755,8 +761,7 @@ def _register_bridge_tool(
             )
             if _qp_id_hint:
                 _qp_id_desc += (
-                    f" **How to get it:** call `{_qp_id_hint}` first and copy "
-                    "the 'id'."
+                    f" **How to get it:** call `{_qp_id_hint}` first and copy the 'id'."
                 )
             fields_dict[pk_field] = PydanticField(description=_qp_id_desc)
         for param_name, param_info in query_params.items():
@@ -854,17 +859,17 @@ def _register_bridge_tool(
     # detail @actions like submit) otherwise expose no id field, leaving
     # pk_field required-but-unsettable — so the tool can't target a record.
     # Inject the pk_field so callers can identify which record to act on.
-    if detail and pk_field and pk_field not in (
-        getattr(input_model, "model_fields", {}) or {}
+    if (
+        detail
+        and pk_field
+        and pk_field not in (getattr(input_model, "model_fields", {}) or {})
     ):
         _id_hint = tool_config.get("id_source") or _find_list_tool_for_viewset(
             viewset_path
         )
         _id_desc = f"UUID of the {entity_name} to {action_name}. UUID v4 format."
         if _id_hint:
-            _id_desc += (
-                f" **How to get it:** call `{_id_hint}` and copy the 'id'."
-            )
+            _id_desc += f" **How to get it:** call `{_id_hint}` and copy the 'id'."
         input_model = type(
             f"Input_{tool_name}",
             (input_model,),

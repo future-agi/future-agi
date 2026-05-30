@@ -77,6 +77,51 @@ expose_to_mcp(
         "create": {"name": "create_eval_task"},
         "update": {"name": "update_eval_task"},
         "destroy": {"name": "delete_eval_task"},
+        # Per-span eval scores/verdicts — readable after a task completes
+        # (TH-5411). EvalTaskView.get_usage is a detail=False GET keyed by the
+        # eval_task_id query param, so the bridge treats it as a non-detail GET
+        # (query params, no `id`). Bridges the existing API; no custom tool.
+        "get_usage": {
+            "name": "get_eval_task_results",
+            "method": "GET",
+            "detail": False,
+            "description": (
+                "Read the results of an eval task — the per-span scores and "
+                "verdicts the task produced. Use after a task completes (or "
+                "while running) to inspect actual outputs, not just status. "
+                "Provide eval_task_id (from list_eval_tasks / create_eval_task). "
+                "Optional: eval_id to filter to one eval when the task ran "
+                "several; span_aggregation=true for a task-wide rollup instead "
+                "of per-span rows."
+            ),
+            "query_params": {
+                "eval_task_id": {
+                    "type": str,
+                    "required": True,
+                    "description": "The eval task id (from list_eval_tasks).",
+                },
+                "eval_id": {
+                    "type": str,
+                    "required": False,
+                    "description": (
+                        "Filter to one eval config when the task ran multiple."
+                    ),
+                },
+                "span_aggregation": {
+                    "type": bool,
+                    "required": False,
+                    "description": (
+                        "When true, return the task-wide aggregated rollup "
+                        "instead of per-span rows."
+                    ),
+                },
+                "page_size": {
+                    "type": int,
+                    "required": False,
+                    "description": "Rows per page (per-span mode).",
+                },
+            },
+        },
     },
 )(EvalTaskView)
 

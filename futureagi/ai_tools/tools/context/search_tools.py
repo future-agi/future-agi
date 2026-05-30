@@ -28,7 +28,20 @@ from ai_tools.registry import register_tool
 
 # Lightweight synonym expansion so intent words match tool vocabulary.
 _SYNONYMS = {
-    "create": {"create", "make", "add", "new", "build", "set", "setup", "register"},
+    "create": {
+        "create",
+        "make",
+        "add",
+        "new",
+        "build",
+        "set",
+        "setup",
+        "register",
+        "save",
+    },
+    "save": {"save", "create", "store", "persist"},
+    "export": {"export", "download", "csv", "extract", "dump"},
+    "assign": {"assign", "allocate", "assignee", "assigned"},
     "make": {"create", "make", "add", "new", "build"},
     "add": {"add", "create", "append", "insert", "attach"},
     "new": {"new", "create", "make"},
@@ -98,19 +111,53 @@ _STOP = {
 # query words that map to each. Lets search_tools align "create a knowledge
 # base" with create_knowledge_base instead of list_knowledge_bases.
 _VERB_TO_PREFIX = {
-    "create": "create", "make": "create", "new": "create", "build": "create",
-    "register": "create", "add": "create",
-    "list": "list", "show": "list", "view": "list", "all": "list", "find": "list",
-    "get": "get", "fetch": "get", "retrieve": "get", "read": "get",
-    "update": "update", "edit": "update", "change": "update", "modify": "update",
-    "rename": "update", "set": "update",
-    "delete": "delete", "remove": "delete", "destroy": "delete", "drop": "delete",
+    "create": "create",
+    "make": "create",
+    "new": "create",
+    "build": "create",
+    "register": "create",
+    "add": "create",
+    "save": "create",
+    "list": "list",
+    "show": "list",
+    "view": "list",
+    "all": "list",
+    "find": "list",
+    "get": "get",
+    "fetch": "get",
+    "retrieve": "get",
+    "read": "get",
+    "update": "update",
+    "edit": "update",
+    "change": "update",
+    "modify": "update",
+    "rename": "update",
+    "set": "update",
+    "delete": "delete",
+    "remove": "delete",
+    "destroy": "delete",
+    "drop": "delete",
     "search": "search",
+    "assign": "assign",
+    "export": "export",
+    "download": "export",
 }
 # Leading verbs that actually occur in tool names (used to detect an action
-# mismatch worth demoting).
+# mismatch worth demoting). NOTE: ordering of query tokens matters — the FIRST
+# query token found here wins verb detection, so an explicit action like "save"
+# is detected before an entity word like "view" (which is also a list-synonym),
+# keeping "save a filtered view" aligned with create_saved_view, not list_*.
 _VERB_CANON = set(_VERB_TO_PREFIX) | {
-    "create", "list", "get", "update", "delete", "add", "submit", "search",
+    "create",
+    "list",
+    "get",
+    "update",
+    "delete",
+    "add",
+    "submit",
+    "search",
+    "assign",
+    "export",
 }
 
 
@@ -204,7 +251,7 @@ class SearchToolsTool(BaseTool):
             # `sampling_rate`) even though the tool name says nothing about it.
             schema = tool.input_schema if isinstance(tool.input_schema, dict) else {}
             param_tokens = set()
-            for pname in (schema.get("properties") or {}):
+            for pname in schema.get("properties") or {}:
                 param_tokens |= set(_tokens(pname))
             score += 2.5 * len(q_expanded & param_tokens)
 
@@ -296,8 +343,7 @@ class SearchToolsTool(BaseTool):
 
         content = section(
             f"Tools matching “{params.query}” ({len(top)})",
-            "\n".join(lines)
-            + "\n\n_Call any tool above by its exact name — it loads "
+            "\n".join(lines) + "\n\n_Call any tool above by its exact name — it loads "
             "automatically. `*` marks required parameters. **If a required "
             "parameter (e.g. an id) isn't known yet, call the matching "
             "`list_*` / `get_*` tool FIRST to retrieve it, then call the "
