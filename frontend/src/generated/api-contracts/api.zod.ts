@@ -569,6 +569,19 @@ export const accountsActivationEventsCreateResponseResultActivationStateSignalsS
 export const accountsActivationEventsCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault = false;
 
 
+
+
+
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
 export const accountsActivationEventsCreateResponseResultActivationStateSampleProjectLabelDefault = `Sample`;
 export const accountsActivationEventsCreateResponseResultActivationStateSampleProjectIsRepairableDefault = false;
 
@@ -937,6 +950,31 @@ export const AccountsActivationEventsCreateResponse = zod.object({
   "requires_permission": zod.string().optional(),
   "first_action_id": zod.string().optional()
 })),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
   "sample_project": zod.object({
   "available": zod.boolean(),
   "created": zod.boolean(),
@@ -1474,6 +1512,19 @@ export const accountsActivationStateListResponseResultSignalsSampleTraceReviewed
 export const accountsActivationStateListResponseResultAvailableGoalsItemDisabledDefault = false;
 
 
+
+
+
+
+
+
+export const accountsActivationStateListResponseResultJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
 export const accountsActivationStateListResponseResultSampleProjectLabelDefault = `Sample`;
 export const accountsActivationStateListResponseResultSampleProjectIsRepairableDefault = false;
 
@@ -1839,6 +1890,31 @@ export const AccountsActivationStateListResponse = zod.object({
   "requires_permission": zod.string().optional(),
   "first_action_id": zod.string().optional()
 })),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsActivationStateListResponseResultJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
   "sample_project": zod.object({
   "available": zod.boolean(),
   "created": zod.boolean(),
@@ -3052,6 +3128,19 @@ export const accountsOnboardingGoalCreateResponseResultSignalsSampleTraceReviewe
 export const accountsOnboardingGoalCreateResponseResultAvailableGoalsItemDisabledDefault = false;
 
 
+
+
+
+
+
+
+export const accountsOnboardingGoalCreateResponseResultJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
 export const accountsOnboardingGoalCreateResponseResultSampleProjectLabelDefault = `Sample`;
 export const accountsOnboardingGoalCreateResponseResultSampleProjectIsRepairableDefault = false;
 
@@ -3417,6 +3506,31 @@ export const AccountsOnboardingGoalCreateResponse = zod.object({
   "requires_permission": zod.string().optional(),
   "first_action_id": zod.string().optional()
 })),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsOnboardingGoalCreateResponseResultJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
   "sample_project": zod.object({
   "available": zod.boolean(),
   "created": zod.boolean(),
@@ -4897,6 +5011,19 @@ export const accountsSampleProjectCreateResponseResultActivationStateSignalsSamp
 export const accountsSampleProjectCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault = false;
 
 
+
+
+
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
 export const accountsSampleProjectCreateResponseResultActivationStateSampleProjectLabelDefault = `Sample`;
 export const accountsSampleProjectCreateResponseResultActivationStateSampleProjectIsRepairableDefault = false;
 
@@ -5288,6 +5415,31 @@ export const AccountsSampleProjectCreateResponse = zod.object({
   "requires_permission": zod.string().optional(),
   "first_action_id": zod.string().optional()
 })),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
   "sample_project": zod.object({
   "available": zod.boolean(),
   "created": zod.boolean(),
@@ -5814,6 +5966,19 @@ export const accountsSampleProjectHideCreateResponseResultActivationStateSignals
 export const accountsSampleProjectHideCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault = false;
 
 
+
+
+
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
 export const accountsSampleProjectHideCreateResponseResultActivationStateSampleProjectLabelDefault = `Sample`;
 export const accountsSampleProjectHideCreateResponseResultActivationStateSampleProjectIsRepairableDefault = false;
 
@@ -6205,6 +6370,31 @@ export const AccountsSampleProjectHideCreateResponse = zod.object({
   "requires_permission": zod.string().optional(),
   "first_action_id": zod.string().optional()
 })),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
   "sample_project": zod.object({
   "available": zod.boolean(),
   "created": zod.boolean(),

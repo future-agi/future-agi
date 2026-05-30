@@ -21,6 +21,7 @@ from accounts.services.onboarding.constants import (
     choices,
 )
 from accounts.services.onboarding.goals import goal_to_primary_path
+from accounts.services.onboarding.journey_plan import JOURNEY_STEP_STATUSES
 
 
 class ActivationAnalyticsSerializer(serializers.Serializer):
@@ -492,6 +493,48 @@ class AvailablePathSerializer(serializers.Serializer):
         allow_blank=True,
         allow_null=True,
     )
+
+
+class ActivationJourneyStepSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    stage = serializers.ChoiceField(choices=choices(ACTIVATION_STAGES))
+    action_id = serializers.CharField()
+    success_event = serializers.ChoiceField(
+        choices=choices(ONBOARDING_ACTIVATION_EVENTS),
+        required=False,
+    )
+    tour_anchor = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+    label = serializers.CharField()
+    description = serializers.CharField()
+    status = serializers.ChoiceField(choices=choices(JOURNEY_STEP_STATUSES))
+    href = serializers.CharField(allow_blank=True)
+    fallback_href = serializers.CharField()
+    route_available = serializers.BooleanField()
+    blocked_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+    requires_permission = serializers.CharField(
+        required=False,
+        allow_blank=True,
+    )
+
+
+class ActivationJourneyPlanSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    primary_path = serializers.ChoiceField(choices=choices(PRODUCT_PATHS))
+    eyebrow = serializers.CharField()
+    title = serializers.CharField()
+    description = serializers.CharField()
+    chips = serializers.ListField(child=serializers.CharField())
+    current_step_id = serializers.CharField()
+    current_step_index = serializers.IntegerField(
+        min_value=0,
+    )
+    steps = ActivationJourneyStepSerializer(many=True)
 
 
 class AvailableGoalSerializer(serializers.Serializer):
@@ -1422,6 +1465,7 @@ class ActivationStateResponseSerializer(serializers.Serializer):
     signals = ActivationSignalsSerializer()
     available_goals = AvailableGoalSerializer(many=True, required=False)
     available_paths = AvailablePathSerializer(many=True)
+    journey_plan = ActivationJourneyPlanSerializer(required=False)
     sample_project = SampleProjectStateSerializer()
     prompt = ActivationPromptStateSerializer(required=False, allow_null=True)
     agent = ActivationAgentStateSerializer(required=False, allow_null=True)

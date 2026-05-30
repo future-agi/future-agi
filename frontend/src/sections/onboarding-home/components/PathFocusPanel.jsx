@@ -42,16 +42,20 @@ export default function PathFocusPanel({
   action,
   fallbackAction,
   isChecking = false,
+  journeyPlan,
   onCheckAgain,
   onFallbackClick,
   onPrimaryClick,
   primaryPath,
   stage,
 }) {
-  const plan = PATH_FOCUS_PLANS[primaryPath];
+  const plan = journeyPlan || PATH_FOCUS_PLANS[primaryPath];
   if (!plan) return null;
 
-  const currentIndex = activeStepIndex(plan.steps, stage);
+  const currentIndex =
+    typeof plan.currentStepIndex === "number"
+      ? plan.currentStepIndex
+      : activeStepIndex(plan.steps, stage);
   const currentStep = plan.steps[currentIndex];
 
   return (
@@ -85,7 +89,8 @@ export default function PathFocusPanel({
           }}
         >
           {plan.steps.map((step, index) => {
-            const status = stepStatus({ index, activeIndex: currentIndex });
+            const status =
+              step.status || stepStatus({ index, activeIndex: currentIndex });
             const statusCopy = STATUS_COPY[status];
 
             return (
@@ -171,6 +176,7 @@ PathFocusPanel.propTypes = {
   action: PropTypes.object,
   fallbackAction: PropTypes.object,
   isChecking: PropTypes.bool,
+  journeyPlan: PropTypes.object,
   onCheckAgain: PropTypes.func,
   onFallbackClick: PropTypes.func,
   onPrimaryClick: PropTypes.func,

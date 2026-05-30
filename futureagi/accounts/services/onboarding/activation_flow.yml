@@ -130,6 +130,339 @@ path_aliases:
   dashboard: dashboards
   sample_project: sample
 
+tour_anchors:
+  - observe_create_project_button
+  - observe_send_trace_button
+  - observe_trace_review_link
+  - observe_evaluator_button
+  - sample_project_button
+  - sample_trace_link
+  - sample_connect_real_data_button
+  - prompt_create_button
+  - prompt_run_test_button
+  - prompt_save_version_button
+  - prompt_compare_versions_button
+  - prompt_add_example_button
+  - agent_create_button
+  - agent_run_scenario_button
+  - agent_trace_review_link
+  - agent_save_eval_button
+  - agent_create_eval_button
+  - gateway_provider_button
+  - gateway_key_button
+  - gateway_request_button
+  - gateway_log_review_link
+  - gateway_failure_button
+  - gateway_policy_button
+  - eval_dataset_button
+  - eval_scorer_button
+  - eval_run_button
+  - eval_failure_review_link
+  - eval_next_loop_button
+  - voice_agent_button
+  - voice_test_call_button
+  - voice_call_review_link
+  - voice_success_criteria_button
+  - voice_monitor_button
+
+journeys:
+  observe_first_run:
+    primary_path: observe
+    eyebrow: Observe loop
+    title: Start with your first quality loop
+    description: Connect traces, review the first signal, then turn it into a check.
+    chips:
+      - observe
+      - quality
+    steps:
+      - id: connect_observability
+        stage: connect_observability
+        action_id: create_observe_project
+        success_event: observe_project_created
+        tour_anchor: observe_create_project_button
+        label: Connect observability
+        description: Create an observe project and send one trace.
+      - id: send_first_trace
+        stage: waiting_for_first_trace
+        active_stages:
+          - waiting_for_first_trace_sample_available
+        action_id: send_first_trace
+        success_event: trace_received
+        tour_anchor: observe_send_trace_button
+        label: Send trace
+        description: Send one production or test trace.
+      - id: review_first_trace
+        stage: review_first_trace
+        action_id: review_first_trace
+        success_event: trace_reviewed
+        tour_anchor: observe_trace_review_link
+        label: Review signal
+        description: Inspect latency, cost, and quality context.
+      - id: create_trace_evaluator
+        stage: create_trace_evaluator
+        action_id: create_trace_evaluator
+        success_event: first_quality_loop_completed
+        tour_anchor: observe_evaluator_button
+        label: Create check
+        description: Turn the reviewed trace into a repeatable evaluator.
+  sample_first_run:
+    primary_path: sample
+    eyebrow: Sample loop
+    title: Preview a quality signal now
+    description: Open a sample trace first, then connect real data when ready.
+    chips:
+      - sample
+      - trace
+    steps:
+      - id: open_sample_project
+        stage: open_sample_project
+        action_id: open_sample_trace
+        success_event: sample_trace_available
+        tour_anchor: sample_project_button
+        label: Open sample
+        description: Use a ready-made trace while setup is pending.
+      - id: review_sample_signal
+        stage: review_sample_signal
+        action_id: open_sample_trace
+        success_event: sample_signal_viewed
+        tour_anchor: sample_trace_link
+        label: Review issue
+        description: Inspect the quality issue in the sample trace.
+      - id: connect_real_data
+        stage: connect_real_data
+        action_id: create_observe_project
+        success_event: observe_project_created
+        tour_anchor: sample_connect_real_data_button
+        label: Connect real data
+        description: Move from sample data to one real signal.
+  prompt_first_run:
+    primary_path: prompt
+    eyebrow: Prompt loop
+    title: Build a prompt quality loop
+    description: Create one prompt, test it, save a baseline, and compare the next version.
+    chips:
+      - prompt
+      - versioning
+    steps:
+      - id: create_prompt
+        stage: start_prompt
+        action_id: create_prompt
+        success_event: prompt_created
+        tour_anchor: prompt_create_button
+        label: Create prompt
+        description: Start with one prompt the team can test.
+      - id: run_prompt_test
+        stage: run_prompt_test
+        action_id: run_prompt_test
+        success_event: prompt_test_run_completed
+        tour_anchor: prompt_run_test_button
+        label: Run test
+        description: Run one focused example before saving.
+      - id: save_prompt_version
+        stage: save_prompt_version
+        action_id: save_prompt_version
+        success_event: prompt_version_created
+        tour_anchor: prompt_save_version_button
+        label: Save version
+        description: Create the baseline for future edits.
+      - id: compare_prompt_versions
+        stage: compare_prompt_versions
+        action_id: compare_prompt_versions
+        success_event: prompt_comparison_completed
+        tour_anchor: prompt_compare_versions_button
+        label: Compare
+        description: Review how the edited version changed behavior.
+      - id: prompt_next_loop
+        stage: prompt_next_loop
+        action_id: add_prompt_failure_example
+        success_event: dataset_example_added
+        tour_anchor: prompt_add_example_button
+        label: Improve
+        description: Turn the result into a reusable example or check.
+  agent_first_run:
+    primary_path: agent
+    eyebrow: Agent loop
+    title: Prototype an agent with a quality check
+    description: Create an agent, run one scenario, inspect the run, then save coverage.
+    chips:
+      - agent
+      - scenario
+    steps:
+      - id: create_agent
+        stage: create_agent
+        action_id: create_agent
+        success_event: agent_created
+        tour_anchor: agent_create_button
+        label: Create agent
+        description: Start with one runnable agent.
+      - id: run_agent_scenario
+        stage: run_agent_scenario
+        action_id: run_agent_scenario
+        success_event: agent_prototype_run_completed
+        tour_anchor: agent_run_scenario_button
+        label: Run scenario
+        description: Exercise the agent on one task.
+      - id: review_agent_trace
+        stage: review_agent_trace
+        action_id: review_agent_trace
+        success_event: agent_trace_reviewed
+        tour_anchor: agent_trace_review_link
+        label: Review run
+        description: Inspect the trace and find the first signal.
+      - id: save_agent_eval
+        stage: save_agent_eval
+        action_id: save_agent_eval
+        success_event: agent_scenario_saved_as_eval
+        tour_anchor: agent_save_eval_button
+        label: Save coverage
+        description: Turn the reviewed run into repeatable coverage.
+      - id: agent_create_eval
+        stage: agent_create_eval
+        action_id: create_agent_eval
+        success_event: agent_eval_created
+        tour_anchor: agent_create_eval_button
+        label: Create eval
+        description: Keep the agent behavior measurable.
+  gateway_first_run:
+    primary_path: gateway
+    eyebrow: Gateway loop
+    title: Route one request safely
+    description: Configure a provider, create a key, send one request, and turn the log into control.
+    chips:
+      - gateway
+      - traffic
+    steps:
+      - id: configure_gateway_provider
+        stage: configure_gateway_provider
+        action_id: gateway_add_provider
+        success_event: gateway_provider_added
+        tour_anchor: gateway_provider_button
+        label: Add provider
+        description: Connect the model provider to route traffic.
+      - id: create_gateway_key
+        stage: create_gateway_key
+        action_id: gateway_create_key
+        success_event: gateway_key_created
+        tour_anchor: gateway_key_button
+        label: Create key
+        description: Create the key for the first request.
+      - id: run_gateway_request
+        stage: run_gateway_request
+        action_id: gateway_send_first_request
+        success_event: gateway_request_seen
+        tour_anchor: gateway_request_button
+        label: Send request
+        description: Send one request through the gateway.
+      - id: review_gateway_log
+        stage: review_gateway_log
+        action_id: gateway_review_request
+        success_event: gateway_log_opened
+        tour_anchor: gateway_log_review_link
+        label: Review log
+        description: Inspect status, latency, cost, and routing.
+      - id: fix_gateway_failure
+        stage: fix_gateway_failure
+        action_id: gateway_fix_failed_request
+        success_event: gateway_failure_resolved
+        tour_anchor: gateway_failure_button
+        label: Fix issue
+        description: Resolve the first failure if one appears.
+      - id: add_gateway_policy
+        stage: add_gateway_policy
+        action_id: gateway_add_policy
+        success_event: gateway_policy_created
+        tour_anchor: gateway_policy_button
+        label: Add policy
+        description: Create a guardrail for future requests.
+  evals_first_run:
+    primary_path: evals
+    eyebrow: Eval loop
+    title: Create one eval and review the first failure
+    description: Add a small dataset, attach a scorer, run the eval, and inspect what failed.
+    chips:
+      - evals
+      - quality
+    steps:
+      - id: create_eval_dataset
+        stage: create_eval_dataset
+        action_id: create_eval_dataset
+        success_event: eval_dataset_created
+        tour_anchor: eval_dataset_button
+        label: Create dataset
+        description: Start with a focused set of examples.
+      - id: add_eval_scorer
+        stage: add_eval_scorer
+        action_id: add_eval_scorer
+        success_event: eval_scorer_created
+        tour_anchor: eval_scorer_button
+        label: Add scorer
+        description: Define the quality signal to measure.
+      - id: run_eval
+        stage: run_eval
+        action_id: run_eval
+        success_event: eval_run_completed
+        tour_anchor: eval_run_button
+        label: Run eval
+        description: Run the check once.
+      - id: review_eval_failures
+        stage: review_eval_failures
+        action_id: review_eval_failures
+        success_event: eval_failures_reviewed
+        tour_anchor: eval_failure_review_link
+        label: Review failure
+        description: Inspect the first useful failure.
+      - id: eval_next_loop
+        stage: eval_next_loop
+        action_id: fix_eval_source
+        success_event: eval_failure_action_created
+        tour_anchor: eval_next_loop_button
+        label: Improve
+        description: Turn the failure into the next fix.
+  voice_first_run:
+    primary_path: voice
+    eyebrow: Voice loop
+    title: Connect a voice agent quality loop
+    description: Create or connect a voice agent, run one call, review it, and add success criteria.
+    chips:
+      - voice
+      - call
+    steps:
+      - id: create_voice_agent
+        stage: create_voice_agent
+        action_id: create_voice_agent
+        success_event: voice_agent_created
+        tour_anchor: voice_agent_button
+        label: Create agent
+        description: Start with one voice agent.
+      - id: run_voice_test_call
+        stage: run_voice_test_call
+        action_id: run_voice_test_call
+        success_event: voice_test_call_completed
+        tour_anchor: voice_test_call_button
+        label: Run call
+        description: Run a test call to collect a signal.
+      - id: review_voice_call
+        stage: review_voice_call
+        action_id: review_voice_call
+        success_event: voice_call_reviewed
+        tour_anchor: voice_call_review_link
+        label: Review call
+        description: Inspect the transcript and outcome.
+      - id: add_voice_success_criteria
+        stage: add_voice_success_criteria
+        action_id: add_voice_success_criteria
+        success_event: voice_success_criteria_added
+        tour_anchor: voice_success_criteria_button
+        label: Add criteria
+        description: Define what a good call means.
+      - id: voice_monitor_calls
+        stage: voice_monitor_calls
+        action_id: voice_monitor_calls
+        success_event: voice_call_monitor_opened
+        tour_anchor: voice_monitor_button
+        label: Monitor
+        description: Keep watching live calls after setup.
+
 action_kinds:
   - choose_goal
   - setup

@@ -18,6 +18,7 @@ from accounts.services.onboarding.flow_config import (
     configured_stage_progress,
     resolve_stage_from_config,
 )
+from accounts.services.onboarding.journey_plan import resolve_journey_plan
 from accounts.services.onboarding.lifecycle_eligibility import (
     evaluate_lifecycle_decision,
     lifecycle_preview_from_decision,
@@ -287,6 +288,11 @@ def resolve_activation_state(*, context, flags, signals):
         stage=stage,
         routes=routes,
     )
+    journey_plan = resolve_journey_plan(
+        primary_path=context.primary_path,
+        stage=stage,
+        routes=routes,
+    )
     now = timezone.now()
     is_activated = stage in {"activated", "daily_review"}
     payload = {
@@ -350,6 +356,8 @@ def resolve_activation_state(*, context, flags, signals):
         "diagnostics": None,
         "warnings": context.warnings,
     }
+    if journey_plan:
+        payload["journey_plan"] = journey_plan
     if payload["home_mode"] == "daily_quality":
         daily_quality = resolve_daily_quality_state(
             context=context,

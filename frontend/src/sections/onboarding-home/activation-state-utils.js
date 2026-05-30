@@ -81,6 +81,7 @@ export const ACTIVATION_STAGE_NAMES = Object.freeze([
 ]);
 
 const ACTIVATION_STAGES = new Set(ACTIVATION_STAGE_NAMES);
+const JOURNEY_STEP_STATUSES = new Set(["complete", "current", "queued"]);
 
 const isObject = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
@@ -427,6 +428,56 @@ const normalizeAvailableGoal = (raw) => ({
   disabled: Boolean(raw.disabled),
   disabledReason: raw.disabled_reason ?? raw.disabledReason ?? null,
 });
+
+const normalizeJourneyStep = (raw) => {
+  const href = raw.href ?? null;
+  const fallbackHref = raw.fallback_href ?? raw.fallbackHref ?? null;
+  const status = raw.status;
+  if (!ACTIVATION_STAGES.has(raw.stage)) {
+    throw new Error(`Unsupported journey stage: ${raw.stage}`);
+  }
+  if (!JOURNEY_STEP_STATUSES.has(status)) {
+    throw new Error(`Unsupported journey step status: ${status}`);
+  }
+  if (!isInternalHref(href)) {
+    throw new Error(`Journey step has external href: ${href}`);
+  }
+  if (!isInternalHref(fallbackHref)) {
+    throw new Error(`Journey step has external fallback href: ${fallbackHref}`);
+  }
+  return {
+    id: raw.id,
+    stage: raw.stage,
+    actionId: raw.action_id ?? raw.actionId,
+    successEvent: raw.success_event ?? raw.successEvent ?? null,
+    tourAnchor: raw.tour_anchor ?? raw.tourAnchor ?? null,
+    label: raw.label,
+    description: raw.description,
+    status,
+    href,
+    fallbackHref,
+    routeAvailable: Boolean(raw.route_available ?? raw.routeAvailable),
+    blockedReason: raw.blocked_reason ?? raw.blockedReason ?? null,
+    requiresPermission:
+      raw.requires_permission ?? raw.requiresPermission ?? null,
+  };
+};
+
+const normalizeJourneyPlan = (raw) => {
+  if (!raw) return null;
+  const steps = (raw.steps || []).map(normalizeJourneyStep);
+  return {
+    id: raw.id,
+    primaryPath: normalizeProductPath(raw.primary_path ?? raw.primaryPath),
+    eyebrow: raw.eyebrow,
+    title: raw.title,
+    description: raw.description,
+    chips: raw.chips || [],
+    currentStepId: raw.current_step_id ?? raw.currentStepId ?? null,
+    currentStepIndex: raw.current_step_index ?? raw.currentStepIndex ?? null,
+    steps,
+  };
+};
 
 export const normalizeSampleProject = (raw = {}) => {
   const href = raw.href ?? null;
@@ -992,6 +1043,7 @@ export const normalizeActivationState = (raw) => {
       normalizeAvailableGoal,
     ),
     availablePaths: (raw.available_paths || []).map(normalizeAvailablePath),
+    journeyPlan: normalizeJourneyPlan(raw.journey_plan ?? raw.journeyPlan),
     sampleProject: normalizeSampleProject(raw.sample_project),
     prompt: normalizePromptState(raw.prompt),
     agent: normalizeAgentState(raw.agent),

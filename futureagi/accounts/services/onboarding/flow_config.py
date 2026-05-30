@@ -20,6 +20,13 @@ from accounts.services.onboarding.signal_contract import (
 CONFIG_PATH = Path(__file__).with_name("activation_flow.yml")
 
 HOME_MODES = {"first_run", "daily_quality", "fallback"}
+JOURNEY_COPY_MAX_LENGTH = {
+    "eyebrow": 48,
+    "title": 120,
+    "description": 240,
+    "label": 64,
+}
+UNSAFE_COPY_MARKERS = ("{{", "{%", "://", "<script", "$(")
 PROGRESS_STATES = {
     "not_started",
     "available",
@@ -113,6 +120,14 @@ def _validate_signal_name(signal: str, path: str) -> None:
         raise _config_error(f"{path} must be a non-empty string.")
     if signal not in SUPPORTED_ONBOARDING_STAGE_RULE_SIGNALS:
         raise _config_error(f"{path} references unknown signal.")
+
+
+def _validate_safe_copy(value: str, path: str, *, max_length: int) -> None:
+    if len(value) > max_length:
+        raise _config_error(f"{path} must be {max_length} characters or fewer.")
+    normalized = value.lower()
+    if any(marker in normalized for marker in UNSAFE_COPY_MARKERS):
+        raise _config_error(f"{path} contains unsupported template or URL syntax.")
 
 
 def _load_config_file() -> dict:
@@ -357,6 +372,104 @@ def _validate_activation_events(config: dict) -> None:
             )
 
 
+def _validate_journeys(config: dict) -> None:
+    journeys = _mapping(config.get("journeys"), "journeys")
+    paths = _mapping(config.get("paths"), "paths")
+    stages = _mapping(config.get("stages"), "stages")
+    actions = _mapping(config.get("actions"), "actions")
+    events = set(
+        _sequence(config["activation_events"]["names"], "activation_events.names")
+    )
+    anchors = set(_sequence(config.get("tour_anchors", []), "tour_anchors"))
+    path_to_journey = {}
+
+    if not journeys:
+        raise _config_error("journeys cannot be empty.")
+
+    for journey_id, journey_config in journeys.items():
+        path = f"journeys.{journey_id}"
+        journey_config = _mapping(journey_config, path)
+        primary_path = _required_text(journey_config, "primary_path", path)
+        if primary_path not in paths:
+            raise _config_error(f"{path}.primary_path references unknown path.")
+        if primary_path in path_to_journey:
+            raise _config_error(
+                f"{path}.primary_path duplicates {path_to_journey[primary_path]}."
+            )
+        path_to_journey[primary_path] = journey_id
+
+        for copy_key in ("eyebrow", "title", "description"):
+            value = _required_text(journey_config, copy_key, path)
+            _validate_safe_copy(
+                value,
+                f"{path}.{copy_key}",
+                max_length=JOURNEY_COPY_MAX_LENGTH[copy_key],
+            )
+
+        chips = _sequence(journey_config.get("chips", []), f"{path}.chips")
+        for index, chip in enumerate(chips):
+            if not isinstance(chip, str) or not chip.strip():
+                raise _config_error(f"{path}.chips.{index} must be a non-empty string.")
+            _validate_safe_copy(chip, f"{path}.chips.{index}", max_length=24)
+
+        steps = _sequence(journey_config.get("steps"), f"{path}.steps")
+        if not steps:
+            raise _config_error(f"{path}.steps cannot be empty.")
+        step_ids = []
+        step_stages = []
+        for index, step in enumerate(steps):
+            step_path = f"{path}.steps.{index}"
+            step = _mapping(step, step_path)
+            step_id = _required_text(step, "id", step_path)
+            step_ids.append(step_id)
+            stage = _required_text(step, "stage", step_path)
+            step_stages.append(stage)
+            if stage not in stages:
+                raise _config_error(f"{step_path}.stage references unknown stage.")
+            for active_index, active_stage in enumerate(
+                _sequence(step.get("active_stages", []), f"{step_path}.active_stages")
+            ):
+                if active_stage not in stages:
+                    raise _config_error(
+                        f"{step_path}.active_stages.{active_index} references unknown stage."
+                    )
+            action_id = _required_text(step, "action_id", step_path)
+            if action_id not in actions:
+                raise _config_error(f"{step_path}.action_id references unknown action.")
+            success_event = _optional_text(step, "success_event", step_path)
+            if success_event and success_event not in events:
+                raise _config_error(
+                    f"{step_path}.success_event references unknown activation event."
+                )
+            tour_anchor = _optional_text(step, "tour_anchor", step_path)
+            if tour_anchor and tour_anchor not in anchors:
+                raise _config_error(
+                    f"{step_path}.tour_anchor references unknown tour anchor."
+                )
+            for copy_key in ("label", "description"):
+                value = _required_text(step, copy_key, step_path)
+                _validate_safe_copy(
+                    value,
+                    f"{step_path}.{copy_key}",
+                    max_length=JOURNEY_COPY_MAX_LENGTH[copy_key],
+                )
+
+        duplicate_step_ids = sorted(
+            step_id for step_id, count in Counter(step_ids).items() if count > 1
+        )
+        if duplicate_step_ids:
+            raise _config_error(
+                f"{path}.steps contains duplicate ids: {', '.join(duplicate_step_ids)}."
+            )
+        duplicate_step_stages = sorted(
+            stage for stage, count in Counter(step_stages).items() if count > 1
+        )
+        if duplicate_step_stages:
+            raise _config_error(
+                f"{path}.steps contains duplicate stages: {', '.join(duplicate_step_stages)}."
+            )
+
+
 def _validate_config(config: dict) -> None:
     _mapping(config.get("product_loop_steps"), "product_loop_steps")
     _validate_actions(config)
@@ -365,6 +478,7 @@ def _validate_config(config: dict) -> None:
     _validate_stages(config)
     _validate_stage_rules(config)
     _validate_activation_events(config)
+    _validate_journeys(config)
 
 
 @lru_cache(maxsize=1)
@@ -458,6 +572,15 @@ def configured_action_kinds() -> tuple[str, ...]:
 
 def configured_action(action_id: str) -> dict:
     return deepcopy(get_activation_flow_config()["actions"][action_id])
+
+
+def configured_journey_for_path(path_id: str | None) -> dict | None:
+    if not path_id:
+        return None
+    for journey_id, journey_config in get_activation_flow_config()["journeys"].items():
+        if journey_config["primary_path"] == path_id:
+            return {"id": journey_id, **deepcopy(journey_config)}
+    return None
 
 
 def configured_activation_events() -> tuple[str, ...]:

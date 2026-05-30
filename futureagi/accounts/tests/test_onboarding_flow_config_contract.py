@@ -6,6 +6,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from accounts.services.onboarding.flow_config import (
     _validate_config,
+    configured_journey_for_path,
     get_activation_flow_config,
 )
 from accounts.services.onboarding.signal_contract import (
@@ -35,6 +36,43 @@ def test_activation_flow_rejects_duplicate_activation_event_names():
     config = _valid_activation_flow_config()
     event_name = config["activation_events"]["names"][0]
     config["activation_events"]["names"].append(event_name)
+
+    with pytest.raises(ImproperlyConfigured):
+        _validate_config(config)
+
+
+def test_activation_flow_exposes_editable_path_journeys():
+    journey = configured_journey_for_path("prompt")
+
+    assert journey["id"] == "prompt_first_run"
+    assert journey["primary_path"] == "prompt"
+    assert [step["stage"] for step in journey["steps"][:2]] == [
+        "start_prompt",
+        "run_prompt_test",
+    ]
+
+
+def test_activation_flow_rejects_unknown_journey_action():
+    config = _valid_activation_flow_config()
+    config["journeys"]["prompt_first_run"]["steps"][0]["action_id"] = "missing_action"
+
+    with pytest.raises(ImproperlyConfigured):
+        _validate_config(config)
+
+
+def test_activation_flow_rejects_unknown_journey_tour_anchor():
+    config = _valid_activation_flow_config()
+    config["journeys"]["prompt_first_run"]["steps"][0]["tour_anchor"] = "missing_anchor"
+
+    with pytest.raises(ImproperlyConfigured):
+        _validate_config(config)
+
+
+def test_activation_flow_rejects_unsafe_journey_copy():
+    config = _valid_activation_flow_config()
+    config["journeys"]["prompt_first_run"]["description"] = (
+        "Open https://example.invalid"
+    )
 
     with pytest.raises(ImproperlyConfigured):
         _validate_config(config)

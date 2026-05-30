@@ -75908,6 +75908,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/AvailablePath"
           }
         },
+        "journey_plan": {
+          "$ref": "#/definitions/ActivationJourneyPlan"
+        },
         "sample_project": {
           "$ref": "#/definitions/SampleProjectState"
         },
@@ -92826,6 +92829,79 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "x-nullable": true
     },
+    "ActivationJourneyPlan": {
+      "required": [
+        "id",
+        "primary_path",
+        "eyebrow",
+        "title",
+        "description",
+        "chips",
+        "current_step_id",
+        "current_step_index",
+        "steps"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "primary_path": {
+          "title": "Primary path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ]
+        },
+        "eyebrow": {
+          "title": "Eyebrow",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "title": "Title",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        },
+        "chips": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "current_step_id": {
+          "title": "Current step id",
+          "type": "string",
+          "minLength": 1
+        },
+        "current_step_index": {
+          "title": "Current step index",
+          "type": "integer",
+          "minimum": 0
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActivationJourneyStep"
+          }
+        }
+      }
+    },
     "ActivationMeaningfulEvent": {
       "required": [
         "name",
@@ -102348,6 +102424,232 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Reason",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "ActivationJourneyStep": {
+      "required": [
+        "id",
+        "stage",
+        "action_id",
+        "label",
+        "description",
+        "status",
+        "href",
+        "fallback_href",
+        "route_available"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ]
+        },
+        "action_id": {
+          "title": "Action id",
+          "type": "string",
+          "minLength": 1
+        },
+        "success_event": {
+          "title": "Success event",
+          "type": "string",
+          "enum": [
+            "onboarding_transition_viewed",
+            "onboarding_home_viewed",
+            "onboarding_goal_selected",
+            "onboarding_goal_changed",
+            "onboarding_recommended_action_viewed",
+            "onboarding_recommended_action_clicked",
+            "onboarding_path_card_clicked",
+            "onboarding_blocked_state_viewed",
+            "onboarding_diagnostics_opened",
+            "onboarding_sample_project_opened",
+            "onboarding_fallback_action_clicked",
+            "sample_trace_available",
+            "sample_signal_viewed",
+            "sample_to_real_setup_clicked",
+            "first_quality_loop_completed",
+            "daily_quality_home_viewed",
+            "daily_quality_top_signal_shown",
+            "daily_quality_top_change_reviewed",
+            "daily_quality_item_reviewed",
+            "daily_quality_action_created",
+            "daily_quality_action_opened",
+            "daily_quality_action_assigned",
+            "daily_quality_action_completed",
+            "daily_quality_action_dismissed",
+            "daily_quality_no_signal_viewed",
+            "daily_quality_empty_state_viewed",
+            "daily_quality_digest_destination_opened",
+            "daily_quality_route_fallback_used",
+            "weekly_quality_review_opened",
+            "weekly_quality_action_assigned",
+            "weekly_quality_action_completed",
+            "weekly_quality_review_completed",
+            "weekly_quality_digest_sent",
+            "weekly_quality_digest_suppressed",
+            "lifecycle_email_send_queued",
+            "lifecycle_email_sent",
+            "lifecycle_email_send_failed",
+            "lifecycle_email_send_suppressed",
+            "lifecycle_email_clicked",
+            "lifecycle_email_unsubscribed",
+            "lifecycle_email_snoozed",
+            "lifecycle_email_completed",
+            "reactivation_reason_clicked",
+            "observe_project_created",
+            "onboarding_observe_route_focus_viewed",
+            "trace_received",
+            "trace_reviewed",
+            "trace_detail_opened",
+            "prompt_created",
+            "prompt_test_input_added",
+            "prompt_test_run_completed",
+            "prompt_version_created",
+            "prompt_comparison_completed",
+            "dataset_example_added",
+            "eval_dataset_created",
+            "eval_scorer_created",
+            "eval_run_started",
+            "eval_run_completed",
+            "eval_failures_reviewed",
+            "eval_failure_action_created",
+            "eval_group_created",
+            "onboarding_eval_source_selected",
+            "onboarding_eval_route_focus_viewed",
+            "onboarding_eval_run_clicked",
+            "onboarding_eval_failure_detail_opened",
+            "onboarding_eval_source_fix_cta_clicked",
+            "onboarding_eval_source_fix_route_viewed",
+            "onboarding_eval_source_fix_rerun_clicked",
+            "onboarding_eval_scorer_edit_cta_clicked",
+            "onboarding_eval_fix_rerun_completed",
+            "onboarding_eval_fix_rerun_reviewed",
+            "onboarding_eval_sample_viewed",
+            "voice_agent_created",
+            "voice_scenario_created",
+            "voice_test_call_started",
+            "voice_test_call_completed",
+            "voice_call_reviewed",
+            "voice_success_criteria_added",
+            "voice_call_monitor_opened",
+            "onboarding_voice_route_focus_viewed",
+            "onboarding_voice_call_detail_opened",
+            "onboarding_voice_success_criteria_cta_clicked",
+            "onboarding_voice_sample_viewed",
+            "prompt_version_promoted",
+            "agent_created",
+            "agent_scenario_created",
+            "agent_prototype_run_completed",
+            "agent_trace_reviewed",
+            "agent_scenario_saved_as_eval",
+            "agent_eval_created",
+            "agent_live_trace_received",
+            "gateway_provider_added",
+            "gateway_key_created",
+            "gateway_test_request_sent",
+            "gateway_request_seen",
+            "gateway_log_opened",
+            "gateway_failure_resolved",
+            "gateway_policy_created",
+            "gateway_dashboard_created",
+            "team_member_invited",
+            "trace_failure_detected"
+          ]
+        },
+        "tour_anchor": {
+          "title": "Tour anchor",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "current",
+            "queued"
+          ]
+        },
+        "href": {
+          "title": "Href",
+          "type": "string"
+        },
+        "fallback_href": {
+          "title": "Fallback href",
+          "type": "string",
+          "minLength": 1
+        },
+        "route_available": {
+          "title": "Route available",
+          "type": "boolean"
+        },
+        "blocked_reason": {
+          "title": "Blocked reason",
+          "type": "string"
+        },
+        "requires_permission": {
+          "title": "Requires permission",
+          "type": "string"
         }
       }
     },

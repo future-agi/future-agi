@@ -64,6 +64,46 @@ describe("PathFocusPanel", () => {
     );
   });
 
+  it("uses a backend journey plan when one is provided", () => {
+    const { state } = renderPanel("promptCreatedNoRun", {
+      journeyPlan: {
+        id: "prompt_first_run",
+        primaryPath: "prompt",
+        eyebrow: "Prompt loop",
+        title: "Test from manifest",
+        description: "Manifest copy wins over bundled fallback copy.",
+        chips: ["prompt"],
+        currentStepId: "run_prompt_test",
+        currentStepIndex: 1,
+        steps: [
+          {
+            id: "create_prompt",
+            stage: "start_prompt",
+            label: "Create prompt",
+            description: "Create from manifest.",
+            status: "complete",
+          },
+          {
+            id: "run_prompt_test",
+            stage: "run_prompt_test",
+            label: "Run manifest test",
+            description: "Run from manifest.",
+            status: "current",
+          },
+        ],
+      },
+    });
+
+    const panel = screen.getByTestId(`path-focus-panel-${state.primaryPath}`);
+    expect(within(panel).getByText("Test from manifest")).toBeVisible();
+    expect(within(panel).getByText("Run manifest test")).toBeVisible();
+    expect(
+      within(screen.getByTestId("path-focus-step-run_prompt_test")).getByText(
+        "Now",
+      ),
+    ).toBeVisible();
+  });
+
   it("guides the gateway path from key setup to first routed request", () => {
     renderPanel("gatewayKeyNoRequest");
 

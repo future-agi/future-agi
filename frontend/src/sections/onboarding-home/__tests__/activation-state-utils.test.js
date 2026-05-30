@@ -86,6 +86,59 @@ describe("activation-state utilities", () => {
     expect(normalized.recommendedAction.href).toContain("onboarding=run-test");
   });
 
+  it("normalizes a backend-driven journey plan", () => {
+    const fixture = getActivationStateFixture("promptCreatedNoRun");
+    const normalized = normalizeActivationState({
+      ...fixture,
+      journey_plan: {
+        id: "prompt_first_run",
+        primary_path: "prompt",
+        eyebrow: "Prompt loop",
+        title: "Build a prompt quality loop",
+        description: "Create one prompt, test it, and compare changes.",
+        chips: ["prompt"],
+        current_step_id: "run_prompt_test",
+        current_step_index: 1,
+        steps: [
+          {
+            id: "create_prompt",
+            stage: "start_prompt",
+            action_id: "create_prompt",
+            success_event: "prompt_created",
+            tour_anchor: "prompt_create_button",
+            label: "Create prompt",
+            description: "Start with one prompt.",
+            status: "complete",
+            href: "/dashboard/workbench/all?source=onboarding",
+            fallback_href: "/dashboard/get-started",
+            route_available: true,
+            blocked_reason: null,
+            requires_permission: "prompt:write",
+          },
+          {
+            id: "run_prompt_test",
+            stage: "run_prompt_test",
+            action_id: "run_prompt_test",
+            success_event: "prompt_test_run_completed",
+            tour_anchor: "prompt_run_test_button",
+            label: "Run test",
+            description: "Run one focused example.",
+            status: "current",
+            href: "/dashboard/workbench/create/prompt-1?onboarding=run-test",
+            fallback_href: "/dashboard/get-started",
+            route_available: true,
+            blocked_reason: null,
+            requires_permission: "prompt:write",
+          },
+        ],
+      },
+    });
+
+    expect(normalized.journeyPlan.id).toBe("prompt_first_run");
+    expect(normalized.journeyPlan.currentStepId).toBe("run_prompt_test");
+    expect(normalized.journeyPlan.steps[1].status).toBe("current");
+  });
+
   it("keeps sample prompt activity out of real activation", () => {
     const normalized = normalizeActivationState(
       getActivationStateFixture("samplePromptOnly"),

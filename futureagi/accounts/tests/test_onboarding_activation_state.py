@@ -143,6 +143,9 @@ def test_observe_path_no_setup_returns_connect_observability(
     assert payload["fallback_action"]["href"] == (
         "/dashboard/observe?setup=true&source=onboarding"
     )
+    assert payload["journey_plan"]["id"] == "observe_first_run"
+    assert payload["journey_plan"]["current_step_id"] == "connect_observability"
+    assert payload["journey_plan"]["steps"][0]["status"] == "current"
 
 
 def test_activation_flow_config_drives_goal_and_stage_wiring():
@@ -151,6 +154,27 @@ def test_activation_flow_config_drives_goal_and_stage_wiring():
     assert configured_stage("connect_observability")["recommended_action"] == (
         "create_observe_project"
     )
+
+
+@pytest.mark.django_db
+def test_prompt_path_returns_configured_journey_plan(organization, workspace, user):
+    payload = resolve_activation_state(
+        context=_context(
+            user,
+            organization,
+            workspace,
+            goal="improve_prompts",
+            primary_path="prompt",
+        ),
+        flags=_flags(onboarding_prompt_path=True),
+        signals=OnboardingSignals(first_checks={}),
+    )
+
+    assert payload["stage"] == "start_prompt"
+    assert payload["journey_plan"]["id"] == "prompt_first_run"
+    assert payload["journey_plan"]["current_step_id"] == "create_prompt"
+    assert payload["journey_plan"]["steps"][0]["status"] == "current"
+    assert payload["journey_plan"]["steps"][1]["status"] == "queued"
 
 
 @pytest.mark.django_db
@@ -471,6 +495,9 @@ def test_evaluator_after_trace_review_activates(organization, workspace, user):
 
     assert payload["stage"] == "activated"
     assert payload["is_activated"] is True
+    assert payload["journey_plan"]["current_step_id"] == "create_trace_evaluator"
+    assert payload["journey_plan"]["current_step_index"] == 3
+    assert {step["status"] for step in payload["journey_plan"]["steps"]} == {"complete"}
     assert payload["stage_copy"] == {
         "eyebrow": "Aha moment reached",
         "title": "Your first quality loop is live",

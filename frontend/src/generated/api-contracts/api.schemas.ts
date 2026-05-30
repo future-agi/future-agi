@@ -1027,6 +1027,224 @@ export interface AvailablePathApi {
   first_action_id?: string;
 }
 
+export type ActivationJourneyPlanApiPrimaryPath = typeof ActivationJourneyPlanApiPrimaryPath[keyof typeof ActivationJourneyPlanApiPrimaryPath];
+
+
+export const ActivationJourneyPlanApiPrimaryPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export type ActivationJourneyStepApiStage = typeof ActivationJourneyStepApiStage[keyof typeof ActivationJourneyStepApiStage];
+
+
+export const ActivationJourneyStepApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export type ActivationJourneyStepApiSuccessEvent = typeof ActivationJourneyStepApiSuccessEvent[keyof typeof ActivationJourneyStepApiSuccessEvent];
+
+
+export const ActivationJourneyStepApiSuccessEvent = {
+  onboarding_transition_viewed: 'onboarding_transition_viewed',
+  onboarding_home_viewed: 'onboarding_home_viewed',
+  onboarding_goal_selected: 'onboarding_goal_selected',
+  onboarding_goal_changed: 'onboarding_goal_changed',
+  onboarding_recommended_action_viewed: 'onboarding_recommended_action_viewed',
+  onboarding_recommended_action_clicked: 'onboarding_recommended_action_clicked',
+  onboarding_path_card_clicked: 'onboarding_path_card_clicked',
+  onboarding_blocked_state_viewed: 'onboarding_blocked_state_viewed',
+  onboarding_diagnostics_opened: 'onboarding_diagnostics_opened',
+  onboarding_sample_project_opened: 'onboarding_sample_project_opened',
+  onboarding_fallback_action_clicked: 'onboarding_fallback_action_clicked',
+  sample_trace_available: 'sample_trace_available',
+  sample_signal_viewed: 'sample_signal_viewed',
+  sample_to_real_setup_clicked: 'sample_to_real_setup_clicked',
+  first_quality_loop_completed: 'first_quality_loop_completed',
+  daily_quality_home_viewed: 'daily_quality_home_viewed',
+  daily_quality_top_signal_shown: 'daily_quality_top_signal_shown',
+  daily_quality_top_change_reviewed: 'daily_quality_top_change_reviewed',
+  daily_quality_item_reviewed: 'daily_quality_item_reviewed',
+  daily_quality_action_created: 'daily_quality_action_created',
+  daily_quality_action_opened: 'daily_quality_action_opened',
+  daily_quality_action_assigned: 'daily_quality_action_assigned',
+  daily_quality_action_completed: 'daily_quality_action_completed',
+  daily_quality_action_dismissed: 'daily_quality_action_dismissed',
+  daily_quality_no_signal_viewed: 'daily_quality_no_signal_viewed',
+  daily_quality_empty_state_viewed: 'daily_quality_empty_state_viewed',
+  daily_quality_digest_destination_opened: 'daily_quality_digest_destination_opened',
+  daily_quality_route_fallback_used: 'daily_quality_route_fallback_used',
+  weekly_quality_review_opened: 'weekly_quality_review_opened',
+  weekly_quality_action_assigned: 'weekly_quality_action_assigned',
+  weekly_quality_action_completed: 'weekly_quality_action_completed',
+  weekly_quality_review_completed: 'weekly_quality_review_completed',
+  weekly_quality_digest_sent: 'weekly_quality_digest_sent',
+  weekly_quality_digest_suppressed: 'weekly_quality_digest_suppressed',
+  lifecycle_email_send_queued: 'lifecycle_email_send_queued',
+  lifecycle_email_sent: 'lifecycle_email_sent',
+  lifecycle_email_send_failed: 'lifecycle_email_send_failed',
+  lifecycle_email_send_suppressed: 'lifecycle_email_send_suppressed',
+  lifecycle_email_clicked: 'lifecycle_email_clicked',
+  lifecycle_email_unsubscribed: 'lifecycle_email_unsubscribed',
+  lifecycle_email_snoozed: 'lifecycle_email_snoozed',
+  lifecycle_email_completed: 'lifecycle_email_completed',
+  reactivation_reason_clicked: 'reactivation_reason_clicked',
+  observe_project_created: 'observe_project_created',
+  onboarding_observe_route_focus_viewed: 'onboarding_observe_route_focus_viewed',
+  trace_received: 'trace_received',
+  trace_reviewed: 'trace_reviewed',
+  trace_detail_opened: 'trace_detail_opened',
+  prompt_created: 'prompt_created',
+  prompt_test_input_added: 'prompt_test_input_added',
+  prompt_test_run_completed: 'prompt_test_run_completed',
+  prompt_version_created: 'prompt_version_created',
+  prompt_comparison_completed: 'prompt_comparison_completed',
+  dataset_example_added: 'dataset_example_added',
+  eval_dataset_created: 'eval_dataset_created',
+  eval_scorer_created: 'eval_scorer_created',
+  eval_run_started: 'eval_run_started',
+  eval_run_completed: 'eval_run_completed',
+  eval_failures_reviewed: 'eval_failures_reviewed',
+  eval_failure_action_created: 'eval_failure_action_created',
+  eval_group_created: 'eval_group_created',
+  onboarding_eval_source_selected: 'onboarding_eval_source_selected',
+  onboarding_eval_route_focus_viewed: 'onboarding_eval_route_focus_viewed',
+  onboarding_eval_run_clicked: 'onboarding_eval_run_clicked',
+  onboarding_eval_failure_detail_opened: 'onboarding_eval_failure_detail_opened',
+  onboarding_eval_source_fix_cta_clicked: 'onboarding_eval_source_fix_cta_clicked',
+  onboarding_eval_source_fix_route_viewed: 'onboarding_eval_source_fix_route_viewed',
+  onboarding_eval_source_fix_rerun_clicked: 'onboarding_eval_source_fix_rerun_clicked',
+  onboarding_eval_scorer_edit_cta_clicked: 'onboarding_eval_scorer_edit_cta_clicked',
+  onboarding_eval_fix_rerun_completed: 'onboarding_eval_fix_rerun_completed',
+  onboarding_eval_fix_rerun_reviewed: 'onboarding_eval_fix_rerun_reviewed',
+  onboarding_eval_sample_viewed: 'onboarding_eval_sample_viewed',
+  voice_agent_created: 'voice_agent_created',
+  voice_scenario_created: 'voice_scenario_created',
+  voice_test_call_started: 'voice_test_call_started',
+  voice_test_call_completed: 'voice_test_call_completed',
+  voice_call_reviewed: 'voice_call_reviewed',
+  voice_success_criteria_added: 'voice_success_criteria_added',
+  voice_call_monitor_opened: 'voice_call_monitor_opened',
+  onboarding_voice_route_focus_viewed: 'onboarding_voice_route_focus_viewed',
+  onboarding_voice_call_detail_opened: 'onboarding_voice_call_detail_opened',
+  onboarding_voice_success_criteria_cta_clicked: 'onboarding_voice_success_criteria_cta_clicked',
+  onboarding_voice_sample_viewed: 'onboarding_voice_sample_viewed',
+  prompt_version_promoted: 'prompt_version_promoted',
+  agent_created: 'agent_created',
+  agent_scenario_created: 'agent_scenario_created',
+  agent_prototype_run_completed: 'agent_prototype_run_completed',
+  agent_trace_reviewed: 'agent_trace_reviewed',
+  agent_scenario_saved_as_eval: 'agent_scenario_saved_as_eval',
+  agent_eval_created: 'agent_eval_created',
+  agent_live_trace_received: 'agent_live_trace_received',
+  gateway_provider_added: 'gateway_provider_added',
+  gateway_key_created: 'gateway_key_created',
+  gateway_test_request_sent: 'gateway_test_request_sent',
+  gateway_request_seen: 'gateway_request_seen',
+  gateway_log_opened: 'gateway_log_opened',
+  gateway_failure_resolved: 'gateway_failure_resolved',
+  gateway_policy_created: 'gateway_policy_created',
+  gateway_dashboard_created: 'gateway_dashboard_created',
+  team_member_invited: 'team_member_invited',
+  trace_failure_detected: 'trace_failure_detected',
+} as const;
+
+export type ActivationJourneyStepApiStatus = typeof ActivationJourneyStepApiStatus[keyof typeof ActivationJourneyStepApiStatus];
+
+
+export const ActivationJourneyStepApiStatus = {
+  complete: 'complete',
+  current: 'current',
+  queued: 'queued',
+} as const;
+
+export interface ActivationJourneyStepApi {
+  /** @minLength 1 */
+  id: string;
+  stage: ActivationJourneyStepApiStage;
+  /** @minLength 1 */
+  action_id: string;
+  success_event?: ActivationJourneyStepApiSuccessEvent;
+  tour_anchor?: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  description: string;
+  status: ActivationJourneyStepApiStatus;
+  href: string;
+  /** @minLength 1 */
+  fallback_href: string;
+  route_available: boolean;
+  blocked_reason?: string;
+  requires_permission?: string;
+}
+
+export interface ActivationJourneyPlanApi {
+  /** @minLength 1 */
+  id: string;
+  primary_path: ActivationJourneyPlanApiPrimaryPath;
+  /** @minLength 1 */
+  eyebrow: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  description: string;
+  chips: string[];
+  /** @minLength 1 */
+  current_step_id: string;
+  /** @minimum 0 */
+  current_step_index: number;
+  steps: ActivationJourneyStepApi[];
+}
+
 export type SampleProjectStateApiStatus = typeof SampleProjectStateApiStatus[keyof typeof SampleProjectStateApiStatus];
 
 
@@ -1933,6 +2151,7 @@ export interface ActivationStateResponseApi {
   signals: ActivationSignalsApi;
   available_goals?: AvailableGoalApi[];
   available_paths: AvailablePathApi[];
+  journey_plan?: ActivationJourneyPlanApi;
   sample_project: SampleProjectStateApi;
   prompt?: ActivationPromptStateApi;
   agent?: ActivationAgentStateApi;

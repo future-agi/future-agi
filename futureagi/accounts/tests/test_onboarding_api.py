@@ -196,6 +196,7 @@ def test_activation_state_flag_on_returns_full_shape(auth_client, user):
         "progress",
         "signals",
         "available_paths",
+        "journey_plan",
         "sample_project",
         "lifecycle",
         "email_eligibility",

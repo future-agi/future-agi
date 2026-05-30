@@ -785,9 +785,11 @@ export default function OnboardingHomeView() {
   const pathFocusPanel =
     renderedState.primaryPath !== "observe" &&
     !["activated", "daily_review"].includes(renderedState.stage) &&
-    hasPathFocusPlan(renderedState.primaryPath) ? (
+    (renderedState.journeyPlan ||
+      hasPathFocusPlan(renderedState.primaryPath)) ? (
       <PathFocusPanel
         {...observePanelProps}
+        journeyPlan={renderedState.journeyPlan}
         primaryPath={renderedState.primaryPath}
         stage={renderedState.stage}
       />
