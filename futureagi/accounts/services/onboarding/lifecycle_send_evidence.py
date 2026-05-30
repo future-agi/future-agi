@@ -63,10 +63,49 @@ class LifecycleSendEvidenceReportResult:
         }
 
 
+@dataclass(frozen=True)
+class LifecycleSendEvidenceReport:
+    path: str
+    sha256: str
+    generated_at: str
+    status: str
+    requirements: dict
+    missing_requirements: tuple[str, ...]
+    aggregate_evidence: dict
+    send_log_count: int
+    send_logs: tuple[dict, ...]
+
+
 def _report_error(message):
     return ImproperlyConfigured(
         f"Invalid lifecycle send evidence report inputs: {message}"
     )
+
+
+def _require_keys(mapping, expected, path):
+    if set(mapping) != expected:
+        missing = sorted(expected - set(mapping))
+        extra = sorted(set(mapping) - expected)
+        parts = []
+        if missing:
+            parts.append(f"missing {', '.join(missing)}")
+        if extra:
+            parts.append(f"unexpected {', '.join(extra)}")
+        raise _report_error(f"{path} has invalid fields ({'; '.join(parts)}).")
+
+
+def _require_text(mapping, key, path):
+    value = mapping.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise _report_error(f"{path}.{key} must be a non-empty string.")
+    return value
+
+
+def _require_nonnegative_int(mapping, key, path):
+    value = mapping.get(key)
+    if not isinstance(value, int) or value < 0:
+        raise _report_error(f"{path}.{key} must be a non-negative integer.")
+    return value
 
 
 def _requirement_flags(**requirements):
@@ -332,4 +371,92 @@ def write_lifecycle_send_evidence_report(
         status=report["status"],
         send_log_count=report["send_log_count"],
         missing_requirements=tuple(report["missing_requirements"]),
+    )
+
+
+def load_lifecycle_send_evidence_report(path, *, require_passed=False):
+    report_path = Path(path)
+    try:
+        raw = report_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise _report_error(f"{report_path} could not be read.") from exc
+    try:
+        report = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise _report_error(f"{report_path} is not valid JSON.") from exc
+    if not isinstance(report, dict):
+        raise _report_error("report root must be a mapping.")
+    _require_keys(
+        report,
+        {
+            "schema_version",
+            "source",
+            "generated_at",
+            "status",
+            "requirements",
+            "missing_requirements",
+            "aggregate_evidence",
+            "send_log_count",
+            "send_logs",
+        },
+        "report",
+    )
+    if report["schema_version"] != SEND_EVIDENCE_REPORT_SCHEMA_VERSION:
+        raise _report_error("schema_version is not supported.")
+    if report["source"] != SEND_EVIDENCE_REPORT_SOURCE:
+        raise _report_error("source is not lifecycle send evidence report.")
+    generated_at = _require_text(report, "generated_at", "report")
+    status = _require_text(report, "status", "report")
+    if status not in {
+        SEND_EVIDENCE_REPORT_PASSED_STATUS,
+        SEND_EVIDENCE_REPORT_INCOMPLETE_STATUS,
+    }:
+        raise _report_error("report.status is not supported.")
+    if require_passed and status != SEND_EVIDENCE_REPORT_PASSED_STATUS:
+        raise _report_error("report.status must be passed.")
+    requirements = report["requirements"]
+    aggregate_evidence = report["aggregate_evidence"]
+    missing_requirements = report["missing_requirements"]
+    send_logs = report["send_logs"]
+    if not isinstance(requirements, dict):
+        raise _report_error("requirements must be a mapping.")
+    if not isinstance(aggregate_evidence, dict):
+        raise _report_error("aggregate_evidence must be a mapping.")
+    for key in REQUIREMENT_KEYS:
+        if key not in requirements:
+            raise _report_error(f"requirements.{key} is required.")
+        if key not in aggregate_evidence:
+            raise _report_error(f"aggregate_evidence.{key} is required.")
+        if not isinstance(requirements[key], bool):
+            raise _report_error(f"requirements.{key} must be a bool.")
+        if not isinstance(aggregate_evidence[key], bool):
+            raise _report_error(f"aggregate_evidence.{key} must be a bool.")
+    if not isinstance(missing_requirements, list) or not all(
+        isinstance(item, str) and item in REQUIREMENT_KEYS
+        for item in missing_requirements
+    ):
+        raise _report_error("missing_requirements must contain supported keys.")
+    send_log_count = _require_nonnegative_int(report, "send_log_count", "report")
+    if not isinstance(send_logs, list):
+        raise _report_error("send_logs must be a list.")
+    if len(send_logs) != send_log_count:
+        raise _report_error("send_log_count does not match send_logs.")
+    for index, send_log in enumerate(send_logs):
+        if not isinstance(send_log, dict):
+            raise _report_error(f"send_logs.{index} must be a mapping.")
+        for key in ("send_log_id", "campaign_key", "status", "artifact_hashes"):
+            if key not in send_log:
+                raise _report_error(f"send_logs.{index}.{key} is required.")
+        if not isinstance(send_log["artifact_hashes"], dict):
+            raise _report_error(f"send_logs.{index}.artifact_hashes must be a mapping.")
+    return LifecycleSendEvidenceReport(
+        path=str(report_path),
+        sha256=sha256(raw.encode("utf-8")).hexdigest(),
+        generated_at=generated_at,
+        status=status,
+        requirements=requirements,
+        missing_requirements=tuple(missing_requirements),
+        aggregate_evidence=aggregate_evidence,
+        send_log_count=send_log_count,
+        send_logs=tuple(send_logs),
     )
