@@ -534,8 +534,8 @@ const EvalUsageTab = ({
   const hasOnboardingReviewRun = useMemo(() => {
     const runId = failureActionOnboardingParams.runId;
     if (!runId) return false;
-    return filteredLogs.some((log) => evalUsageLogMatchesRun(log, runId));
-  }, [failureActionOnboardingParams.runId, filteredLogs]);
+    return logItems.some((log) => evalUsageLogMatchesRun(log, runId));
+  }, [failureActionOnboardingParams.runId, logItems]);
   const isWaitingForOnboardingReviewRun = Boolean(
     failureActionOnboardingParams.isOnboarding &&
       failureActionOnboardingParams.step === "review" &&
@@ -589,10 +589,18 @@ const EvalUsageTab = ({
       return;
     }
 
+    const reviewLog = logItems.find((log) =>
+      evalUsageLogMatchesRun(log, runId),
+    );
+    if (!reviewLog) return;
+
     const reviewLogIndex = filteredLogs.findIndex((log) =>
       evalUsageLogMatchesRun(log, runId),
     );
-    if (reviewLogIndex < 0) return;
+    if (reviewLogIndex < 0) {
+      if (searchQuery) setSearchQuery("");
+      return;
+    }
 
     autoOpenedReviewRunRef.current = runId;
     setDetailIndex(reviewLogIndex);
@@ -600,6 +608,8 @@ const EvalUsageTab = ({
     failureActionOnboardingParams.isOnboarding,
     failureActionOnboardingParams.runId,
     filteredLogs,
+    logItems,
+    searchQuery,
   ]);
 
   useEffect(() => {

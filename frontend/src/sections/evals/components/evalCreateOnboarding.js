@@ -401,8 +401,9 @@ export const buildEvalRunStepHref = ({
 };
 
 export const getEvalRunResultId = (result = {}) =>
-  result?.run_id ||
   result?.log_id ||
+  result?.eval_log_id ||
+  result?.run_id ||
   result?.eval_run_id ||
   result?.eval_task_id ||
   result?.evaluation_id ||

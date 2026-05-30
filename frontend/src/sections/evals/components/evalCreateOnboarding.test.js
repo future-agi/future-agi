@@ -797,10 +797,19 @@ describe("evalCreateOnboarding", () => {
     expect(getEvalRunResultId({ log_id: "log-1" })).toBe("log-1");
     expect(
       getEvalRunResultId({
+        eval_log_id: "eval-log-1",
         eval_task_id: "task-1",
         log_id: "log-1",
+        run_id: "run-1",
       }),
     ).toBe("log-1");
+    expect(
+      getEvalRunResultId({
+        eval_log_id: "eval-log-1",
+        eval_task_id: "task-1",
+        run_id: "run-1",
+      }),
+    ).toBe("eval-log-1");
     expect(getEvalRunResultId({})).toBeNull();
   });
 
