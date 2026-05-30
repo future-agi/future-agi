@@ -93,7 +93,7 @@ describe("GuardrailManagementSection onboarding activation", () => {
     window.history.pushState(
       {},
       "Guardrails",
-      "/dashboard/gateway/guardrails/configuration?source=onboarding&request_id=req-123",
+      "/dashboard/gateway/guardrails/configuration?journey_step=add_gateway_policy&request_id=req-123",
     );
 
     render(<GuardrailManagementSection />);

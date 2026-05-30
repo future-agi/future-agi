@@ -64,6 +64,35 @@ describe("evalCreateOnboarding", () => {
     });
   });
 
+  it("parses eval create journey-step params from Home CTAs", () => {
+    expect(
+      getEvalCreateOnboardingParams(
+        "?tour_anchor=eval_source_button&journey_step=create_eval_dataset",
+      ),
+    ).toMatchObject({
+      isOnboarding: true,
+      step: EVAL_CREATE_ONBOARDING_STEPS.DATA,
+    });
+
+    expect(
+      getEvalCreateOnboardingParams(
+        "?tour_anchor=eval_run_button&journey_step=run_eval",
+      ),
+    ).toMatchObject({
+      isOnboarding: true,
+      step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+    });
+
+    expect(
+      getEvalCreateOnboardingParams(
+        "?tour_anchor=eval_scorer_button&journey_step=add_eval_scorer",
+      ),
+    ).toMatchObject({
+      isOnboarding: true,
+      step: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+    });
+  });
+
   it("parses fix-rerun context on eval create routes", () => {
     expect(
       getEvalCreateOnboardingParams(
@@ -553,6 +582,18 @@ describe("evalCreateOnboarding", () => {
     });
   });
 
+  it("parses eval review journey-step params from Home CTAs", () => {
+    expect(
+      getEvalReviewOnboardingParams(
+        "?tour_anchor=eval_review_button&journey_step=review_eval_failures",
+      ),
+    ).toMatchObject({
+      isOnboarding: true,
+      step: "review",
+      tab: "usage",
+    });
+  });
+
   it("returns review copy for the review route focus panel", () => {
     expect(getEvalReviewOnboardingCopy()).toMatchObject({
       currentStep: "Review",
@@ -929,6 +970,17 @@ describe("evalCreateOnboarding", () => {
       sourceId: null,
       sourceType: null,
       step: null,
+    });
+  });
+
+  it("parses eval source-fix journey-step params from Home CTAs", () => {
+    expect(
+      getEvalSourceFixOnboardingParams(
+        "?tour_anchor=eval_next_loop_button&journey_step=eval_next_loop",
+      ),
+    ).toMatchObject({
+      isOnboarding: true,
+      step: "fix-eval-failure",
     });
   });
 

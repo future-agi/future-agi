@@ -14,6 +14,7 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import {
   buildPromptFirstQualityLoopCompletedPayload,
+  getPromptOnboardingRouteParams,
   PROMPT_ONBOARDING_MODES,
 } from "../promptActions/promptOnboardingRoute";
 import PromptMetricsOnboardingFocusPanel from "./PromptMetricsOnboardingFocusPanel";
@@ -33,9 +34,10 @@ const MetricsTabs = () => {
   const completePromptLoop = useRecordActivationEvent();
   const { activeTab, setActiveTab, setIsFilterDrawerOpen } =
     useWorkbenchMetrics();
+  const promptOnboardingParams = getPromptOnboardingRouteParams(searchParams);
   const isMetricsOnboarding =
-    searchParams.get("source") === "onboarding" &&
-    searchParams.get("onboarding") === PROMPT_ONBOARDING_MODES.METRICS;
+    promptOnboardingParams.isOnboarding &&
+    promptOnboardingParams.mode === PROMPT_ONBOARDING_MODES.METRICS;
 
   const metricsTabData = [
     { id: "Metrics", title: "Metrics", icon: () => icon("metric") },

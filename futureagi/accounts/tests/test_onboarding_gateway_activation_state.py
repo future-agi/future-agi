@@ -218,6 +218,42 @@ def test_gateway_reviewed_request_without_policy_returns_add_policy(
 
 
 @pytest.mark.django_db
+def test_gateway_guardrail_review_routes_to_guardrail_policy(
+    organization,
+    workspace,
+    user,
+):
+    create_gateway_provider(organization=organization, workspace=workspace)
+    key = create_gateway_key(organization=organization, workspace=workspace, user=user)
+    request_log = create_gateway_request_log(
+        organization=organization,
+        workspace=workspace,
+        gateway_key=key,
+        guardrail_triggered=True,
+    )
+    record_event(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        event_name="gateway_request_reviewed",
+        source="test",
+        product_path="gateway",
+        activation_stage="review_gateway_log",
+        metadata={
+            "request_log_id": str(request_log.id),
+            "request_id": request_log.request_id,
+        },
+    )
+
+    payload = _gateway_state(user, organization, workspace)
+
+    assert payload["stage"] == "add_gateway_policy"
+    assert payload["recommended_action"]["href"].startswith(
+        "/dashboard/gateway/guardrails/configuration?"
+    )
+
+
+@pytest.mark.django_db
 def test_gateway_policy_after_review_activates(organization, workspace, user):
     create_gateway_provider(organization=organization, workspace=workspace)
     key = create_gateway_key(organization=organization, workspace=workspace, user=user)

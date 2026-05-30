@@ -5,10 +5,33 @@ import {
   buildGatewayFallbackPolicyCreatedPayload,
   buildGatewayOnboardingCompletionHref,
   buildGatewayPolicyCreatedPayload,
+  GATEWAY_ONBOARDING_MODES,
   gatewayPlaygroundRequestId,
+  getGatewayOnboardingRouteParams,
 } from "./gatewayOnboardingEvents";
 
 describe("gatewayOnboardingEvents", () => {
+  it("parses gateway journey-step params from Home CTAs", () => {
+    [
+      ["configure_gateway_provider", GATEWAY_ONBOARDING_MODES.ADD_PROVIDER],
+      ["create_gateway_key", GATEWAY_ONBOARDING_MODES.CREATE_KEY],
+      ["run_gateway_request", GATEWAY_ONBOARDING_MODES.TEST_REQUEST],
+      ["review_gateway_log", GATEWAY_ONBOARDING_MODES.REVIEW_REQUEST],
+      ["fix_gateway_failure", GATEWAY_ONBOARDING_MODES.FIX_FAILURE],
+      ["add_gateway_policy", GATEWAY_ONBOARDING_MODES.ADD_POLICY],
+    ].forEach(([journeyStep, mode]) => {
+      expect(
+        getGatewayOnboardingRouteParams(
+          `?tour_anchor=gateway_focus&journey_step=${journeyStep}&request_id=req-123`,
+        ),
+      ).toEqual({
+        isOnboarding: true,
+        mode,
+        requestId: "req-123",
+      });
+    });
+  });
+
   it("builds a gateway first-request payload from playground results", () => {
     expect(
       buildGatewayRequestSeenPayload({

@@ -162,6 +162,19 @@ describe("GatewayOverviewSection onboarding request", () => {
     );
   });
 
+  it("shows request focus from Home journey-step params", () => {
+    window.history.pushState(
+      {},
+      "Gateway",
+      "/dashboard/gateway?tour_anchor=gateway_request_button&journey_step=run_gateway_request",
+    );
+
+    renderWithQueryClient(<GatewayOverviewSection />);
+
+    expect(screen.getByTestId("gateway-onboarding-focus")).toBeVisible();
+    expect(screen.getByText("Send the first gateway request")).toBeVisible();
+  });
+
   it("continues to request review when onboarding state recording fails", async () => {
     mockRecordActivationEvent.mockRejectedValueOnce(new Error("unavailable"));
 

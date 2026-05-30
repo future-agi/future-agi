@@ -46,6 +46,8 @@ import { recordActivationEvent } from "src/sections/onboarding-home/api/onboardi
 import {
   buildGatewayOnboardingCompletionHref,
   buildGatewayPolicyCreatedPayload,
+  GATEWAY_ONBOARDING_MODES,
+  getGatewayOnboardingRouteParams,
 } from "../gatewayOnboardingEvents";
 
 // Tab slug <-> index mapping
@@ -373,8 +375,12 @@ const ConfigTab = () => {
   const [searchParams] = useSearchParams();
   const [localGuardrails, setLocalGuardrails] = useState(null);
   const [dirty, setDirty] = useState(false);
-  const isOnboardingRoute = searchParams.get("source") === "onboarding";
-  const onboardingRequestId = searchParams.get("request_id");
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const isOnboardingRoute =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_POLICY);
+  const onboardingRequestId = onboardingParams.requestId;
 
   // Initialize local state from org config on first load
   const guardrailData = localGuardrails ?? orgConfig?.guardrails ?? {};

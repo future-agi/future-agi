@@ -35,6 +35,15 @@ const STEP_TO_STAGE = {
   [EVAL_CREATE_ONBOARDING_STEPS.SCORER]: "add_eval_scorer",
   [EVAL_CREATE_ONBOARDING_STEPS.RUN]: "run_eval",
 };
+const EVAL_JOURNEY_CREATE_STEPS = {
+  add_eval_scorer: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+  create_eval_dataset: EVAL_CREATE_ONBOARDING_STEPS.DATA,
+  run_eval: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+};
+const EVAL_JOURNEY_REVIEW_STEPS = {
+  eval_next_loop: EVAL_FIX_STEP,
+  review_eval_failures: EVAL_REVIEW_STEP,
+};
 
 const SOURCE_TYPE_TO_TAB = {
   dataset: EVAL_CREATE_SOURCE_TABS.DATASET,
@@ -212,12 +221,14 @@ const appendEvalFixRerunParams = (
 export const getEvalCreateOnboardingParams = (search = "") => {
   const params = toSearchParams(search);
   const rawStep = params.get("step");
-  const step = validSteps.has(rawStep)
-    ? rawStep
-    : EVAL_CREATE_ONBOARDING_STEPS.SCORER;
+  const journeyStep = EVAL_JOURNEY_CREATE_STEPS[params.get("journey_step")];
+  const step =
+    (validSteps.has(rawStep) && rawStep) ||
+    journeyStep ||
+    EVAL_CREATE_ONBOARDING_STEPS.SCORER;
 
   return {
-    isOnboarding: params.get("source") === "onboarding",
+    isOnboarding: params.get("source") === "onboarding" || Boolean(journeyStep),
     previousRunId: params.get("previous_run_id"),
     rerunFrom: normalizeFixRerunOrigin(params.get("rerun_from")),
     runId: params.get("run_id"),
@@ -477,12 +488,14 @@ export const getEvalReviewActionKind = ({
 
 export const getEvalReviewOnboardingParams = (search = "") => {
   const params = toSearchParams(search);
-  const step = params.get("step");
+  const journeyStep = EVAL_JOURNEY_REVIEW_STEPS[params.get("journey_step")];
+  const step = params.get("step") || journeyStep || null;
   const tab = params.get("tab") || "usage";
 
   return {
     isOnboarding:
-      params.get("source") === "onboarding" && step === EVAL_REVIEW_STEP,
+      (params.get("source") === "onboarding" || Boolean(journeyStep)) &&
+      step === EVAL_REVIEW_STEP,
     previousRunId: params.get("previous_run_id"),
     rerunFrom: normalizeFixRerunOrigin(params.get("rerun_from")),
     runId: params.get("run_id"),
@@ -495,11 +508,12 @@ export const getEvalReviewOnboardingParams = (search = "") => {
 
 export const getEvalFailureActionOnboardingParams = (search = "") => {
   const params = toSearchParams(search);
-  const step = params.get("step");
+  const journeyStep = EVAL_JOURNEY_REVIEW_STEPS[params.get("journey_step")];
+  const step = params.get("step") || journeyStep || null;
 
   return {
     isOnboarding:
-      params.get("source") === "onboarding" &&
+      (params.get("source") === "onboarding" || Boolean(journeyStep)) &&
       [EVAL_REVIEW_STEP, EVAL_FIX_STEP].includes(step),
     previousRunId: params.get("previous_run_id"),
     rerunFrom: normalizeFixRerunOrigin(params.get("rerun_from")),
@@ -515,12 +529,14 @@ export const getEvalReviewOnboardingCopy = ({ rerunFrom } = {}) =>
 
 export const getEvalSourceFixOnboardingParams = (search = "") => {
   const params = toSearchParams(search);
-  const step = params.get("step");
+  const journeyStep = EVAL_JOURNEY_REVIEW_STEPS[params.get("journey_step")];
+  const step = params.get("step") || journeyStep || null;
 
   return {
     evalId: params.get("eval_id"),
     isOnboarding:
-      params.get("source") === "onboarding" && step === EVAL_FIX_STEP,
+      (params.get("source") === "onboarding" || Boolean(journeyStep)) &&
+      step === EVAL_FIX_STEP,
     runId: params.get("run_id"),
     sourceId: params.get("source_id"),
     sourceType: params.get("source_type"),

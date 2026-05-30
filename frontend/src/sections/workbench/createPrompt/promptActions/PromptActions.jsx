@@ -59,6 +59,7 @@ import PromptOnboardingFocusPanel from "./PromptOnboardingFocusPanel";
 import {
   buildPromptCreatedHref,
   buildPromptEditorHref,
+  getPromptOnboardingRouteParams,
   PROMPT_ONBOARDING_MODES,
   shouldAdvancePromptRunOnboarding,
   shouldAdvancePromptSaveOnboarding,
@@ -333,8 +334,14 @@ const PromptActions = () => {
     currentTab === "Evaluation" ||
     currentTab === "Metrics" ||
     !RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole];
-  const onboardingMode = searchParams.get("onboarding");
-  const onboardingSource = searchParams.get("source");
+  const promptOnboardingParams = useMemo(
+    () => getPromptOnboardingRouteParams(searchParams),
+    [searchParams],
+  );
+  const onboardingMode = promptOnboardingParams.mode;
+  const onboardingSource = promptOnboardingParams.isOnboarding
+    ? "onboarding"
+    : searchParams.get("source");
 
   useEffect(() => {
     if (

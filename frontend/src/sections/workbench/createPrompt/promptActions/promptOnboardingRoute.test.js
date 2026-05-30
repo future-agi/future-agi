@@ -25,6 +25,27 @@ describe("promptOnboardingRoute", () => {
     });
   });
 
+  it("parses prompt journey-step params from Home CTAs", () => {
+    [
+      ["start_prompt", PROMPT_ONBOARDING_MODES.CREATE_PROMPT],
+      ["create_prompt", PROMPT_ONBOARDING_MODES.CREATE_PROMPT],
+      ["run_prompt_test", PROMPT_ONBOARDING_MODES.RUN_TEST],
+      ["save_prompt_version", PROMPT_ONBOARDING_MODES.SAVE_VERSION],
+      ["compare_prompt_versions", PROMPT_ONBOARDING_MODES.COMPARE],
+      ["prompt_next_loop", PROMPT_ONBOARDING_MODES.ADD_FAILURE],
+    ].forEach(([journeyStep, mode]) => {
+      expect(
+        getPromptOnboardingRouteParams(
+          `?tour_anchor=prompt_focus&journey_step=${journeyStep}`,
+        ),
+      ).toEqual({
+        action: mode,
+        isOnboarding: true,
+        mode,
+      });
+    });
+  });
+
   it("drops unsupported prompt onboarding modes", () => {
     expect(
       getPromptOnboardingRouteParams(
@@ -53,6 +74,17 @@ describe("promptOnboardingRoute", () => {
       buildPromptCreatedHref({
         promptId: "prompt-1",
         search: "?source=onboarding&action=create-prompt",
+      }),
+    ).toBe(
+      "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=run-test",
+    );
+  });
+
+  it("moves a journey-created prompt to the run-test route", () => {
+    expect(
+      buildPromptCreatedHref({
+        promptId: "prompt-1",
+        search: "?tour_anchor=prompt_create_button&journey_step=start_prompt",
       }),
     ).toBe(
       "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=run-test",

@@ -38,6 +38,10 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import SetBudgetDialog from "./SetBudgetDialog";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost } from "../utils/formatters";
+import {
+  GATEWAY_ONBOARDING_MODES,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
 
 const TAB_SLUGS = ["dashboard", "config", "access", "audit"];
 
@@ -690,8 +694,12 @@ const BudgetRBACSection = () => {
 
   const budgets = useMemo(() => extractBudgets(config), [config]);
   const roles = useMemo(() => extractRBAC(config), [config]);
-  const isOnboardingRoute = searchParams.get("source") === "onboarding";
-  const onboardingRequestId = searchParams.get("request_id");
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const isOnboardingRoute =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_POLICY);
+  const onboardingRequestId = onboardingParams.requestId;
 
   if (gwLoading || configLoading) {
     return (

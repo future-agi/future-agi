@@ -30,6 +30,7 @@ import {
   getGatewayLogOnboardingCopy,
   isGatewayLogOnboardingMode,
 } from "./gatewayLogOnboarding";
+import { getGatewayOnboardingRouteParams } from "../gatewayOnboardingEvents";
 
 // ---------------------------------------------------------------------------
 // Quick filter definitions
@@ -96,8 +97,15 @@ const RequestExplorerSection = () => {
 
   // --- View tab -------------------------------------------------------------
   const currentView = filters.view || "requests";
-  const onboardingMode = filters.onboarding || null;
-  const onboardingRequestId = filters.requestId || null;
+  const gatewayOnboardingParams = getGatewayOnboardingRouteParams(
+    new URLSearchParams({
+      ...(filters.journeyStep ? { journey_step: filters.journeyStep } : {}),
+      ...(filters.onboarding ? { onboarding: filters.onboarding } : {}),
+      ...(filters.requestId ? { request_id: filters.requestId } : {}),
+    }),
+  );
+  const onboardingMode = gatewayOnboardingParams.mode || null;
+  const onboardingRequestId = gatewayOnboardingParams.requestId || null;
   const isLogOnboardingMode = isGatewayLogOnboardingMode(onboardingMode);
   const onboardingCopy = getGatewayLogOnboardingCopy(onboardingMode);
   const onboardingTargetRow = useMemo(

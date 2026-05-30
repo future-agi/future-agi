@@ -122,6 +122,14 @@ describe("EvaluationActions prompt onboarding", () => {
     expect(wrapperContext.setIsEvaluationDrawerOpen).toHaveBeenCalledWith(true);
   });
 
+  it("shows the prompt failure capture panel from journey-step routes", () => {
+    renderActions(
+      "/dashboard/workbench/create/prompt-1?tour_anchor=prompt_failure_button&journey_step=prompt_next_loop",
+    );
+
+    expect(screen.getByTestId("prompt-failure-capture-focus")).toBeVisible();
+  });
+
   it("moves guided add-failure routes to metrics after an evaluation is added", async () => {
     renderActions(
       "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=add-failure",

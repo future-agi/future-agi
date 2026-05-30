@@ -29,6 +29,7 @@ import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/use
 import {
   buildPromptComparisonCompletedPayload,
   buildPromptEditorHref,
+  getPromptOnboardingRouteParams,
   PROMPT_ONBOARDING_MODES,
   shouldAdvancePromptCompareOnboarding,
 } from "../promptActions/promptOnboardingRoute";
@@ -95,6 +96,13 @@ const VersionHistoryChild = ({ onClose }) => {
   const [compareSelectedVersions, setCompareSelectedVersions] = useState([]);
 
   const { role: userRole } = useAuthContext();
+  const promptOnboardingParams = useMemo(
+    () => getPromptOnboardingRouteParams(searchParams),
+    [searchParams],
+  );
+  const onboardingSource = promptOnboardingParams.isOnboarding
+    ? "onboarding"
+    : searchParams.get("source");
 
   const handleCompare = () => {
     const comparedVersions = [
@@ -106,9 +114,9 @@ const VersionHistoryChild = ({ onClose }) => {
 
     if (
       shouldAdvancePromptCompareOnboarding({
-        mode: searchParams.get("onboarding"),
+        mode: promptOnboardingParams.mode,
         selectedVersionCount: comparedVersions.length,
-        source: searchParams.get("source"),
+        source: onboardingSource,
       })
     ) {
       recordActivationEvent?.(

@@ -237,7 +237,7 @@ def resolve_route_availability(*, context, flags, signals, sample_project=None):
         "/dashboard/gateway/logs", gateway_failure_params
     )
     gateway_policy_path = {
-        "guardrail": "/dashboard/gateway/guardrails",
+        "guardrail": "/dashboard/gateway/guardrails/configuration",
         "fallback": "/dashboard/gateway/fallbacks",
         "budget": "/dashboard/gateway/budgets",
     }.get(gateway_policy_route, "/dashboard/gateway/budgets")

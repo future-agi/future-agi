@@ -20,6 +20,10 @@ import RoutingConfigView from "./RoutingConfigView";
 import CacheStatusView from "./CacheStatusView";
 import AddProviderDialog from "./AddProviderDialog";
 import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
+import {
+  GATEWAY_ONBOARDING_MODES,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
 
 const TAB_SLUGS = ["health", "config", "routing", "cache"];
 
@@ -62,7 +66,11 @@ const ProviderManagementSection = () => {
 
   const isLoading =
     gwLoading || configLoading || healthLoading || orgConfigLoading;
-  const showOnboardingFocus = searchParams.get("source") === "onboarding";
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const showOnboardingFocus =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_PROVIDER);
   const providers = providerHealth?.providers;
   const hasProviders = Array.isArray(providers)
     ? providers.length > 0

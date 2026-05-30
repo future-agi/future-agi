@@ -35,7 +35,9 @@ import { recordActivationEvent } from "src/sections/onboarding-home/api/onboardi
 import {
   buildGatewayRequestReviewHref,
   buildGatewayRequestSeenPayload,
+  GATEWAY_ONBOARDING_MODES,
   gatewayPlaygroundRequestId,
+  getGatewayOnboardingRouteParams,
 } from "./gatewayOnboardingEvents";
 
 const STATUS_COLORS = {
@@ -200,9 +202,10 @@ const GatewayOverviewSection = () => {
     }
   };
 
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
   const isOnboardingRequestMode =
-    searchParams.get("onboarding") === "test-request" ||
-    searchParams.get("source") === "onboarding";
+    onboardingParams.mode === GATEWAY_ONBOARDING_MODES.TEST_REQUEST ||
+    (onboardingParams.isOnboarding && !onboardingParams.mode);
 
   const gatewayFocusPrimaryAction = (() => {
     if (!completionState.hasProviders) {

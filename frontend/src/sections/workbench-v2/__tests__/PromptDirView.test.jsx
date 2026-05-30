@@ -85,4 +85,17 @@ describe("PromptDirView onboarding route mode", () => {
       ),
     );
   });
+
+  it("opens the create prompt modal for journey-step links", async () => {
+    renderView(
+      "/dashboard/workbench/all?tour_anchor=prompt_create_button&journey_step=start_prompt",
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("create-new-prompt")).toHaveAttribute(
+        "data-open",
+        "true",
+      ),
+    );
+  });
 });

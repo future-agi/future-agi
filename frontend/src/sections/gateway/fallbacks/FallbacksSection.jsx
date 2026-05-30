@@ -34,6 +34,8 @@ import { recordActivationEvent } from "src/sections/onboarding-home/api/onboardi
 import {
   buildGatewayFallbackPolicyCreatedPayload,
   buildGatewayOnboardingCompletionHref,
+  GATEWAY_ONBOARDING_MODES,
+  getGatewayOnboardingRouteParams,
 } from "../gatewayOnboardingEvents";
 
 // ---------------------------------------------------------------------------
@@ -421,8 +423,12 @@ const FallbacksSection = () => {
   }, [providerHealth]);
 
   const noModelsConfigured = availableModels.length === 0;
-  const onboardingRequestId = searchParams.get("request_id");
-  const showOnboardingFocus = searchParams.get("source") === "onboarding";
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const onboardingRequestId = onboardingParams.requestId;
+  const showOnboardingFocus =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_POLICY);
 
   // Local draft state — initialized from server data
   const [draft, setDraft] = useState(null);

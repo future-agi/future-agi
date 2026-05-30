@@ -13,6 +13,7 @@ import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import {
   buildPromptEditorHref,
+  getPromptOnboardingRouteParams,
   isPromptFailureCaptureOnboarding,
   PROMPT_ONBOARDING_MODES,
 } from "../promptActions/promptOnboardingRoute";
@@ -38,9 +39,12 @@ const EvaluationActions = () => {
     setIsEvaluationDrawerOpen(false);
   };
   const canUpdatePrompts = RolePermission.PROMPTS[PERMISSIONS.UPDATE][role];
+  const promptOnboardingParams = getPromptOnboardingRouteParams(searchParams);
   const isFailureCaptureOnboarding = isPromptFailureCaptureOnboarding({
-    mode: searchParams.get("onboarding"),
-    source: searchParams.get("source"),
+    mode: promptOnboardingParams.mode,
+    source: promptOnboardingParams.isOnboarding
+      ? "onboarding"
+      : searchParams.get("source"),
   });
   const handleOpenEvaluationDrawer = () => setIsEvaluationDrawerOpen(true);
   const variableKeys = Object.keys(variables ?? {}).reduce((acc, curr) => {

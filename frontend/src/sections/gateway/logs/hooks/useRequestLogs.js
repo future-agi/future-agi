@@ -17,6 +17,7 @@ const FILTER_KEY_MAP = {
   sessionId: "session_id",
   apiKeyId: "api_key_id",
   requestId: "request_id",
+  journeyStep: "journey_step",
   campaignKey: "campaign_key",
   targetEvent: "target_event",
   minLatency: "min_latency",
@@ -77,6 +78,7 @@ export default function useRequestLogs({
       delete params.search;
       delete params.onboarding;
       delete params.source;
+      delete params.journey_step;
       delete params.campaign_key;
       delete params.target_event;
 

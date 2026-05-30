@@ -10,6 +10,14 @@ export const PROMPT_ONBOARDING_MODES = {
 const VALID_PROMPT_ONBOARDING_MODES = new Set(
   Object.values(PROMPT_ONBOARDING_MODES),
 );
+const PROMPT_JOURNEY_STEP_MODES = {
+  compare_prompt_versions: PROMPT_ONBOARDING_MODES.COMPARE,
+  create_prompt: PROMPT_ONBOARDING_MODES.CREATE_PROMPT,
+  prompt_next_loop: PROMPT_ONBOARDING_MODES.ADD_FAILURE,
+  run_prompt_test: PROMPT_ONBOARDING_MODES.RUN_TEST,
+  save_prompt_version: PROMPT_ONBOARDING_MODES.SAVE_VERSION,
+  start_prompt: PROMPT_ONBOARDING_MODES.CREATE_PROMPT,
+};
 
 const toSearchParams = (search = "") =>
   search instanceof URLSearchParams
@@ -23,12 +31,17 @@ const safeKeyPart = (value, fallback) =>
 
 export const getPromptOnboardingRouteParams = (search = "") => {
   const params = toSearchParams(search);
-  const mode = params.get("onboarding");
+  const rawMode = params.get("onboarding");
+  const journeyMode = PROMPT_JOURNEY_STEP_MODES[params.get("journey_step")];
+  const mode = VALID_PROMPT_ONBOARDING_MODES.has(rawMode)
+    ? rawMode
+    : journeyMode || null;
+  const action = params.get("action") || journeyMode || null;
 
   return {
-    action: params.get("action"),
-    isOnboarding: params.get("source") === "onboarding",
-    mode: VALID_PROMPT_ONBOARDING_MODES.has(mode) ? mode : null,
+    action,
+    isOnboarding: params.get("source") === "onboarding" || Boolean(mode),
+    mode,
   };
 };
 

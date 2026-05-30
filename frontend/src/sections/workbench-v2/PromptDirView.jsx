@@ -11,6 +11,10 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "../../utils/axios";
 import { FOLDERS } from "./common";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import {
+  getPromptOnboardingRouteParams,
+  PROMPT_ONBOARDING_MODES,
+} from "../workbench/createPrompt/promptActions/promptOnboardingRoute";
 
 export default function PromptDirView() {
   const theme = useTheme();
@@ -90,9 +94,12 @@ export default function PromptDirView() {
 
   useEffect(() => {
     if (onboardingActionHandledRef.current) return;
+    const { action, isOnboarding, mode } =
+      getPromptOnboardingRouteParams(searchParams);
     if (
-      searchParams.get("source") === "onboarding" &&
-      searchParams.get("action") === "create-prompt"
+      isOnboarding &&
+      (action === PROMPT_ONBOARDING_MODES.CREATE_PROMPT ||
+        mode === PROMPT_ONBOARDING_MODES.CREATE_PROMPT)
     ) {
       onboardingActionHandledRef.current = true;
       setNewPromptModal(true);

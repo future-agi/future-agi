@@ -30,6 +30,10 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import CreateKeyDialog from "./CreateKeyDialog";
 import KeyDetailDrawer from "./KeyDetailDrawer";
 import { formatDate } from "../utils/formatters";
+import {
+  GATEWAY_ONBOARDING_MODES,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
 
 const STATUS_COLORS = {
   active: "success",
@@ -55,7 +59,11 @@ const KeyManagementSection = () => {
 
   const { data: keys, isLoading, error, refetch } = useApiKeys(gatewayId);
   const syncMutation = useSyncApiKeys();
-  const showOnboardingFocus = searchParams.get("source") === "onboarding";
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const showOnboardingFocus =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.CREATE_KEY);
 
   // Client-side filters
   const filteredKeys = useMemo(() => {

@@ -15,6 +15,13 @@ const STAGE_BY_MODE = Object.freeze({
   [VOICE_ONBOARDING_MODES.SUCCESS_CRITERIA]: "add_voice_success_criteria",
   [VOICE_ONBOARDING_MODES.MONITOR_CALLS]: "voice_monitor_calls",
 });
+const MODE_BY_JOURNEY_STEP = Object.freeze({
+  add_voice_success_criteria: VOICE_ONBOARDING_MODES.SUCCESS_CRITERIA,
+  create_voice_agent: VOICE_ONBOARDING_MODES.CREATE_AGENT,
+  review_voice_call: VOICE_ONBOARDING_MODES.REVIEW_CALL,
+  run_voice_test_call: VOICE_ONBOARDING_MODES.RUN_TEST_CALL,
+  voice_monitor_calls: VOICE_ONBOARDING_MODES.MONITOR_CALLS,
+});
 
 const compactMetadata = (metadata) =>
   Object.fromEntries(
@@ -25,9 +32,10 @@ const compactMetadata = (metadata) =>
 
 export const getVoiceOnboardingParams = (search = "") => {
   const params = new URLSearchParams(search);
+  const journeyMode = MODE_BY_JOURNEY_STEP[params.get("journey_step")] || "";
   return {
-    mode: params.get("onboarding") || "",
-    from: params.get("from") || "",
+    mode: params.get("onboarding") || journeyMode,
+    from: params.get("from") || (journeyMode ? "onboarding" : ""),
     callId: params.get("call_id") || "",
     agentDefinitionId: params.get("agent_definition_id") || "",
   };

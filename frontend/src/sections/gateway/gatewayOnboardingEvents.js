@@ -1,5 +1,26 @@
 const DEFAULT_GATEWAY_ID = "default";
 
+export const GATEWAY_ONBOARDING_MODES = {
+  ADD_POLICY: "add-policy",
+  ADD_PROVIDER: "add-provider",
+  CREATE_KEY: "create-key",
+  FIX_FAILURE: "fix-failure",
+  REVIEW_REQUEST: "review-request",
+  TEST_REQUEST: "test-request",
+};
+
+const GATEWAY_JOURNEY_STEP_MODES = {
+  add_gateway_policy: GATEWAY_ONBOARDING_MODES.ADD_POLICY,
+  configure_gateway_provider: GATEWAY_ONBOARDING_MODES.ADD_PROVIDER,
+  create_gateway_key: GATEWAY_ONBOARDING_MODES.CREATE_KEY,
+  fix_gateway_failure: GATEWAY_ONBOARDING_MODES.FIX_FAILURE,
+  review_gateway_log: GATEWAY_ONBOARDING_MODES.REVIEW_REQUEST,
+  run_gateway_request: GATEWAY_ONBOARDING_MODES.TEST_REQUEST,
+};
+const VALID_GATEWAY_ONBOARDING_MODES = new Set(
+  Object.values(GATEWAY_ONBOARDING_MODES),
+);
+
 const compactMetadata = (metadata) =>
   Object.fromEntries(
     Object.entries(metadata).filter(
@@ -30,6 +51,24 @@ const headerValue = (headers = {}, names = []) => {
 
 export const gatewayPlaygroundResult = (payload = {}) =>
   payload?.result || payload || {};
+
+export const getGatewayOnboardingRouteParams = (search = "") => {
+  const params =
+    search instanceof URLSearchParams
+      ? new URLSearchParams(search)
+      : new URLSearchParams(search);
+  const rawMode = params.get("onboarding");
+  const journeyMode = GATEWAY_JOURNEY_STEP_MODES[params.get("journey_step")];
+  const mode = VALID_GATEWAY_ONBOARDING_MODES.has(rawMode)
+    ? rawMode
+    : journeyMode || null;
+
+  return {
+    isOnboarding: params.get("source") === "onboarding" || Boolean(mode),
+    mode,
+    requestId: params.get("request_id"),
+  };
+};
 
 export const gatewayPlaygroundRequestId = (payload = {}) => {
   const result = gatewayPlaygroundResult(payload);

@@ -64,7 +64,7 @@ describe("FallbacksSection onboarding activation", () => {
     window.history.pushState(
       {},
       "Fallbacks",
-      "/dashboard/gateway/fallbacks?source=onboarding&request_id=req-123",
+      "/dashboard/gateway/fallbacks?journey_step=add_gateway_policy&request_id=req-123",
     );
 
     render(<FallbacksSection />);
