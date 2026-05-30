@@ -12,8 +12,9 @@ import {
   buildEvalReviewRouteFocusPayload,
   buildEvalReviewStepHref,
   buildEvalRouteFocusPayload,
-  buildEvalRunStepHref,
   buildEvalRunCompletedPayload,
+  buildEvalRunClickedPayload,
+  buildEvalRunStepHref,
   buildEvalScorerEditCtaClickedPayload,
   buildEvalScorerEditHref,
   buildEvalScorerCreatedPayload,
@@ -510,6 +511,37 @@ describe("evalCreateOnboarding", () => {
     });
     expect(payload.metadata).not.toHaveProperty("output");
     expect(payload.metadata).not.toHaveProperty("reason");
+  });
+
+  it("builds a run-clicked payload before result content exists", () => {
+    const payload = buildEvalRunClickedPayload({
+      evalId: "eval-1",
+      evalType: "code",
+      mode: "single",
+      sourceId: "project-1",
+      sourceType: "trace_project",
+    });
+
+    expect(payload).toMatchObject({
+      eventName: "onboarding_eval_run_clicked",
+      primaryPath: "evals",
+      stage: "run_eval",
+      source: "eval_create_onboarding",
+      artifactType: "eval",
+      artifactId: "eval-1",
+      metadata: {
+        eval_id: "eval-1",
+        eval_type: "code",
+        is_composite: false,
+        mode: "single",
+        source_id: "project-1",
+        source_type: "trace_project",
+        step: "run",
+      },
+      idempotencyKey: "onboarding_eval_run_clicked:project-1:eval-1",
+    });
+    expect(payload.metadata).not.toHaveProperty("run_id");
+    expect(payload.metadata).not.toHaveProperty("result");
   });
 
   it("builds a fix-rerun completed payload without result content", () => {

@@ -781,6 +781,46 @@ export const buildEvalScorerCreatedPayload = ({
   };
 };
 
+export const buildEvalRunClickedPayload = ({
+  evalId,
+  evalType,
+  isComposite = false,
+  mode,
+  previousRunId,
+  rerunFrom,
+  sourceId,
+  sourceType,
+} = {}) => {
+  const artifactId = safeKeyPart(evalId || sourceId, "eval-run");
+  const normalizedRerunFrom = normalizeFixRerunOrigin(rerunFrom);
+
+  return {
+    eventName: "onboarding_eval_run_clicked",
+    primaryPath: "evals",
+    stage: "run_eval",
+    source: "eval_create_onboarding",
+    artifactType: "eval",
+    artifactId,
+    metadata: compactMetadata({
+      eval_id: evalId,
+      eval_type: evalType,
+      is_composite: Boolean(isComposite),
+      mode,
+      previous_run_id: previousRunId,
+      rerun_from: normalizedRerunFrom,
+      source_id: sourceId,
+      source_type: sourceType,
+      step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+    }),
+    idempotencyKey: [
+      "onboarding_eval_run_clicked",
+      safeKeyPart(sourceId, "no-source"),
+      artifactId,
+    ].join(":"),
+    isSample: false,
+  };
+};
+
 export const buildEvalRunCompletedPayload = ({
   evalId,
   evalType,

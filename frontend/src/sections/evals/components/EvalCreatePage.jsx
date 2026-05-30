@@ -53,6 +53,7 @@ import {
   buildEvalReviewStepHref,
   buildEvalRouteFocusPayload,
   buildEvalRunCompletedPayload,
+  buildEvalRunClickedPayload,
   buildEvalRunStepHref,
   buildEvalScorerCreatedPayload,
   buildEvalScorerSourceHref,
@@ -970,6 +971,24 @@ const EvalCreatePage = () => {
     setTestPassed(false);
 
     try {
+      if (
+        onboardingParams.isOnboarding &&
+        onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.RUN &&
+        !onboardingParams.rerunFrom
+      ) {
+        recordActivationEvent?.(
+          buildEvalRunClickedPayload({
+            evalId: draftId,
+            evalType: mode === "composite" ? "composite" : evalType,
+            isComposite: mode === "composite",
+            mode,
+            previousRunId: onboardingParams.previousRunId,
+            rerunFrom: onboardingParams.rerunFrom,
+            sourceId: onboardingParams.sourceId,
+            sourceType: onboardingParams.sourceType,
+          }),
+        );
+      }
       if (mode === "single") {
         await updateDraft.mutateAsync(buildUpdatePayload());
         testPlaygroundRef.current?.runTest?.(draftId);
@@ -990,6 +1009,9 @@ const EvalCreatePage = () => {
     updateDraft,
     handleTestResult,
     enqueueSnackbar,
+    evalType,
+    onboardingParams,
+    recordActivationEvent,
   ]);
 
   const isLoading =
