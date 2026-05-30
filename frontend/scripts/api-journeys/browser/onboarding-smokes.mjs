@@ -306,6 +306,19 @@ const SMOKES = [
       ONBOARDING_SMOKE_VIEWPORT: "mobile",
     },
   },
+  {
+    id: "signup-real-proof-pack",
+    mode: "real-signup",
+    suite: true,
+    sequence: [
+      "signup-sample-open-real",
+      "signup-sample-open-mobile-real",
+      "signup-quick-start-real",
+      "signup-quick-start-mobile-real",
+    ],
+    description:
+      "Disposable-account desktop and mobile proof pack for sample Aha and first quality loop.",
+  },
 ];
 
 const args = parseArgs(process.argv.slice(2));
@@ -332,6 +345,11 @@ if (selected.length === 0) {
 }
 
 if (args.reportOutput) {
+  if (args.reportOutputDir) {
+    throw new Error(
+      "--report-output and --report-output-dir are mutually exclusive.",
+    );
+  }
   if (selected.length !== 1 || selected[0].suite) {
     throw new Error(
       "--report-output can only be used with one non-suite smoke.",
@@ -340,6 +358,14 @@ if (args.reportOutput) {
   if (selected[0].mode !== "real-signup") {
     throw new Error(
       "--report-output can only be used with real-signup smokes.",
+    );
+  }
+}
+if (args.reportOutputDir) {
+  const nonRealSignup = selected.find((smoke) => smoke.mode !== "real-signup");
+  if (nonRealSignup) {
+    throw new Error(
+      "--report-output-dir can only be used with real-signup smokes.",
     );
   }
 }
@@ -358,6 +384,7 @@ function parseArgs(argv) {
     mode: "",
     only: new Set(),
     reportOutput: "",
+    reportOutputDir: "",
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -376,6 +403,12 @@ function parseArgs(argv) {
         throw new Error("--report-output requires a non-empty path.");
       }
       parsed.reportOutput = output;
+    } else if (arg === "--report-output-dir") {
+      const outputDir = argv[++index] || "";
+      if (!outputDir.trim()) {
+        throw new Error("--report-output-dir requires a non-empty path.");
+      }
+      parsed.reportOutputDir = outputDir;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }
@@ -412,12 +445,16 @@ async function runSmoke(smoke, stack, inheritedEnv) {
 
   const scriptPath = resolve(SCRIPT_DIR, smoke.file);
   console.log(`RUN ${smoke.id} ${smoke.description}`);
+  const smokeEnv = {
+    ...env,
+    ...reportOutputDirEnv(smoke),
+  };
 
   const exitCode = await new Promise((resolveExit) => {
     const child = spawn(process.execPath, [scriptPath], {
       env: {
         ...process.env,
-        ...env,
+        ...smokeEnv,
       },
       stdio: "inherit",
     });
@@ -434,4 +471,14 @@ async function runSmoke(smoke, stack, inheritedEnv) {
   }
 
   console.log(`PASS ${smoke.id}`);
+}
+
+function reportOutputDirEnv(smoke) {
+  if (!args.reportOutputDir) return {};
+  return {
+    ONBOARDING_SMOKE_REPORT_OUTPUT: resolve(
+      args.reportOutputDir,
+      `${smoke.id}.json`,
+    ),
+  };
 }
