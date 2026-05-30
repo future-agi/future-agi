@@ -5,6 +5,8 @@ from accounts.models.onboarding import (
     NotificationDeliveryLog,
     NotificationPreference,
     OnboardingActivationEvent,
+    OnboardingActivationFactReceipt,
+    OnboardingActivationFactReceiptRejection,
     OnboardingGoal,
     OnboardingLifecycleEvaluationLog,
     OnboardingLifecyclePreference,

@@ -1,3 +1,5 @@
+import uuid
+
 from rest_framework import serializers
 
 from accounts.services.onboarding.constants import (
@@ -1866,6 +1868,68 @@ class ActivationEventResultSerializer(serializers.Serializer):
 class ActivationEventResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = ActivationEventResultSerializer()
+
+
+class OnboardingActivationFactReceiptRequestSerializer(serializers.Serializer):
+    type = serializers.CharField(max_length=64)
+    export_log_id = serializers.UUIDField()
+    idempotency_key = serializers.CharField(max_length=220)
+    schema_version = serializers.CharField(max_length=96)
+    event_cursor = serializers.CharField(
+        max_length=160,
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    evaluated_at = serializers.DateTimeField()
+    fact = serializers.JSONField()
+
+    def _required_uuid(self, value, path):
+        current = value
+        for key in path:
+            if not isinstance(current, dict):
+                raise serializers.ValidationError(
+                    {".".join(path): "Must be a valid UUID."}
+                )
+            current = current.get(key)
+        try:
+            uuid.UUID(str(current))
+        except (TypeError, ValueError):
+            raise serializers.ValidationError(
+                {".".join(path): "Must be a valid UUID."}
+            ) from None
+
+    def validate_fact(self, value):
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("Activation fact must be an object.")
+        self._required_uuid(value, ("organization", "id"))
+        self._required_uuid(value, ("workspace", "id"))
+        user = value.get("user") if isinstance(value.get("user"), dict) else {}
+        user_id = user.get("id")
+        if user_id not in {None, ""}:
+            try:
+                uuid.UUID(str(user_id))
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"user.id": "Must be a valid UUID."}
+                ) from None
+        return value
+
+
+class OnboardingActivationFactReceiptResultSerializer(serializers.Serializer):
+    receipt_id = serializers.UUIDField()
+    created = serializers.BooleanField()
+    idempotency_key = serializers.CharField()
+    workspace_id = serializers.UUIDField()
+    user_id = serializers.UUIDField(required=False, allow_null=True)
+    activation_stage = serializers.CharField()
+    primary_path = serializers.CharField()
+    cohort_keys = serializers.ListField(child=serializers.CharField())
+
+
+class OnboardingActivationFactReceiptApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = OnboardingActivationFactReceiptResultSerializer()
 
 
 class SampleProjectRequestSerializer(serializers.Serializer):

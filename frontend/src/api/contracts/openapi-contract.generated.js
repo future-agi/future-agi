@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 989,
+  "endpointCount": 990,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -1552,6 +1552,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/UserOnboardingSaveResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/onboarding/activation-facts/": {
+      "post": {
+        "operationId": "accounts_onboarding_activation-facts_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/OnboardingActivationFactReceiptRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/OnboardingActivationFactReceiptApiResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -62038,6 +62072,73 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "OnboardingActivationFactReceiptApiResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/OnboardingActivationFactReceiptResult"
+        }
+      }
+    },
+    "OnboardingActivationFactReceiptRequest": {
+      "required": [
+        "type",
+        "export_log_id",
+        "idempotency_key",
+        "schema_version",
+        "evaluated_at",
+        "fact"
+      ],
+      "type": "object",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1
+        },
+        "export_log_id": {
+          "title": "Export log id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "idempotency_key": {
+          "title": "Idempotency key",
+          "type": "string",
+          "maxLength": 220,
+          "minLength": 1
+        },
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "maxLength": 96,
+          "minLength": 1
+        },
+        "event_cursor": {
+          "title": "Event cursor",
+          "type": "string",
+          "maxLength": 160,
+          "x-nullable": true
+        },
+        "evaluated_at": {
+          "title": "Evaluated at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "fact": {
+          "title": "Fact",
+          "type": "object"
+        }
+      }
+    },
     "OnboardingLifecycleDigestPromotionRequest": {
       "required": [
         "sources"
@@ -85411,6 +85512,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "array",
           "items": {
             "$ref": "#/definitions/ObserveGraphDataPoint"
+          }
+        }
+      }
+    },
+    "OnboardingActivationFactReceiptResult": {
+      "required": [
+        "receipt_id",
+        "created",
+        "idempotency_key",
+        "workspace_id",
+        "activation_stage",
+        "primary_path",
+        "cohort_keys"
+      ],
+      "type": "object",
+      "properties": {
+        "receipt_id": {
+          "title": "Receipt id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "created": {
+          "title": "Created",
+          "type": "boolean"
+        },
+        "idempotency_key": {
+          "title": "Idempotency key",
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "title": "Workspace id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "activation_stage": {
+          "title": "Activation stage",
+          "type": "string",
+          "minLength": 1
+        },
+        "primary_path": {
+          "title": "Primary path",
+          "type": "string",
+          "minLength": 1
+        },
+        "cohort_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }

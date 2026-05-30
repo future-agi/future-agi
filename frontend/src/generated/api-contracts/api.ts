@@ -761,6 +761,8 @@ import type {
   ObservationSpanApi,
   ObserveGraphDataRequestApi,
   ObserveGraphDataResponseApi,
+  OnboardingActivationFactReceiptApiResponseApi,
+  OnboardingActivationFactReceiptRequestApi,
   OnboardingLifecycleDigestPromotionRequestApi,
   OnboardingLifecycleDigestPromotionResponseApi,
   OnboardingLifecycleDigestReviewResponseApi,
@@ -4193,6 +4195,72 @@ export const accountsOnboardingCreate = async (userOnboardingApi: UserOnboarding
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       userOnboardingApi,)
+  }
+);}
+
+
+
+export type accountsOnboardingActivationFactsCreateResponse200 = {
+  data: OnboardingActivationFactReceiptApiResponseApi
+  status: 200
+}
+
+export type accountsOnboardingActivationFactsCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOnboardingActivationFactsCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOnboardingActivationFactsCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOnboardingActivationFactsCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOnboardingActivationFactsCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOnboardingActivationFactsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsOnboardingActivationFactsCreateResponseSuccess = (accountsOnboardingActivationFactsCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsOnboardingActivationFactsCreateResponseError = (accountsOnboardingActivationFactsCreateResponse400 | accountsOnboardingActivationFactsCreateResponse401 | accountsOnboardingActivationFactsCreateResponse403 | accountsOnboardingActivationFactsCreateResponse404 | accountsOnboardingActivationFactsCreateResponse500 | accountsOnboardingActivationFactsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsOnboardingActivationFactsCreateResponse = (accountsOnboardingActivationFactsCreateResponseSuccess | accountsOnboardingActivationFactsCreateResponseError)
+
+export const getAccountsOnboardingActivationFactsCreateUrl = () => {
+
+
+
+
+  return `/accounts/onboarding/activation-facts/`
+}
+
+export const accountsOnboardingActivationFactsCreate = async (onboardingActivationFactReceiptRequestApi: OnboardingActivationFactReceiptRequestApi, options?: RequestInit): Promise<accountsOnboardingActivationFactsCreateResponse> => {
+
+  return apiMutator<accountsOnboardingActivationFactsCreateResponse>(getAccountsOnboardingActivationFactsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      onboardingActivationFactReceiptRequestApi,)
   }
 );}
 

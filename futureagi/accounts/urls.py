@@ -12,6 +12,7 @@ from accounts.views.keys import GetKeysView, SecretKeyAPIViewSet
 from accounts.views.onboarding import (
     ActivationEventView,
     ActivationStateView,
+    OnboardingActivationFactReceiptView,
     OnboardingGoalView,
     SampleProjectHideView,
     SampleProjectView,
@@ -157,6 +158,11 @@ user_urls = [
         "activation-events/",
         ActivationEventView.as_view(),
         name="activation-events",
+    ),
+    path(
+        "onboarding/activation-facts/",
+        OnboardingActivationFactReceiptView.as_view(),
+        name="onboarding-activation-facts",
     ),
     path("sample-project/", SampleProjectView.as_view(), name="sample-project"),
     path(

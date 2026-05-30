@@ -1,5 +1,5 @@
 import structlog
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -13,6 +13,8 @@ from accounts.serializers.onboarding import (
     ActivationGoalRequestSerializer,
     ActivationStateApiResponseSerializer,
     ActivationStateQuerySerializer,
+    OnboardingActivationFactReceiptApiResponseSerializer,
+    OnboardingActivationFactReceiptRequestSerializer,
     SampleProjectApiResponseSerializer,
     SampleProjectHideRequestSerializer,
     SampleProjectRequestSerializer,
@@ -20,6 +22,11 @@ from accounts.serializers.onboarding import (
 from accounts.services.onboarding.activation_events import (
     build_idempotency_key,
     record_event,
+)
+from accounts.services.onboarding.activation_fact_receipts import (
+    activation_fact_body,
+    receive_activation_fact,
+    record_activation_fact_rejection,
 )
 from accounts.services.onboarding.activation_state import (
     resolve_activation_state_for_request,
@@ -290,6 +297,74 @@ class ActivationEventView(APIView):
             )
             return self._gm.internal_server_error_response(
                 "Failed to record onboarding activation event"
+            )
+
+
+class OnboardingActivationFactReceiptView(APIView):
+    authentication_classes = []
+    permission_classes = []
+    _gm = GeneralMethods()
+
+    @validated_request(
+        request_serializer=OnboardingActivationFactReceiptRequestSerializer,
+        responses={
+            200: OnboardingActivationFactReceiptApiResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        strict_request_validation=False,
+        reject_unknown_fields=True,
+    )
+    def post(self, request):
+        body = activation_fact_body(request.data)
+        serializer = OnboardingActivationFactReceiptRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            record_activation_fact_rejection(
+                reason="malformed_payload",
+                message="Activation fact request did not match the contract.",
+                payload=request.data if isinstance(request.data, dict) else None,
+                headers=request.headers,
+                body=body,
+            )
+            return self._gm.bad_request(serializer.errors)
+
+        try:
+            result = receive_activation_fact(
+                payload=serializer.validated_data,
+                headers=request.headers,
+                body=body,
+            )
+            receipt = result.receipt
+            return self._gm.success_response(
+                {
+                    "receipt_id": str(receipt.id),
+                    "created": result.created,
+                    "idempotency_key": receipt.idempotency_key,
+                    "workspace_id": str(receipt.workspace_id_value),
+                    "user_id": (
+                        str(receipt.user_id_value) if receipt.user_id_value else None
+                    ),
+                    "activation_stage": receipt.activation_stage,
+                    "primary_path": receipt.primary_path,
+                    "cohort_keys": receipt.cohort_keys,
+                }
+            )
+        except ValidationError as exc:
+            return _bad_request(self._gm, exc)
+        except ImproperlyConfigured as exc:
+            logger.exception(
+                "Activation fact receiver configuration failed",
+                error=str(exc),
+            )
+            return self._gm.internal_server_error_response(
+                "Activation fact receiver is not configured"
+            )
+        except Exception as exc:
+            logger.exception(
+                "Activation fact receipt failed",
+                error=str(exc),
+            )
+            return self._gm.internal_server_error_response(
+                "Failed to record activation fact"
             )
 
 

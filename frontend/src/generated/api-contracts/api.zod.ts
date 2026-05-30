@@ -2924,6 +2924,49 @@ export const AccountsOnboardingCreateResponse = zod.object({
 })
 
 
+export const accountsOnboardingActivationFactsCreateBodyTypeMax = 64;
+
+export const accountsOnboardingActivationFactsCreateBodyIdempotencyKeyMax = 220;
+
+export const accountsOnboardingActivationFactsCreateBodySchemaVersionMax = 96;
+
+export const accountsOnboardingActivationFactsCreateBodyEventCursorMax = 160;
+
+
+
+export const AccountsOnboardingActivationFactsCreateBody = zod.object({
+  "type": zod.string().min(1).max(accountsOnboardingActivationFactsCreateBodyTypeMax),
+  "export_log_id": zod.string().uuid(),
+  "idempotency_key": zod.string().min(1).max(accountsOnboardingActivationFactsCreateBodyIdempotencyKeyMax),
+  "schema_version": zod.string().min(1).max(accountsOnboardingActivationFactsCreateBodySchemaVersionMax),
+  "event_cursor": zod.string().max(accountsOnboardingActivationFactsCreateBodyEventCursorMax).optional(),
+  "evaluated_at": zod.string().datetime({"offset":true}),
+  "fact": zod.object({
+
+}).passthrough()
+})
+
+export const accountsOnboardingActivationFactsCreateResponseStatusDefault = true;
+
+
+
+
+
+export const AccountsOnboardingActivationFactsCreateResponse = zod.object({
+  "status": zod.boolean().default(accountsOnboardingActivationFactsCreateResponseStatusDefault),
+  "result": zod.object({
+  "receipt_id": zod.string().uuid(),
+  "created": zod.boolean(),
+  "idempotency_key": zod.string().min(1),
+  "workspace_id": zod.string().uuid(),
+  "user_id": zod.string().uuid().optional(),
+  "activation_stage": zod.string().min(1),
+  "primary_path": zod.string().min(1),
+  "cohort_keys": zod.array(zod.string().min(1))
+})
+})
+
+
 
 
 

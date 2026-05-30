@@ -2827,6 +2827,50 @@ export interface UserOnboardingSaveResponseApi {
   result: UserOnboardingSaveResultApi;
 }
 
+export type OnboardingActivationFactReceiptRequestApiFact = { [key: string]: unknown };
+
+export interface OnboardingActivationFactReceiptRequestApi {
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  type: string;
+  export_log_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 220
+     */
+  idempotency_key: string;
+  /**
+     * @minLength 1
+     * @maxLength 96
+     */
+  schema_version: string;
+  /** @maxLength 160 */
+  event_cursor?: string;
+  evaluated_at: string;
+  fact: OnboardingActivationFactReceiptRequestApiFact;
+}
+
+export interface OnboardingActivationFactReceiptResultApi {
+  receipt_id: string;
+  created: boolean;
+  /** @minLength 1 */
+  idempotency_key: string;
+  workspace_id: string;
+  user_id?: string;
+  /** @minLength 1 */
+  activation_stage: string;
+  /** @minLength 1 */
+  primary_path: string;
+  cohort_keys: string[];
+}
+
+export interface OnboardingActivationFactReceiptApiResponseApi {
+  status?: boolean;
+  result: OnboardingActivationFactReceiptResultApi;
+}
+
 export type ActivationGoalRequestApiReason = typeof ActivationGoalRequestApiReason[keyof typeof ActivationGoalRequestApiReason];
 
 

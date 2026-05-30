@@ -168,6 +168,129 @@ class OnboardingPaidCloudActivationExportLog(BaseModel):
         return f"{self.event_cursor}:{self.status} for {self.workspace_id}"
 
 
+class OnboardingActivationFactReceipt(BaseModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    export_log_id = models.UUIDField(db_index=True)
+    idempotency_key = models.CharField(max_length=220, db_index=True)
+    schema_version = models.CharField(max_length=96, db_index=True)
+    event_cursor = models.CharField(max_length=160, blank=True, default="")
+    organization_id_value = models.UUIDField(db_index=True)
+    workspace_id_value = models.UUIDField(db_index=True)
+    user_id_value = models.UUIDField(null=True, blank=True, db_index=True)
+    deployment_mode = models.CharField(max_length=16, blank=True, default="")
+    deployment_region = models.CharField(
+        max_length=16,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    plan_tier = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    activation_stage = models.CharField(
+        max_length=96,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    primary_path = models.CharField(
+        max_length=32, blank=True, default="", db_index=True
+    )
+    is_activated = models.BooleanField(default=False, db_index=True)
+    lifecycle_campaign_key = models.CharField(
+        max_length=96,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    lifecycle_template_key = models.CharField(max_length=96, blank=True, default="")
+    lifecycle_status = models.CharField(max_length=64, blank=True, default="")
+    email_next_key = models.CharField(max_length=96, blank=True, default="")
+    email_eligible = models.BooleanField(default=False, db_index=True)
+    email_suppressed = models.BooleanField(default=False, db_index=True)
+    journey_config_schema_version = models.CharField(
+        max_length=96,
+        blank=True,
+        default="",
+    )
+    primary_cohort_key = models.CharField(
+        max_length=96,
+        blank=True,
+        default="",
+        db_index=True,
+    )
+    cohort_keys = models.JSONField(default=list, blank=True)
+    journey_cohorts = models.JSONField(default=list, blank=True)
+    payload_hash = models.CharField(max_length=64, db_index=True)
+    payload = models.JSONField(default=dict, blank=True)
+    evaluated_at = models.DateTimeField(db_index=True)
+    received_at = models.DateTimeField(default=timezone.now, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "accounts_onboarding_activation_fact_receipt"
+        ordering = ("-received_at", "-created_at")
+        indexes = [
+            models.Index(
+                fields=["workspace_id_value", "-evaluated_at"],
+                name="onb_fact_ws_eval",
+            ),
+            models.Index(
+                fields=["user_id_value", "-evaluated_at"],
+                name="onb_fact_user_eval",
+            ),
+            models.Index(
+                fields=["activation_stage", "primary_path"],
+                name="onb_fact_stage_path",
+            ),
+            models.Index(
+                fields=["primary_cohort_key", "-evaluated_at"],
+                name="onb_fact_cohort_eval",
+            ),
+            models.Index(
+                fields=["lifecycle_campaign_key", "-evaluated_at"],
+                name="onb_fact_campaign_eval",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["idempotency_key"],
+                condition=models.Q(deleted=False),
+                name="onb_fact_unique_idemp",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.idempotency_key}:{self.activation_stage}"
+
+
+class OnboardingActivationFactReceiptRejection(BaseModel):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    reason = models.CharField(max_length=96, db_index=True)
+    message = models.CharField(max_length=240, blank=True, default="")
+    export_log_id = models.UUIDField(null=True, blank=True, db_index=True)
+    idempotency_key = models.CharField(max_length=220, blank=True, default="")
+    schema_version = models.CharField(max_length=96, blank=True, default="")
+    payload_hash = models.CharField(max_length=64, blank=True, default="")
+    received_at = models.DateTimeField(default=timezone.now, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "accounts_onboarding_activation_fact_receipt_rejection"
+        ordering = ("-received_at", "-created_at")
+        indexes = [
+            models.Index(
+                fields=["reason", "-received_at"],
+                name="onb_fact_rej_reason_ts",
+            ),
+            models.Index(
+                fields=["idempotency_key", "-received_at"],
+                name="onb_fact_rej_idemp_ts",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.reason}:{self.idempotency_key or self.export_log_id}"
+
+
 class OnboardingGoal(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(
