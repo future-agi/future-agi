@@ -1,10 +1,15 @@
+import json
 from decimal import Decimal
 
 import pytest
-from django.core.exceptions import ValidationError
+from django.core.exceptions import ImproperlyConfigured, ValidationError
 from django.utils import timezone
 
 from accounts.models import OnboardingPaidCloudActivationExportLog
+from accounts.services.onboarding.activation_export_delivery import (
+    activation_export_delivery_config,
+    run_onboarding_activation_export_delivery,
+)
 from accounts.services.onboarding.activation_export_registry import (
     activation_export_paid_plan_values,
     get_activation_export_config,
@@ -101,6 +106,13 @@ def _activation_state(now=None):
             "metadata": {"prompt": "unsafe"},
         },
     }
+
+
+class _DeliveryResponse:
+    status_code = 202
+
+    def raise_for_status(self):
+        return None
 
 
 @pytest.fixture
@@ -255,6 +267,178 @@ def test_activation_export_config_drives_paid_plans_and_cohorts():
     assert [cohort["cohort_key"] for cohort in cohorts] == [
         "sample_reviewed_no_real_trace"
     ]
+
+
+@pytest.mark.django_db
+def test_delivery_dry_run_does_not_send_or_update(
+    monkeypatch,
+    organization,
+    workspace,
+    user,
+    paid_decision,
+):
+    monkeypatch.setattr(
+        "accounts.services.onboarding.activation_exporter.activation_export_decision",
+        lambda organization: paid_decision,
+    )
+    export_activation_fact(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        activation_state=_activation_state(),
+        write=True,
+    )
+
+    post_calls = []
+    monkeypatch.setattr(
+        "accounts.services.onboarding.activation_export_delivery.requests.post",
+        lambda *args, **kwargs: post_calls.append((args, kwargs)),
+    )
+
+    result = run_onboarding_activation_export_delivery(dry_run=True)
+
+    assert result.evaluated == 1
+    assert result.delivered == 0
+    assert result.status_counts == {"dry_run": 1}
+    assert post_calls == []
+    log = OnboardingPaidCloudActivationExportLog.no_workspace_objects.get()
+    assert log.status == OnboardingPaidCloudActivationExportLog.STATUS_READY
+
+
+@pytest.mark.django_db
+def test_delivery_sends_ready_rows_with_signed_payload(
+    monkeypatch,
+    organization,
+    workspace,
+    user,
+    paid_decision,
+):
+    monkeypatch.setattr(
+        "accounts.services.onboarding.activation_exporter.activation_export_decision",
+        lambda organization: paid_decision,
+    )
+    export_activation_fact(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        activation_state=_activation_state(),
+        write=True,
+    )
+    post_calls = []
+
+    def _post(url, *, data, headers, timeout):
+        post_calls.append(
+            {
+                "url": url,
+                "data": json.loads(data.decode("utf-8")),
+                "headers": headers,
+                "timeout": timeout,
+            }
+        )
+        return _DeliveryResponse()
+
+    monkeypatch.setattr(
+        "accounts.services.onboarding.activation_export_delivery.requests.post",
+        _post,
+    )
+
+    result = run_onboarding_activation_export_delivery(
+        dry_run=False,
+        endpoint_url="https://activation.example.test/exports",
+        shared_secret="test-secret",
+        timeout_seconds=3,
+    )
+
+    assert result.delivered == 1
+    assert result.failed == 0
+    assert len(post_calls) == 1
+    sent = post_calls[0]
+    assert sent["url"] == "https://activation.example.test/exports"
+    assert sent["timeout"] == 3
+    assert sent["data"]["type"] == "onboarding_activation_fact"
+    assert sent["data"]["fact"]["journey"]["cohorts"]
+    assert sent["headers"]["x-futureagi-activation-export-signature"].startswith(
+        "sha256="
+    )
+    assert (
+        sent["headers"]["x-futureagi-activation-export-key"]
+        == sent["data"]["idempotency_key"]
+    )
+
+    log = OnboardingPaidCloudActivationExportLog.no_workspace_objects.get()
+    assert log.status == OnboardingPaidCloudActivationExportLog.STATUS_EXPORTED
+    assert log.exported_at is not None
+    assert log.metadata["delivery"]["status"] == "exported"
+
+
+@pytest.mark.django_db
+def test_delivery_failed_rows_require_retry_flag(
+    monkeypatch,
+    organization,
+    workspace,
+    user,
+    paid_decision,
+):
+    monkeypatch.setattr(
+        "accounts.services.onboarding.activation_exporter.activation_export_decision",
+        lambda organization: paid_decision,
+    )
+    export_activation_fact(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        activation_state=_activation_state(),
+        write=True,
+    )
+
+    def _failing_post(*args, **kwargs):
+        raise RuntimeError("delivery unavailable")
+
+    monkeypatch.setattr(
+        "accounts.services.onboarding.activation_export_delivery.requests.post",
+        _failing_post,
+    )
+    failed = run_onboarding_activation_export_delivery(
+        dry_run=False,
+        endpoint_url="https://activation.example.test/exports",
+        shared_secret="test-secret",
+    )
+    assert failed.failed == 1
+
+    skipped = run_onboarding_activation_export_delivery(
+        dry_run=False,
+        endpoint_url="https://activation.example.test/exports",
+        shared_secret="test-secret",
+    )
+    assert skipped.evaluated == 0
+
+    monkeypatch.setattr(
+        "accounts.services.onboarding.activation_export_delivery.requests.post",
+        lambda *args, **kwargs: _DeliveryResponse(),
+    )
+    retried = run_onboarding_activation_export_delivery(
+        dry_run=False,
+        retry_failed=True,
+        endpoint_url="https://activation.example.test/exports",
+        shared_secret="test-secret",
+    )
+
+    assert retried.delivered == 1
+    log = OnboardingPaidCloudActivationExportLog.no_workspace_objects.get()
+    assert log.status == OnboardingPaidCloudActivationExportLog.STATUS_EXPORTED
+
+
+def test_delivery_config_requires_https_and_secret():
+    with pytest.raises(ImproperlyConfigured):
+        activation_export_delivery_config(
+            endpoint_url="http://activation.example.test/exports",
+            shared_secret="test-secret",
+        )
+    with pytest.raises(ImproperlyConfigured):
+        activation_export_delivery_config(
+            endpoint_url="https://activation.example.test/exports",
+            shared_secret="",
+        )
 
 
 @pytest.mark.django_db
