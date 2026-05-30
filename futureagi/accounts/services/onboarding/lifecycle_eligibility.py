@@ -418,6 +418,13 @@ def stage_started_at(*, activation_state, organization, workspace, now):
             "prompt_test_run_completed",
             is_sample=False,
         )
+    if stage == "create_second_prompt_version":
+        return _latest_event_at(
+            organization,
+            workspace,
+            "prompt_version_created",
+            is_sample=False,
+        )
     if stage == "compare_prompt_versions":
         return _latest_event_at(
             organization,

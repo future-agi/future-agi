@@ -106,6 +106,27 @@ campaigns:
     owner: product
     qa_fixture: prompt_run_no_version_after_wait
 
+  - campaign_key: prompt_create_second_version
+    template_key: prompt_compare_candidate_v1
+    template_version: "2026-05-27.1"
+    campaign_group: prompt
+    email_subject: Create one more prompt version to compare
+    email_preheader: A second tested version gives the baseline something real to compare against.
+    primary_path: prompt
+    entry_stages:
+      - create_second_prompt_version
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: create_second_prompt_version
+    target_success_event: prompt_comparison_completed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_prompt_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: prompt_single_version_no_second_version_after_wait
+
   - campaign_key: prompt_compare_candidate
     template_key: prompt_compare_candidate_v1
     template_version: "2026-05-27.1"

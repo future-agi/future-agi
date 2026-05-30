@@ -412,6 +412,65 @@ def test_external_recommendation_href_suppresses_lifecycle_campaign(
 
 
 @pytest.mark.django_db
+def test_prompt_second_version_stage_is_eligible_for_lifecycle_nudge(
+    organization,
+    workspace,
+    user,
+):
+    now = timezone.now()
+    record_event(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        event_name="prompt_version_created",
+        product_path="prompt",
+        activation_stage="save_prompt_version",
+        source="test",
+        occurred_at=now - timedelta(days=2),
+    )
+    flags = _flags(onboarding_email_prompt_enabled=True)
+    activation_state = {
+        "stage": "create_second_prompt_version",
+        "primary_path": "prompt",
+        "is_activated": False,
+        "recommended_action": {
+            "id": "create_second_prompt_version",
+            "href": (
+                "/dashboard/workbench/create/prompt-1"
+                "?source=onboarding&onboarding=compare"
+            ),
+        },
+        "fallback_action": {
+            "id": "open_prompt_workbench",
+            "href": "/dashboard/workbench/all",
+        },
+        "permissions": {
+            "can_write": True,
+            "permission_limited": False,
+        },
+        "sample_project": {},
+        "signals": {},
+        "last_meaningful_event": None,
+        "route_availability": {},
+    }
+
+    decision = evaluate_lifecycle_decision(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        activation_state=activation_state,
+        flags=flags,
+        now=now,
+    )
+
+    assert decision.status == OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE
+    assert decision.campaign["campaign_key"] == "prompt_create_second_version"
+    assert "onboarding=compare" in decision.target_url
+    assert "campaign_key=prompt_create_second_version" in decision.target_url
+    assert "target_event=prompt_comparison_completed" in decision.target_url
+
+
+@pytest.mark.django_db
 def test_artifact_deep_link_uses_campaign_action_route_not_observe_fallback(
     organization,
     workspace,
