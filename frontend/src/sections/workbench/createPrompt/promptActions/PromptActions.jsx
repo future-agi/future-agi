@@ -406,7 +406,16 @@ const PromptActions = () => {
   const handleCreateSecondVersion = useCallback(() => {
     setCurrentTab("Playground");
     addToCompare();
-  }, [addToCompare, setCurrentTab]);
+    if (id) {
+      navigate(
+        buildPromptEditorHref({
+          promptId: id,
+          mode: PROMPT_ONBOARDING_MODES.RUN_TEST,
+        }),
+        { replace: true },
+      );
+    }
+  }, [addToCompare, id, navigate, setCurrentTab]);
 
   const handleRunPrompt = () => {
     if (buttonTooltip) {
