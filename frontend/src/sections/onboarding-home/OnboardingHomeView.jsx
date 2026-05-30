@@ -390,6 +390,23 @@ export default function OnboardingHomeView() {
     renderedState.stage === "choose_goal" &&
     renderedState.featureFlags?.onboarding_goal_picker !== false;
   const isSavingGoal = mutationPending(saveGoal);
+  const isSetupQuickStart =
+    searchContext.source === "setup_org" && Boolean(searchContext.quickStartId);
+  const isSampleQuickStart =
+    searchContext.quickStartPrimaryPath === "sample" ||
+    searchContext.quickStartId === "sample_preview";
+  const isFirstRunQuickStartFocus =
+    isSetupQuickStart &&
+    !renderedState.isActivated &&
+    !showGoalPicker &&
+    !["feature_disabled", "activated", "daily_review"].includes(
+      renderedState.stage,
+    );
+  const suppressCompetingSamplePanel =
+    isFirstRunQuickStartFocus &&
+    !isSampleQuickStart &&
+    renderedState.primaryPath === "observe" &&
+    renderedState.stage === "connect_observability";
 
   const handleSelectGoal = (option) => {
     setSelectedGoal(option.goal);
@@ -709,6 +726,7 @@ export default function OnboardingHomeView() {
     shouldShowSampleAsPrimary(renderedState) &&
     SAMPLE_PRIMARY_STAGES.has(renderedState.stage);
   const showSamplePanel =
+    !suppressCompetingSamplePanel &&
     sampleProject?.available &&
     !sampleProject?.isHidden &&
     !renderedState.isActivated &&
@@ -840,65 +858,74 @@ export default function OnboardingHomeView() {
           </Box>
         )}
 
-        <Box
-          sx={{
-            border: "1px solid",
-            borderColor: "divider",
-            borderRadius: 1,
-            p: 2,
-          }}
-        >
-          <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
-            <Box sx={{ flex: 1 }}>
-              <Typography variant="subtitle2">Current stage</Typography>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ mt: 0.5, textTransform: "capitalize" }}
-              >
-                {readableToken(renderedState.stage)}
-              </Typography>
-            </Box>
-            <Box sx={{ flex: 1 }}>
-              <Typography variant="subtitle2">Selected path</Typography>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ mt: 0.5, textTransform: "capitalize" }}
-              >
-                {readableToken(renderedState.primaryPath)}
-              </Typography>
-            </Box>
-            <Box sx={{ flex: 1 }}>
-              <Typography variant="subtitle2">Goal</Typography>
-              <Typography
-                variant="body2"
-                color="text.secondary"
-                sx={{ mt: 0.5, textTransform: "capitalize" }}
-              >
-                {readableToken(renderedState.goal)}
-              </Typography>
-            </Box>
-          </Stack>
-        </Box>
+        {!isFirstRunQuickStartFocus ? (
+          <Box
+            data-testid="onboarding-state-summary"
+            sx={{
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+              p: 2,
+            }}
+          >
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2}>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="subtitle2">Current stage</Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 0.5, textTransform: "capitalize" }}
+                >
+                  {readableToken(renderedState.stage)}
+                </Typography>
+              </Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="subtitle2">Selected path</Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 0.5, textTransform: "capitalize" }}
+                >
+                  {readableToken(renderedState.primaryPath)}
+                </Typography>
+              </Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="subtitle2">Goal</Typography>
+                <Typography
+                  variant="body2"
+                  color="text.secondary"
+                  sx={{ mt: 0.5, textTransform: "capitalize" }}
+                >
+                  {readableToken(renderedState.goal)}
+                </Typography>
+              </Box>
+            </Stack>
+          </Box>
+        ) : null}
 
-        <ProductLoopStepper
-          fallbackAction={renderedState.fallbackAction}
-          goal={renderedState.goal}
-          onActionClick={handleActionClick}
-          primaryPath={renderedState.primaryPath}
-          progress={renderedState.progress}
-          recommendedAction={renderedState.recommendedAction}
-          stage={renderedState.stage}
-        />
-        {observePanel ? (
+        {!isFirstRunQuickStartFocus ? (
+          <ProductLoopStepper
+            fallbackAction={renderedState.fallbackAction}
+            goal={renderedState.goal}
+            onActionClick={handleActionClick}
+            primaryPath={renderedState.primaryPath}
+            progress={renderedState.progress}
+            recommendedAction={renderedState.recommendedAction}
+            stage={renderedState.stage}
+          />
+        ) : null}
+        {!isFirstRunQuickStartFocus && observePanel ? (
           <ObserveDiagnosticsPanel signals={renderedState.signals} />
         ) : null}
-        <PathCardGrid
-          paths={renderedState.availablePaths}
-          onPathClick={handlePathClick}
-        />
-        <Diagnostics state={renderedState} />
+        {!isFirstRunQuickStartFocus ? (
+          <PathCardGrid
+            paths={renderedState.availablePaths}
+            onPathClick={handlePathClick}
+          />
+        ) : null}
+        {!isFirstRunQuickStartFocus ? (
+          <Diagnostics state={renderedState} />
+        ) : null}
       </Stack>
     </Box>
   );

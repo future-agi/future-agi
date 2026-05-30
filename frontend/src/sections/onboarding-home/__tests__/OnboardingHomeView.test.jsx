@@ -568,6 +568,19 @@ describe("OnboardingHomeView", () => {
       "/dashboard/home?source=setup_org&quick_start_id=observe&quick_start_goal=monitor_production_ai_app&quick_start_primary_path=observe",
     );
 
+    expect(screen.getByTestId("observe-setup-panel")).toBeVisible();
+    expect(
+      screen.queryByTestId("sample-project-panel"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-state-summary"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-product-loop-stepper"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-path-card-grid"),
+    ).not.toBeInTheDocument();
     expect(mocks.useActivationState).toHaveBeenCalledWith(
       expect.objectContaining({
         source: "setup_org",
@@ -607,6 +620,36 @@ describe("OnboardingHomeView", () => {
       quickStartId: "observe",
       quickStartPrimaryPath: "observe",
     });
+  });
+
+  it("keeps sample preview quick starts focused on the sample Aha action", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("sampleTraceReady"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=sample_preview&quick_start_goal=explore_sample_data&quick_start_primary_path=sample",
+    );
+
+    const samplePanel = screen.getByTestId("sample-project-panel");
+    expect(samplePanel).toBeVisible();
+    expect(
+      within(samplePanel).getByRole("button", { name: /open sample trace/i }),
+    ).toBeVisible();
+    expect(
+      screen.queryByTestId("onboarding-state-summary"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-product-loop-stepper"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-path-card-grid"),
+    ).not.toBeInTheDocument();
   });
 
   it("drops unrecognized quick-start URL attribution before tracking", async () => {
