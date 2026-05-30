@@ -66,6 +66,26 @@ async function main() {
     traceDetailRequests: [],
   };
   const pageErrors = [];
+  const preflight = await preflightRealSignupTargets([
+    { name: "app", url: APP_BASE },
+    { name: "api", url: API_BASE },
+  ]);
+  const unavailableTarget = preflight.find((target) => !target.reachable);
+  if (unavailableTarget) {
+    const failureReason =
+      unavailableTarget.error || `HTTP ${unavailableTarget.status}`;
+    const report = smokeReportPayload({
+      status: "failed",
+      mode: smokeMode,
+      diagnostic: {
+        error_message: `Preflight failed for ${unavailableTarget.name} at ${unavailableTarget.url}: ${failureReason}`,
+        preflight,
+      },
+    });
+    console.error(JSON.stringify(report, null, 2));
+    await writeSmokeReport(report);
+    throw new Error(report.diagnostic.error_message);
+  }
 
   const browser = await puppeteer.launch({
     executablePath: browserExecutablePath(),
@@ -1414,6 +1434,7 @@ async function main() {
         body_text: await safeBodyText(page),
         error_message: error?.message || String(error),
         page_errors: pageErrors,
+        preflight,
         signup_form_state: await safeSignupFormState(page),
         url: page.url(),
       },
@@ -1499,6 +1520,36 @@ function assertLocalUrl(value, name) {
     localHosts.has(url.hostname),
     `${name} must be localhost unless ONBOARDING_REAL_SIGNUP_ALLOW_REMOTE=1.`,
   );
+}
+
+async function preflightRealSignupTargets(targets) {
+  return Promise.all(targets.map(preflightTarget));
+}
+
+async function preflightTarget({ name, url }) {
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: AbortSignal.timeout(5000),
+    });
+    return {
+      name,
+      url,
+      reachable: true,
+      status: response.status,
+      duration_ms: Date.now() - startedAt,
+    };
+  } catch (error) {
+    return {
+      name,
+      url,
+      reachable: false,
+      error: error?.message || String(error),
+      duration_ms: Date.now() - startedAt,
+    };
+  }
 }
 
 async function expectVisibleText(

@@ -273,6 +273,17 @@ const SMOKES = [
     },
   },
   {
+    id: "signup-quick-start-mobile-real",
+    mode: "real-signup",
+    file: "signup-quick-start-smoke.mjs",
+    description:
+      "Mobile disposable-account proof from signup through first Observe/Eval quality loop.",
+    env: {
+      ONBOARDING_REAL_SIGNUP: "1",
+      ONBOARDING_SMOKE_VIEWPORT: "mobile",
+    },
+  },
+  {
     id: "signup-sample-open-real",
     mode: "real-signup",
     file: "signup-quick-start-smoke.mjs",
@@ -281,6 +292,18 @@ const SMOKES = [
     env: {
       ONBOARDING_REAL_SIGNUP: "1",
       ONBOARDING_REAL_SIGNUP_SAMPLE_ONLY: "1",
+    },
+  },
+  {
+    id: "signup-sample-open-mobile-real",
+    mode: "real-signup",
+    file: "signup-quick-start-smoke.mjs",
+    description:
+      "Mobile disposable-account proof that sample trace opens and stays non-activating.",
+    env: {
+      ONBOARDING_REAL_SIGNUP: "1",
+      ONBOARDING_REAL_SIGNUP_SAMPLE_ONLY: "1",
+      ONBOARDING_SMOKE_VIEWPORT: "mobile",
     },
   },
 ];
