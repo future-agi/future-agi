@@ -16,6 +16,11 @@ from accounts.models import (
     User,
 )
 from accounts.models.workspace import Workspace
+from accounts.services.onboarding.lifecycle_launch_packets import (
+    LAUNCH_PACKET_READY_STATUS,
+    LAUNCH_PACKET_SCHEMA_VERSION,
+    LAUNCH_PACKET_SOURCE,
+)
 from accounts.services.onboarding.lifecycle_preview_approval import (
     APPROVAL_METADATA_KEY,
     PREVIEW_APPROVAL_MISSING_REASON,
@@ -346,6 +351,257 @@ def test_approve_send_dry_run_report_command_writes_review_record(
     assert record["command"] == "run_onboarding_lifecycle_send"
     assert record["candidate_count"] == 1
     assert user.email not in record_text
+
+
+@pytest.mark.django_db
+@override_settings(ONBOARDING_FEATURE_FLAGS=_flags())
+def test_lifecycle_launch_packet_command_writes_reviewable_packet(
+    organization,
+    workspace,
+    user,
+    tmp_path,
+):
+    _eligible_campaign_log(user, organization, workspace, "welcome_resume_goal")
+    approval_manifest, approval_record = _approval_paths(tmp_path)
+    OnboardingLifecycleSendAllowlist.no_workspace_objects.create(
+        scope_type=OnboardingLifecycleSendAllowlist.SCOPE_USER,
+        scope_value=str(user.id),
+        environment="local",
+        campaign_group="welcome",
+    )
+    dry_run_report, dry_run_report_review = _reviewed_welcome_send_report_paths(
+        tmp_path,
+        approval_manifest=approval_manifest,
+        approval_record=approval_record,
+    )
+    packet_path = tmp_path / "welcome-launch-packet.json"
+    output = StringIO()
+
+    call_command(
+        "generate_onboarding_lifecycle_launch_packet",
+        "--approval-manifest",
+        str(approval_manifest),
+        "--approval-record",
+        str(approval_record),
+        "--dry-run-report",
+        str(dry_run_report),
+        "--dry-run-report-review-record",
+        str(dry_run_report_review),
+        "--output",
+        str(packet_path),
+        "--require-sendable-candidate",
+        "--now",
+        "2026-05-30T10:15:00Z",
+        stdout=output,
+    )
+
+    packet_text = packet_path.read_text()
+    packet = json.loads(packet_text)
+    value = output.getvalue()
+    assert f"output_path={packet_path}" in value
+    assert "packet_sha256=" in value
+    assert "sendable_candidate_count=1" in value
+    assert packet["schema_version"] == LAUNCH_PACKET_SCHEMA_VERSION
+    assert packet["source"] == LAUNCH_PACKET_SOURCE
+    assert packet["generated_at"] == "2026-05-30T10:15:00+00:00"
+    assert packet["status"] == LAUNCH_PACKET_READY_STATUS
+    assert packet["command"]["name"] == "run_onboarding_welcome_email_beta"
+    assert packet["command"]["argv"] == [
+        "run_onboarding_welcome_email_beta",
+        "--send",
+        "--cohort",
+        "beta",
+        "--limit",
+        "1",
+        "--approval-manifest",
+        str(approval_manifest),
+        "--approval-record",
+        str(approval_record),
+        "--dry-run-report",
+        str(dry_run_report),
+        "--dry-run-report-review-record",
+        str(dry_run_report_review),
+    ]
+    assert packet["send_parameters"] == {
+        "cohort": "beta",
+        "limit": 1,
+        "campaign_group": "welcome",
+        "user_id": None,
+        "workspace_id": None,
+        "require_campaign_group_allowlist": True,
+    }
+    assert (
+        packet["preview"]["manifest_sha256"]
+        == packet["dry_run"]["approval_manifest_sha256"]
+    )
+    assert (
+        packet["preview"]["approval_record_sha256"]
+        == packet["dry_run"]["approval_record_sha256"]
+    )
+    assert len(packet["preview"]["manifest_sha256"]) == 64
+    assert len(packet["preview"]["approval_record_sha256"]) == 64
+    assert packet["preview"]["approved_campaign_keys"] == ["welcome_resume_goal"]
+    assert packet["dry_run"]["sendable_candidate_count"] == 1
+    assert packet["dry_run"]["status_counts"] == {"would_send": 1}
+    assert packet["checks"] == {
+        "preview_approval_record_present": True,
+        "dry_run_review_record_present": True,
+        "dry_run_approval_matches_preview": True,
+        "sendable_candidate_required": True,
+    }
+    assert user.email not in packet_text
+
+
+@pytest.mark.django_db
+@override_settings(ONBOARDING_FEATURE_FLAGS=_flags())
+def test_lifecycle_launch_packet_command_supports_lifecycle_send(
+    organization,
+    workspace,
+    user,
+    tmp_path,
+):
+    _eligible_log(user, organization, workspace)
+    approval_manifest, approval_record = _approval_paths(tmp_path)
+    OnboardingLifecycleSendAllowlist.no_workspace_objects.create(
+        scope_type=OnboardingLifecycleSendAllowlist.SCOPE_USER,
+        scope_value=str(user.id),
+        environment="local",
+    )
+    dry_run_report, dry_run_report_review = _reviewed_lifecycle_send_report_paths(
+        tmp_path,
+        approval_manifest=approval_manifest,
+        approval_record=approval_record,
+        campaign_group="welcome",
+    )
+    packet_path = tmp_path / "lifecycle-launch-packet.json"
+
+    call_command(
+        "generate_onboarding_lifecycle_launch_packet",
+        "--approval-manifest",
+        str(approval_manifest),
+        "--approval-record",
+        str(approval_record),
+        "--dry-run-report",
+        str(dry_run_report),
+        "--dry-run-report-review-record",
+        str(dry_run_report_review),
+        "--output",
+        str(packet_path),
+        "--require-sendable-candidate",
+        stdout=StringIO(),
+    )
+
+    packet = json.loads(packet_path.read_text())
+    assert packet["status"] == LAUNCH_PACKET_READY_STATUS
+    assert packet["command"]["name"] == "run_onboarding_lifecycle_send"
+    assert packet["command"]["argv"] == [
+        "run_onboarding_lifecycle_send",
+        "--cohort",
+        "internal",
+        "--limit",
+        "1",
+        "--campaign-family",
+        "welcome",
+        "--approval-manifest",
+        str(approval_manifest),
+        "--approval-record",
+        str(approval_record),
+        "--dry-run-report",
+        str(dry_run_report),
+        "--dry-run-report-review-record",
+        str(dry_run_report_review),
+    ]
+    assert packet["send_parameters"] == {
+        "cohort": "internal",
+        "limit": 1,
+        "campaign_group": "welcome",
+        "user_id": None,
+        "workspace_id": None,
+        "require_campaign_group_allowlist": False,
+    }
+
+
+@pytest.mark.django_db
+@override_settings(ONBOARDING_FEATURE_FLAGS=_flags())
+def test_lifecycle_launch_packet_rejects_mismatched_preview_approval(
+    organization,
+    workspace,
+    user,
+    tmp_path,
+):
+    _eligible_campaign_log(user, organization, workspace, "welcome_resume_goal")
+    approval_manifest, approval_record = _approval_paths(tmp_path)
+    OnboardingLifecycleSendAllowlist.no_workspace_objects.create(
+        scope_type=OnboardingLifecycleSendAllowlist.SCOPE_USER,
+        scope_value=str(user.id),
+        environment="local",
+        campaign_group="welcome",
+    )
+    dry_run_report, dry_run_report_review = _reviewed_welcome_send_report_paths(
+        tmp_path,
+        approval_manifest=approval_manifest,
+        approval_record=approval_record,
+    )
+    other_manifest, other_record = _approval_paths(
+        tmp_path,
+        campaign_key="prompt_create_first",
+    )
+    packet_path = tmp_path / "mismatched-launch-packet.json"
+
+    with pytest.raises(CommandError, match="approval manifest does not match"):
+        call_command(
+            "generate_onboarding_lifecycle_launch_packet",
+            "--approval-manifest",
+            str(other_manifest),
+            "--approval-record",
+            str(other_record),
+            "--dry-run-report",
+            str(dry_run_report),
+            "--dry-run-report-review-record",
+            str(dry_run_report_review),
+            "--output",
+            str(packet_path),
+            stdout=StringIO(),
+        )
+
+    assert not packet_path.exists()
+
+
+@pytest.mark.django_db
+@override_settings(ONBOARDING_FEATURE_FLAGS=_flags())
+def test_lifecycle_launch_packet_can_require_sendable_candidates(
+    organization,
+    workspace,
+    user,
+    tmp_path,
+):
+    _eligible_campaign_log(user, organization, workspace, "welcome_resume_goal")
+    approval_manifest, approval_record = _approval_paths(tmp_path)
+    dry_run_report, dry_run_report_review = _reviewed_welcome_send_report_paths(
+        tmp_path,
+        approval_manifest=approval_manifest,
+        approval_record=approval_record,
+    )
+    packet_path = tmp_path / "empty-launch-packet.json"
+
+    with pytest.raises(CommandError, match="no sendable candidates"):
+        call_command(
+            "generate_onboarding_lifecycle_launch_packet",
+            "--approval-manifest",
+            str(approval_manifest),
+            "--approval-record",
+            str(approval_record),
+            "--dry-run-report",
+            str(dry_run_report),
+            "--dry-run-report-review-record",
+            str(dry_run_report_review),
+            "--output",
+            str(packet_path),
+            "--require-sendable-candidate",
+            stdout=StringIO(),
+        )
+
+    assert not packet_path.exists()
 
 
 @pytest.mark.django_db
