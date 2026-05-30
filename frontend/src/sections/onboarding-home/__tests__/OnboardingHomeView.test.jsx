@@ -5,6 +5,7 @@ import { renderWithRouter } from "src/utils/test-utils";
 import { getActivationStateFixture } from "../fixtures/activation-state.fixtures";
 import { normalizeActivationState } from "../activation-state-utils";
 import OnboardingHomeView from "../OnboardingHomeView";
+import { readPersistedSetupQuickStartAttribution } from "src/sections/auth/jwt/setup-org-quick-starts";
 
 const mocks = vi.hoisted(() => ({
   useActivationState: vi.fn(),
@@ -166,6 +167,7 @@ const pathState = ({
 describe("OnboardingHomeView", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.sessionStorage.clear();
     mocks.useAuthContext.mockReturnValue({ user: defaultUser });
     mocks.useWorkspace.mockReturnValue(defaultWorkspace);
     mocks.useRecordActivationEvent.mockReturnValue({
@@ -566,6 +568,14 @@ describe("OnboardingHomeView", () => {
       "/dashboard/home?source=setup_org&quick_start_id=observe&quick_start_goal=monitor_production_ai_app&quick_start_primary_path=observe",
     );
 
+    expect(mocks.useActivationState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "setup_org",
+        quickStartGoal: "monitor_production_ai_app",
+        quickStartId: "observe",
+        quickStartPrimaryPath: "observe",
+      }),
+    );
     await waitFor(() =>
       expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
         "onboarding_home_viewed",
@@ -592,6 +602,11 @@ describe("OnboardingHomeView", () => {
         route_available: true,
       }),
     );
+    expect(readPersistedSetupQuickStartAttribution()).toEqual({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
   });
 
   it("drops unrecognized quick-start URL attribution before tracking", async () => {
@@ -618,6 +633,7 @@ describe("OnboardingHomeView", () => {
         }),
       ),
     );
+    expect(readPersistedSetupQuickStartAttribution()).toEqual({});
   });
 
   it("renders daily quality home for activated observe workspaces", async () => {

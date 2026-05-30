@@ -23,6 +23,11 @@ const STUB_AUTH = envFlag("ONBOARDING_SMOKE_STUB_AUTH");
 const QUICK_STARTS = {
   observe: {
     buttonText: "Connect observability first",
+    expectedAttribution: {
+      quick_start_goal: "monitor_production_ai_app",
+      quick_start_id: "observe",
+      quick_start_primary_path: "observe",
+    },
     expectedGoal: "Monitor a production AI app",
     expectedSelector: '[data-testid="observe-setup-panel"]',
     expectedTexts: ["Connect one observe project"],
@@ -30,6 +35,11 @@ const QUICK_STARTS = {
   },
   sample_preview: {
     buttonText: "Preview sample trace first",
+    expectedAttribution: {
+      quick_start_goal: "explore_sample_data",
+      quick_start_id: "sample_preview",
+      quick_start_primary_path: "sample",
+    },
     expectedGoal: "Explore with sample data",
     expectedSelector: '[data-testid="sample-project-panel"]',
     expectedTexts: ["Fastest path to Aha", "Open sample trace"],
@@ -37,6 +47,11 @@ const QUICK_STARTS = {
   },
   prompt: {
     buttonText: "Test prompts",
+    expectedAttribution: {
+      quick_start_goal: "improve_prompts",
+      quick_start_id: "prompt",
+      quick_start_primary_path: "prompt",
+    },
     expectedGoal: "Test and improve prompts",
     expectedSelector: '[data-testid="path-focus-panel-prompt"]',
     expectedTexts: ["Build a prompt quality loop", "Create prompt"],
@@ -44,6 +59,11 @@ const QUICK_STARTS = {
   },
   agent: {
     buttonText: "Prototype agent",
+    expectedAttribution: {
+      quick_start_goal: "build_ai_agent",
+      quick_start_id: "agent",
+      quick_start_primary_path: "agent",
+    },
     expectedGoal: "Build or prototype an AI agent",
     expectedSelector: '[data-testid="path-focus-panel-agent"]',
     expectedTexts: ["Prototype an agent with a quality check", "Create agent"],
@@ -51,6 +71,11 @@ const QUICK_STARTS = {
   },
   gateway: {
     buttonText: "Route gateway",
+    expectedAttribution: {
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
+    },
     expectedGoal: "Route LLM traffic safely",
     expectedSelector: '[data-testid="path-focus-panel-gateway"]',
     expectedTexts: ["Route one request safely", "Add provider"],
@@ -58,6 +83,11 @@ const QUICK_STARTS = {
   },
   evals: {
     buttonText: "Run eval",
+    expectedAttribution: {
+      quick_start_goal: "evaluate_quality",
+      quick_start_id: "evals",
+      quick_start_primary_path: "evals",
+    },
     expectedGoal: "Evaluate quality on data or traces",
     expectedSelector: '[data-testid="path-focus-panel-evals"]',
     expectedTexts: [
@@ -69,6 +99,11 @@ const QUICK_STARTS = {
   },
   voice: {
     buttonText: "Connect voice",
+    expectedAttribution: {
+      quick_start_goal: "connect_voice_ai_agent",
+      quick_start_id: "voice",
+      quick_start_primary_path: "voice",
+    },
     expectedGoal: "Connect a voice AI agent",
     expectedSelector: '[data-testid="path-focus-panel-voice"]',
     expectedTexts: ["Connect a voice agent quality loop", "Create agent"],
@@ -89,7 +124,9 @@ async function main() {
   const auth = createStubbedAuthenticatedContext();
   const apiFailures = [];
   const pageErrors = [];
+  const consoleMessages = [];
   const onboardingPosts = [];
+  const requestFailures = [];
   const setupPosts = [];
   const activationStateRequests = [];
   let setupCompleted = false;
@@ -146,7 +183,17 @@ async function main() {
       apiFailures.push(`${response.status()} ${url}`);
     }
   });
+  page.on("console", (message) => {
+    if (message.type() === "error" || message.type() === "warning") {
+      consoleMessages.push(`${message.type()}: ${message.text()}`);
+    }
+  });
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("requestfailed", (request) => {
+    requestFailures.push(
+      `${request.failure()?.errorText || "failed"} ${request.url()}`,
+    );
+  });
 
   try {
     await page.goto(`${APP_BASE}/auth/jwt/setup-org?step=0`, {
@@ -164,6 +211,14 @@ async function main() {
           "setup_org",
       { timeout: 30000 },
     );
+
+    const homeParams = await page.evaluate(() =>
+      Object.fromEntries(new URL(window.location.href).searchParams),
+    );
+    assertExpectedAttribution(homeParams, {
+      ...QUICK_START.expectedAttribution,
+      source: "setup_org",
+    });
 
     await expectSelector(page, QUICK_START.expectedSelector);
     for (const text of QUICK_START.expectedTexts) {
@@ -203,6 +258,10 @@ async function main() {
       activationStateRequests.length === 1,
       `Expected one activation-state request, got ${activationStateRequests.length}`,
     );
+    assertExpectedAttribution(activationStateRequests[0], {
+      ...QUICK_START.expectedAttribution,
+      source: "setup_org",
+    });
     assert(apiFailures.length === 0, `API failures: ${apiFailures.join("; ")}`);
     assert(pageErrors.length === 0, `Page errors: ${pageErrors.join("; ")}`);
 
@@ -217,7 +276,10 @@ async function main() {
           evidence: {
             activation_state_requests: activationStateRequests,
             browser_state: browserState,
+            console_messages: consoleMessages,
+            home_params: homeParams,
             onboarding_post: onboardingPosts[0],
+            request_failures: requestFailures,
             screenshot: SCREENSHOT_PATH,
             setup_posts: setupPosts,
             setup_quick_start: QUICK_START_KEY,
@@ -238,7 +300,9 @@ async function main() {
             activation_state_requests: activationStateRequests,
             api_failures: apiFailures,
             body_text: await safeBodyText(page),
+            console_messages: consoleMessages,
             page_errors: pageErrors,
+            request_failures: requestFailures,
             setup_quick_start: QUICK_START_KEY,
             onboarding_posts: onboardingPosts,
             setup_posts: setupPosts,
@@ -252,6 +316,17 @@ async function main() {
     throw error;
   } finally {
     await browser.close();
+  }
+}
+
+function assertExpectedAttribution(actual, expected) {
+  for (const [key, value] of Object.entries(expected)) {
+    assert(
+      actual?.[key] === value,
+      `Expected ${key}=${value}, got ${actual?.[key]} in ${JSON.stringify(
+        actual,
+      )}`,
+    );
   }
 }
 

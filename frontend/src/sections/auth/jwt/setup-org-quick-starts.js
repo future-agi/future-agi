@@ -1,5 +1,8 @@
 import { ONBOARDING_GOAL_OPTIONS } from "src/sections/onboarding-home/onboarding-home.constants";
 
+export const SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY =
+  "futureagi.setup_quick_start_attribution";
+
 const goalOptionById = new Map(
   ONBOARDING_GOAL_OPTIONS.map((option) => [option.id, option]),
 );
@@ -107,4 +110,55 @@ export const normalizeSetupQuickStartAttribution = ({
     return {};
   }
   return attribution;
+};
+
+const setupQuickStartStorage = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.sessionStorage || null;
+  } catch {
+    return null;
+  }
+};
+
+export const persistSetupQuickStartAttribution = (input = {}) => {
+  const attribution = normalizeSetupQuickStartAttribution(input);
+
+  try {
+    const storage = setupQuickStartStorage();
+    if (!attribution.quickStartId) {
+      storage?.removeItem(SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY);
+      return {};
+    }
+
+    storage?.setItem(
+      SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY,
+      JSON.stringify(attribution),
+    );
+  } catch {
+    return attribution;
+  }
+
+  return attribution;
+};
+
+export const readPersistedSetupQuickStartAttribution = () => {
+  const storage = setupQuickStartStorage();
+  if (!storage) return {};
+
+  try {
+    const rawValue = storage.getItem(SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY);
+    if (!rawValue) return {};
+    const attribution = normalizeSetupQuickStartAttribution(
+      JSON.parse(rawValue),
+    );
+    if (!attribution.quickStartId) {
+      storage.removeItem(SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY);
+      return {};
+    }
+    return attribution;
+  } catch {
+    storage.removeItem(SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY);
+    return {};
+  }
 };

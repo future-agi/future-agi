@@ -1,11 +1,18 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   normalizeSetupQuickStartAttribution,
+  persistSetupQuickStartAttribution,
+  readPersistedSetupQuickStartAttribution,
+  SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY,
   SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS,
   setupQuickStartAttributionFromId,
 } from "./setup-org-quick-starts";
 
 describe("setup org product-loop quick starts", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+  });
+
   it("covers each first-run product path with a canonical goal", () => {
     expect(
       SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.map((option) => [
@@ -87,5 +94,45 @@ describe("setup org product-loop quick starts", () => {
         quickStartPrimaryPath: "voice",
       }),
     ).toEqual({});
+  });
+
+  it("persists only normalized quick-start attribution", () => {
+    expect(
+      persistSetupQuickStartAttribution({
+        quickStartGoal: "monitor_production_ai_app",
+        quickStartId: "observe",
+        quickStartPrimaryPath: "observe",
+      }),
+    ).toEqual({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+    expect(readPersistedSetupQuickStartAttribution()).toEqual({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+
+    expect(
+      persistSetupQuickStartAttribution({
+        quickStartGoal: "secret",
+        quickStartId: "user@example.com",
+        quickStartPrimaryPath: "observe",
+      }),
+    ).toEqual({});
+    expect(readPersistedSetupQuickStartAttribution()).toEqual({});
+  });
+
+  it("drops corrupted persisted attribution", () => {
+    window.sessionStorage.setItem(
+      SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY,
+      "{",
+    );
+
+    expect(readPersistedSetupQuickStartAttribution()).toEqual({});
+    expect(
+      window.sessionStorage.getItem(SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY),
+    ).toBeNull();
   });
 });

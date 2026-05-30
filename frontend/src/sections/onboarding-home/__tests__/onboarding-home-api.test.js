@@ -20,6 +20,7 @@ vi.mock("src/utils/axios", () => ({
 }));
 
 import axios, { endpoints } from "src/utils/axios";
+import { persistSetupQuickStartAttribution } from "src/sections/auth/jwt/setup-org-quick-starts";
 import { getActivationStateFixture } from "../fixtures/activation-state.fixtures";
 import { useActivationState } from "../hooks/useActivationState";
 import {
@@ -50,6 +51,7 @@ const renderWithQueryClient = (hook) => {
 describe("onboarding home API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.sessionStorage.clear();
   });
 
   it("fetches activation state from the onboarding endpoint", async () => {
@@ -81,6 +83,7 @@ describe("onboarding home API", () => {
       targetRoute: "/dashboard/observe/observe-1",
       linkIssuedAt: "2026-05-26T15:00:00Z",
       staleReason: "target_complete",
+      contextStatus: "stale",
       mode: "email",
     });
 
@@ -96,7 +99,30 @@ describe("onboarding home API", () => {
         target_route: "/dashboard/observe/observe-1",
         link_issued_at: "2026-05-26T15:00:00Z",
         stale_reason: "target_complete",
+        context_status: "stale",
         mode: "email",
+      },
+    });
+  });
+
+  it("passes normalized setup quick-start params to activation state", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: { result: getActivationStateFixture("observeNoSetup") },
+    });
+
+    await fetchActivationState({
+      source: "setup_org",
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+
+    expect(axios.get).toHaveBeenCalledWith("/accounts/activation-state/", {
+      params: {
+        source: "setup_org",
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
       },
     });
   });
@@ -277,6 +303,77 @@ describe("onboarding home API", () => {
         quick_start_goal: "monitor_production_ai_app",
         quick_start_id: "observe",
         quick_start_primary_path: "observe",
+      },
+    });
+  });
+
+  it("uses normalized metadata quick-start attribution before persisted setup context", async () => {
+    persistSetupQuickStartAttribution({
+      quickStartGoal: "evaluate_quality",
+      quickStartId: "evals",
+      quickStartPrimaryPath: "evals",
+    });
+    axios.post.mockResolvedValueOnce({
+      data: {
+        result: {
+          activation_state: getActivationStateFixture("observeNeedsEvaluator"),
+        },
+      },
+    });
+
+    await recordActivationEvent({
+      eventName: "trace_detail_opened",
+      primaryPath: "observe",
+      metadata: {
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+        entry: "trace_full_page",
+      },
+    });
+
+    expect(axios.post).toHaveBeenCalledWith("/accounts/activation-events/", {
+      event_name: "trace_detail_opened",
+      primary_path: "observe",
+      metadata: {
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+        entry: "trace_full_page",
+      },
+    });
+  });
+
+  it("uses persisted quick-start attribution for downstream activation events", async () => {
+    persistSetupQuickStartAttribution({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+    axios.post.mockResolvedValueOnce({
+      data: {
+        result: {
+          activation_state: getActivationStateFixture("observeNeedsEvaluator"),
+        },
+      },
+    });
+
+    await recordActivationEvent({
+      eventName: "trace_detail_opened",
+      primaryPath: "observe",
+      metadata: {
+        entry: "trace_drawer",
+      },
+    });
+
+    expect(axios.post).toHaveBeenCalledWith("/accounts/activation-events/", {
+      event_name: "trace_detail_opened",
+      primary_path: "observe",
+      metadata: {
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+        entry: "trace_drawer",
       },
     });
   });

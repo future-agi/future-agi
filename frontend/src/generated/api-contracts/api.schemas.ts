@@ -24600,6 +24600,9 @@ link_issued_at?: string;
 stale_reason?: string;
 context_status?: AccountsActivationStateListContextStatus;
 mode?: string;
+quick_start_goal?: string;
+quick_start_id?: string;
+quick_start_primary_path?: string;
 debug?: boolean;
 };
 

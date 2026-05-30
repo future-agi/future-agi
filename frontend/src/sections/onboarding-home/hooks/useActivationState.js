@@ -18,7 +18,11 @@ export const useActivationState = ({
   targetRoute,
   linkIssuedAt,
   staleReason,
+  contextStatus,
   mode,
+  quickStartGoal,
+  quickStartId,
+  quickStartPrimaryPath,
   enabled = true,
   requireWorkspaceContext = true,
 } = {}) => {
@@ -37,7 +41,11 @@ export const useActivationState = ({
     targetRoute,
     linkIssuedAt,
     staleReason,
+    contextStatus,
     mode,
+    quickStartGoal,
+    quickStartId,
+    quickStartPrimaryPath,
   };
   const query = useQuery({
     queryKey: onboardingHomeQueryKeys.activationState(queryParams),

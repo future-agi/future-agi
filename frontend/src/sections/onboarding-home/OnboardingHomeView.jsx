@@ -8,7 +8,10 @@ import Typography from "@mui/material/Typography";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
-import { normalizeSetupQuickStartAttribution } from "src/sections/auth/jwt/setup-org-quick-starts";
+import {
+  normalizeSetupQuickStartAttribution,
+  persistSetupQuickStartAttribution,
+} from "src/sections/auth/jwt/setup-org-quick-starts";
 import { shouldShowSampleAsPrimary } from "./activation-state-utils";
 import { useActivationState } from "./hooks/useActivationState";
 import { useRecordActivationEvent } from "./hooks/useRecordActivationEvent";
@@ -159,6 +162,20 @@ export default function OnboardingHomeView() {
     () => activationPayloadEmailContext(searchContext),
     [searchContext],
   );
+
+  useEffect(() => {
+    if (searchContext.source !== "setup_org") return;
+    persistSetupQuickStartAttribution({
+      quickStartGoal: searchContext.quickStartGoal,
+      quickStartId: searchContext.quickStartId,
+      quickStartPrimaryPath: searchContext.quickStartPrimaryPath,
+    });
+  }, [
+    searchContext.quickStartGoal,
+    searchContext.quickStartId,
+    searchContext.quickStartPrimaryPath,
+    searchContext.source,
+  ]);
 
   useEffect(() => {
     if (Object.keys(searchActivationEmailContext).length === 0) return;

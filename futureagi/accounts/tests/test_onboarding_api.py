@@ -256,6 +256,24 @@ def test_activation_state_unknown_query_param_does_not_crash(auth_client, user):
 
 @pytest.mark.django_db
 @override_settings(ONBOARDING_FEATURE_FLAGS={"onboarding_activation_state_api": True})
+def test_activation_state_accepts_setup_quick_start_context(auth_client, user):
+    user.goals = ["monitor_production_ai_app"]
+    user.save(update_fields=["goals"])
+
+    response = auth_client.get(
+        "/accounts/activation-state/"
+        "?source=setup_org"
+        "&quick_start_id=observe"
+        "&quick_start_goal=monitor_production_ai_app"
+        "&quick_start_primary_path=observe"
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["result"]["stage"] == "connect_observability"
+
+
+@pytest.mark.django_db
+@override_settings(ONBOARDING_FEATURE_FLAGS={"onboarding_activation_state_api": True})
 def test_activation_state_stale_email_query_reflects_current_state(auth_client, user):
     user.goals = ["monitor_production_ai_app"]
     user.save(update_fields=["goals"])

@@ -7,7 +7,10 @@ import {
   OnboardingHomeEvents,
   trackOnboardingHomeEvent,
 } from "../analytics/onboarding-events";
-import { normalizeSetupQuickStartAttribution } from "src/sections/auth/jwt/setup-org-quick-starts";
+import {
+  normalizeSetupQuickStartAttribution,
+  readPersistedSetupQuickStartAttribution,
+} from "src/sections/auth/jwt/setup-org-quick-starts";
 
 const compactProperties = (properties = {}) =>
   Object.entries(properties).reduce((result, [key, value]) => {
@@ -31,6 +34,16 @@ const quickStartAttribution = (payload = {}) =>
       payload.quick_start_primary_path ??
       payload.metadata?.quick_start_primary_path,
   });
+
+const payloadWithQuickStartAttribution = (payload = {}) => {
+  if (quickStartAttribution(payload).quickStartId) return payload;
+  const attribution = readPersistedSetupQuickStartAttribution();
+  if (!attribution.quickStartId) return payload;
+  return {
+    ...payload,
+    ...attribution,
+  };
+};
 
 const trackActivationEventRecorded = (activationState, payload = {}) => {
   const eventName = payload.eventName ?? payload.event_name;
@@ -74,9 +87,13 @@ const trackActivationEventRecorded = (activationState, payload = {}) => {
 export const useRecordActivationEvent = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: recordActivationEvent,
+    mutationFn: (payload) =>
+      recordActivationEvent(payloadWithQuickStartAttribution(payload)),
     onSuccess: (activationState, payload) => {
-      trackActivationEventRecorded(activationState, payload);
+      trackActivationEventRecorded(
+        activationState,
+        payloadWithQuickStartAttribution(payload),
+      );
       queryClient.invalidateQueries({
         queryKey: onboardingHomeQueryKeys.all,
       });

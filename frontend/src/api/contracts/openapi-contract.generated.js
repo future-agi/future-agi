@@ -579,6 +579,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "type": "string"
             }
           },
+          "quick_start_goal": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "quick_start_id": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "quick_start_primary_path": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
           "debug": {
             "required": false,
             "schema": {

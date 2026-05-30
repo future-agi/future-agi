@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useRecordActivationEvent } from "../hooks/useRecordActivationEvent";
 import { recordActivationEvent } from "../api/onboarding-home-api";
 import { trackOnboardingHomeEvent } from "../analytics/onboarding-events";
+import { persistSetupQuickStartAttribution } from "src/sections/auth/jwt/setup-org-quick-starts";
 
 vi.mock("../api/onboarding-home-api", () => ({
   onboardingHomeQueryKeys: {
@@ -44,6 +45,7 @@ const renderWithQueryClient = (hook) => {
 describe("useRecordActivationEvent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    window.sessionStorage.clear();
   });
 
   it("tracks successful activation events through onboarding analytics", async () => {
@@ -234,6 +236,53 @@ describe("useRecordActivationEvent", () => {
     );
     expect(trackOnboardingHomeEvent.mock.calls[0][1]).not.toHaveProperty(
       "idempotencyKey",
+    );
+  });
+
+  it("uses persisted quick-start attribution for downstream events", async () => {
+    persistSetupQuickStartAttribution({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+    recordActivationEvent.mockResolvedValueOnce({
+      requestId: "req-observe-next",
+      stage: "create_trace_evaluator",
+      primaryPath: "observe",
+      isActivated: false,
+      workspaceId: "wrk-observe",
+      organizationId: "org-observe",
+      userId: "usr-observe",
+    });
+
+    const { result } = renderWithQueryClient(() => useRecordActivationEvent());
+
+    await act(async () => {
+      await result.current.mutateAsync({
+        eventName: "trace_detail_opened",
+        primaryPath: "observe",
+        stage: "review_first_trace",
+        source: "trace_drawer",
+      });
+    });
+
+    expect(recordActivationEvent).toHaveBeenCalledWith({
+      eventName: "trace_detail_opened",
+      primaryPath: "observe",
+      stage: "review_first_trace",
+      source: "trace_drawer",
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+    expect(trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "onboarding_activation_event_recorded",
+      expect.objectContaining({
+        activation_event_name: "trace_detail_opened",
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+      }),
     );
   });
 

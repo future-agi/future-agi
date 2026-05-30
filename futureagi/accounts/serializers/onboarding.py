@@ -1550,6 +1550,21 @@ class ActivationStateQuerySerializer(serializers.Serializer):
         allow_null=True,
     )
     mode = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    quick_start_goal = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    quick_start_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    quick_start_primary_path = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
     debug = serializers.BooleanField(required=False)
 
 

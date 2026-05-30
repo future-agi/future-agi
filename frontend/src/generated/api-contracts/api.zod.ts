@@ -1278,6 +1278,9 @@ export const AccountsActivationStateListQueryParams = zod.object({
   "stale_reason": zod.string().optional(),
   "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']).optional(),
   "mode": zod.string().optional(),
+  "quick_start_goal": zod.string().optional(),
+  "quick_start_id": zod.string().optional(),
+  "quick_start_primary_path": zod.string().optional(),
   "debug": zod.boolean().optional()
 })
 

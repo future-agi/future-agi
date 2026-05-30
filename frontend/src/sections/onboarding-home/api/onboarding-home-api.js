@@ -4,7 +4,10 @@ import {
   normalizeProductPath,
   normalizeSampleProject,
 } from "../activation-state-utils";
-import { normalizeSetupQuickStartAttribution } from "src/sections/auth/jwt/setup-org-quick-starts";
+import {
+  normalizeSetupQuickStartAttribution,
+  readPersistedSetupQuickStartAttribution,
+} from "src/sections/auth/jwt/setup-org-quick-starts";
 
 export const ONBOARDING_HOME_QUERY_KEY = "onboarding-home";
 
@@ -32,6 +35,9 @@ export const onboardingHomeQueryKeys = {
     staleReason,
     contextStatus,
     mode,
+    quickStartGoal,
+    quickStartId,
+    quickStartPrimaryPath,
   } = {}) => [
     ONBOARDING_HOME_QUERY_KEY,
     "activation-state",
@@ -50,6 +56,9 @@ export const onboardingHomeQueryKeys = {
       staleReason,
       contextStatus,
       mode,
+      quickStartGoal,
+      quickStartId,
+      quickStartPrimaryPath,
     }),
   ],
 };
@@ -69,6 +78,20 @@ const normalizeSampleProjectPayload = (payload) => {
   };
 };
 
+const setupQuickStartAttributionParams = (params = {}) => {
+  const attribution = normalizeSetupQuickStartAttribution({
+    quickStartGoal: params.quickStartGoal ?? params.quick_start_goal,
+    quickStartId: params.quickStartId ?? params.quick_start_id,
+    quickStartPrimaryPath:
+      params.quickStartPrimaryPath ?? params.quick_start_primary_path,
+  });
+  return compactObject({
+    quick_start_goal: attribution.quickStartGoal,
+    quick_start_id: attribution.quickStartId,
+    quick_start_primary_path: attribution.quickStartPrimaryPath,
+  });
+};
+
 const activationStateParams = (params = {}) =>
   compactObject({
     source: params.source,
@@ -83,6 +106,7 @@ const activationStateParams = (params = {}) =>
     stale_reason: params.staleReason ?? params.stale_reason,
     context_status: params.contextStatus ?? params.context_status,
     mode: params.mode,
+    ...setupQuickStartAttributionParams(params),
   });
 
 const goalPayload = (payload = {}) =>
@@ -120,12 +144,26 @@ const activationEventMetadata = (metadata) => {
 };
 
 const activationAttributionMetadata = (payload = {}) => {
-  const attribution = normalizeSetupQuickStartAttribution({
+  const topLevelAttribution = normalizeSetupQuickStartAttribution({
     quickStartGoal: payload.quickStartGoal ?? payload.quick_start_goal,
     quickStartId: payload.quickStartId ?? payload.quick_start_id,
     quickStartPrimaryPath:
       payload.quickStartPrimaryPath ?? payload.quick_start_primary_path,
   });
+  const metadataAttribution = normalizeSetupQuickStartAttribution({
+    quickStartGoal:
+      payload.metadata?.quickStartGoal ?? payload.metadata?.quick_start_goal,
+    quickStartId:
+      payload.metadata?.quickStartId ?? payload.metadata?.quick_start_id,
+    quickStartPrimaryPath:
+      payload.metadata?.quickStartPrimaryPath ??
+      payload.metadata?.quick_start_primary_path,
+  });
+  const attribution = topLevelAttribution.quickStartId
+    ? topLevelAttribution
+    : metadataAttribution.quickStartId
+      ? metadataAttribution
+      : readPersistedSetupQuickStartAttribution();
   return compactObject({
     quick_start_goal: attribution.quickStartGoal,
     quick_start_id: attribution.quickStartId,

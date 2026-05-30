@@ -20,6 +20,17 @@ const REQUIRE_REAL_SIGNUP = envFlag("ONBOARDING_REAL_SIGNUP");
 const ALLOW_REMOTE = envFlag("ONBOARDING_REAL_SIGNUP_ALLOW_REMOTE");
 const SAMPLE_ONLY = envFlag("ONBOARDING_REAL_SIGNUP_SAMPLE_ONLY");
 const REPORT_OUTPUT = process.env.ONBOARDING_SMOKE_REPORT_OUTPUT || "";
+const OBSERVE_QUICK_START_PARAMS = {
+  source: "setup_org",
+  quick_start_id: "observe",
+  quick_start_goal: "monitor_production_ai_app",
+  quick_start_primary_path: "observe",
+};
+const OBSERVE_QUICK_START_METADATA = {
+  quick_start_id: OBSERVE_QUICK_START_PARAMS.quick_start_id,
+  quick_start_goal: OBSERVE_QUICK_START_PARAMS.quick_start_goal,
+  quick_start_primary_path: OBSERVE_QUICK_START_PARAMS.quick_start_primary_path,
+};
 
 async function main() {
   assert(REQUIRE_REAL_SIGNUP, "Set ONBOARDING_REAL_SIGNUP=1 for this smoke.");
@@ -263,12 +274,27 @@ async function main() {
     );
 
     await page.waitForFunction(
-      () =>
-        window.location.pathname === "/dashboard/home" &&
-        new URLSearchParams(window.location.search).get("source") ===
-          "setup_org",
+      ({ requireObserveQuickStart }) => {
+        const params = new URLSearchParams(window.location.search);
+        return (
+          window.location.pathname === "/dashboard/home" &&
+          params.get("source") === "setup_org" &&
+          (!requireObserveQuickStart ||
+            (params.get("quick_start_id") === "observe" &&
+              params.get("quick_start_goal") === "monitor_production_ai_app" &&
+              params.get("quick_start_primary_path") === "observe"))
+        );
+      },
       { timeout: 45000 },
+      { requireObserveQuickStart: !SAMPLE_ONLY },
     );
+    const setupOrgHomeUrl = page.url();
+    if (!SAMPLE_ONLY) {
+      assert(
+        hasObserveQuickStartParams(setupOrgHomeUrl),
+        `Expected setup-org home URL quick-start attribution, got ${setupOrgHomeUrl}`,
+      );
+    }
     await expectNoVisibleText(page, "Invite your team later", {
       timeout: 1000,
     });
@@ -479,6 +505,7 @@ async function main() {
             (payload) => payload?.event_name === "sample_trace_detail_opened",
           ),
           sample_trace_url: sampleTraceUrl,
+          setup_org_home_url: setupOrgHomeUrl,
           screenshot: SCREENSHOT_PATH,
           signup_post: evidence.signupPosts[0],
           token_post: evidence.tokenPosts[0],
@@ -611,7 +638,8 @@ async function main() {
             payload?.stage === "review_first_trace" &&
             payload?.artifact_id === realTrace.traceId &&
             payload?.project_id === realProject.projectId &&
-            payload?.is_sample === false,
+            payload?.is_sample === false &&
+            hasObserveQuickStartMetadata(payload),
         ),
       "Expected real trace detail activation event.",
       45000,
@@ -848,7 +876,8 @@ async function main() {
             payload?.metadata?.source_type === "trace_project" &&
             payload?.metadata?.eval_type === "code" &&
             payload?.metadata?.run_id === firstEvalRunId &&
-            payload?.metadata?.step === "run",
+            payload?.metadata?.step === "run" &&
+            hasObserveQuickStartMetadata(payload),
         ),
       "Expected eval run completed activation event.",
       45000,
@@ -1111,7 +1140,8 @@ async function main() {
             payload?.metadata?.run_id === repairEvalRunId &&
             payload?.metadata?.previous_run_id === firstEvalRunId &&
             payload?.metadata?.rerun_from === "source_fix" &&
-            payload?.metadata?.review_outcome === "result_summary_reviewed",
+            payload?.metadata?.review_outcome === "result_summary_reviewed" &&
+            hasObserveQuickStartMetadata(payload),
         ),
       "Expected eval first quality loop completion activation event.",
       45000,
@@ -1175,7 +1205,8 @@ async function main() {
           payload?.event_name === "sample_trace_detail_opened" &&
           payload?.primary_path === "sample" &&
           payload?.stage === "review_first_trace" &&
-          payload?.is_sample === true,
+          payload?.is_sample === true &&
+          hasObserveQuickStartMetadata(payload),
       ),
       "Expected sample trace detail activation event.",
     );
@@ -1185,7 +1216,8 @@ async function main() {
           payload?.event_name === "sample_to_real_setup_clicked" &&
           payload?.primary_path === "sample" &&
           payload?.stage === "connect_real_data" &&
-          payload?.is_sample === true,
+          payload?.is_sample === true &&
+          hasObserveQuickStartMetadata(payload),
       ),
       "Expected sample to real setup activation event.",
     );
@@ -1201,10 +1233,12 @@ async function main() {
       "Expected real setup focus event after sample trace review.",
     );
     assert(
-      evidence.activationStateRequests.some(
-        (request) => request.source === "setup_org",
+      evidence.activationStateRequests.some((request) =>
+        hasObserveQuickStartParams(request),
       ),
-      "Expected activation-state request with source=setup_org.",
+      `Expected activation-state request with setup-org quick-start attribution, got ${JSON.stringify(
+        evidence.activationStateRequests,
+      )}`,
     );
     assert(
       browserState.initialRender === "done",
@@ -1360,6 +1394,7 @@ async function main() {
             payload?.source === "sample_trace_review",
         ),
         sample_trace_url: sampleTraceUrl,
+        setup_org_home_url: setupOrgHomeUrl,
         real_setup_return_url: realSetupReturnUrl,
         screenshot: SCREENSHOT_PATH,
         setup_posts: evidence.setupPosts,
@@ -1985,6 +2020,36 @@ function summarizeEvalUsageResponse(payload = {}) {
     stats: result.stats,
     template_id: result.template_id,
   };
+}
+
+function hasObserveQuickStartParams(value) {
+  const params = paramsObject(value);
+  return Object.entries(OBSERVE_QUICK_START_PARAMS).every(
+    ([key, expected]) => params?.[key] === expected,
+  );
+}
+
+function hasObserveQuickStartMetadata(payload) {
+  const metadata = paramsObject(payload?.metadata);
+  return Object.entries(OBSERVE_QUICK_START_METADATA).every(
+    ([key, expected]) => metadata?.[key] === expected,
+  );
+}
+
+function paramsObject(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    const url = safeUrl(value);
+    if (!url) return {};
+    return Object.fromEntries(url.searchParams);
+  }
+  if (value instanceof URLSearchParams) {
+    return Object.fromEntries(value);
+  }
+  if (typeof value === "object") {
+    return value;
+  }
+  return {};
 }
 
 async function waitForCondition(condition, message, timeout = 30000) {
