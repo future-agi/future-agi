@@ -1222,7 +1222,11 @@ def get_annotation_graph_data(
         trace_id_values = trace_ids_queryset.values("id")
         base_queryset = Score.objects.filter(
             Q(trace_id__in=trace_id_values)
-            | Q(observation_span__trace_id__in=trace_id_values),
+            | Q(
+                observation_span_id__in=ObservationSpan.objects.filter(
+                    trace_id__in=trace_id_values
+                ).values("id")
+            ),
             label_id=annotation_label_id,
             deleted=False,
             created_at__gte=start_date,
