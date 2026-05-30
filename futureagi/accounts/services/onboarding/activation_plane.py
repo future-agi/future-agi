@@ -4,6 +4,10 @@ from dataclasses import dataclass
 
 from django.conf import settings
 
+from accounts.services.onboarding.activation_export_registry import (
+    activation_export_paid_plan_values,
+)
+
 
 @dataclass(frozen=True)
 class ActivationExportDecision:
@@ -21,9 +25,6 @@ class _SubscriptionFacts:
     status: str
     paid: bool
     suppression_reason: str | None = None
-
-
-PAID_PLAN_VALUES = {"payg", "boost", "scale", "enterprise", "custom"}
 
 
 def _deployment_mode():
@@ -87,7 +88,7 @@ def _subscription_facts(organization) -> _SubscriptionFacts:
         )
 
     plan = str(getattr(subscription, "plan", "") or "")
-    paid = plan in PAID_PLAN_VALUES
+    paid = plan in activation_export_paid_plan_values()
     return _SubscriptionFacts(
         plan_tier=plan,
         status=status,

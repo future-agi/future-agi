@@ -5,6 +5,11 @@ from django.core.exceptions import ValidationError
 from django.utils import timezone
 
 from accounts.models import OnboardingPaidCloudActivationExportLog
+from accounts.services.onboarding.activation_export_registry import (
+    activation_export_paid_plan_values,
+    get_activation_export_config,
+    matching_activation_export_cohorts,
+)
 from accounts.services.onboarding.activation_exporter import (
     assert_activation_export_payload_safe,
     export_activation_fact,
@@ -143,7 +148,10 @@ def test_paid_cloud_export_write_is_idempotent_and_sanitized(
         "accounts.services.onboarding.activation_exporter.activation_export_decision",
         lambda organization: paid_decision,
     )
-    state = _activation_state()
+    state = {
+        **_activation_state(),
+        "stage": "waiting_for_first_trace_sample_available",
+    }
 
     first = export_activation_fact(
         user=user,
@@ -186,6 +194,9 @@ def test_paid_cloud_export_write_is_idempotent_and_sanitized(
         "sample_trace_available": True,
         "traces": 0,
     }
+    assert "sample_reviewed_no_real_trace" in {
+        cohort["cohort_key"] for cohort in payload["journey"]["cohorts"]
+    }
     assert "href" not in payload["route_availability"]["path_observe"]
     assert "last_meaningful_event" not in payload
 
@@ -224,6 +235,26 @@ def test_suppressed_export_write_records_reason(
 def test_export_payload_rejects_sensitive_keys():
     with pytest.raises(ValidationError):
         assert_activation_export_payload_safe({"token": "unsafe"})
+
+
+def test_activation_export_config_drives_paid_plans_and_cohorts():
+    config = get_activation_export_config()
+
+    assert config["schema_version"] == (
+        "onboarding-activation-export-config-2026-05-30.v1"
+    )
+    assert PlanChoices.PAYG.value in activation_export_paid_plan_values()
+
+    state = {
+        **_activation_state(),
+        "primary_path": "sample",
+        "stage": "connect_real_data",
+    }
+    cohorts = matching_activation_export_cohorts(state)
+
+    assert [cohort["cohort_key"] for cohort in cohorts] == [
+        "sample_reviewed_no_real_trace"
+    ]
 
 
 @pytest.mark.django_db

@@ -1,0 +1,271 @@
+schema_version: onboarding-activation-export-config-2026-05-30.v1
+
+paid_plan_values:
+  - payg
+  - boost
+  - scale
+  - enterprise
+  - custom
+
+payload_allowlist:
+  action_keys:
+    - activation_stage
+    - completion_event
+    - id
+    - is_sample
+    - kind
+    - label
+    - product_path
+    - route_key
+    - success_event
+  signal_keys:
+    - agent_first_loop_completed
+    - agent_has_agent
+    - agent_has_agent_version
+    - agent_has_eval_coverage
+    - agent_has_review
+    - agent_has_run
+    - agent_has_scenario
+    - agent_multiple_scenarios
+    - agent_permission_limited
+    - agent_prototype_runs
+    - agent_run_failed
+    - agent_run_status
+    - agent_sample_count
+    - agent_voice_feature_unavailable
+    - agents
+    - alerts
+    - dashboards
+    - datasets
+    - eval_failure_count
+    - eval_first_loop_completed
+    - eval_group_count
+    - eval_has_completed_run
+    - eval_has_failure_action
+    - eval_has_failures
+    - eval_has_review
+    - eval_has_scorer
+    - eval_has_source
+    - eval_is_sample_only
+    - eval_permission_limited
+    - eval_run_count
+    - eval_run_status
+    - eval_runs
+    - eval_sample_source_count
+    - eval_scorer_count
+    - eval_source_count
+    - evals
+    - gateway_available
+    - gateway_first_loop_completed
+    - gateway_guard_blocked
+    - gateway_has_failure_repair
+    - gateway_has_key
+    - gateway_has_policy
+    - gateway_has_provider
+    - gateway_has_request
+    - gateway_has_review
+    - gateway_is_sample_only
+    - gateway_keys
+    - gateway_permission_limited
+    - gateway_policies
+    - gateway_policy_synced
+    - gateway_provider_count
+    - gateway_provider_model_count
+    - gateway_request_cache_hit
+    - gateway_request_fallback_used
+    - gateway_request_guardrail_triggered
+    - gateway_request_is_error
+    - gateway_request_latency_ms
+    - gateway_request_status_code
+    - gateway_requests
+    - gateway_sample_request_count
+    - observe_projects
+    - prompt_committed_version_exists
+    - prompt_comparison_completed
+    - prompt_comparisons
+    - prompt_first_loop_completed
+    - prompt_next_loop_action_exists
+    - prompt_run_exists
+    - prompt_sample_templates
+    - prompt_templates
+    - prompt_versions
+    - provider_keys
+    - sample_project_opened
+    - sample_signal_viewed
+    - sample_trace_available
+    - sample_trace_reviewed
+    - team_invites
+    - trace_reviews
+    - traces
+    - voice_agents
+    - voice_call_failed
+    - voice_calls
+    - voice_first_loop_completed
+    - voice_has_agent
+    - voice_has_call
+    - voice_has_completed_call
+    - voice_has_review
+    - voice_has_scenario
+    - voice_has_success_criteria
+    - voice_has_test
+    - voice_is_sample_only
+    - voice_permission_limited
+    - voice_reviews
+    - voice_sample_call_count
+    - voice_simulations
+
+blocked_payload_keys:
+  - api_key
+  - authorization
+  - gateway_key_prefix
+  - gateway_provider_credential_id
+  - input
+  - messages
+  - output
+  - password
+  - prompt
+  - provider_credential_id
+  - provider_credentials
+  - secret
+  - token
+  - trace_payload
+
+cohort_rules:
+  - cohort_key: choose_goal
+    description: User has not selected the first product goal.
+    owner: product
+    primary_path: any
+    stages:
+      - choose_goal
+    signal_equals: {}
+    target_action_id: choose_onboarding_goal
+    target_success_event: onboarding_goal_selected
+    priority: 100
+
+  - cohort_key: observe_connect_project
+    description: User selected observability but has not created the first observe project.
+    owner: product
+    primary_path: observe
+    stages:
+      - connect_observability
+    signal_equals:
+      observe_projects: 0
+    target_action_id: create_observe_project
+    target_success_event: observe_project_created
+    priority: 95
+
+  - cohort_key: observe_waiting_first_trace
+    description: User created an observe project but has not sent a real trace.
+    owner: product
+    primary_path: observe
+    stages:
+      - waiting_for_first_trace
+      - waiting_for_first_trace_sample_available
+      - connect_real_data
+    signal_equals:
+      traces: 0
+    target_action_id: send_first_trace
+    target_success_event: trace_received
+    priority: 95
+
+  - cohort_key: sample_reviewed_no_real_trace
+    description: User saw sample signal but still needs real data.
+    owner: product
+    primary_path: any
+    stages:
+      - waiting_for_first_trace_sample_available
+      - connect_real_data
+      - review_first_trace
+    signal_equals:
+      sample_trace_available: true
+      traces: 0
+    target_action_id: send_first_trace
+    target_success_event: trace_received
+    priority: 90
+
+  - cohort_key: observe_review_first_trace
+    description: User sent a first trace but has not reviewed it.
+    owner: product
+    primary_path: observe
+    stages:
+      - review_first_trace
+    signal_equals:
+      trace_reviewed: false
+    target_action_id: review_first_trace
+    target_success_event: trace_reviewed
+    priority: 90
+
+  - cohort_key: observe_create_quality_check
+    description: User reviewed trace signal and needs a repeatable quality check.
+    owner: product
+    primary_path: observe
+    stages:
+      - create_trace_evaluator
+    signal_equals:
+      first_loop_completed: false
+    target_action_id: create_trace_evaluator
+    target_success_event: first_quality_loop_completed
+    priority: 85
+
+  - cohort_key: prompt_create_first
+    description: User chose prompt improvement but has not created a prompt.
+    owner: product
+    primary_path: prompt
+    stages:
+      - start_prompt
+    signal_equals:
+      prompt_templates: 0
+    target_action_id: create_prompt
+    target_success_event: prompt_created
+    priority: 90
+
+  - cohort_key: prompt_run_first_test
+    description: User has a prompt but has not run the first test.
+    owner: product
+    primary_path: prompt
+    stages:
+      - run_prompt_test
+    signal_equals:
+      prompt_run_exists: false
+    target_action_id: run_prompt_test
+    target_success_event: prompt_test_run_completed
+    priority: 85
+
+  - cohort_key: agent_run_first_scenario
+    description: User is prototyping an agent but has not produced a first run.
+    owner: product
+    primary_path: agent
+    stages:
+      - create_agent
+      - run_agent_scenario
+    signal_equals:
+      agent_has_run: false
+    target_action_id: run_agent_scenario
+    target_success_event: agent_prototype_run_completed
+    priority: 85
+
+  - cohort_key: gateway_send_first_request
+    description: User has gateway intent but has not sent the first gateway request.
+    owner: product
+    primary_path: gateway
+    stages:
+      - create_gateway_key
+      - run_gateway_request
+    signal_equals:
+      gateway_has_request: false
+    target_action_id: gateway_send_first_request
+    target_success_event: gateway_request_seen
+    priority: 85
+
+  - cohort_key: voice_review_first_call
+    description: User connected voice workflow but has not reviewed a completed call.
+    owner: product
+    primary_path: voice
+    stages:
+      - run_voice_test_call
+      - review_voice_call
+    signal_equals:
+      voice_has_review: false
+    target_action_id: review_voice_call
+    target_success_event: voice_call_reviewed
+    priority: 80

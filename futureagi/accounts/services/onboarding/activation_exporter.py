@@ -11,7 +11,13 @@ from django.core.serializers.json import DjangoJSONEncoder
 from django.utils import timezone
 
 from accounts.models import OnboardingPaidCloudActivationExportLog
-from accounts.services.onboarding.activation_events import SENSITIVE_METADATA_KEYS
+from accounts.services.onboarding.activation_export_registry import (
+    activation_export_blocked_payload_keys,
+    activation_export_safe_action_keys,
+    activation_export_safe_signal_keys,
+    get_activation_export_config,
+    matching_activation_export_cohorts,
+)
 from accounts.services.onboarding.activation_plane import (
     ActivationExportDecision,
     activation_export_decision,
@@ -26,119 +32,6 @@ from accounts.services.onboarding.signal_resolver import (
 )
 
 ACTIVATION_EXPORT_SCHEMA_VERSION = "onboarding-activation-export-2026-05-30.v1"
-
-SAFE_SIGNAL_KEYS = {
-    "provider_keys",
-    "datasets",
-    "evals",
-    "eval_runs",
-    "eval_source_count",
-    "eval_scorer_count",
-    "eval_group_count",
-    "eval_run_count",
-    "eval_failure_count",
-    "eval_has_source",
-    "eval_has_scorer",
-    "eval_has_completed_run",
-    "eval_has_failures",
-    "eval_has_review",
-    "eval_has_failure_action",
-    "eval_first_loop_completed",
-    "eval_is_sample_only",
-    "eval_sample_source_count",
-    "eval_permission_limited",
-    "prompt_templates",
-    "prompt_versions",
-    "prompt_comparisons",
-    "prompt_sample_templates",
-    "prompt_run_exists",
-    "prompt_committed_version_exists",
-    "prompt_comparison_completed",
-    "prompt_next_loop_action_exists",
-    "prompt_first_loop_completed",
-    "agents",
-    "agent_prototype_runs",
-    "agent_sample_count",
-    "agent_has_agent",
-    "agent_has_agent_version",
-    "agent_has_scenario",
-    "agent_has_run",
-    "agent_run_failed",
-    "agent_has_review",
-    "agent_has_eval_coverage",
-    "agent_multiple_scenarios",
-    "agent_first_loop_completed",
-    "agent_voice_feature_unavailable",
-    "agent_permission_limited",
-    "observe_projects",
-    "traces",
-    "trace_reviews",
-    "gateway_keys",
-    "gateway_requests",
-    "gateway_policies",
-    "gateway_available",
-    "gateway_provider_count",
-    "gateway_provider_model_count",
-    "gateway_has_provider",
-    "gateway_has_key",
-    "gateway_has_request",
-    "gateway_request_status_code",
-    "gateway_request_is_error",
-    "gateway_request_latency_ms",
-    "gateway_request_cache_hit",
-    "gateway_request_fallback_used",
-    "gateway_request_guardrail_triggered",
-    "gateway_has_review",
-    "gateway_has_failure_repair",
-    "gateway_has_policy",
-    "gateway_policy_synced",
-    "gateway_is_sample_only",
-    "gateway_sample_request_count",
-    "gateway_permission_limited",
-    "gateway_guard_blocked",
-    "gateway_first_loop_completed",
-    "voice_agents",
-    "voice_simulations",
-    "voice_calls",
-    "voice_reviews",
-    "voice_has_agent",
-    "voice_has_scenario",
-    "voice_has_test",
-    "voice_has_call",
-    "voice_has_completed_call",
-    "voice_call_failed",
-    "voice_has_review",
-    "voice_has_success_criteria",
-    "voice_first_loop_completed",
-    "voice_is_sample_only",
-    "voice_sample_call_count",
-    "voice_permission_limited",
-    "team_invites",
-    "dashboards",
-    "alerts",
-    "sample_project_opened",
-    "sample_trace_available",
-    "sample_signal_viewed",
-    "sample_trace_reviewed",
-}
-
-SAFE_ACTION_KEYS = {
-    "id",
-    "kind",
-    "label",
-    "completion_event",
-    "success_event",
-    "product_path",
-    "activation_stage",
-    "route_key",
-    "is_sample",
-}
-
-SENSITIVE_EXPORT_KEYS = SENSITIVE_METADATA_KEYS | {
-    "gateway_key_prefix",
-    "gateway_provider_credential_id",
-    "provider_credential_id",
-}
 
 
 @dataclass(frozen=True)
@@ -194,7 +87,9 @@ def _walk_keys(value):
 
 
 def assert_activation_export_payload_safe(payload):
-    unsafe_keys = SENSITIVE_EXPORT_KEYS.intersection(_walk_keys(payload))
+    unsafe_keys = activation_export_blocked_payload_keys().intersection(
+        _walk_keys(payload)
+    )
     if unsafe_keys:
         raise ValidationError("Activation export payload contains sensitive keys.")
     _json_safe(payload)
@@ -207,7 +102,7 @@ def _safe_signals(activation_state):
         return {}
     return {
         key: _json_safe(signals[key])
-        for key in sorted(SAFE_SIGNAL_KEYS)
+        for key in sorted(activation_export_safe_signal_keys())
         if key in signals
     }
 
@@ -217,7 +112,7 @@ def _safe_action(action):
         return None
     return {
         key: _json_safe(action[key])
-        for key in sorted(SAFE_ACTION_KEYS)
+        for key in sorted(activation_export_safe_action_keys())
         if key in action
     }
 
@@ -325,6 +220,10 @@ def build_activation_export_payload(
         "signals": _safe_signals(activation_state),
         "route_availability": _safe_route_availability(activation_state),
         "lifecycle": _safe_lifecycle(activation_state),
+        "journey": {
+            "config_schema_version": get_activation_export_config()["schema_version"],
+            "cohorts": matching_activation_export_cohorts(activation_state),
+        },
     }
     return assert_activation_export_payload_safe(_json_safe(payload))
 
