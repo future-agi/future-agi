@@ -9,6 +9,14 @@ class Comparator(ABC):
         pass
 
 class CosineSimilarity(Comparator):
+    """Token-vector cosine similarity.
+
+    Tokenization is case-insensitive (see ``_tokenize``). Empty / whitespace-only
+    inputs are handled consistently with the other grounded comparators:
+    two empty inputs are treated as fully similar (1.0); one empty and one
+    non-empty are treated as fully dissimilar (0.0).
+    """
+
     def compare(self, string1, string2):
         # Tokenize and create a combined set of unique words
         combined_set = self._create_combined_set(string1, string2)
@@ -18,9 +26,13 @@ class CosineSimilarity(Comparator):
         dot_product = sum(p*q for p, q in zip(vector1, vector2, strict=False))
         magnitude_vec1 = math.sqrt(sum([val**2 for val in vector1]))
         magnitude_vec2 = math.sqrt(sum([val**2 for val in vector2]))
+        if magnitude_vec1 == 0 and magnitude_vec2 == 0:
+            # Both inputs produced no tokens (e.g. empty / whitespace-only).
+            # Treat as fully similar, matching Jaccard / Sorensen-Dice.
+            return 1.0
         if magnitude_vec1 * magnitude_vec2 == 0:
-            # Avoid division by zero
-            return 0
+            # Exactly one side is empty: fully dissimilar.
+            return 0.0
         return dot_product / (magnitude_vec1 * magnitude_vec2)
 
     def _tokenize(self, string):

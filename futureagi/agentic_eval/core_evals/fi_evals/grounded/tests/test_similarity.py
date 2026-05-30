@@ -58,47 +58,89 @@ class TestSorensenDiceSimilarityCaseInsensitive:
 
 
 class TestSimilarityEdgeCases:
-    """Empty / whitespace-only inputs must not raise ZeroDivisionError."""
+    """Empty / whitespace-only inputs must not raise ZeroDivisionError.
+
+    All three comparators (Cosine, Jaccard, Sorensen-Dice) now share the same
+    edge-case contract so callers dispatching through ``GroundedEvaluator`` get
+    consistent results regardless of which comparator they configure.
+    """
 
     @pytest.mark.parametrize(
         "comparator",
-        [JaccardSimilarity(), SorensenDiceSimilarity()],
-        ids=["jaccard", "sorensen_dice"],
+        [CosineSimilarity(), JaccardSimilarity(), SorensenDiceSimilarity()],
+        ids=["cosine", "jaccard", "sorensen_dice"],
     )
     def test_both_empty_strings_return_1_without_dividing_by_zero(self, comparator):
-        # Pre-fix this raised ZeroDivisionError; post-fix returns 1.0 (defined
-        # similarity for two identical-but-empty inputs).
+        # Pre-fix the Jaccard / Sorensen-Dice paths raised ZeroDivisionError
+        # and CosineSimilarity silently returned 0; all three now return 1.0
+        # for two identical-but-empty inputs.
         assert comparator.compare("", "") == 1.0
 
     @pytest.mark.parametrize(
         "comparator",
-        [JaccardSimilarity(), SorensenDiceSimilarity()],
-        ids=["jaccard", "sorensen_dice"],
+        [CosineSimilarity(), JaccardSimilarity(), SorensenDiceSimilarity()],
+        ids=["cosine", "jaccard", "sorensen_dice"],
     )
     def test_both_whitespace_only_return_1_without_dividing_by_zero(self, comparator):
         assert comparator.compare("   ", "\t\n") == 1.0
 
     @pytest.mark.parametrize(
         "comparator",
-        [JaccardSimilarity(), SorensenDiceSimilarity()],
-        ids=["jaccard", "sorensen_dice"],
+        [CosineSimilarity(), JaccardSimilarity(), SorensenDiceSimilarity()],
+        ids=["cosine", "jaccard", "sorensen_dice"],
     )
     def test_one_empty_one_nonempty_returns_zero(self, comparator):
         assert comparator.compare("", "hello world") == 0.0
 
     @pytest.mark.parametrize(
         "comparator",
-        [JaccardSimilarity(), SorensenDiceSimilarity()],
-        ids=["jaccard", "sorensen_dice"],
+        [CosineSimilarity(), JaccardSimilarity(), SorensenDiceSimilarity()],
+        ids=["cosine", "jaccard", "sorensen_dice"],
     )
     def test_completely_disjoint_token_sets(self, comparator):
         assert comparator.compare("alpha beta", "gamma delta") == 0.0
 
     @pytest.mark.parametrize(
         "comparator",
-        [JaccardSimilarity(), SorensenDiceSimilarity()],
-        ids=["jaccard", "sorensen_dice"],
+        [CosineSimilarity(), JaccardSimilarity(), SorensenDiceSimilarity()],
+        ids=["cosine", "jaccard", "sorensen_dice"],
     )
     def test_unicode_case_folding(self, comparator):
         # Python's str.lower() handles common unicode case pairs.
         assert comparator.compare("ÉCOLE café", "école CAFÉ") == 1.0
+
+
+class TestCrossComparatorEdgeCaseConsistency:
+    """Explicit guarantee: Cosine, Jaccard, and Sorensen-Dice agree on edge cases.
+
+    Added in response to review feedback (#653 thread): empty-input semantics
+    must not diverge across comparators, since ``GroundedEvaluator`` dispatches
+    them interchangeably and callers may apply a single ``failure_threshold``
+    across runs.
+    """
+
+    COMPARATORS = [
+        ("cosine", CosineSimilarity()),
+        ("jaccard", JaccardSimilarity()),
+        ("sorensen_dice", SorensenDiceSimilarity()),
+    ]
+
+    def _all_return(self, inputs, expected):
+        s1, s2 = inputs
+        for name, comparator in self.COMPARATORS:
+            actual = comparator.compare(s1, s2)
+            assert actual == pytest.approx(expected), (
+                f"{name}.compare({s1!r}, {s2!r}) = {actual}, expected {expected}"
+            )
+
+    def test_all_comparators_agree_on_both_empty(self):
+        self._all_return(("", ""), 1.0)
+
+    def test_all_comparators_agree_on_one_empty(self):
+        self._all_return(("", "hello world"), 0.0)
+
+    def test_all_comparators_agree_on_identical_nonempty(self):
+        self._all_return(("hello world", "hello world"), 1.0)
+
+    def test_all_comparators_agree_on_case_only_differences(self):
+        self._all_return(("Hello WORLD", "hello world"), 1.0)
