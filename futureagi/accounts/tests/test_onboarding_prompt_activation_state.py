@@ -141,7 +141,7 @@ def test_prompt_run_without_committed_version_returns_save_baseline(
 
 
 @pytest.mark.django_db
-def test_single_prompt_version_without_comparison_returns_save_baseline(
+def test_single_prompt_version_without_comparison_returns_second_version_bridge(
     organization,
     workspace,
     user,
@@ -161,8 +161,9 @@ def test_single_prompt_version_without_comparison_returns_save_baseline(
 
     payload = _prompt_state(user, organization, workspace)
 
-    assert payload["stage"] == "save_prompt_version"
-    assert payload["recommended_action"]["id"] == "save_prompt_version"
+    assert payload["stage"] == "create_second_prompt_version"
+    assert payload["recommended_action"]["id"] == "create_second_prompt_version"
+    assert "onboarding=compare" in payload["recommended_action"]["href"]
     assert payload["prompt"]["has_committed_version"] is True
     assert payload["prompt"]["has_comparable_versions"] is False
 

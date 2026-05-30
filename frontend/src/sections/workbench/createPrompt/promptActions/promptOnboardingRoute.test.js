@@ -33,6 +33,7 @@ describe("promptOnboardingRoute", () => {
       ["create_prompt", PROMPT_ONBOARDING_MODES.CREATE_PROMPT],
       ["run_prompt_test", PROMPT_ONBOARDING_MODES.RUN_TEST],
       ["save_prompt_version", PROMPT_ONBOARDING_MODES.SAVE_VERSION],
+      ["create_second_prompt_version", PROMPT_ONBOARDING_MODES.COMPARE],
       ["compare_prompt_versions", PROMPT_ONBOARDING_MODES.COMPARE],
       ["prompt_next_loop", PROMPT_ONBOARDING_MODES.ADD_FAILURE],
     ].forEach(([journeyStep, mode]) => {

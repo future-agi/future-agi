@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   axiosPost: vi.fn(),
   invalidateQueries: vi.fn(),
   recordActivationEvent: vi.fn(),
+  testResult: null,
   runTest: vi.fn(),
   updateDraftMutate: vi.fn(),
   updateDraftMutateAsync: vi.fn(),
@@ -25,6 +26,19 @@ vi.mock("@tanstack/react-query", async () => {
     useQueryClient: () => ({
       invalidateQueries: mocks.invalidateQueries,
     }),
+  };
+});
+
+vi.mock("react-router", async () => {
+  const actual = await vi.importActual("react-router");
+  return {
+    ...actual,
+    useParams: () => {
+      const match = window.location.pathname.match(
+        /^\/dashboard\/evaluations\/create\/([^/]+)/,
+      );
+      return match ? { draftId: decodeURIComponent(match[1]) } : {};
+    },
   };
 });
 
@@ -62,9 +76,14 @@ vi.mock("src/components/resizablePanels/ResizablePanels", () => ({
 vi.mock("./TestPlayground", async () => {
   const React = await vi.importActual("react");
   const TestPlaygroundMock = React.forwardRef((props, ref) => {
-    const { onReadyChange } = props;
+    const { onReadyChange, onTestResult } = props;
     React.useImperativeHandle(ref, () => ({
-      runTest: mocks.runTest,
+      runTest: (templateId) => {
+        mocks.runTest(templateId);
+        if (mocks.testResult) {
+          onTestResult?.(true, mocks.testResult);
+        }
+      },
     }));
     React.useEffect(() => {
       onReadyChange?.(true);
@@ -75,6 +94,7 @@ vi.mock("./TestPlayground", async () => {
   TestPlaygroundMock.displayName = "TestPlaygroundMock";
   TestPlaygroundMock.propTypes = {
     onReadyChange: () => null,
+    onTestResult: () => null,
   };
 
   return {
@@ -105,6 +125,7 @@ vi.mock("../hooks/useCompositeEval", () => ({
 describe("EvalCreatePage onboarding source handoff", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.testResult = null;
     mocks.axiosPost.mockResolvedValue({
       data: { result: { id: "eval-draft-1" } },
     });
@@ -235,6 +256,53 @@ describe("EvalCreatePage onboarding source handoff", () => {
       expect(mocks.updateDraftMutateAsync).toHaveBeenCalled(),
     );
     expect(mocks.runTest).toHaveBeenCalledWith("eval-draft-1");
+  });
+
+  it("opens the first run review route with the returned usage log id", async () => {
+    mocks.testResult = {
+      log_id: "log-1",
+      run_id: "provider-run-1",
+      status: "completed",
+    };
+
+    renderWithRouter(<EvalCreatePage />, {
+      route:
+        "/dashboard/evaluations/create/eval-draft-1?source=onboarding&step=run&source_type=trace_project&source_id=project-1",
+    });
+
+    const runButton = await screen.findByRole("button", {
+      name: "Run first eval",
+    });
+    await waitFor(() => expect(runButton).toBeEnabled());
+
+    fireEvent.click(runButton);
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(
+        "/dashboard/evaluations/eval-draft-1",
+      );
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("tab")).toBe("usage");
+      expect(params.get("source")).toBe("onboarding");
+      expect(params.get("step")).toBe("review");
+      expect(params.get("run_id")).toBe("log-1");
+      expect(params.get("source_type")).toBe("trace_project");
+      expect(params.get("source_id")).toBe("project-1");
+    });
+    expect(mocks.recordActivationEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "eval_run_completed",
+        artifactId: "log-1",
+        metadata: expect.objectContaining({
+          eval_id: "eval-draft-1",
+          log_id: "log-1",
+          run_id: "log-1",
+          source_id: "project-1",
+          source_type: "trace_project",
+          step: "run",
+        }),
+      }),
+    );
   });
 
   it("does not record the first-run click event for repair reruns", async () => {

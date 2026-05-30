@@ -265,6 +265,13 @@ journeys:
         tour_anchor: prompt_save_version_button
         label: Save version
         description: Create the baseline for future edits.
+      - id: create_second_prompt_version
+        stage: create_second_prompt_version
+        action_id: create_second_prompt_version
+        success_event: prompt_version_created
+        tour_anchor: prompt_compare_versions_button
+        label: Second version
+        description: Edit, run, and save one more version before comparing.
       - id: compare_prompt_versions
         stage: compare_prompt_versions
         action_id: compare_prompt_versions
@@ -546,6 +553,17 @@ actions:
     estimated_minutes: 2
     requires_permission: prompt:write
     completion_event: prompt_version_created
+    target_path: prompt
+    fallback_route_key: prompt_workbench
+  create_second_prompt_version:
+    kind: improve
+    title: Create a second version
+    description: Edit the baseline, run the prompt again, and save one more version.
+    route_key: prompt_compare_versions
+    cta_label: Create second version
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: prompt:write
     target_path: prompt
     fallback_route_key: prompt_workbench
   compare_prompt_versions:
@@ -1270,6 +1288,22 @@ stages:
       title: Save the prompt version
       description: Save the working version so it can be compared later.
     next:
+      - create_second_prompt_version
+  create_second_prompt_version:
+    progress:
+      build: complete
+      test: complete
+      observe: available
+      ship: available
+      improve: in_progress
+    recommended_action: create_second_prompt_version
+    fallback_action: open_prompt_workbench
+    requires_write: true
+    copy:
+      eyebrow: Prompt version
+      title: Create a second prompt version
+      description: Edit, run, and save one more version before comparing behavior.
+    next:
       - compare_prompt_versions
   compare_prompt_versions:
     progress:
@@ -1765,13 +1799,20 @@ stage_rules:
             primary_path: prompt
         - signal: prompt_comparable_versions_exist
         - signal_not: prompt_comparison_completed
+  - stage: create_second_prompt_version
+    when:
+      all:
+        - context_equals:
+            primary_path: prompt
+        - signal: prompt_committed_version_exists
+        - signal_not: prompt_comparable_versions_exist
   - stage: save_prompt_version
     when:
       all:
         - context_equals:
             primary_path: prompt
         - signal: prompt_run_exists
-        - signal_not: prompt_comparable_versions_exist
+        - signal_not: prompt_committed_version_exists
   - stage: run_prompt_test
     when:
       all:
