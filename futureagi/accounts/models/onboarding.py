@@ -72,6 +72,102 @@ class OnboardingActivationEvent(BaseModel):
         return f"{self.event_name} for {self.workspace_id} at {self.occurred_at}"
 
 
+class OnboardingPaidCloudActivationExportLog(BaseModel):
+    DEPLOYMENT_MODE_CLOUD = "cloud"
+    DEPLOYMENT_MODE_EE = "ee"
+    DEPLOYMENT_MODE_OSS = "oss"
+
+    DEPLOYMENT_MODE_CHOICES = (
+        (DEPLOYMENT_MODE_CLOUD, DEPLOYMENT_MODE_CLOUD),
+        (DEPLOYMENT_MODE_EE, DEPLOYMENT_MODE_EE),
+        (DEPLOYMENT_MODE_OSS, DEPLOYMENT_MODE_OSS),
+    )
+
+    STATUS_READY = "ready"
+    STATUS_SUPPRESSED = "suppressed"
+    STATUS_EXPORTED = "exported"
+    STATUS_FAILED = "failed"
+
+    STATUS_CHOICES = (
+        (STATUS_READY, STATUS_READY),
+        (STATUS_SUPPRESSED, STATUS_SUPPRESSED),
+        (STATUS_EXPORTED, STATUS_EXPORTED),
+        (STATUS_FAILED, STATUS_FAILED),
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        "accounts.Organization",
+        on_delete=models.CASCADE,
+        related_name="onboarding_paid_cloud_activation_export_logs",
+    )
+    workspace = models.ForeignKey(
+        "accounts.Workspace",
+        on_delete=models.CASCADE,
+        related_name="onboarding_paid_cloud_activation_export_logs",
+    )
+    user = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="onboarding_paid_cloud_activation_export_logs",
+    )
+    deployment_mode = models.CharField(
+        max_length=16,
+        choices=DEPLOYMENT_MODE_CHOICES,
+    )
+    run_id = models.UUIDField(db_index=True)
+    region = models.CharField(max_length=16, blank=True, default="")
+    plan_tier = models.CharField(max_length=64, blank=True, default="")
+    schema_version = models.CharField(max_length=96)
+    event_cursor = models.CharField(max_length=160)
+    idempotency_key = models.CharField(max_length=220, db_index=True)
+    status = models.CharField(
+        max_length=16,
+        choices=STATUS_CHOICES,
+        default=STATUS_READY,
+        db_index=True,
+    )
+    suppression_reason = models.CharField(max_length=64, null=True, blank=True)
+    fact_payload = models.JSONField(default=dict, blank=True)
+    exported_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    evaluated_at = models.DateTimeField(default=timezone.now, db_index=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = "accounts_onboarding_paid_cloud_activation_export_log"
+        ordering = ("-evaluated_at", "-created_at")
+        indexes = [
+            models.Index(
+                fields=["status", "evaluated_at"],
+                name="onb_paid_exp_status_eval",
+            ),
+            models.Index(
+                fields=["run_id", "status"],
+                name="onb_paid_exp_run_status",
+            ),
+            models.Index(
+                fields=["workspace", "status", "-evaluated_at"],
+                name="onb_paid_exp_ws_status",
+            ),
+            models.Index(
+                fields=["workspace", "event_cursor"],
+                name="onb_paid_exp_ws_cursor",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["organization", "workspace", "idempotency_key"],
+                condition=models.Q(deleted=False),
+                name="onb_paid_exp_unique_idemp",
+            )
+        ]
+
+    def __str__(self):
+        return f"{self.event_cursor}:{self.status} for {self.workspace_id}"
+
+
 class OnboardingGoal(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     organization = models.ForeignKey(

@@ -10,6 +10,7 @@ from accounts.models.onboarding import (
     OnboardingLifecyclePreference,
     OnboardingLifecycleSendAllowlist,
     OnboardingLifecycleSendLog,
+    OnboardingPaidCloudActivationExportLog,
     OnboardingQualityAction,
     OnboardingSampleProject,
 )
