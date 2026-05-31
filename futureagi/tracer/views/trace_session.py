@@ -901,6 +901,19 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             analytics = AnalyticsQueryService()
 
+            # P3b step1.5 (DESIGN §3 / id_remap_sql): the value-picker dropdown
+            # reads the soft id straight off raw spans; a cross-cutover straddler
+            # carries BOTH an old random-uuid4 and a new deterministic-UUIDv5 id,
+            # so without resolution the same session/user appears TWICE in the
+            # picker (and first/last message is computed per-split-half). Resolve
+            # `trace_session_id` / `end_user_id` new→old through the remap so the
+            # straddler collapses to its OLD curated id. Pre-flip the remap is a
+            # no-op → byte-identical dropdown (gate B).
+            from tracer.services.clickhouse.v2.id_remap_sql import (
+                remap_left_join,
+                resolved_id_expr,
+            )
+
             # For firstMessage/lastMessage we need argMin/argMax from root spans
             if ch_column in ("first_message", "last_message"):
                 agg_expr = (
@@ -909,15 +922,29 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     else "argMax(input, start_time)"
                 )
                 search_clause = "AND val ILIKE %(search)s" if search else ""
+                ts_join = remap_left_join(
+                    "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
+                )
+                resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
                 query = f"""
                 SELECT DISTINCT val FROM (
                     SELECT {agg_expr} AS val
-                    FROM spans
-                    WHERE project_id = %(project_id)s
-                      AND is_deleted = 0
-                      AND trace_session_id IS NOT NULL
-                      AND trace_session_id != toUUID('{NIL_UUID}')
-                      AND (parent_span_id IS NULL OR parent_span_id = '')
+                    FROM (
+                        SELECT
+                            {resolved_ts} AS trace_session_id,
+                            rs.input AS input,
+                            rs.start_time AS start_time
+                        FROM (
+                            SELECT trace_session_id, input, start_time
+                            FROM spans
+                            WHERE project_id = %(project_id)s
+                              AND is_deleted = 0
+                              AND trace_session_id IS NOT NULL
+                              AND trace_session_id != toUUID('{NIL_UUID}')
+                              AND (parent_span_id IS NULL OR parent_span_id = '')
+                        ) AS rs
+                        {ts_join}
+                    )
                     GROUP BY trace_session_id
                 )
                 WHERE val != '' AND val IS NOT NULL
@@ -926,23 +953,38 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 LIMIT %(limit)s OFFSET %(offset)s
                 """
             else:
-                # Simple distinct on the column (session_id, user_id)
+                # Simple distinct on the column (session_id, user_id) — resolved
+                # new→old so a straddler is listed ONCE under its OLD curated id.
                 is_uuid = ch_column in ("trace_session_id", "end_user_id")
-                select_expr = f"toString({ch_column})" if is_uuid else ch_column
+                remap_table = (
+                    "trace_session_id_remap"
+                    if ch_column == "trace_session_id"
+                    else "end_user_id_remap"
+                )
+                resolved_col = resolved_id_expr(f"rs.{ch_column}", "rmp")
+                col_join = remap_left_join(f"rs.{ch_column}", remap_table, "rmp")
+                select_expr = "toString(val_id)" if is_uuid else "val_id"
                 search_clause = (
-                    f"AND toString({ch_column}) ILIKE %(search)s" if search else ""
+                    "AND toString(val_id) ILIKE %(search)s" if search else ""
                 )
                 nil_uuid_clause = (
-                    f"AND {ch_column} != toUUID('{NIL_UUID}')" if is_uuid else ""
+                    f"AND val_id != toUUID('{NIL_UUID}')" if is_uuid else ""
                 )
                 query = f"""
-                SELECT DISTINCT {select_expr} AS val
-                FROM spans
-                WHERE project_id = %(project_id)s
-                  AND is_deleted = 0
-                  AND {ch_column} IS NOT NULL
+                SELECT DISTINCT {select_expr} AS val FROM (
+                    SELECT {resolved_col} AS val_id
+                    FROM (
+                        SELECT {ch_column}
+                        FROM spans
+                        WHERE project_id = %(project_id)s
+                          AND is_deleted = 0
+                          AND {ch_column} IS NOT NULL
+                          AND (parent_span_id IS NULL OR parent_span_id = '')
+                    ) AS rs
+                    {col_join}
+                )
+                WHERE val_id IS NOT NULL
                   {nil_uuid_clause}
-                  AND (parent_span_id IS NULL OR parent_span_id = '')
                   {search_clause}
                 ORDER BY val
                 LIMIT %(limit)s OFFSET %(offset)s

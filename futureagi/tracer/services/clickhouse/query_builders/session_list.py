@@ -121,16 +121,13 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
 
-        # P3b step1.5 (DESIGN §3 / id_remap_sql): the per-user session filter
-        # (`self.user_id` and/or the synthetic `end_user_id IN (...)` injected by
-        # trace_session.py) is resolved through `end_user_id_remap` on the
-        # `_session_from_where` wrapped source so a cross-cutover straddler's
-        # old + new spans select as ONE user. The session/root/time/project
-        # predicates + `{filter_fragment}` stay on the bare inner `spans` scan;
-        # only the identity match binds the resolved column. With NO user filter
-        # the source is the committed bare `spans` scan verbatim (byte-identical,
-        # gate B). `trace_session_id` itself stays raw (its remap is the NEXT
-        # slice).
+        # P3b step1.5 (DESIGN §3 / id_remap_sql): `_session_from_where` ALWAYS
+        # resolves `trace_session_id` new→old (and `end_user_id` too when a user
+        # filter is present), so the `GROUP BY trace_session_id` below unifies a
+        # cross-cutover straddler's old + new session ids into ONE listed row
+        # (closes the no-filter/bookmark browse double-list). Pre-flip the remap
+        # joins are no-ops → byte-identical (result-set) to the committed bare
+        # scan (gate B).
         time_where = "AND start_time >= %(start_date)s AND start_time < %(end_date)s"
         from_where = self._session_from_where(
             self.params,
@@ -159,20 +156,44 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         return query, self.params
 
     def build_content_query(self, session_ids: list[str]) -> tuple[str, dict[str, Any]]:
-        """Fetch first/last messages for a page of session IDs."""
+        """Fetch first/last messages for a page of session IDs.
+
+        P3b step1.5 (DESIGN §3 / id_remap_sql): ``session_ids`` are the OLD
+        curated ids emitted by the (resolved) browse ``build()``. A straddler's
+        NEW-deterministic-id spans carry ``trace_session_id = new_id``, so we
+        resolve each span's ``trace_session_id`` new→old through
+        ``trace_session_id_remap`` and BOTH filter (``IN session_ids``) and
+        ``GROUP BY`` the RESOLVED id — else the new-id spans are missed and a
+        straddler's first/last message is computed off only its old-id half.
+        Pre-flip the remap is a no-op → byte-identical (gate B).
+        """
         if not session_ids:
             return "", {}
         params = {**self.params, "content_session_ids": tuple(session_ids)}
+        ts_join = remap_left_join(
+            "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
+        )
+        resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
         query = f"""
         SELECT
             trace_session_id AS session_id,
             argMin(input, start_time) AS first_message,
             argMax(input, start_time) AS last_message
-        FROM {self.TABLE}
-        WHERE {self.project_filter_sql()}
-          AND is_deleted = 0
-          AND trace_session_id IN %(content_session_ids)s
-          AND (parent_span_id IS NULL OR parent_span_id = '')
+        FROM (
+            SELECT
+                {resolved_ts} AS trace_session_id,
+                rs.input AS input,
+                rs.start_time AS start_time
+            FROM (
+                SELECT trace_session_id, input, start_time
+                FROM {self.TABLE}
+                WHERE {self.project_filter_sql()}
+                  AND is_deleted = 0
+                  AND (parent_span_id IS NULL OR parent_span_id = '')
+            ) AS rs
+            {ts_join}
+        )
+        WHERE trace_session_id IN %(content_session_ids)s
         GROUP BY trace_session_id
         """
         return query, params
@@ -214,9 +235,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
 
-        # P3b step1.5: same id-remap-resolved user scan as build() so the count
-        # matches the listed rows for a straddler (else has_more/pagination
-        # lies). No user filter → committed bare scan (byte-identical, gate B).
+        # P3b step1.5: same id-remap-resolved scan as build() (trace_session_id
+        # always, end_user_id when filtered) so `count(DISTINCT trace_session_id)`
+        # unifies a straddler and the count matches the listed rows (else
+        # has_more/pagination lies). Pre-flip a byte-identical no-op (gate B).
         time_where = "AND start_time >= %(start_date)s AND start_time < %(end_date)s"
         from_where = self._session_from_where(
             params,
@@ -248,9 +270,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
 
-        # P3b step1.5: same id-remap-resolved user scan as build()/simple-count
-        # so the HAVING-filtered session count unifies a straddler identically.
-        # No user filter → committed bare scan (byte-identical, gate B).
+        # P3b step1.5: same id-remap-resolved scan as build()/simple-count so the
+        # HAVING-filtered session count unifies a straddler identically (group on
+        # the resolved trace_session_id). Pre-flip a byte-identical no-op (gate B).
         time_where = "AND start_time >= %(start_date)s AND start_time < %(end_date)s"
         from_where = self._session_from_where(
             params,
@@ -293,14 +315,32 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             return "", {}
 
         params = {**self.params, "attr_session_ids": tuple(session_ids)}
+        # P3b step1.5 (DESIGN §3 / id_remap_sql): `session_ids` are OLD curated ids
+        # from the resolved browse; resolve each span's `trace_session_id` new→old
+        # so a straddler's NEW-id spans' attributes attach to the OLD session id
+        # the page lists. Filter + project the RESOLVED id. Pre-flip: no-op (gate
+        # B). The committed PREWHERE micro-opt becomes a WHERE (the id-remap join
+        # dominates the cost at scale anyway).
+        #
+        # Single-level SELECT (NOT a nested re-projection): the v1→v2 rewrite turns
+        # bare `span_attributes_raw` into `toJSONString(attributes_extra) AS
+        # span_attributes_raw`; a `<alias>.span_attributes_raw` reference would be
+        # mangled by that bare-token rewrite. So the JSON/Map attribute columns
+        # stay BARE (CH binds them to `s` — the remap join has no such columns),
+        # and only `trace_session_id` is read prefixed as `s.trace_session_id`
+        # (not a rewrite-special token) to feed the resolve expression.
+        ts_join = remap_left_join(
+            "s.trace_session_id", "trace_session_id_remap", "ts_remap"
+        )
+        resolved_ts = resolved_id_expr("s.trace_session_id", "ts_remap")
         query = f"""
         SELECT
-            trace_session_id AS session_id,
+            {resolved_ts} AS session_id,
             span_attributes_raw,
             span_attr_str,
             span_attr_num
-        FROM {self.TABLE}
-        PREWHERE trace_session_id IN %(attr_session_ids)s
+        FROM {self.TABLE} AS s
+        {ts_join}
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
@@ -309,6 +349,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             OR length(mapKeys(span_attr_str)) > 0
             OR length(mapKeys(span_attr_num)) > 0
           )
+          AND {resolved_ts} IN %(attr_session_ids)s
         LIMIT 500
         """
         return query, params
@@ -479,14 +520,22 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     ) -> str:
         """Return the ``FROM … WHERE …`` clause for a session aggregation query.
 
-        With NO end-user filter this is the committed bare ``spans`` scan,
-        byte-identical to the pre-step1.5 SQL (gate B). With a user filter it
-        wraps the bare scan in a derived table that resolves ``end_user_id``
-        new→old through ``end_user_id_remap`` (P3b step1.5) and binds the
-        resolved-id predicate in the outer ``WHERE`` — old + new straddler spans
+        P3b step1.5 (DESIGN §3 / id_remap_sql): the scan is ALWAYS wrapped in a
+        derived table that resolves ``trace_session_id`` new→old through
+        ``trace_session_id_remap`` and projects it AS ``trace_session_id``, so the
+        outer ``GROUP BY trace_session_id`` / ``count(DISTINCT trace_session_id)``
+        treat a cross-cutover straddler's OLD + NEW session ids as ONE session
+        (else the no-filter/bookmark BROWSE lists it twice at the flip). When a
+        user filter is present, ``end_user_id`` is ALSO resolved (its remap) and
+        the resolved-id predicate binds in the outer ``WHERE`` so old + new spans
         select as ONE user. The session/root/time/project predicates +
-        ``{filter_fragment}`` stay on the inner raw scan. ``trace_session_id``
-        stays raw (next slice). Mutates ``params`` via
+        ``{filter_fragment}`` stay on the inner raw scan.
+
+        GATE B: pre-flip every span's id lives in the remap ``old_id`` column, so
+        NO span matches a ``new_id`` → ``resolved_id_expr`` (zero-uuid-guarded,
+        NOT a COALESCE) returns each span's own id and the LEFT JOIN(s) add
+        nothing → the wrapped scan is a transparent pass-through, byte-identical
+        (result-set) to the committed bare scan. Mutates ``params`` via
         ``_build_resolved_user_clause``.
         """
         base_predicates = f"""{self.project_where()}
@@ -497,25 +546,46 @@ class SessionListQueryBuilder(BaseQueryBuilder):
           {filter_fragment}"""
 
         resolved_user_clause = self._build_resolved_user_clause(params)
-        if not resolved_user_clause:
-            # No user filter → committed bare scan (byte-identical, gate B).
-            return f"FROM {self.TABLE}\n        {base_predicates}"
 
-        remap_join = remap_left_join("rs.end_user_id", "end_user_id_remap")
-        resolved_eu = resolved_id_expr("rs.end_user_id")
-        cols = ", ".join(self._SESSION_SCAN_COLS)
+        # `trace_session_id` resolution is UNCONDITIONAL (closes the browse split);
+        # `end_user_id` resolution is added only when a user filter needs it (its
+        # join is otherwise dead weight). Both remap joins hang off the SAME inner
+        # row `rs` → DISTINCT aliases (`ts_remap` / `eu_remap`).
+        ts_join = remap_left_join(
+            "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
+        )
+        resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
+
+        # Inner scan projects the narrow aggregate cols; `end_user_id` is pulled
+        # in only when the user filter needs to resolve+bind it.
+        scan_cols = list(self._SESSION_SCAN_COLS)
+        outer_select = [f"{resolved_ts} AS trace_session_id"] + [
+            f"rs.{c} AS {c}" for c in scan_cols if c != "trace_session_id"
+        ]
+        joins = [ts_join]
+        inner_extra = ""
+        where_clause = ""
+        if resolved_user_clause:
+            eu_join = remap_left_join("rs.end_user_id", "end_user_id_remap", "eu_remap")
+            resolved_eu = resolved_id_expr("rs.end_user_id", "eu_remap")
+            outer_select.append(f"{resolved_eu} AS end_user_id")
+            joins.append(eu_join)
+            inner_extra = ", end_user_id"
+            where_clause = f"\n        WHERE {resolved_user_clause}"
+
+        inner_cols = ", ".join(scan_cols)
+        outer_select_sql = ",\n                ".join(outer_select)
+        joins_sql = "\n            ".join(joins)
         return f"""FROM (
             SELECT
-                {resolved_eu} AS end_user_id,
-                {", ".join(f"rs.{c} AS {c}" for c in self._SESSION_SCAN_COLS)}
+                {outer_select_sql}
             FROM (
-                SELECT {cols}, end_user_id
+                SELECT {inner_cols}{inner_extra}
                 FROM {self.TABLE}
                 {base_predicates}
             ) AS rs
-            {remap_join}
-        )
-        WHERE {resolved_user_clause}"""
+            {joins_sql}
+        ){where_clause}"""
 
     def _build_having_clauses(self) -> str:
         """Build HAVING clause fragments for aggregate-level filters."""
