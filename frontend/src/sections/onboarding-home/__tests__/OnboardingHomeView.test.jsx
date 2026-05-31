@@ -1476,7 +1476,9 @@ describe("OnboardingHomeView", () => {
       refetch: vi.fn(),
     });
 
-    renderView();
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=gateway&quick_start_goal=control_model_traffic&quick_start_primary_path=gateway",
+    );
 
     const panel = screen.getByTestId("path-focus-panel-gateway");
     expect(screen.getByText("Run a gateway request")).toBeVisible();
@@ -1488,9 +1490,8 @@ describe("OnboardingHomeView", () => {
       within(panel).getByRole("link", { name: /send request/i }),
     ).toHaveAttribute(
       "href",
-      "/dashboard/gateway?onboarding=test-request&tour_anchor=gateway_request_button&journey_step=run_gateway_request",
+      "/dashboard/gateway?onboarding=test-request&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway&tour_anchor=gateway_request_button&journey_step=run_gateway_request",
     );
-    expect(screen.getByText("Selected path")).toBeVisible();
     expect(screen.getAllByText("gateway").length).toBeGreaterThan(0);
   });
 

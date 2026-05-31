@@ -21,6 +21,7 @@ import CacheStatusView from "./CacheStatusView";
 import AddProviderDialog from "./AddProviderDialog";
 import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
 import {
+  appendGatewayOnboardingAttributionToHref,
   GATEWAY_ONBOARDING_MODES,
   getGatewayOnboardingRouteParams,
 } from "../gatewayOnboardingEvents";
@@ -52,6 +53,10 @@ const ProviderManagementSection = () => {
       }
     },
     [navigate],
+  );
+  const onboardingHref = useCallback(
+    (href) => appendGatewayOnboardingAttributionToHref(href, searchParams),
+    [searchParams],
   );
   const [addProviderOpen, setAddProviderOpen] = useState(false);
 
@@ -165,12 +170,15 @@ const ProviderManagementSection = () => {
               }
             : {
                 label: "Open overview",
-                onClick: () => navigate("/dashboard/gateway"),
+                onClick: () => navigate(onboardingHref("/dashboard/gateway")),
               }
         }
         secondaryAction={{
           label: "Open API keys",
-          onClick: () => navigate("/dashboard/gateway/keys?source=onboarding"),
+          onClick: () =>
+            navigate(
+              onboardingHref("/dashboard/gateway/keys?source=onboarding"),
+            ),
         }}
         steps={[
           {

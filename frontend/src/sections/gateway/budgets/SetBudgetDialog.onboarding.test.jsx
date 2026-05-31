@@ -6,6 +6,8 @@ import SetBudgetDialog from "./SetBudgetDialog";
 
 const mockSetBudgetMutate = vi.fn();
 const mockRecordActivationEvent = vi.fn();
+const gatewayQuickStartQuery =
+  "quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway";
 
 vi.mock("../providers/hooks/useGatewayConfig", () => ({
   useSetBudget: () => ({
@@ -37,7 +39,7 @@ describe("SetBudgetDialog onboarding activation", () => {
     window.history.pushState(
       {},
       "Budgets",
-      "/dashboard/gateway/budgets?source=onboarding&request_id=req-123",
+      `/dashboard/gateway/budgets?source=onboarding&request_id=req-123&${gatewayQuickStartQuery}`,
     );
 
     render(
@@ -64,6 +66,9 @@ describe("SetBudgetDialog onboarding activation", () => {
         primaryPath: "gateway",
         stage: "add_gateway_policy",
         source: "gateway_budget_onboarding",
+        quick_start_goal: "control_model_traffic",
+        quick_start_id: "gateway",
+        quick_start_primary_path: "gateway",
         metadata: expect.objectContaining({
           gateway_id: "gateway-1",
           request_id: "req-123",
@@ -85,6 +90,9 @@ describe("SetBudgetDialog onboarding activation", () => {
     expect(
       new URLSearchParams(window.location.search).get("target_event"),
     ).toBe("gateway_policy_created");
+    expect(
+      new URLSearchParams(window.location.search).get("quick_start_id"),
+    ).toBe("gateway");
   });
 
   it("does not record policy completion for ordinary budget saves", async () => {

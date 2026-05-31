@@ -8,6 +8,8 @@ import GuardrailManagementSection from "./GuardrailManagementSection";
 const mockCreateOrgConfigMutate = vi.fn();
 const mockRecordActivationEvent = vi.fn();
 const mockNavigate = vi.hoisted(() => vi.fn());
+const gatewayQuickStartQuery =
+  "quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway";
 
 let mockOrgConfigReturn;
 
@@ -93,7 +95,7 @@ describe("GuardrailManagementSection onboarding activation", () => {
     window.history.pushState(
       {},
       "Guardrails",
-      "/dashboard/gateway/guardrails/configuration?journey_step=add_gateway_policy&request_id=req-123",
+      `/dashboard/gateway/guardrails/configuration?journey_step=add_gateway_policy&request_id=req-123&${gatewayQuickStartQuery}`,
     );
 
     render(<GuardrailManagementSection />);
@@ -114,6 +116,9 @@ describe("GuardrailManagementSection onboarding activation", () => {
         primaryPath: "gateway",
         stage: "add_gateway_policy",
         source: "gateway_guardrail_onboarding",
+        quick_start_goal: "control_model_traffic",
+        quick_start_id: "gateway",
+        quick_start_primary_path: "gateway",
         metadata: expect.objectContaining({
           gateway_id: "gateway-1",
           request_id: "req-123",
@@ -125,7 +130,7 @@ describe("GuardrailManagementSection onboarding activation", () => {
     );
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
-        "/dashboard/home?mode=daily-quality&source=onboarding&target_event=gateway_policy_created",
+        `/dashboard/home?mode=daily-quality&source=onboarding&target_event=gateway_policy_created&${gatewayQuickStartQuery}`,
         { replace: true },
       ),
     );

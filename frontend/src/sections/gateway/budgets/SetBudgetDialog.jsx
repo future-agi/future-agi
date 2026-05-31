@@ -12,13 +12,14 @@ import {
   MenuItem,
   Typography,
 } from "@mui/material";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { useSetBudget } from "../providers/hooks/useGatewayConfig";
 import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
 import {
   buildGatewayOnboardingCompletionHref,
   buildGatewayPolicyCreatedPayload,
+  gatewaySetupQuickStartAttributionFromSearch,
 } from "../gatewayOnboardingEvents";
 
 const BUDGET_LEVELS = [
@@ -76,7 +77,10 @@ const SetBudgetDialog = ({
   shouldRecordOnboardingCompletion = false,
 }) => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const isEditMode = Boolean(budget);
+  const gatewayQuickStartAttribution =
+    gatewaySetupQuickStartAttributionFromSearch(searchParams);
   const [level, setLevel] = useState("");
   const [limit, setLimit] = useState("");
   const [alertThreshold, setAlertThreshold] = useState("80");
@@ -124,6 +128,7 @@ const SetBudgetDialog = ({
                 gatewayId,
                 policyId: `budget:${level}`,
                 policyType: "budget",
+                quickStartAttribution: gatewayQuickStartAttribution,
                 requestId: onboardingRequestId,
                 source: "gateway_budget_onboarding",
                 metadata: {
@@ -134,9 +139,15 @@ const SetBudgetDialog = ({
                 },
               });
               await recordActivationEvent(eventPayload);
-              navigate(buildGatewayOnboardingCompletionHref(eventPayload), {
-                replace: true,
-              });
+              navigate(
+                buildGatewayOnboardingCompletionHref({
+                  ...eventPayload,
+                  quickStartAttribution: gatewayQuickStartAttribution,
+                }),
+                {
+                  replace: true,
+                },
+              );
             } catch {
               enqueueSnackbar(
                 "Budget saved, but onboarding could not be completed. Please try again.",

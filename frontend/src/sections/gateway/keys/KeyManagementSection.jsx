@@ -31,6 +31,7 @@ import CreateKeyDialog from "./CreateKeyDialog";
 import KeyDetailDrawer from "./KeyDetailDrawer";
 import { formatDate } from "../utils/formatters";
 import {
+  appendGatewayOnboardingAttributionToHref,
   GATEWAY_ONBOARDING_MODES,
   getGatewayOnboardingRouteParams,
 } from "../gatewayOnboardingEvents";
@@ -59,6 +60,11 @@ const KeyManagementSection = () => {
 
   const { data: keys, isLoading, error, refetch } = useApiKeys(gatewayId);
   const syncMutation = useSyncApiKeys();
+  const onboardingHref = useMemo(
+    () => (href) =>
+      appendGatewayOnboardingAttributionToHref(href, searchParams),
+    [searchParams],
+  );
   const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
   const showOnboardingFocus =
     onboardingParams.isOnboarding &&
@@ -180,7 +186,10 @@ const KeyManagementSection = () => {
         }}
         secondaryAction={{
           label: "Open request step",
-          onClick: () => navigate("/dashboard/gateway?onboarding=test-request"),
+          onClick: () =>
+            navigate(
+              onboardingHref("/dashboard/gateway?onboarding=test-request"),
+            ),
         }}
         steps={[
           { label: "Provider", complete: true },

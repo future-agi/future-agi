@@ -33,10 +33,12 @@ import { useApiKeys } from "./keys/hooks/useApiKeys";
 import SvgColor from "src/components/svg-color";
 import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
 import {
+  appendGatewayOnboardingAttributionToHref,
   buildGatewayRequestReviewHref,
   buildGatewayRequestSeenPayload,
   GATEWAY_ONBOARDING_MODES,
   gatewayPlaygroundRequestId,
+  gatewaySetupQuickStartAttributionFromSearch,
   getGatewayOnboardingRouteParams,
 } from "./gatewayOnboardingEvents";
 
@@ -111,6 +113,18 @@ const GatewayOverviewSection = () => {
     gatewayId,
   });
   const { data: apiKeys } = useApiKeys(gatewayId);
+  const gatewayQuickStartAttribution = useMemo(
+    () => gatewaySetupQuickStartAttributionFromSearch(searchParams),
+    [searchParams],
+  );
+  const gatewayOnboardingHref = useMemo(
+    () => (href) =>
+      appendGatewayOnboardingAttributionToHref(
+        href,
+        gatewayQuickStartAttribution,
+      ),
+    [gatewayQuickStartAttribution],
+  );
 
   const completionState = useMemo(
     () => ({
@@ -148,6 +162,7 @@ const GatewayOverviewSection = () => {
       const result = data.result || data;
       const eventPayload = buildGatewayRequestSeenPayload({
         gatewayId,
+        quickStartAttribution: gatewayQuickStartAttribution,
         result,
       });
       let nextState = null;
@@ -164,9 +179,10 @@ const GatewayOverviewSection = () => {
       const nextHref =
         nextState?.recommendedAction?.href ||
         buildGatewayRequestReviewHref({
+          quickStartAttribution: gatewayQuickStartAttribution,
           requestId: gatewayPlaygroundRequestId(result),
         });
-      navigate(nextHref);
+      navigate(gatewayOnboardingHref(nextHref));
     },
     onError: (requestError) => {
       enqueueSnackbar(
@@ -212,13 +228,20 @@ const GatewayOverviewSection = () => {
       return {
         label: "Add provider",
         onClick: () =>
-          navigate("/dashboard/gateway/providers?source=onboarding"),
+          navigate(
+            gatewayOnboardingHref(
+              "/dashboard/gateway/providers?source=onboarding",
+            ),
+          ),
       };
     }
     if (!completionState.hasKeys) {
       return {
         label: "Create key",
-        onClick: () => navigate("/dashboard/gateway/keys?source=onboarding"),
+        onClick: () =>
+          navigate(
+            gatewayOnboardingHref("/dashboard/gateway/keys?source=onboarding"),
+          ),
       };
     }
     if (!completionState.hasRequests) {
@@ -232,7 +255,7 @@ const GatewayOverviewSection = () => {
     }
     return {
       label: "Open logs",
-      onClick: () => navigate("/dashboard/gateway/logs"),
+      onClick: () => navigate(gatewayOnboardingHref("/dashboard/gateway/logs")),
     };
   })();
 
@@ -244,7 +267,7 @@ const GatewayOverviewSection = () => {
         }
       : {
           label: "Open overview",
-          onClick: () => navigate("/dashboard/gateway"),
+          onClick: () => navigate(gatewayOnboardingHref("/dashboard/gateway")),
         };
 
   if (isLoading) {

@@ -47,6 +47,7 @@ import {
   buildGatewayOnboardingCompletionHref,
   buildGatewayPolicyCreatedPayload,
   GATEWAY_ONBOARDING_MODES,
+  gatewaySetupQuickStartAttributionFromSearch,
   getGatewayOnboardingRouteParams,
 } from "../gatewayOnboardingEvents";
 
@@ -376,6 +377,8 @@ const ConfigTab = () => {
   const [localGuardrails, setLocalGuardrails] = useState(null);
   const [dirty, setDirty] = useState(false);
   const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const gatewayQuickStartAttribution =
+    gatewaySetupQuickStartAttributionFromSearch(searchParams);
   const isOnboardingRoute =
     onboardingParams.isOnboarding &&
     (!onboardingParams.mode ||
@@ -408,6 +411,7 @@ const ConfigTab = () => {
                 gatewayId,
                 policyId: "guardrail",
                 policyType: "guardrail",
+                quickStartAttribution: gatewayQuickStartAttribution,
                 requestId: onboardingRequestId,
                 source: "gateway_guardrail_onboarding",
                 metadata: {
@@ -415,9 +419,15 @@ const ConfigTab = () => {
                 },
               });
               await recordActivationEvent(eventPayload);
-              navigate(buildGatewayOnboardingCompletionHref(eventPayload), {
-                replace: true,
-              });
+              navigate(
+                buildGatewayOnboardingCompletionHref({
+                  ...eventPayload,
+                  quickStartAttribution: gatewayQuickStartAttribution,
+                }),
+                {
+                  replace: true,
+                },
+              );
             } catch {
               enqueueSnackbar(
                 "Guardrail saved, but onboarding could not be completed. Please try again.",

@@ -35,6 +35,9 @@ const URL_ONLY_FILTER_KEYS = new Set([
   "journeyStep",
   "tourAnchor",
   "campaignKey",
+  "quick_start_goal",
+  "quick_start_id",
+  "quick_start_primary_path",
   "targetEvent",
 ]);
 
@@ -91,6 +94,9 @@ export default function useRequestLogs({
       delete params.source;
       delete params.journey_step;
       delete params.campaign_key;
+      delete params.quick_start_goal;
+      delete params.quick_start_id;
+      delete params.quick_start_primary_path;
       delete params.target_event;
 
       // Use the dedicated search endpoint when a search term is present

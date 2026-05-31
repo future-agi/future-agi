@@ -467,7 +467,13 @@ function GuardrailsTab({ log }) {
 // Main component
 // ---------------------------------------------------------------------------
 
-const RequestDetailDrawer = ({ logId, open, onClose, onboardingMode }) => {
+const RequestDetailDrawer = ({
+  logId,
+  open,
+  onClose,
+  onboardingMode,
+  quickStartAttribution,
+}) => {
   const { data, isLoading, error, refetch } = useRequestDetail(logId);
   const recordActivationEvent = useRecordActivationEvent();
   const recordedLogIds = useRef(new Set());
@@ -519,8 +525,9 @@ const RequestDetailDrawer = ({ logId, open, onClose, onboardingMode }) => {
       metadata,
       idempotencyKey: key,
       isSample: Boolean(logMetadata.is_sample || logMetadata.sample),
+      ...quickStartAttribution,
     });
-  }, [log, onboardingMode, open, recordActivationEvent]);
+  }, [log, onboardingMode, open, quickStartAttribution, recordActivationEvent]);
 
   // Build the dynamic tab list -- conditionally include Guardrails
   const showGuardrails = log?.guardrail_triggered;
@@ -720,6 +727,7 @@ RequestDetailDrawer.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   onboardingMode: PropTypes.string,
+  quickStartAttribution: PropTypes.object,
 };
 
 export default RequestDetailDrawer;

@@ -7,8 +7,12 @@ import {
   buildGatewayPolicyCreatedPayload,
   GATEWAY_ONBOARDING_MODES,
   gatewayPlaygroundRequestId,
+  gatewaySetupQuickStartAttributionFromSearch,
   getGatewayOnboardingRouteParams,
 } from "./gatewayOnboardingEvents";
+
+const GATEWAY_QUICK_START_SEARCH =
+  "?quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway";
 
 describe("gatewayOnboardingEvents", () => {
   it("parses gateway journey-step params from Home CTAs", () => {
@@ -87,9 +91,27 @@ describe("gatewayOnboardingEvents", () => {
     expect(buildGatewayRequestReviewHref({ requestId: "req-123" })).toBe(
       "/dashboard/gateway/logs?onboarding=review-request&request_id=req-123",
     );
+    expect(
+      buildGatewayRequestReviewHref({
+        requestId: "req-123",
+        search: GATEWAY_QUICK_START_SEARCH,
+      }),
+    ).toBe(
+      "/dashboard/gateway/logs?onboarding=review-request&request_id=req-123&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
+    );
     expect(buildGatewayRequestReviewHref()).toBe(
       "/dashboard/gateway/logs?onboarding=review-request",
     );
+  });
+
+  it("extracts setup quick-start attribution from gateway routes", () => {
+    expect(
+      gatewaySetupQuickStartAttributionFromSearch(GATEWAY_QUICK_START_SEARCH),
+    ).toEqual({
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
+    });
   });
 
   it("builds a safe gateway fallback policy completion payload", () => {
@@ -140,6 +162,9 @@ describe("gatewayOnboardingEvents", () => {
         gatewayId: "gateway-1",
         policyId: "budget:per_model",
         policyType: "budget",
+        quickStartAttribution: gatewaySetupQuickStartAttributionFromSearch(
+          GATEWAY_QUICK_START_SEARCH,
+        ),
         requestId: "req-123",
         source: "gateway_budget_onboarding",
         metadata: {
@@ -162,12 +187,22 @@ describe("gatewayOnboardingEvents", () => {
         limit: 1000,
       },
       idempotencyKey: "gateway_policy_created:budget:req-123:gateway-1",
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
     });
   });
 
   it("builds the gateway onboarding completion destination", () => {
     expect(buildGatewayOnboardingCompletionHref()).toBe(
       "/dashboard/home?mode=daily-quality&source=onboarding&target_event=gateway_policy_created",
+    );
+    expect(
+      buildGatewayOnboardingCompletionHref({
+        search: GATEWAY_QUICK_START_SEARCH,
+      }),
+    ).toBe(
+      "/dashboard/home?mode=daily-quality&source=onboarding&target_event=gateway_policy_created&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
     );
   });
 });

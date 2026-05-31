@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box,
   Stack,
@@ -30,7 +30,11 @@ import {
   getGatewayLogOnboardingCopy,
   isGatewayLogOnboardingMode,
 } from "./gatewayLogOnboarding";
-import { getGatewayOnboardingRouteParams } from "../gatewayOnboardingEvents";
+import {
+  appendGatewayOnboardingAttributionToHref,
+  gatewaySetupQuickStartAttributionFromSearch,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
 
 // ---------------------------------------------------------------------------
 // Quick filter definitions
@@ -66,6 +70,7 @@ function activeQuickFilter(filters) {
 
 const RequestExplorerSection = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   // --- URL-synced filters ---------------------------------------------------
   const { filters, setFilter, setFilters, clearFilters, activeFilterCount } =
     useFilters();
@@ -97,13 +102,10 @@ const RequestExplorerSection = () => {
 
   // --- View tab -------------------------------------------------------------
   const currentView = filters.view || "requests";
-  const gatewayOnboardingParams = getGatewayOnboardingRouteParams(
-    new URLSearchParams({
-      ...(filters.journeyStep ? { journey_step: filters.journeyStep } : {}),
-      ...(filters.onboarding ? { onboarding: filters.onboarding } : {}),
-      ...(filters.requestId ? { request_id: filters.requestId } : {}),
-      ...(filters.tourAnchor ? { tour_anchor: filters.tourAnchor } : {}),
-    }),
+  const gatewayOnboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const gatewayQuickStartAttribution = useMemo(
+    () => gatewaySetupQuickStartAttributionFromSearch(searchParams),
+    [searchParams],
   );
   const onboardingMode = gatewayOnboardingParams.mode || null;
   const onboardingRequestId = gatewayOnboardingParams.requestId || null;
@@ -145,8 +147,13 @@ const RequestExplorerSection = () => {
     if (onboardingRequestId) {
       params.set("request_id", onboardingRequestId);
     }
-    navigate(`/dashboard/gateway/fallbacks?${params.toString()}`);
-  }, [navigate, onboardingRequestId]);
+    navigate(
+      appendGatewayOnboardingAttributionToHref(
+        `/dashboard/gateway/fallbacks?${params.toString()}`,
+        gatewayQuickStartAttribution,
+      ),
+    );
+  }, [gatewayQuickStartAttribution, navigate, onboardingRequestId]);
 
   const handleShowAllLogs = useCallback(() => {
     clearFilters();
@@ -408,6 +415,7 @@ const RequestExplorerSection = () => {
       {/* ---- Detail drawer ---- */}
       <RequestDetailDrawer
         logId={selectedLogId}
+        quickStartAttribution={gatewayQuickStartAttribution}
         onboardingMode={onboardingMode}
         open={Boolean(selectedLogId)}
         onClose={() => setSelectedLogId(null)}

@@ -11,6 +11,8 @@ const mockAxiosPost = vi.hoisted(() => vi.fn());
 const mockRecordActivationEvent = vi.hoisted(() => vi.fn());
 const mockRefreshGateways = vi.hoisted(() => vi.fn());
 const mockEnqueueSnackbar = vi.hoisted(() => vi.fn());
+const gatewayQuickStartQuery =
+  "quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway";
 
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual("react-router-dom");
@@ -101,7 +103,7 @@ describe("GatewayOverviewSection onboarding request", () => {
     window.history.pushState(
       {},
       "Gateway",
-      "/dashboard/gateway?onboarding=test-request",
+      `/dashboard/gateway?onboarding=test-request&${gatewayQuickStartQuery}`,
     );
     mockAxiosPost.mockResolvedValue({
       data: {
@@ -148,6 +150,9 @@ describe("GatewayOverviewSection onboarding request", () => {
         source: "gateway_request_onboarding",
         artifactType: "gateway_request",
         artifactId: "req-123",
+        quick_start_goal: "control_model_traffic",
+        quick_start_id: "gateway",
+        quick_start_primary_path: "gateway",
         metadata: expect.objectContaining({
           gateway_id: "gateway-1",
           request_id: "req-123",
@@ -158,7 +163,7 @@ describe("GatewayOverviewSection onboarding request", () => {
     );
     expect(mockRefreshGateways).toHaveBeenCalledTimes(1);
     expect(mockNavigate).toHaveBeenCalledWith(
-      "/dashboard/gateway/logs?onboarding=review-request&request_id=req-123",
+      `/dashboard/gateway/logs?onboarding=review-request&request_id=req-123&${gatewayQuickStartQuery}`,
     );
   });
 
@@ -189,7 +194,7 @@ describe("GatewayOverviewSection onboarding request", () => {
 
     await waitFor(() =>
       expect(mockNavigate).toHaveBeenCalledWith(
-        "/dashboard/gateway/logs?onboarding=review-request&request_id=req-123",
+        `/dashboard/gateway/logs?onboarding=review-request&request_id=req-123&${gatewayQuickStartQuery}`,
       ),
     );
     expect(mockRefreshGateways).toHaveBeenCalledTimes(1);

@@ -17,6 +17,9 @@ describe("buildFilterParams", () => {
         source: "onboarding",
         tourAnchor: "gateway_request_button",
         campaignKey: "gateway_review_request",
+        quick_start_goal: "control_model_traffic",
+        quick_start_id: "gateway",
+        quick_start_primary_path: "gateway",
       }),
     ).toEqual({
       min_status_code: "400",

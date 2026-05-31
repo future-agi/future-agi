@@ -42,6 +42,9 @@ const NON_CONTENT_KEYS = new Set([
   "journeyStep",
   "tourAnchor",
   "campaignKey",
+  "quick_start_goal",
+  "quick_start_id",
+  "quick_start_primary_path",
   "targetEvent",
 ]);
 

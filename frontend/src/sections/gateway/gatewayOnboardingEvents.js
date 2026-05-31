@@ -1,3 +1,8 @@
+import {
+  appendSetupQuickStartAttributionToHref,
+  setupQuickStartAttributionParams,
+} from "src/sections/auth/jwt/setup-org-quick-starts";
+
 const DEFAULT_GATEWAY_ID = "default";
 
 export const GATEWAY_ONBOARDING_MODES = {
@@ -28,6 +33,32 @@ const compactMetadata = (metadata) =>
     ),
   );
 
+const toSearchParams = (search = "") =>
+  search instanceof URLSearchParams
+    ? new URLSearchParams(search)
+    : new URLSearchParams(search);
+
+export const gatewaySetupQuickStartAttributionFromSearch = (search = "") => {
+  const params = toSearchParams(search);
+  return {
+    quick_start_goal: params.get("quick_start_goal"),
+    quick_start_id: params.get("quick_start_id"),
+    quick_start_primary_path: params.get("quick_start_primary_path"),
+  };
+};
+
+export const appendGatewayOnboardingAttributionToHref = (
+  href,
+  attributionOrSearch = {},
+) =>
+  appendSetupQuickStartAttributionToHref(
+    href,
+    attributionOrSearch instanceof URLSearchParams ||
+      typeof attributionOrSearch === "string"
+      ? gatewaySetupQuickStartAttributionFromSearch(attributionOrSearch)
+      : attributionOrSearch,
+  );
+
 const safeKeyPart = (value, fallback) =>
   String(value || fallback)
     .replace(/\s+/g, "-")
@@ -53,10 +84,7 @@ export const gatewayPlaygroundResult = (payload = {}) =>
   payload?.result || payload || {};
 
 export const getGatewayOnboardingRouteParams = (search = "") => {
-  const params =
-    search instanceof URLSearchParams
-      ? new URLSearchParams(search)
-      : new URLSearchParams(search);
+  const params = toSearchParams(search);
   const rawMode = params.get("onboarding");
   const journeyMode = GATEWAY_JOURNEY_STEP_MODES[params.get("journey_step")];
   const mode = VALID_GATEWAY_ONBOARDING_MODES.has(rawMode)
@@ -86,17 +114,26 @@ export const gatewayPlaygroundRequestId = (payload = {}) => {
   );
 };
 
-export const buildGatewayRequestReviewHref = ({ requestId } = {}) => {
+export const buildGatewayRequestReviewHref = ({
+  quickStartAttribution,
+  requestId,
+  search,
+} = {}) => {
   const params = new URLSearchParams();
   params.set("onboarding", "review-request");
   if (requestId) {
     params.set("request_id", requestId);
   }
-  return `/dashboard/gateway/logs?${params.toString()}`;
+  return appendGatewayOnboardingAttributionToHref(
+    `/dashboard/gateway/logs?${params.toString()}`,
+    quickStartAttribution ||
+      gatewaySetupQuickStartAttributionFromSearch(search),
+  );
 };
 
 export const buildGatewayRequestSeenPayload = ({
   gatewayId = DEFAULT_GATEWAY_ID,
+  quickStartAttribution,
   result,
   source = "gateway_request_onboarding",
 } = {}) => {
@@ -138,6 +175,7 @@ export const buildGatewayRequestSeenPayload = ({
       safeKeyPart(gatewayId, DEFAULT_GATEWAY_ID),
     ].join(":"),
     isSample: false,
+    ...setupQuickStartAttributionParams(quickStartAttribution),
   };
 };
 
@@ -145,6 +183,7 @@ export const buildGatewayPolicyCreatedPayload = ({
   gatewayId = DEFAULT_GATEWAY_ID,
   policyId,
   policyType,
+  quickStartAttribution,
   requestId,
   source,
   metadata = {},
@@ -177,11 +216,13 @@ export const buildGatewayPolicyCreatedPayload = ({
       safeKeyPart(gatewayId, DEFAULT_GATEWAY_ID),
     ].join(":"),
     isSample: false,
+    ...setupQuickStartAttributionParams(quickStartAttribution),
   };
 };
 
 export const buildGatewayFallbackPolicyCreatedPayload = ({
   gatewayId = DEFAULT_GATEWAY_ID,
+  quickStartAttribution,
   requestId,
   routing,
   source = "gateway_fallbacks_onboarding",
@@ -193,6 +234,7 @@ export const buildGatewayFallbackPolicyCreatedPayload = ({
     gatewayId,
     policyId: requestId ? `fallback:${requestId}` : "fallback",
     policyType: "fallback",
+    quickStartAttribution,
     requestId,
     source,
     metadata: {
@@ -206,11 +248,27 @@ export const buildGatewayFallbackPolicyCreatedPayload = ({
 
 export const buildGatewayOnboardingCompletionHref = ({
   eventName = "gateway_policy_created",
+  quickStartAttribution,
+  quick_start_goal,
+  quick_start_id,
+  quick_start_primary_path,
+  search,
 } = {}) => {
   const params = new URLSearchParams();
   params.set("mode", "daily-quality");
   params.set("source", "onboarding");
   params.set("target_event", eventName);
+  const payloadAttribution = {
+    quick_start_goal,
+    quick_start_id,
+    quick_start_primary_path,
+  };
 
-  return `/dashboard/home?${params.toString()}`;
+  return appendGatewayOnboardingAttributionToHref(
+    `/dashboard/home?${params.toString()}`,
+    quickStartAttribution ||
+      (payloadAttribution.quick_start_id
+        ? payloadAttribution
+        : gatewaySetupQuickStartAttributionFromSearch(search)),
+  );
 };

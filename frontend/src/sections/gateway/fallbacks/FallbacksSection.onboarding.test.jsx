@@ -8,6 +8,8 @@ const mockSaveRouting = vi.fn();
 const mockRecordActivationEvent = vi.fn();
 
 let hookReturn;
+const gatewayQuickStartQuery =
+  "quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway";
 
 vi.mock("./hooks/useFallbackConfig", () => ({
   useFallbackConfig: () => hookReturn,
@@ -64,7 +66,7 @@ describe("FallbacksSection onboarding activation", () => {
     window.history.pushState(
       {},
       "Fallbacks",
-      "/dashboard/gateway/fallbacks?journey_step=add_gateway_policy&request_id=req-123",
+      `/dashboard/gateway/fallbacks?journey_step=add_gateway_policy&request_id=req-123&${gatewayQuickStartQuery}`,
     );
 
     render(<FallbacksSection />);
@@ -85,6 +87,9 @@ describe("FallbacksSection onboarding activation", () => {
         source: "gateway_fallbacks_onboarding",
         artifactType: "gateway_policy",
         artifactId: "req-123",
+        quick_start_goal: "control_model_traffic",
+        quick_start_id: "gateway",
+        quick_start_primary_path: "gateway",
         metadata: expect.objectContaining({
           gateway_id: "gateway-1",
           request_id: "req-123",
@@ -103,6 +108,9 @@ describe("FallbacksSection onboarding activation", () => {
     expect(
       new URLSearchParams(window.location.search).get("target_event"),
     ).toBe("gateway_policy_created");
+    expect(
+      new URLSearchParams(window.location.search).get("quick_start_id"),
+    ).toBe("gateway");
   });
 
   it("does not record policy completion outside onboarding route context", async () => {

@@ -1,7 +1,9 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, userEvent } from "src/utils/test-utils";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import RequestDetailDrawer from "./RequestDetailDrawer";
+
+const mockRecordActivationEventMutate = vi.hoisted(() => vi.fn());
 
 vi.mock("./hooks/useRequestDetail", () => ({
   default: () => ({
@@ -49,11 +51,15 @@ vi.mock("../guardrails/FeedbackWidget", () => ({
 
 vi.mock("src/sections/onboarding-home/hooks/useRecordActivationEvent", () => ({
   useRecordActivationEvent: () => ({
-    mutate: vi.fn(),
+    mutate: (...args) => mockRecordActivationEventMutate(...args),
   }),
 }));
 
 describe("RequestDetailDrawer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders canonical snake_case details and exposes guardrail tab", async () => {
     render(
       <RequestDetailDrawer open logId="log-detail-id" onClose={vi.fn()} />,
@@ -73,5 +79,34 @@ describe("RequestDetailDrawer", () => {
     expect(screen.getByText(/warned/)).toBeInTheDocument();
     expect(screen.getByText("pii")).toBeInTheDocument();
     expect(screen.getByText("Latency: 12ms")).toBeInTheDocument();
+  });
+
+  it("records gateway log review with setup quick-start attribution", async () => {
+    render(
+      <RequestDetailDrawer
+        open
+        logId="log-detail-id"
+        onboardingMode="review-request"
+        onClose={vi.fn()}
+        quickStartAttribution={{
+          quick_start_goal: "control_model_traffic",
+          quick_start_id: "gateway",
+          quick_start_primary_path: "gateway",
+        }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(mockRecordActivationEventMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: "gateway_log_opened",
+          primaryPath: "gateway",
+          stage: "review_gateway_log",
+          quick_start_goal: "control_model_traffic",
+          quick_start_id: "gateway",
+          quick_start_primary_path: "gateway",
+        }),
+      ),
+    );
   });
 });

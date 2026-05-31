@@ -32,9 +32,12 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
 import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
 import {
+  appendGatewayOnboardingAttributionToHref,
   buildGatewayFallbackPolicyCreatedPayload,
   buildGatewayOnboardingCompletionHref,
+  buildGatewayRequestReviewHref,
   GATEWAY_ONBOARDING_MODES,
+  gatewaySetupQuickStartAttributionFromSearch,
   getGatewayOnboardingRouteParams,
 } from "../gatewayOnboardingEvents";
 
@@ -424,6 +427,16 @@ const FallbacksSection = () => {
 
   const noModelsConfigured = availableModels.length === 0;
   const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const gatewayQuickStartAttribution =
+    gatewaySetupQuickStartAttributionFromSearch(searchParams);
+  const onboardingHref = useCallback(
+    (href) =>
+      appendGatewayOnboardingAttributionToHref(
+        href,
+        gatewayQuickStartAttribution,
+      ),
+    [gatewayQuickStartAttribution],
+  );
   const onboardingRequestId = onboardingParams.requestId;
   const showOnboardingFocus =
     onboardingParams.isOnboarding &&
@@ -502,13 +515,20 @@ const FallbacksSection = () => {
         try {
           const eventPayload = buildGatewayFallbackPolicyCreatedPayload({
             gatewayId,
+            quickStartAttribution: gatewayQuickStartAttribution,
             requestId: onboardingRequestId,
             routing: draft,
           });
           await recordActivationEvent(eventPayload);
-          navigate(buildGatewayOnboardingCompletionHref(eventPayload), {
-            replace: true,
-          });
+          navigate(
+            buildGatewayOnboardingCompletionHref({
+              ...eventPayload,
+              quickStartAttribution: gatewayQuickStartAttribution,
+            }),
+            {
+              replace: true,
+            },
+          );
         } catch {
           // Keep the policy save intact if activation recording is unavailable.
         }
@@ -525,12 +545,12 @@ const FallbacksSection = () => {
   };
 
   const openOnboardingRequestLog = () => {
-    const params = new URLSearchParams();
-    if (onboardingRequestId) {
-      params.set("request_id", onboardingRequestId);
-    }
-    params.set("onboarding", "review-request");
-    navigate(`/dashboard/gateway/logs?${params.toString()}`);
+    navigate(
+      buildGatewayRequestReviewHref({
+        quickStartAttribution: gatewayQuickStartAttribution,
+        requestId: onboardingRequestId,
+      }),
+    );
   };
 
   // Convenience getters
@@ -594,7 +614,11 @@ const FallbacksSection = () => {
           primaryAction={{
             label: "Configure providers",
             onClick: () =>
-              navigate("/dashboard/gateway/providers?source=onboarding"),
+              navigate(
+                onboardingHref(
+                  "/dashboard/gateway/providers?source=onboarding",
+                ),
+              ),
           }}
           secondaryAction={
             onboardingRequestId
