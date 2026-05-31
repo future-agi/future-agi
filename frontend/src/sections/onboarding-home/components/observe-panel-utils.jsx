@@ -107,7 +107,7 @@ export function CurrentStepGuide({ step, stage, stepNumber, totalSteps }) {
     >
       <Stack spacing={0.75} sx={{ maxWidth: 720 }}>
         <Stack direction="row" spacing={0.75} flexWrap="wrap">
-          <Chip size="small" color="primary" label="Start here" />
+          <Chip size="small" color="primary" label="Do this now" />
           <Chip size="small" variant="outlined" label={progressLabel} />
         </Stack>
         <Typography variant="h6" color="text.primary">
@@ -163,7 +163,7 @@ export function ObserveJourneyProgress({
         justifyContent="space-between"
       >
         <Typography variant="subtitle2">
-          {singleActionFocus ? "Your setup path" : "Setup checklist"}
+          {singleActionFocus ? "Full setup path" : "Setup checklist"}
         </Typography>
         {singleActionFocus ? (
           <Chip

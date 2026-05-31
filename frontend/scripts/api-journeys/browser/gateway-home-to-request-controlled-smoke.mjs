@@ -88,10 +88,10 @@ async function main() {
     );
     await waitForVisibleText(page, "Set up gateway", { exact: true });
     await waitForVisibleText(page, "Start with Send request.");
-    await waitForVisibleText(page, "Start here", { exact: true });
+    await waitForVisibleText(page, "Do this now", { exact: true });
     await waitForVisibleText(page, "Step 3 of 6", { exact: true });
     await waitForVisibleText(page, "Send request", { exact: true });
-    await waitForVisibleText(page, "Your setup path", { exact: true });
+    await waitForVisibleText(page, "Full setup path", { exact: true });
     evidence.home_route = await currentRelativeUrl(page);
     assertGatewayQuickStartParams(evidence.home_route, "Home route");
     evidence.home_cta_href = await visibleLinkHref(page, "Send request", {

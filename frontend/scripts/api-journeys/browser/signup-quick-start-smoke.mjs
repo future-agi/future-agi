@@ -327,7 +327,7 @@ async function main() {
     });
     await expectVisibleText(
       page,
-      "Pick a product path. You will see the first action and the full setup path next.",
+      "Pick the workflow that matches your first job. You will see the first step and the full setup path next.",
       { timeout: 90000 },
     );
     await waitForBrowserFrame();
@@ -374,7 +374,7 @@ async function main() {
       await expectVisibleText(page, "Start with Create Observe project.", {
         timeout: 45000,
       });
-      await expectVisibleText(page, "Your setup path", {
+      await expectVisibleText(page, "Full setup path", {
         exact: true,
         timeout: 45000,
       });

@@ -685,7 +685,7 @@ describe("OnboardingHomeView", () => {
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
       "Run one focused example before saving.",
     );
-    expect(within(panel).getByText("Your setup path")).toBeVisible();
+    expect(within(panel).getByText("Full setup path")).toBeVisible();
     expect(within(panel).getAllByText("Step 2 of 6").length).toBeGreaterThan(0);
     expect(
       screen.queryByTestId("path-focus-step-run_prompt_test"),
@@ -1105,7 +1105,7 @@ describe("OnboardingHomeView", () => {
       expect(
         screen.getByText(
           new RegExp(
-            `Start with ${primaryLabel}\\. The checklist below keeps the rest of setup in order\\.`,
+            `You chose ${quickStartOption.buttonLabel}\\. Start with ${primaryLabel}\\. Complete this action first; the full setup path stays below\\.`,
           ),
         ),
       ).toBeVisible();
@@ -1116,7 +1116,7 @@ describe("OnboardingHomeView", () => {
       expect(within(panel).getAllByText(/^Step 1 of /).length).toBeGreaterThan(
         0,
       );
-      expect(within(panel).getByText("Your setup path")).toBeVisible();
+      expect(within(panel).getByText("Full setup path")).toBeVisible();
       expect(within(panel).queryByText("Show full path")).toBeNull();
       const primaryLink = within(panel).getByRole("link", {
         name: new RegExp(primaryLabel, "i"),
@@ -1201,7 +1201,7 @@ describe("OnboardingHomeView", () => {
       within(panel).getAllByText("Create Observe project").length,
     ).toBeGreaterThan(0);
     expect(within(panel).getAllByText("Step 1 of 4").length).toBeGreaterThan(0);
-    expect(within(panel).getByText("Your setup path")).toBeVisible();
+    expect(within(panel).getByText("Full setup path")).toBeVisible();
     expect(within(panel).queryByText("Show full path")).toBeNull();
     expect(within(panel).getByText("Send first trace")).toBeVisible();
     expect(within(panel).getByText("Review first signal")).toBeVisible();
@@ -1258,7 +1258,7 @@ describe("OnboardingHomeView", () => {
     const panel = screen.getByTestId("path-focus-panel-prompt");
     expect(screen.getByTestId("path-focus-step-start_prompt")).toBeVisible();
     expect(within(panel).getAllByText("Step 1 of 6").length).toBeGreaterThan(0);
-    expect(within(panel).getByText("Your setup path")).toBeVisible();
+    expect(within(panel).getByText("Full setup path")).toBeVisible();
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
       "Create prompt",
     );
@@ -2147,7 +2147,7 @@ describe("OnboardingHomeView", () => {
         name: "Set up gateway",
       }),
     ).toBeVisible();
-    expect(within(panel).getByText("Your setup path")).toBeVisible();
+    expect(within(panel).getByText("Full setup path")).toBeVisible();
     expect(within(panel).getAllByText("Send request").length).toBeGreaterThan(
       0,
     );

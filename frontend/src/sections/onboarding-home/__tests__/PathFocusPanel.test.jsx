@@ -140,7 +140,7 @@ describe("PathFocusPanel", () => {
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
       "Run one focused example before saving.",
     );
-    expect(within(panel).getByText("Your setup path")).toBeVisible();
+    expect(within(panel).getByText("Full setup path")).toBeVisible();
     expect(within(panel).getAllByText("Step 2 of 6").length).toBeGreaterThan(0);
     expect(screen.queryByTestId("path-focus-step-start_prompt")).toBeVisible();
     expect(

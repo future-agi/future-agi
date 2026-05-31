@@ -57,13 +57,13 @@ const QUICK_START_ROLE = "AI Builder";
 const SETUP_SIDE_PANEL_STEPS = [
   {
     icon: "mdi:cursor-default-click-outline",
-    label: "Choose one product path",
-    description: "Pick the workflow you want to make real first.",
+    label: "Choose one setup path",
+    description: "Pick the workflow that matches your first job.",
   },
   {
     icon: "mdi:clipboard-check-outline",
     label: "Start with one action",
-    description: "The workspace opens with the first action selected.",
+    description: "Home opens with the first action selected.",
   },
   {
     icon: "mdi:database-eye-outline",
@@ -269,7 +269,7 @@ const SetupOrgSidePanel = () => (
         </Typography>
         <Typography variant="h4">Choose what to set up first</Typography>
         <Typography variant="body1" color="text.secondary">
-          Pick the path that matches your first job. The workspace will open
+          Pick the workflow that matches your first job. The workspace will open
           with that action selected.
         </Typography>
       </Stack>
@@ -615,7 +615,7 @@ const SetupOrganization = ({ getStarted = false }) => {
         fullWidth
         sx={{
           borderRadius: 0.5,
-          minHeight: { xs: 188, sm: 128 },
+          minHeight: { xs: 204, sm: 148 },
           height: "auto",
           alignItems: "flex-start",
           justifyContent: "flex-start",
@@ -623,6 +623,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           py: 1.25,
           textAlign: "left",
           whiteSpace: "normal",
+          textTransform: "none",
           "& .MuiButton-startIcon": {
             mt: 0.2,
           },
@@ -639,6 +640,13 @@ const SetupOrganization = ({ getStarted = false }) => {
           handleProductLoopQuickStartPointerUp(event, option)
         }
         color="primary"
+        endIcon={
+          <Iconify
+            icon="mdi:arrow-right"
+            width={18}
+            sx={{ flexShrink: 0, mt: 0.25 }}
+          />
+        }
         startIcon={
           <Iconify
             icon={option.icon}
@@ -665,6 +673,45 @@ const SetupOrganization = ({ getStarted = false }) => {
               spacing={0.25}
               sx={{ display: "flex", minWidth: 0 }}
             >
+              <Stack
+                component="span"
+                direction="row"
+                spacing={0.75}
+                alignItems="center"
+                flexWrap="wrap"
+                sx={{ display: "flex" }}
+              >
+                <Chip
+                  component="span"
+                  size="small"
+                  label={option.surfaceLabel || option.goalLabel}
+                  sx={{
+                    color: option.featured
+                      ? "primary.contrastText"
+                      : "text.primary",
+                    borderColor: option.featured
+                      ? "rgba(255,255,255,0.48)"
+                      : "divider",
+                  }}
+                  variant="outlined"
+                />
+                {option.estimatedMinutes ? (
+                  <Chip
+                    component="span"
+                    size="small"
+                    label={`${option.estimatedMinutes} min`}
+                    sx={{
+                      color: option.featured
+                        ? "primary.contrastText"
+                        : "text.secondary",
+                      borderColor: option.featured
+                        ? "rgba(255,255,255,0.36)"
+                        : "divider",
+                    }}
+                    variant="outlined"
+                  />
+                ) : null}
+              </Stack>
               <Typography
                 component="span"
                 variant="subtitle2"
@@ -680,6 +727,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                     ? "primary.contrastText"
                     : "text.secondary",
                   lineHeight: 1.25,
+                  mt: 0.25,
                 }}
               >
                 {option.shortDescription}
@@ -687,6 +735,7 @@ const SetupOrganization = ({ getStarted = false }) => {
             </Stack>
             {option.featured ? (
               <Chip
+                component="span"
                 size="small"
                 label="Recommended"
                 sx={{
@@ -726,7 +775,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   textTransform: "uppercase",
                 }}
               >
-                First action
+                First step
               </Typography>
               <Typography
                 component="span"
@@ -751,7 +800,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: 1.25,
                 }}
               >
-                Then: {option.pathPreview}
+                Next: {option.pathPreview}
               </Typography>
             </Stack>
           </Box>
@@ -777,8 +826,8 @@ const SetupOrganization = ({ getStarted = false }) => {
           <Typography variant="subtitle2">Preview sample data</Typography>
         </Stack>
         <Typography variant="body2" color="text.secondary">
-          Optional preview only. This does not complete setup; choose a product
-          path above to set up your workspace with real data.
+          Optional preview only. This does not complete setup; choose a setup
+          workflow above to set up your workspace with real data.
         </Typography>
         <Box
           sx={{
@@ -822,7 +871,7 @@ const SetupOrganization = ({ getStarted = false }) => {
       <Stack spacing={1.5}>
         <Stack spacing={0.5}>
           <Typography variant="body2" color="text.secondary">
-            Choose one path. The next screen opens with the first action
+            Choose one setup workflow. The next screen opens with the first step
             selected and the remaining setup steps visible.
           </Typography>
           <Typography variant="body2" color="text.secondary">
@@ -1208,8 +1257,8 @@ const SetupOrganization = ({ getStarted = false }) => {
                   maxWidth: 520,
                 }}
               >
-                Pick a product path. You will see the first action and the full
-                setup path next.
+                Pick the workflow that matches your first job. You will see the
+                first step and the full setup path next.
               </Typography>
             </Box>
 

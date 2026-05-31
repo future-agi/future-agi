@@ -646,7 +646,7 @@ export default function OnboardingHomeView() {
       ? {
           title: "Sample data is a preview",
           description:
-            "Use it to inspect screens. Real setup still starts from a product path.",
+            "Use it to inspect screens. Real setup still starts from a setup workflow.",
         }
       : null;
   const isFirstRunQuickStartFocus =
@@ -800,12 +800,13 @@ export default function OnboardingHomeView() {
             eyebrow: "Sample preview",
             title: "Preview sample data",
             description:
-              "Open the sample trace to inspect screens. Real setup still starts from a product path.",
+              "Open the sample trace to inspect screens. Real setup still starts from a setup workflow.",
           }
         : {
             eyebrow: "First setup",
             title: selectedSetupQuickStart.buttonLabel,
-            description: `Start with ${firstRunCurrentStepLabel}. The checklist below keeps the rest of setup in order.`,
+            description: `You chose ${selectedSetupQuickStart.buttonLabel}. Start with ${firstRunCurrentStepLabel}. Complete this action first; the full setup path stays below.`,
+            surfaceLabel: selectedSetupQuickStart.surfaceLabel,
           }
       : quickStartMismatchAction
         ? {
@@ -1212,6 +1213,9 @@ export default function OnboardingHomeView() {
             flexWrap="wrap"
           >
             <Chip size="small" label={copy.eyebrow} />
+            {copy.surfaceLabel ? (
+              <Chip size="small" variant="outlined" label={copy.surfaceLabel} />
+            ) : null}
             {renderedState.isActivated ? (
               <Chip size="small" color="success" label="Activated" />
             ) : null}

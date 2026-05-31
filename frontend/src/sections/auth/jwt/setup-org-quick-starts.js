@@ -37,8 +37,9 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
   quickStart("monitor_production_ai_app", {
     id: "observe",
     goal: "monitor_production_ai_app",
+    surfaceLabel: "Tracing",
     buttonLabel: "Connect your agent",
-    shortDescription: "Connect an AI app or agent and send the first trace.",
+    shortDescription: "Connect traces from an AI app or agent.",
     firstActionLabel: "Create Observe project",
     pathPreview: "Send first trace, review first signal, add quality check.",
     featured: true,
@@ -47,6 +48,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
   quickStart("test_and_improve_prompts", {
     id: "prompt",
     goal: "improve_prompts",
+    surfaceLabel: "Prompts",
     buttonLabel: "Test prompts or agent prompts",
     shortDescription: "Run prompt tests and compare output changes.",
     firstActionLabel: "Create prompt",
@@ -56,6 +58,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
   quickStart("build_or_prototype_agent", {
     id: "agent",
     goal: "build_ai_agent",
+    surfaceLabel: "Agents",
     buttonLabel: "Prototype agent",
     shortDescription: "Run one scenario and inspect what the agent did.",
     firstActionLabel: "Create agent",
@@ -65,6 +68,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
   quickStart("route_llm_traffic_safely", {
     id: "gateway",
     goal: "control_model_traffic",
+    surfaceLabel: "Gateway",
     buttonLabel: "Set up gateway",
     shortDescription: "Add a provider, create a key, and send a request.",
     firstActionLabel: "Add provider",
@@ -74,6 +78,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
   quickStart("evaluate_quality", {
     id: "evals",
     goal: "evaluate_quality",
+    surfaceLabel: "Evals / simulation",
     buttonLabel: "Test AI using simulation",
     shortDescription: "Create a small eval or simulation and review failures.",
     firstActionLabel: "Create dataset",
@@ -83,6 +88,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
   quickStart("connect_voice_ai_agent", {
     id: "voice",
     goal: "connect_voice_ai_agent",
+    surfaceLabel: "Voice",
     buttonLabel: "Connect voice agent",
     shortDescription: "Run a test call and review the transcript.",
     firstActionLabel: "Create agent",
@@ -92,11 +98,12 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
   quickStart("explore_sample_data", {
     id: SETUP_ORG_SAMPLE_PREVIEW_QUICK_START_ID,
     goal: "explore_sample_data",
+    surfaceLabel: "Sample screens",
     buttonLabel: "Open sample data",
     previewButtonLabel: "Preview sample screens",
     shortDescription: "Use preloaded data to understand the product screens.",
     firstActionLabel: "Open sample trace",
-    pathPreview: "Preview only. Real setup still starts from a product path.",
+    pathPreview: "Preview only. Real setup still starts from a setup workflow.",
     icon: "mdi:chart-timeline-variant",
     sample: true,
   }),
