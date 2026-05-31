@@ -29,7 +29,7 @@ from accounts.services.onboarding.recommendations import (
     resolve_recommended_action,
 )
 from accounts.services.onboarding.route_availability import resolve_route_availability
-from accounts.services.onboarding.sample_project import get_sample_project_state
+from accounts.services.onboarding.sample_project import ensure_sample_project_ready
 from accounts.services.onboarding.signal_resolver import (
     OnboardingSignals,
     collect_onboarding_signals,
@@ -279,7 +279,7 @@ def _validate_payload(payload):
 
 
 def resolve_activation_state(*, context, flags, signals):
-    sample_project = get_sample_project_state(
+    sample_project = ensure_sample_project_ready(
         user=context.user,
         organization=context.organization,
         workspace=context.workspace,

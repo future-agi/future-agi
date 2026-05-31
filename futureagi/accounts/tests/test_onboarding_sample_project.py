@@ -8,6 +8,7 @@ from accounts.services.onboarding.sample_manifest import (
 )
 from accounts.services.onboarding.sample_project import (
     create_or_get_sample_project,
+    ensure_sample_project_ready,
     get_sample_project_state,
     hide_sample_project,
 )
@@ -82,6 +83,43 @@ def test_sample_project_create_is_idempotent_and_opens_trace_route(
             metadata__is_sample=True,
         ).count()
         == 4
+    )
+
+
+@pytest.mark.django_db
+def test_sample_project_ready_provision_does_not_record_open_event(
+    organization,
+    workspace,
+    user,
+):
+    state = ensure_sample_project_ready(
+        user,
+        organization,
+        workspace,
+        is_enabled=True,
+        can_create=True,
+    )
+
+    assert state["status"] == "ready_for_observe"
+    assert state["created"] is True
+    assert state["entry_route"].startswith("/dashboard/observe/")
+    sample_project = OnboardingSampleProject.no_workspace_objects.get(
+        workspace=workspace,
+        manifest_id=DEFAULT_SAMPLE_MANIFEST_ID,
+        manifest_version=DEFAULT_SAMPLE_MANIFEST_VERSION,
+    )
+    assert sample_project.first_opened_by is None
+    assert sample_project.last_opened_by is None
+    assert sample_project.last_opened_at is None
+    assert (
+        OnboardingActivationEvent.no_workspace_objects.filter(
+            workspace=workspace,
+            event_name__in=[
+                "onboarding_sample_project_opened",
+                "sample_trace_available",
+            ],
+        ).count()
+        == 0
     )
 
 

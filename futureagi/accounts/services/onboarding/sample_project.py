@@ -240,18 +240,26 @@ def _record_sample_event(
     )
 
 
-def _get_or_create_sample_project(user, organization, workspace, manifest):
+def _get_or_create_sample_project(
+    user,
+    organization,
+    workspace,
+    manifest,
+    *,
+    mark_opened=True,
+):
     key = sample_idempotency_key(workspace, manifest)
+    now = timezone.now()
     defaults = {
         "organization": organization,
         "workspace": workspace,
-        "first_opened_by": user,
-        "last_opened_by": user,
+        "first_opened_by": user if mark_opened else None,
+        "last_opened_by": user if mark_opened else None,
         "manifest_id": manifest["manifest_id"],
         "manifest_version": manifest["manifest_version"],
         "status": OnboardingSampleProject.STATUS_CREATING,
         "idempotency_key": key,
-        "last_opened_at": timezone.now(),
+        "last_opened_at": now if mark_opened else None,
         "metadata": {
             "sample_label": manifest["sample_label"],
             "display_name": manifest["display_name"],
@@ -277,6 +285,120 @@ def _get_or_create_sample_project(user, organization, workspace, manifest):
             )
         )
     return sample_project
+
+
+def _prepare_sample_project_artifacts(sample_project, manifest):
+    try:
+        artifacts = ensure_observe_sample_artifacts(sample_project, manifest)
+        missing = artifacts["missing_artifacts"]
+        route_ready = artifacts["route_ready"]
+        status = (
+            OnboardingSampleProject.STATUS_READY_FOR_OBSERVE
+            if route_ready
+            else OnboardingSampleProject.STATUS_PARTIALLY_READY
+        )
+        sample_project.artifact_refs = artifacts["artifact_refs"]
+        sample_project.missing_artifacts = missing
+        sample_project.health = {
+            "route_ready": route_ready,
+            "last_validated_at": timezone.now().isoformat(),
+            "optional_paths": manifest["optional_paths"],
+        }
+        sample_project.status = status
+        _save_sample_project(
+            sample_project,
+            update_fields=[
+                "artifact_refs",
+                "missing_artifacts",
+                "health",
+                "status",
+            ],
+        )
+    except Exception as exc:
+        sample_project.repair_attempts += 1
+        sample_project.last_repair_attempt_at = timezone.now()
+        sample_project.status = OnboardingSampleProject.STATUS_REPAIR_FAILED
+        sample_project.health = {
+            "route_ready": False,
+            "error": str(exc),
+            "last_validated_at": timezone.now().isoformat(),
+        }
+        _save_sample_project(
+            sample_project,
+            update_fields=[
+                "repair_attempts",
+                "last_repair_attempt_at",
+                "status",
+                "health",
+            ],
+        )
+        logger.exception(
+            "Onboarding sample project creation failed",
+            sample_project_id=str(sample_project.id),
+            workspace_id=str(sample_project.workspace_id),
+            error=str(exc),
+        )
+
+
+def ensure_sample_project_ready(
+    user,
+    organization,
+    workspace,
+    *,
+    is_enabled=True,
+    can_create=True,
+    manifest_id=None,
+    manifest_version=None,
+):
+    manifest = get_sample_manifest(manifest_id, manifest_version)
+    if manifest is None:
+        return get_sample_project_state(
+            user,
+            organization,
+            workspace,
+            is_enabled=is_enabled,
+            can_create=can_create,
+            manifest_id=manifest_id,
+            manifest_version=manifest_version,
+        )
+    if not is_enabled or organization is None or workspace is None or not can_create:
+        return get_sample_project_state(
+            user,
+            organization,
+            workspace,
+            is_enabled=is_enabled,
+            can_create=can_create,
+            manifest_id=manifest_id,
+            manifest_version=manifest_version,
+        )
+
+    with transaction.atomic():
+        sample_project = _get_or_create_sample_project(
+            user,
+            organization,
+            workspace,
+            manifest,
+            mark_opened=False,
+        )
+        if sample_project.hidden_at:
+            return _state_from_project(sample_project, manifest, is_enabled=is_enabled)
+
+        validation = validate_sample_artifacts(sample_project, manifest)
+        already_ready = (
+            validation["route_ready"]
+            and sample_project.status
+            == OnboardingSampleProject.STATUS_READY_FOR_OBSERVE
+        )
+        repair_failed = (
+            sample_project.status == OnboardingSampleProject.STATUS_REPAIR_FAILED
+            and sample_project.repair_attempts > 0
+        )
+        if not already_ready and not repair_failed:
+            sample_project.status = OnboardingSampleProject.STATUS_CREATING
+            _save_sample_project(sample_project, update_fields=["status"])
+            _prepare_sample_project_artifacts(sample_project, manifest)
+
+    return _state_from_project(sample_project, manifest, is_enabled=is_enabled)
 
 
 def create_or_get_sample_project(
@@ -326,56 +448,7 @@ def create_or_get_sample_project(
             ],
         )
 
-        try:
-            artifacts = ensure_observe_sample_artifacts(sample_project, manifest)
-            missing = artifacts["missing_artifacts"]
-            route_ready = artifacts["route_ready"]
-            status = (
-                OnboardingSampleProject.STATUS_READY_FOR_OBSERVE
-                if route_ready
-                else OnboardingSampleProject.STATUS_PARTIALLY_READY
-            )
-            sample_project.artifact_refs = artifacts["artifact_refs"]
-            sample_project.missing_artifacts = missing
-            sample_project.health = {
-                "route_ready": route_ready,
-                "last_validated_at": timezone.now().isoformat(),
-                "optional_paths": manifest["optional_paths"],
-            }
-            sample_project.status = status
-            _save_sample_project(
-                sample_project,
-                update_fields=[
-                    "artifact_refs",
-                    "missing_artifacts",
-                    "health",
-                    "status",
-                ],
-            )
-        except Exception as exc:
-            sample_project.repair_attempts += 1
-            sample_project.last_repair_attempt_at = timezone.now()
-            sample_project.status = OnboardingSampleProject.STATUS_REPAIR_FAILED
-            sample_project.health = {
-                "route_ready": False,
-                "error": str(exc),
-                "last_validated_at": timezone.now().isoformat(),
-            }
-            _save_sample_project(
-                sample_project,
-                update_fields=[
-                    "repair_attempts",
-                    "last_repair_attempt_at",
-                    "status",
-                    "health",
-                ],
-            )
-            logger.exception(
-                "Onboarding sample project creation failed",
-                sample_project_id=str(sample_project.id),
-                workspace_id=str(workspace.id),
-                error=str(exc),
-            )
+        _prepare_sample_project_artifacts(sample_project, manifest)
 
     state = _state_from_project(sample_project, manifest, is_enabled=is_enabled)
     _record_sample_event(

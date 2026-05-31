@@ -1,6 +1,10 @@
 import pytest
 
-from accounts.models import OnboardingLifecycleEvaluationLog
+from accounts.models import (
+    OnboardingActivationEvent,
+    OnboardingLifecycleEvaluationLog,
+    OnboardingSampleProject,
+)
 from accounts.services.onboarding.activation_events import record_event
 from accounts.services.onboarding.activation_state import resolve_activation_state
 from accounts.services.onboarding.context import OnboardingContext
@@ -185,6 +189,41 @@ def test_activation_state_surfaces_core_path_discovery_cards(
         for path in payload["available_paths"]
         if path["status"] == "available"
     } >= {"prompt", "agent", "gateway", "evals", "voice"}
+
+
+@pytest.mark.django_db
+def test_activation_state_auto_provisions_sample_project_without_open_event(
+    organization,
+    workspace,
+    user,
+):
+    payload = resolve_activation_state(
+        context=_context(user, organization, workspace),
+        flags=_flags(
+            onboarding_sample_project=True,
+            onboarding_sample_project_enabled=True,
+        ),
+        signals=OnboardingSignals(first_checks={}),
+    )
+
+    sample_project = payload["sample_project"]
+    assert sample_project["status"] == "ready_for_observe"
+    assert sample_project["created"] is True
+    assert sample_project["entry_route"].startswith("/dashboard/observe/")
+    assert (
+        OnboardingSampleProject.no_workspace_objects.filter(workspace=workspace).count()
+        == 1
+    )
+    assert (
+        OnboardingActivationEvent.no_workspace_objects.filter(
+            workspace=workspace,
+            event_name__in=[
+                "onboarding_sample_project_opened",
+                "sample_trace_available",
+            ],
+        ).count()
+        == 0
+    )
 
 
 def test_activation_flow_config_drives_goal_and_stage_wiring():
