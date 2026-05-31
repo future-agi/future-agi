@@ -143,6 +143,29 @@ describe("usePostLoginDestination", () => {
     expect(result.current.reason).toBe("safe_return_to");
   });
 
+  it("does not preserve legacy fallback return targets", async () => {
+    fetchActivationState.mockResolvedValueOnce(state("observeNoSetup"));
+
+    const { result } = renderWithQueryClient(() =>
+      usePostLoginDestination({
+        currentPath: paths.dashboard.falconAI,
+        returnTo: `${paths.dashboard.falconAI}?from=login`,
+        user: baseUser,
+      }),
+    );
+
+    await waitFor(() => expect(result.current.isResolving).toBe(false));
+
+    expect(fetchActivationState).toHaveBeenCalledWith({
+      source: "post_login",
+      mode: "post_login",
+    });
+    expect(result.current.destination.href).toBe(paths.dashboard.home);
+    expect(result.current.reason).toBe("internal_onboarding_home");
+    expect(result.current.destination.usedReturnTo).toBe(false);
+    expect(result.current.destination.shouldClearReturnTo).toBe(true);
+  });
+
   it("does not fetch activation state for direct dashboard routes", () => {
     const { result } = renderWithQueryClient(() =>
       usePostLoginDestination({

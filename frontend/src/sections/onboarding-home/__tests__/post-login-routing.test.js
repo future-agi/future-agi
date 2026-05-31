@@ -56,6 +56,8 @@ describe("post-login routing", () => {
     );
     expect(isSafePostLoginReturnTo("//example.com/dashboard")).toBe(false);
     expect(isSafePostLoginReturnTo("/auth/jwt/login")).toBe(false);
+    expect(isSafePostLoginReturnTo(paths.dashboard.falconAI)).toBe(false);
+    expect(isSafePostLoginReturnTo(paths.dashboard.getstarted)).toBe(false);
   });
 
   it("preserves a safe return target before rollout decisions", () => {
@@ -73,6 +75,18 @@ describe("post-login routing", () => {
   it("rejects unsafe return targets and clears them after the decision", () => {
     const destination = resolve({
       returnTo: "https://example.com/dashboard",
+    });
+
+    expect(destination.href).toBe(paths.dashboard.home);
+    expect(destination.reason).toBe("internal_onboarding_home");
+    expect(destination.usedReturnTo).toBe(false);
+    expect(destination.shouldClearReturnTo).toBe(true);
+  });
+
+  it("rejects legacy fallback return targets and routes eligible users to home", () => {
+    const destination = resolve({
+      currentPath: paths.dashboard.falconAI,
+      returnTo: `${paths.dashboard.falconAI}?from=login`,
     });
 
     expect(destination.href).toBe(paths.dashboard.home);

@@ -48,11 +48,19 @@ const routesMatch = (left, right) =>
 
 export const routeForAnalytics = (href) => routePathname(href);
 
+const isLegacyPostLoginFallbackPath = (pathname) =>
+  LEGACY_POST_LOGIN_FALLBACK_PATHS.some((legacyPath) =>
+    routesMatch(pathname, legacyPath),
+  );
+
 export const isSafePostLoginReturnTo = (returnTo) => {
   if (!returnTo || typeof returnTo !== "string") return false;
   if (!returnTo.startsWith("/") || returnTo.startsWith("//")) return false;
   const pathname = routePathname(returnTo);
-  return !AUTH_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  if (AUTH_ROUTE_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return false;
+  }
+  return !isLegacyPostLoginFallbackPath(pathname);
 };
 
 const hasRequiredFlags = (flags = {}) =>
@@ -66,11 +74,7 @@ export const shouldPreserveCurrentDashboardRoute = ({
   if (!pathname.startsWith(paths.dashboard.root)) return false;
   if (routesMatch(pathname, paths.dashboard.root)) return false;
   if (routesMatch(pathname, paths.dashboard.home)) return false;
-  if (
-    LEGACY_POST_LOGIN_FALLBACK_PATHS.some((legacyPath) =>
-      routesMatch(pathname, legacyPath),
-    )
-  ) {
+  if (isLegacyPostLoginFallbackPath(pathname)) {
     return false;
   }
   if (fallbackDestination && routesMatch(pathname, fallbackDestination)) {
