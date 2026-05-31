@@ -89,10 +89,10 @@ describe("ProductLoopStepper", () => {
       />,
     );
 
-    expect(screen.getByText("Fallback")).toBeVisible();
+    expect(screen.getByText("Other setup option")).toBeVisible();
     expect(screen.getByText("Open observe setup")).toBeVisible();
     expect(
-      screen.getByRole("link", { name: /open fallback/i }),
+      screen.getByRole("link", { name: /open other setup option/i }),
     ).toHaveAttribute(
       "href",
       "/dashboard/observe?setup=true&source=onboarding",

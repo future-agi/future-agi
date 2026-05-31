@@ -2,6 +2,14 @@ import { ONBOARDING_GOAL_OPTIONS } from "src/sections/onboarding-home/onboarding
 
 export const SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY =
   "futureagi.setup_quick_start_attribution";
+export const SETUP_ORG_SAMPLE_PREVIEW_QUICK_START_ID = "sample_preview";
+export const SETUP_ORG_FIRST_SETUP_QUICK_START_IDS = [
+  "observe",
+  "prompt",
+  "agent",
+  "gateway",
+  "evals",
+];
 
 const goalOptionById = new Map(
   ONBOARDING_GOAL_OPTIONS.map((option) => [option.id, option]),
@@ -31,6 +39,8 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     goal: "monitor_production_ai_app",
     buttonLabel: "Connect your agent",
     shortDescription: "Connect an AI app or agent and send the first trace.",
+    firstActionLabel: "Create Observe project",
+    pathPreview: "Send first trace, review first signal, add quality check.",
     featured: true,
     icon: "mdi:connection",
   }),
@@ -39,6 +49,8 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     goal: "improve_prompts",
     buttonLabel: "Test prompts or agent prompts",
     shortDescription: "Run prompt tests and compare output changes.",
+    firstActionLabel: "Create prompt",
+    pathPreview: "Run test, save version, compare versions, improve.",
     icon: "mdi:message-processing-outline",
   }),
   quickStart("build_or_prototype_agent", {
@@ -46,6 +58,8 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     goal: "build_ai_agent",
     buttonLabel: "Prototype agent",
     shortDescription: "Run one scenario and inspect what the agent did.",
+    firstActionLabel: "Create agent",
+    pathPreview: "Run scenario, review run, save coverage.",
     icon: "mdi:graph-outline",
   }),
   quickStart("route_llm_traffic_safely", {
@@ -53,6 +67,8 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     goal: "control_model_traffic",
     buttonLabel: "Set up gateway",
     shortDescription: "Add a provider, create a key, and send a request.",
+    firstActionLabel: "Add provider",
+    pathPreview: "Create key, send request, review log, add policy.",
     icon: "mdi:transit-connection-variant",
   }),
   quickStart("evaluate_quality", {
@@ -60,6 +76,8 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     goal: "evaluate_quality",
     buttonLabel: "Test AI using simulation",
     shortDescription: "Create a small eval or simulation and review failures.",
+    firstActionLabel: "Create dataset",
+    pathPreview: "Add scorer, run eval, review failure, improve.",
     icon: "mdi:check-decagram-outline",
   }),
   quickStart("connect_voice_ai_agent", {
@@ -67,17 +85,25 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     goal: "connect_voice_ai_agent",
     buttonLabel: "Connect voice agent",
     shortDescription: "Run a test call and review the transcript.",
+    firstActionLabel: "Create agent",
+    pathPreview: "Run call, review call, add success criteria.",
     icon: "mdi:phone-in-talk-outline",
   }),
   quickStart("explore_sample_data", {
-    id: "sample_preview",
+    id: SETUP_ORG_SAMPLE_PREVIEW_QUICK_START_ID,
     goal: "explore_sample_data",
     buttonLabel: "Open sample data",
+    previewButtonLabel: "Preview sample screens",
     shortDescription: "Use preloaded data to understand the product screens.",
+    firstActionLabel: "Open sample trace",
+    pathPreview: "Preview only. Real setup still starts from a product path.",
     icon: "mdi:chart-timeline-variant",
     sample: true,
   }),
 ];
+
+export const isSetupOrgFirstSetupQuickStart = (option) =>
+  SETUP_ORG_FIRST_SETUP_QUICK_START_IDS.includes(option?.id);
 
 export const setupQuickStartAttributionFromId = (id) => {
   if (!id) return null;

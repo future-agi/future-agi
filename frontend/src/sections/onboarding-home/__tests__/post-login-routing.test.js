@@ -266,6 +266,15 @@ describe("post-login routing", () => {
     expect(incompleteDashboard.shouldReplace).toBe(true);
   });
 
+  it("routes completed users away from setup-org", () => {
+    const completed = resolve({
+      currentPath: paths.auth.jwt.setup_org,
+    });
+
+    expect(completed.href).toBe(paths.dashboard.home);
+    expect(completed.shouldReplace).toBe(true);
+  });
+
   it("keeps viewer fallback unless activation state supports permission-limited home", () => {
     expect(resolve({ user: viewerUser }).href).toBe(paths.dashboard.home);
 

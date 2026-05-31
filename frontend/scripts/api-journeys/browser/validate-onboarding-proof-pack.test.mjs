@@ -20,7 +20,6 @@ async function writeJson(path, value) {
 function reportFor(child, dir, overrides = {}) {
   const sampleEvidence = {
     browser_state: { initialRender: "done", redirectUrl: null },
-    onboarding_post: { goals: ["Explore with sample data"] },
     sample_open_state: {
       sample_project: { created: true, status: "ready" },
       signals: { first_observe_id: null, first_trace_id: null, traces: 0 },
@@ -105,6 +104,7 @@ function reportFor(child, dir, overrides = {}) {
     eval_source_fix_route_event: {
       event_name: "onboarding_eval_source_fix_route_viewed",
     },
+    expected_daily_quality_available: true,
     onboarding_post: { goals: ["Monitor production AI app"] },
     post_review_state: { stage: "activated", is_activated: true },
     real_observe_project: { projectId: "project-1" },

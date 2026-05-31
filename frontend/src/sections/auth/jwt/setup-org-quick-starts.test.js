@@ -5,7 +5,9 @@ import {
   persistSetupQuickStartAttribution,
   readPersistedSetupQuickStartAttribution,
   SETUP_QUICK_START_ATTRIBUTION_STORAGE_KEY,
+  SETUP_ORG_FIRST_SETUP_QUICK_START_IDS,
   SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS,
+  isSetupOrgFirstSetupQuickStart,
   setupQuickStartAttributionFromId,
 } from "./setup-org-quick-starts";
 
@@ -57,9 +59,32 @@ describe("setup org product-loop quick starts", () => {
     expect(observeQuickStart).toMatchObject({
       buttonLabel: "Connect your agent",
       featured: true,
+      firstActionLabel: "Create Observe project",
+      pathPreview: "Send first trace, review first signal, add quality check.",
       primaryPath: "observe",
     });
     expect(observeQuickStart.sample).toBeUndefined();
+  });
+
+  it("keeps the signup picker to the five first setup paths", () => {
+    expect(SETUP_ORG_FIRST_SETUP_QUICK_START_IDS).toEqual([
+      "observe",
+      "prompt",
+      "agent",
+      "gateway",
+      "evals",
+    ]);
+    expect(
+      SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
+        isSetupOrgFirstSetupQuickStart,
+      ).map((option) => option.buttonLabel),
+    ).toEqual([
+      "Connect your agent",
+      "Test prompts or agent prompts",
+      "Prototype agent",
+      "Set up gateway",
+      "Test AI using simulation",
+    ]);
   });
 
   it("normalizes quick-start attribution from known quick-start ids", () => {

@@ -107,7 +107,7 @@ export function CurrentStepGuide({ step, stage, stepNumber, totalSteps }) {
     >
       <Stack spacing={0.75} sx={{ maxWidth: 720 }}>
         <Stack direction="row" spacing={0.75} flexWrap="wrap">
-          <Chip size="small" color="primary" label="Do this now" />
+          <Chip size="small" color="primary" label="Start here" />
           <Chip size="small" variant="outlined" label={progressLabel} />
         </Stack>
         <Typography variant="h6" color="text.primary">
@@ -140,10 +140,7 @@ export function ObserveJourneyProgress({
 
   const currentStep = journeyCurrentStep(journeyPlan, stage);
   const currentIndex = Math.max(steps.indexOf(currentStep), 0);
-  const visibleSteps =
-    singleActionFocus && currentStep
-      ? steps.filter((_, index) => index > currentIndex)
-      : steps;
+  const visibleSteps = steps;
 
   if (singleActionFocus && !showCurrentStepGuide && visibleSteps.length === 0) {
     return null;
@@ -166,13 +163,13 @@ export function ObserveJourneyProgress({
         justifyContent="space-between"
       >
         <Typography variant="subtitle2">
-          {singleActionFocus ? "After this" : "Setup checklist"}
+          {singleActionFocus ? "Your setup path" : "Setup checklist"}
         </Typography>
         {singleActionFocus ? (
           <Chip
             size="small"
             variant="outlined"
-            label={`${visibleSteps.length} steps left`}
+            label={`Step ${currentIndex + 1} of ${steps.length}`}
           />
         ) : null}
       </Stack>
@@ -325,7 +322,7 @@ export function ObservePanelActions({
           disabled={!fallbackHref}
           onClick={() => onFallbackClick?.(fallbackAction)}
         >
-          {fallbackAction.ctaLabel || "Fallback"}
+          {fallbackAction.ctaLabel || "Other setup option"}
         </Button>
       ) : null}
       {showCheckAgain ? (

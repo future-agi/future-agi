@@ -18,6 +18,7 @@ const QUICK_START_KEY =
 const SCREENSHOT_PATH =
   process.env.SETUP_ORG_COMPLETION_SCREENSHOT ||
   `/tmp/setup-org-completion-smoke-${VIEWPORT_NAME}-${QUICK_START_KEY}.png`;
+const PICK_SCREENSHOT_PATH = process.env.SETUP_ORG_PICK_SCREENSHOT || "";
 const STUB_AUTH = envFlag("ONBOARDING_SMOKE_STUB_AUTH");
 const SAMPLE_QUICK_START_METADATA = {
   quick_start_goal: "explore_sample_data",
@@ -34,17 +35,17 @@ const QUICK_STARTS = {
       quick_start_id: "observe",
       quick_start_primary_path: "observe",
     },
-    expectedGoal: "Connect your agent",
+    expectedGoal: "monitor_production_ai_app",
     fixture: "newWorkspaceNoGoal",
   },
   sample_preview: {
-    buttonText: "Open sample data",
+    buttonText: "Preview sample screens",
     expectedAttribution: {
       quick_start_goal: "explore_sample_data",
       quick_start_id: "sample_preview",
       quick_start_primary_path: "sample",
     },
-    expectedGoal: "Explore with sample data",
+    expectedGoal: null,
     fixture: "sampleFirstRunStart",
   },
   prompt: {
@@ -55,7 +56,7 @@ const QUICK_STARTS = {
       quick_start_id: "prompt",
       quick_start_primary_path: "prompt",
     },
-    expectedGoal: "Test and improve prompts",
+    expectedGoal: "improve_prompts",
     fixture: "promptNoPrompt",
   },
   agent: {
@@ -66,7 +67,7 @@ const QUICK_STARTS = {
       quick_start_id: "agent",
       quick_start_primary_path: "agent",
     },
-    expectedGoal: "Build or prototype an AI agent",
+    expectedGoal: "build_ai_agent",
     fixture: "agentNoAgent",
   },
   gateway: {
@@ -77,7 +78,7 @@ const QUICK_STARTS = {
       quick_start_id: "gateway",
       quick_start_primary_path: "gateway",
     },
-    expectedGoal: "Route LLM traffic safely",
+    expectedGoal: "control_model_traffic",
     fixture: "gatewayNoProvider",
   },
   evals: {
@@ -88,21 +89,9 @@ const QUICK_STARTS = {
       quick_start_id: "evals",
       quick_start_primary_path: "evals",
     },
-    expectedGoal: "Test AI using simulation",
+    expectedGoal: "evaluate_quality",
     activationState: pathFocusActivationState,
     primaryPath: "evals",
-  },
-  voice: {
-    buttonText: "Connect voice agent",
-    expectedActionText: "Create agent",
-    expectedAttribution: {
-      quick_start_goal: "connect_voice_ai_agent",
-      quick_start_id: "voice",
-      quick_start_primary_path: "voice",
-    },
-    expectedGoal: "Connect a voice AI agent",
-    activationState: pathFocusActivationState,
-    primaryPath: "voice",
   },
 };
 
@@ -204,7 +193,7 @@ async function main() {
     await expectVisibleText(page, "What do you want to set up first?");
     await expectVisibleText(
       page,
-      "Choose one setup flow. We will show the current action and the remaining setup steps next.",
+      "Pick a product path. You will see the first action and the full setup path next.",
     );
     const quickStartInitiallyVisible = await isVisibleButtonText(
       page,
@@ -214,6 +203,9 @@ async function main() {
       quickStartInitiallyVisible,
       `Expected ${QUICK_START.buttonText} to be visible on setup-org.`,
     );
+    if (PICK_SCREENSHOT_PATH) {
+      await page.screenshot({ path: PICK_SCREENSHOT_PATH, fullPage: true });
+    }
     await page.evaluate(() => {
       localStorage.setItem("redirectUrl", "/dashboard/observe?project=stale");
     });
@@ -251,8 +243,11 @@ async function main() {
       await expectVisibleText(page, QUICK_START.buttonText, {
         exact: true,
       });
-      await expectVisibleText(page, "Complete the highlighted action first.");
-      await expectVisibleText(page, "After this", { exact: true });
+      await expectVisibleText(
+        page,
+        `Start with ${QUICK_START.expectedActionText}.`,
+      );
+      await expectVisibleText(page, "Your setup path", { exact: true });
       await expectVisibleText(page, "Step 1 of");
       await expectVisibleText(page, QUICK_START.expectedActionText, {
         exact: true,
@@ -283,17 +278,24 @@ async function main() {
       browserState.redirectUrl === null,
       `Expected redirectUrl to be cleared, got ${browserState.redirectUrl}`,
     );
-    assert(onboardingPosts.length === 1, "Expected one onboarding POST.");
-    assert(
-      onboardingPosts[0]?.role === "AI Builder",
-      `Expected quick-start role, got ${onboardingPosts[0]?.role}`,
-    );
-    assert(
-      onboardingPosts[0]?.goals?.includes(QUICK_START.expectedGoal),
-      `Expected ${QUICK_START.expectedGoal} quick-start goal, got ${JSON.stringify(
-        onboardingPosts[0]?.goals,
-      )}`,
-    );
+    if (QUICK_START_KEY === "sample_preview") {
+      assert(
+        onboardingPosts.length === 0,
+        "Sample preview must not save onboarding or complete setup.",
+      );
+    } else {
+      assert(onboardingPosts.length === 1, "Expected one onboarding POST.");
+      assert(
+        onboardingPosts[0]?.role === "AI Builder",
+        `Expected quick-start role, got ${onboardingPosts[0]?.role}`,
+      );
+      assert(
+        onboardingPosts[0]?.goals?.includes(QUICK_START.expectedGoal),
+        `Expected ${QUICK_START.expectedGoal} quick-start goal, got ${JSON.stringify(
+          onboardingPosts[0]?.goals,
+        )}`,
+      );
+    }
     assert(
       setupPosts.length === 0,
       "Expected no setup organization POST on product-loop quick start.",

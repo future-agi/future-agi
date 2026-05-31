@@ -47,15 +47,17 @@ export default function ObserveSetupPanel({
       }}
     >
       <Stack spacing={2}>
-        <ObservePanelHeader
-          eyebrow={effectiveJourneyPlan.eyebrow || "Observe setup"}
-          title={effectiveJourneyPlan.title || "Connect your agent"}
-          description={
-            effectiveJourneyPlan.description ||
-            "Create the project, send one trace, then return here for the first review."
-          }
-          chips={effectiveJourneyPlan.chips || ["observe", "setup"]}
-        />
+        {!singleActionFocus ? (
+          <ObservePanelHeader
+            eyebrow={effectiveJourneyPlan.eyebrow || "Observe setup"}
+            title={effectiveJourneyPlan.title || "Connect your agent"}
+            description={
+              effectiveJourneyPlan.description ||
+              "Create the project, send one trace, then return here for the first review."
+            }
+            chips={effectiveJourneyPlan.chips || ["observe", "setup"]}
+          />
+        ) : null}
         {singleActionFocus ? (
           <CurrentStepGuide
             step={actionStep}

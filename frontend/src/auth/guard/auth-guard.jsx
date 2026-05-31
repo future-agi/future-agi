@@ -278,6 +278,21 @@ function Container({ children }) {
       return;
     }
 
+    if (window.location.pathname === paths.auth.jwt.setup_org) {
+      if (isPostLoginDestinationResolving) return;
+      const targetRoute =
+        postLoginDestination?.href || postLoginPath || paths.dashboard.home;
+      trackPostLoginDecision("setup_org_completed_user", targetRoute);
+      trackPostLoginDestination(postLoginDestination, targetRoute);
+      if (postLoginDestination?.shouldClearReturnTo) {
+        localStorage.removeItem("redirectUrl");
+      }
+      if (postLoginDestination?.shouldReplace !== false) {
+        router.replace(targetRoute);
+      }
+      return;
+    }
+
     const initial = localStorage.getItem("initial-render");
 
     if (initial !== "done") {

@@ -3,6 +3,7 @@ import { paths } from "src/routes/paths";
 export const SETUP_COMPLETION_SOURCE = "setup_org";
 export const SETUP_COMPLETION_HANDOFF_STORAGE_KEY =
   "futureagi.setup_completion_handoff";
+const SAMPLE_PREVIEW_QUICK_START_ID = "sample_preview";
 
 const appendIfPresent = (params, key, value) => {
   if (value !== undefined && value !== null && value !== "") {
@@ -74,19 +75,32 @@ export const isSetupCompletionHandoff = (href) => {
     const quickStartPrimaryPath = url.searchParams.get(
       "quick_start_primary_path",
     );
+    const storedQuickStartId = storedUrl.searchParams.get("quick_start_id");
     const storedQuickStartGoal = storedUrl.searchParams.get("quick_start_goal");
     const storedQuickStartPrimaryPath = storedUrl.searchParams.get(
       "quick_start_primary_path",
     );
-    return (
-      storedUrl.pathname === url.pathname &&
-      url.pathname === paths.dashboard.home &&
-      storedUrl.searchParams.get("source") === SETUP_COMPLETION_SOURCE &&
+    const quickStartMatches =
       Boolean(quickStartId) &&
-      storedUrl.searchParams.get("quick_start_id") === quickStartId &&
+      storedQuickStartId === quickStartId &&
       (!quickStartGoal || storedQuickStartGoal === quickStartGoal) &&
       (!quickStartPrimaryPath ||
-        storedQuickStartPrimaryPath === quickStartPrimaryPath)
+        storedQuickStartPrimaryPath === quickStartPrimaryPath);
+    const isHomeHandoff =
+      storedUrl.pathname === url.pathname &&
+      url.pathname === paths.dashboard.home;
+    const isSamplePreviewHandoff =
+      storedQuickStartId === SAMPLE_PREVIEW_QUICK_START_ID &&
+      quickStartId === SAMPLE_PREVIEW_QUICK_START_ID &&
+      url.pathname.startsWith(`${paths.dashboard.root}/observe/`) &&
+      url.pathname.includes("/trace/") &&
+      url.searchParams.get("sample") === "true" &&
+      url.searchParams.get("from") === "onboarding";
+
+    return (
+      storedUrl.searchParams.get("source") === SETUP_COMPLETION_SOURCE &&
+      quickStartMatches &&
+      (isHomeHandoff || isSamplePreviewHandoff)
     );
   } catch {
     return false;

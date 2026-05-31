@@ -681,15 +681,15 @@ describe("OnboardingHomeView", () => {
     expect(params.get("quick_start_primary_path")).toBe("prompt");
     expect(params.get("tour_anchor")).toBe("prompt_run_test_button");
     expect(params.get("journey_step")).toBe("run_prompt_test");
-    expect(within(panel).getByText("Step 2 of 6")).toBeVisible();
+    expect(within(panel).getAllByText("Step 2 of 6").length).toBeGreaterThan(0);
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
       "Run one focused example before saving.",
     );
-    expect(within(panel).getByText("After this")).toBeVisible();
-    expect(within(panel).getByText("4 steps left")).toBeVisible();
+    expect(within(panel).getByText("Your setup path")).toBeVisible();
+    expect(within(panel).getAllByText("Step 2 of 6").length).toBeGreaterThan(0);
     expect(
       screen.queryByTestId("path-focus-step-run_prompt_test"),
-    ).not.toBeInTheDocument();
+    ).toBeVisible();
     expect(
       within(panel).queryByRole("link", { name: /open workbench/i }),
     ).not.toBeInTheDocument();
@@ -1104,15 +1104,19 @@ describe("OnboardingHomeView", () => {
       ).toBeVisible();
       expect(
         screen.getByText(
-          "Complete the highlighted action first. The checklist below shows the rest of this setup flow.",
+          new RegExp(
+            `Start with ${primaryLabel}\\. The checklist below keeps the rest of setup in order\\.`,
+          ),
         ),
       ).toBeVisible();
       expect(
         screen.queryByTestId("setup-quick-start-handoff-alert"),
       ).not.toBeInTheDocument();
       expect(screen.queryByTestId("sample-project-panel")).toBeNull();
-      expect(within(panel).getByText(/^Step 1 of /)).toBeVisible();
-      expect(within(panel).getByText("After this")).toBeVisible();
+      expect(within(panel).getAllByText(/^Step 1 of /).length).toBeGreaterThan(
+        0,
+      );
+      expect(within(panel).getByText("Your setup path")).toBeVisible();
       expect(within(panel).queryByText("Show full path")).toBeNull();
       const primaryLink = within(panel).getByRole("link", {
         name: new RegExp(primaryLabel, "i"),
@@ -1139,15 +1143,13 @@ describe("OnboardingHomeView", () => {
           within(panel).getByTestId("current-step-guide"),
         ).toHaveTextContent("Create Observe project");
         expect(
-          screen.queryByTestId("observe-journey-step-connect_observability"),
-        ).not.toBeInTheDocument();
+          screen.getByTestId("observe-journey-step-connect_observability"),
+        ).toBeVisible();
       } else {
         expect(
           within(panel).getByTestId("current-step-guide"),
         ).toHaveTextContent(primaryLabel);
-        expect(
-          screen.queryByTestId(`path-focus-step-${stage}`),
-        ).not.toBeInTheDocument();
+        expect(screen.getByTestId(`path-focus-step-${stage}`)).toBeVisible();
       }
       expect(
         within(panel).queryByRole("link", {
@@ -1193,13 +1195,13 @@ describe("OnboardingHomeView", () => {
     ).toBeVisible();
     const panel = screen.getByTestId("observe-setup-panel");
     expect(
-      within(panel).getByRole("heading", { name: "Connect your agent" }),
-    ).toBeVisible();
+      within(panel).queryByRole("heading", { name: "Connect your agent" }),
+    ).not.toBeInTheDocument();
     expect(
       within(panel).getAllByText("Create Observe project").length,
     ).toBeGreaterThan(0);
-    expect(within(panel).getByText("Step 1 of 4")).toBeVisible();
-    expect(within(panel).getByText("After this")).toBeVisible();
+    expect(within(panel).getAllByText("Step 1 of 4").length).toBeGreaterThan(0);
+    expect(within(panel).getByText("Your setup path")).toBeVisible();
     expect(within(panel).queryByText("Show full path")).toBeNull();
     expect(within(panel).getByText("Send first trace")).toBeVisible();
     expect(within(panel).getByText("Review first signal")).toBeVisible();
@@ -1254,11 +1256,9 @@ describe("OnboardingHomeView", () => {
       }),
     ).toBeVisible();
     const panel = screen.getByTestId("path-focus-panel-prompt");
-    expect(
-      screen.queryByTestId("path-focus-step-start_prompt"),
-    ).not.toBeInTheDocument();
-    expect(within(panel).getByText("Step 1 of 6")).toBeVisible();
-    expect(within(panel).getByText("After this")).toBeVisible();
+    expect(screen.getByTestId("path-focus-step-start_prompt")).toBeVisible();
+    expect(within(panel).getAllByText("Step 1 of 6").length).toBeGreaterThan(0);
+    expect(within(panel).getByText("Your setup path")).toBeVisible();
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
       "Create prompt",
     );
@@ -2147,7 +2147,7 @@ describe("OnboardingHomeView", () => {
         name: "Set up gateway",
       }),
     ).toBeVisible();
-    expect(within(panel).getByText("Route one request safely")).toBeVisible();
+    expect(within(panel).getByText("Your setup path")).toBeVisible();
     expect(within(panel).getAllByText("Send request").length).toBeGreaterThan(
       0,
     );
@@ -2160,7 +2160,11 @@ describe("OnboardingHomeView", () => {
       "href",
       "/dashboard/gateway?onboarding=test-request&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway&tour_anchor=gateway_request_button&journey_step=run_gateway_request",
     );
-    expect(within(panel).getByText("Selected flow")).toBeVisible();
+    expect(
+      within(
+        screen.getByTestId("path-focus-step-run_gateway_request"),
+      ).getByText("Now"),
+    ).toBeVisible();
     expect(screen.queryByText("gateway")).toBeNull();
   });
 

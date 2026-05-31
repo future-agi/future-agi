@@ -430,7 +430,6 @@ function validateSampleEvidence(checks, childId, report) {
   const evidence = report.evidence || {};
   addEvidenceFieldChecks(checks, childId, evidence, [
     "browser_state",
-    "onboarding_post",
     "sample_open_state",
     "sample_project_post",
     "sample_project_response",
@@ -446,6 +445,12 @@ function validateSampleEvidence(checks, childId, report) {
     evidence.setup_quick_start === "sample_preview",
     `${childId}:sample:quick_start`,
     "Sample proof used the sample preview quick start.",
+  );
+  addCheck(
+    checks,
+    !evidence.onboarding_post,
+    `${childId}:sample:no_setup_completion`,
+    "Sample proof does not save profile onboarding or complete setup.",
   );
   addCheck(
     checks,

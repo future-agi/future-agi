@@ -12,6 +12,7 @@ import {
   Typography,
   TextField,
   IconButton,
+  Chip,
   styled,
   MobileStepper,
   Button,
@@ -45,8 +46,10 @@ import {
   trackSetupOrgQuickStartsViewed,
 } from "./setup-org-analytics";
 import {
+  isSetupOrgFirstSetupQuickStart,
   persistSetupQuickStartAttribution,
   SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS,
+  SETUP_ORG_SAMPLE_PREVIEW_QUICK_START_ID,
 } from "./setup-org-quick-starts";
 
 const QUICK_START_ROLE = "AI Builder";
@@ -54,18 +57,18 @@ const QUICK_START_ROLE = "AI Builder";
 const SETUP_SIDE_PANEL_STEPS = [
   {
     icon: "mdi:cursor-default-click-outline",
-    label: "Choose a setup flow",
-    description: "Pick the product area you want working first.",
+    label: "Choose one product path",
+    description: "Pick the workflow you want to make real first.",
   },
   {
     icon: "mdi:clipboard-check-outline",
-    label: "Follow one guided path",
-    description: "The next screen highlights the current action.",
+    label: "Start with one action",
+    description: "The workspace opens with the first action selected.",
   },
   {
     icon: "mdi:database-eye-outline",
-    label: "Use real data to finish",
-    description: "Sample data is only a preview and does not finish setup.",
+    label: "Complete real setup",
+    description: "Sample data stays available, but it does not finish setup.",
   },
 ];
 
@@ -262,12 +265,12 @@ const SetupOrgSidePanel = () => (
     >
       <Stack spacing={1}>
         <Typography variant="overline" color="text.secondary">
-          Setup flow
+          First setup
         </Typography>
-        <Typography variant="h4">Choose, then follow the checklist</Typography>
+        <Typography variant="h4">Choose what to set up first</Typography>
         <Typography variant="body1" color="text.secondary">
-          Start from a product workflow. FutureAGI will keep the next screen on
-          that workflow until the first real signal is set up.
+          Pick the path that matches your first job. The workspace will open
+          with that action selected.
         </Typography>
       </Stack>
 
@@ -515,7 +518,7 @@ const SetupOrganization = ({ getStarted = false }) => {
         finishSetup(quickStartOption);
       }
     },
-    onError: (error, variables) => {
+    onError: (error) => {
       const quickStartOption = quickStartOptionRef.current;
       const shouldFinishQuickStart = Boolean(quickStartOption);
       quickStartOptionRef.current = null;
@@ -527,14 +530,9 @@ const SetupOrganization = ({ getStarted = false }) => {
           reason: setupSaveFailureReason(error),
           status: error?.response?.status || error?.status,
         });
-        updateUserData({
-          role: variables?.role,
-          goals: variables?.goals || [],
-          onboarding_completed: Boolean(
-            variables?.role && variables?.goals?.length,
-          ),
+        enqueueSnackbar("Could not save your setup choice. Please try again.", {
+          variant: "error",
         });
-        finishSetup(quickStartOption);
         return;
       }
       enqueueSnackbar(error?.message || "Failed to save profile", {
@@ -574,7 +572,7 @@ const SetupOrganization = ({ getStarted = false }) => {
       });
       saveUserData({
         role: customRoleValue || roleValue || QUICK_START_ROLE,
-        goals: [option.goalLabel],
+        goals: [option.goal],
       });
     },
     [customRoleValue, isSavingUserData, roleValue, saveUserData],
@@ -588,6 +586,26 @@ const SetupOrganization = ({ getStarted = false }) => {
     },
     [handleProductLoopQuickStart],
   );
+  const handleSamplePreviewQuickStart = useCallback(
+    (option) => {
+      if (isSavingUserData || quickStartOptionRef.current) {
+        return;
+      }
+
+      persistSetupQuickStartAttribution({
+        quickStartGoal: option.goal,
+        quickStartId: option.id,
+        quickStartPrimaryPath: option.primaryPath,
+      });
+      trackSetupOrgQuickStartClicked({
+        quickStartGoal: option.goal,
+        quickStartId: option.id,
+        quickStartPrimaryPath: option.primaryPath,
+      });
+      finishSetup(option);
+    },
+    [finishSetup, isSavingUserData],
+  );
 
   const renderProductLoopQuickStart = (option) => {
     const ButtonComponent = option.featured ? LoadingButton : Button;
@@ -597,7 +615,8 @@ const SetupOrganization = ({ getStarted = false }) => {
         fullWidth
         sx={{
           borderRadius: 0.5,
-          minHeight: option.featured ? 78 : 72,
+          minHeight: { xs: 188, sm: 128 },
+          height: "auto",
           alignItems: "flex-start",
           justifyContent: "flex-start",
           px: 1.75,
@@ -606,6 +625,9 @@ const SetupOrganization = ({ getStarted = false }) => {
           whiteSpace: "normal",
           "& .MuiButton-startIcon": {
             mt: 0.2,
+          },
+          "& .MuiButton-endIcon": {
+            alignSelf: "flex-start",
           },
         }}
         variant={option.featured ? "contained" : "outlined"}
@@ -625,26 +647,114 @@ const SetupOrganization = ({ getStarted = false }) => {
           />
         }
       >
-        <Stack spacing={0.25} sx={{ minWidth: 0 }}>
-          <Typography
+        <Stack
+          component="span"
+          spacing={1}
+          sx={{ display: "flex", minWidth: 0, width: "100%" }}
+        >
+          <Stack
             component="span"
-            variant="subtitle2"
-            sx={{ lineHeight: 1.2 }}
+            direction={{ xs: "column", sm: "row" }}
+            spacing={0.75}
+            justifyContent="space-between"
+            alignItems={{ xs: "flex-start", sm: "center" }}
+            sx={{ width: "100%" }}
           >
-            {option.buttonLabel}
-          </Typography>
-          <Typography
+            <Stack
+              component="span"
+              spacing={0.25}
+              sx={{ display: "flex", minWidth: 0 }}
+            >
+              <Typography
+                component="span"
+                variant="subtitle2"
+                sx={{ lineHeight: 1.2 }}
+              >
+                {option.buttonLabel}
+              </Typography>
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{
+                  color: option.featured
+                    ? "primary.contrastText"
+                    : "text.secondary",
+                  lineHeight: 1.25,
+                }}
+              >
+                {option.shortDescription}
+              </Typography>
+            </Stack>
+            {option.featured ? (
+              <Chip
+                size="small"
+                label="Recommended"
+                sx={{
+                  color: "primary.contrastText",
+                  borderColor: "rgba(255,255,255,0.48)",
+                }}
+                variant="outlined"
+              />
+            ) : null}
+          </Stack>
+          <Box
             component="span"
-            variant="caption"
             sx={{
-              color: option.featured
-                ? "primary.contrastText"
-                : "text.secondary",
-              lineHeight: 1.25,
+              display: "block",
+              border: "1px solid",
+              borderColor: option.featured
+                ? "rgba(255,255,255,0.36)"
+                : "divider",
+              borderRadius: 0.5,
+              px: 1,
+              py: 0.75,
+              bgcolor: option.featured
+                ? "rgba(255,255,255,0.10)"
+                : "background.neutral",
+              width: "100%",
             }}
           >
-            {option.shortDescription}
-          </Typography>
+            <Stack component="span" spacing={0.25} sx={{ display: "flex" }}>
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{
+                  color: option.featured
+                    ? "primary.contrastText"
+                    : "text.secondary",
+                  opacity: option.featured ? 0.82 : 1,
+                  textTransform: "uppercase",
+                }}
+              >
+                First action
+              </Typography>
+              <Typography
+                component="span"
+                variant="body2"
+                sx={{
+                  color: option.featured
+                    ? "primary.contrastText"
+                    : "text.primary",
+                  fontWeight: "fontWeightMedium",
+                }}
+              >
+                {option.firstActionLabel}
+              </Typography>
+              <Typography
+                component="span"
+                variant="caption"
+                sx={{
+                  color: option.featured
+                    ? "primary.contrastText"
+                    : "text.secondary",
+                  opacity: option.featured ? 0.88 : 1,
+                  lineHeight: 1.25,
+                }}
+              >
+                Then: {option.pathPreview}
+              </Typography>
+            </Stack>
+          </Box>
         </Stack>
       </ButtonComponent>
     );
@@ -667,44 +777,53 @@ const SetupOrganization = ({ getStarted = false }) => {
           <Typography variant="subtitle2">Preview sample data</Typography>
         </Stack>
         <Typography variant="body2" color="text.secondary">
-          Optional preview only. Real setup still starts from one of the product
-          workflows above.
+          Optional preview only. This does not complete setup; choose a product
+          path above to set up your workspace with real data.
         </Typography>
-        <LoadingButton
+        <Box
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 0.5,
+            px: 1,
+            py: 0.75,
+            bgcolor: "background.neutral",
+          }}
+        >
+          <Typography variant="caption" color="text.secondary">
+            Preview: {option.firstActionLabel}. {option.pathPreview}
+          </Typography>
+        </Box>
+        <Button
           fullWidth
           sx={{ borderRadius: 0.5, minHeight: 48 }}
-          variant="outlined"
-          loading={isSavingUserData}
+          variant="text"
           disabled={isSavingUserData}
-          aria-label={option.buttonLabel}
-          onClick={() => handleProductLoopQuickStart(option)}
-          onPointerUp={(event) =>
-            handleProductLoopQuickStartPointerUp(event, option)
-          }
+          aria-label={option.previewButtonLabel || option.buttonLabel}
+          onClick={() => handleSamplePreviewQuickStart(option)}
           color="primary"
           startIcon={<Iconify icon="mdi:chart-timeline-variant" width={18} />}
         >
-          {option.buttonLabel}
-        </LoadingButton>
+          {option.previewButtonLabel || option.buttonLabel}
+        </Button>
       </Stack>
     </Box>
   );
 
   const renderProductLoopQuickStarts = () => {
     const sampleQuickStart = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.find(
-      (option) => option.sample,
+      (option) => option.id === SETUP_ORG_SAMPLE_PREVIEW_QUICK_START_ID,
     );
     const productQuickStarts = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
-      (option) => !option.sample,
+      (option) => isSetupOrgFirstSetupQuickStart(option),
     );
 
     return (
       <Stack spacing={1.5}>
         <Stack spacing={0.5}>
-          <Typography variant="subtitle2">Choose one setup flow</Typography>
           <Typography variant="body2" color="text.secondary">
-            Pick the product area you want working first. The next screen keeps
-            that setup flow focused on one action at a time.
+            Choose one path. The next screen opens with the first action
+            selected and the remaining setup steps visible.
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Team invites can wait until setup is working.
@@ -1082,16 +1201,15 @@ const SetupOrganization = ({ getStarted = false }) => {
                 What do you want to set up first?
               </Typography>
               <Typography
-                fontWeight={"fontWeightSemiBold"}
+                variant="body1"
                 sx={{
-                  fontSize: "28px",
                   color: "text.secondary",
-                  fontFamily: "Inter",
-                  lineHeight: "36px",
+                  mt: 1,
+                  maxWidth: 520,
                 }}
               >
-                Choose one setup flow. We will show the current action and the
-                remaining setup steps next.
+                Pick a product path. You will see the first action and the full
+                setup path next.
               </Typography>
             </Box>
 

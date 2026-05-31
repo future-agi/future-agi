@@ -67,10 +67,10 @@ export default function ProductLoopStepper({
   const fallbackHref = actionHref(fallbackAction);
   const nextAction = primaryHref ? recommendedAction : fallbackAction;
   const nextActionHref = primaryHref || fallbackHref;
-  const nextActionLabel = primaryHref ? "Next step" : "Fallback";
+  const nextActionLabel = primaryHref ? "Next step" : "Other setup option";
   const nextActionButtonLabel = primaryHref
     ? "Open next step"
-    : "Open fallback";
+    : "Open other setup option";
   const metadata = actionMetadata(nextAction);
 
   return (

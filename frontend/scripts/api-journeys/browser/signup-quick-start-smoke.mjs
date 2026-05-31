@@ -327,13 +327,13 @@ async function main() {
     });
     await expectVisibleText(
       page,
-      "Choose one setup flow. We will show the current action and the remaining setup steps next.",
+      "Pick a product path. You will see the first action and the full setup path next.",
       { timeout: 90000 },
     );
     await waitForBrowserFrame();
     await clickVisibleButtonText(
       page,
-      SAMPLE_ONLY ? "Open sample data" : "Connect your agent",
+      SAMPLE_ONLY ? "Preview sample screens" : "Connect your agent",
     );
 
     let setupOrgHomeUrl = null;
@@ -371,10 +371,10 @@ async function main() {
         exact: true,
         timeout: 45000,
       });
-      await expectVisibleText(page, "Complete the highlighted action first.", {
+      await expectVisibleText(page, "Start with Create Observe project.", {
         timeout: 45000,
       });
-      await expectVisibleText(page, "After this", {
+      await expectVisibleText(page, "Your setup path", {
         exact: true,
         timeout: 45000,
       });
@@ -503,12 +503,8 @@ async function main() {
         "Expected sample project activation state to expose an entry route.",
       );
       assert(
-        evidence.onboardingPosts[0]?.goals?.includes(
-          "Explore with sample data",
-        ),
-        `Expected sample preview quick-start goal, got ${JSON.stringify(
-          evidence.onboardingPosts[0]?.goals,
-        )}`,
+        evidence.onboardingPosts.length === 0,
+        "Sample preview must not save onboarding or complete setup.",
       );
       assert(
         evidence.activationEventPosts.some(
@@ -1270,9 +1266,7 @@ async function main() {
       `Expected quick-start role, got ${evidence.onboardingPosts[0]?.role}`,
     );
     assert(
-      evidence.onboardingPosts[0]?.goals?.includes(
-        "Monitor a production AI app",
-      ),
+      evidence.onboardingPosts[0]?.goals?.includes("monitor_production_ai_app"),
       `Expected observe quick-start goal, got ${JSON.stringify(
         evidence.onboardingPosts[0]?.goals,
       )}`,

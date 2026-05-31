@@ -36,7 +36,7 @@ goals:
     estimated_minutes: 8
   control_model_traffic:
     primary_path: gateway
-    label: Setup gateway
+    label: Set up gateway
     description: Add a provider, create a key, and send a gateway request.
     estimated_minutes: 7
   evaluate_quality:
@@ -66,6 +66,7 @@ goal_aliases:
   Prototype agent: build_ai_agent
   Route LLM traffic safely: control_model_traffic
   Setup gateway: control_model_traffic
+  Set up gateway: control_model_traffic
   Evaluate quality on data or traces: evaluate_quality
   Test AI using simulation: evaluate_quality
   Connect a voice AI agent: connect_voice_ai_agent
@@ -96,7 +97,7 @@ paths:
     first_action_id: create_observe_project
     requires_permission: observe:write
   gateway:
-    label: Setup gateway
+    label: Set up gateway
     description: Configure model routing and production policies.
     first_action_id: gateway_add_provider
     requires_permission: gateway:write

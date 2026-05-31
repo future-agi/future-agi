@@ -89,6 +89,25 @@ describe("setup org completion routing", () => {
     ).toBe(false);
   });
 
+  it("allows the sample preview trace handoff without completing setup", () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    persistSetupCompletionReturnTo(
+      `${paths.dashboard.home}?source=setup_org&quick_start_id=sample_preview&quick_start_goal=explore_sample_data&quick_start_primary_path=sample`,
+    );
+
+    expect(
+      isSetupCompletionHandoff(
+        "/dashboard/observe/observe-1/trace/trace-1?sample=true&from=onboarding&quick_start_id=sample_preview&quick_start_goal=explore_sample_data&quick_start_primary_path=sample",
+      ),
+    ).toBe(true);
+    expect(
+      isSetupCompletionHandoff(
+        "/dashboard/observe/observe-1/trace/trace-1?sample=true&from=onboarding&quick_start_id=observe&quick_start_goal=monitor_production_ai_app&quick_start_primary_path=observe",
+      ),
+    ).toBe(false);
+  });
+
   it("ignores internal return targets after setup so activation can resolve", () => {
     expect(resolveSetupCompletionHref("/dashboard/observe?project=1")).toBe(
       setupCompletionHomeHref(),

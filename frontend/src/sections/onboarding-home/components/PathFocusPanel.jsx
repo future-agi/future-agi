@@ -66,10 +66,7 @@ export default function PathFocusPanel({
       ? null
       : Math.min(Math.max(derivedCurrentIndex, 0), plan.steps.length - 1);
   const currentStep = currentIndex === null ? null : plan.steps[currentIndex];
-  const visibleSteps =
-    singleActionFocus && currentIndex !== null
-      ? plan.steps.filter((_, index) => index > currentIndex)
-      : plan.steps;
+  const visibleSteps = plan.steps;
 
   return (
     <Box
@@ -83,16 +80,14 @@ export default function PathFocusPanel({
       }}
     >
       <Stack spacing={2}>
-        <ObservePanelHeader
-          eyebrow={singleActionFocus ? "Selected flow" : plan.eyebrow}
-          title={plan.title}
-          description={
-            singleActionFocus
-              ? "Do the highlighted step now. The later steps stay visible so the setup path is clear."
-              : plan.description
-          }
-          chips={singleActionFocus ? [] : plan.chips}
-        />
+        {!singleActionFocus ? (
+          <ObservePanelHeader
+            eyebrow={plan.eyebrow}
+            title={plan.title}
+            description={plan.description}
+            chips={plan.chips}
+          />
+        ) : null}
 
         {singleActionFocus ? (
           <CurrentStepGuide
@@ -123,13 +118,13 @@ export default function PathFocusPanel({
           justifyContent="space-between"
         >
           <Typography variant="subtitle2">
-            {singleActionFocus ? "After this" : "Setup checklist"}
+            {singleActionFocus ? "Your setup path" : "Setup checklist"}
           </Typography>
           {singleActionFocus && currentIndex !== null ? (
             <Chip
               size="small"
               variant="outlined"
-              label={`${visibleSteps.length} steps left`}
+              label={`Step ${currentIndex + 1} of ${plan.steps.length}`}
             />
           ) : null}
         </Stack>

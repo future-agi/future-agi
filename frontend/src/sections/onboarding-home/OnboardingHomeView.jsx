@@ -45,8 +45,15 @@ import OnboardingHomeError from "./components/OnboardingHomeError";
 import OnboardingHomeSkeleton from "./components/OnboardingHomeSkeleton";
 import PathCardGrid from "./components/PathCardGrid";
 import PathFocusPanel from "./components/PathFocusPanel";
-import { hrefWithJourneyGuide } from "./components/journey-guide-utils";
-import { hasPathFocusPlan } from "./components/path-focus-plan";
+import {
+  hrefWithJourneyGuide,
+  journeyCurrentStep,
+} from "./components/journey-guide-utils";
+import { observeFallbackJourneyPlan } from "./components/observe-fallback-journey-plan";
+import {
+  hasPathFocusPlan,
+  PATH_FOCUS_PLANS,
+} from "./components/path-focus-plan";
 import ProductLoopStepper from "./components/ProductLoopStepper";
 import RecommendedActionCard from "./components/RecommendedActionCard";
 import SampleProjectPanel from "./components/SampleProjectPanel";
@@ -639,7 +646,7 @@ export default function OnboardingHomeView() {
       ? {
           title: "Sample data is a preview",
           description:
-            "Use it to inspect screens. Real setup still starts from a product workflow.",
+            "Use it to inspect screens. Real setup still starts from a product path.",
         }
       : null;
   const isFirstRunQuickStartFocus =
@@ -773,6 +780,19 @@ export default function OnboardingHomeView() {
     );
   }
 
+  const firstRunJourneyPlan =
+    isFirstRunQuickStartFocus && !isSampleQuickStart
+      ? renderedState.journeyPlan ||
+        (renderedState.primaryPath === "observe"
+          ? observeFallbackJourneyPlan(renderedState.stage)
+          : PATH_FOCUS_PLANS[renderedState.primaryPath])
+      : null;
+  const firstRunCurrentStep = firstRunJourneyPlan
+    ? journeyCurrentStep(firstRunJourneyPlan, renderedState.stage)
+    : null;
+  const firstRunCurrentStepLabel =
+    firstRunCurrentStep?.label || "the highlighted action";
+
   const copy =
     isFirstRunQuickStartFocus && selectedSetupQuickStart
       ? isSampleQuickStart
@@ -780,13 +800,12 @@ export default function OnboardingHomeView() {
             eyebrow: "Sample preview",
             title: "Preview sample data",
             description:
-              "Open the sample trace to inspect screens. Real setup still starts from a product workflow.",
+              "Open the sample trace to inspect screens. Real setup still starts from a product path.",
           }
         : {
             eyebrow: "First setup",
             title: selectedSetupQuickStart.buttonLabel,
-            description:
-              "Complete the highlighted action first. The checklist below shows the rest of this setup flow.",
+            description: `Start with ${firstRunCurrentStepLabel}. The checklist below keeps the rest of setup in order.`,
           }
       : quickStartMismatchAction
         ? {
@@ -1284,7 +1303,7 @@ export default function OnboardingHomeView() {
             />
             <RecommendedActionCard
               action={renderedState.fallbackAction}
-              label="Fallback"
+              label="Other setup option"
               variant="fallback"
               onActionClick={handleActionClick}
             />
@@ -1318,7 +1337,7 @@ export default function OnboardingHomeView() {
             />
             <RecommendedActionCard
               action={renderedState.fallbackAction}
-              label="Fallback"
+              label="Other setup option"
               variant="fallback"
               onActionClick={handleActionClick}
             />

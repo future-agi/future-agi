@@ -75,17 +75,6 @@ const SMOKES = [
     },
   },
   {
-    id: "setup-org-voice-controlled",
-    mode: "controlled",
-    file: "setup-org-completion-smoke.mjs",
-    description:
-      "Stubbed auth proof for setup-org voice quick start into the first voice action.",
-    env: {
-      ONBOARDING_SMOKE_SETUP_QUICK_START: "voice",
-      ONBOARDING_SMOKE_STUB_AUTH: "1",
-    },
-  },
-  {
     id: "onboarding-home-observe-controlled",
     mode: "controlled",
     file: "onboarding-home-observe-smoke.mjs",
@@ -274,6 +263,13 @@ const SMOKES = [
     },
   },
   {
+    id: "gateway-home-to-request-controlled",
+    mode: "controlled",
+    file: "gateway-home-to-request-controlled-smoke.mjs",
+    description:
+      "Stubbed proof from first-run Home gateway CTA through request send and log review.",
+  },
+  {
     id: "onboarding-first-signup-aha-coverage-controlled",
     mode: "controlled",
     suite: true,
@@ -284,7 +280,6 @@ const SMOKES = [
       "setup-org-agent-controlled",
       "setup-org-gateway-controlled",
       "setup-org-evals-controlled",
-      "setup-org-voice-controlled",
       "onboarding-home-observe-controlled",
       "onboarding-home-sample-open-controlled",
       "onboarding-observe-project-first-trace-controlled",
@@ -305,7 +300,6 @@ const SMOKES = [
       "setup-org-agent-controlled",
       "setup-org-gateway-controlled",
       "setup-org-evals-controlled",
-      "setup-org-voice-controlled",
       "onboarding-home-observe-controlled",
       "onboarding-home-sample-open-controlled",
       "onboarding-observe-project-first-trace-controlled",
