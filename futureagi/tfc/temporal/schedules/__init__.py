@@ -11,10 +11,11 @@ Pattern:
 """
 
 # Config (no temporalio)
-from tfc.temporal.schedules.config import ScheduleConfig
 from tfc.temporal.schedules.billing import BILLING_SCHEDULES
+from tfc.temporal.schedules.config import ScheduleConfig
 from tfc.temporal.schedules.integrations import INTEGRATION_SCHEDULES
 from tfc.temporal.schedules.model_hub import MODEL_HUB_SCHEDULES
+from tfc.temporal.schedules.onboarding import ONBOARDING_SCHEDULES
 from tfc.temporal.schedules.retention import RETENTION_SCHEDULES
 from tfc.temporal.schedules.simulate import SIMULATE_SCHEDULES
 from tfc.temporal.schedules.tracer import TRACER_SCHEDULES
@@ -25,12 +26,13 @@ ALL_SCHEDULES = [
     *TRACER_SCHEDULES,
     *SIMULATE_SCHEDULES,
     *INTEGRATION_SCHEDULES,
+    *ONBOARDING_SCHEDULES,
     *BILLING_SCHEDULES,
     *RETENTION_SCHEDULES,
 ]
 
 # Manager functions
-from tfc.temporal.schedules.manager import (  # Async functions (a_ prefix); Sync wrappers
+from tfc.temporal.schedules.manager import (  # noqa: E402
     a_create_or_update_schedule,
     a_create_schedule,
     a_delete_schedule,
@@ -64,6 +66,7 @@ __all__ = [
     "TRACER_SCHEDULES",
     "SIMULATE_SCHEDULES",
     "INTEGRATION_SCHEDULES",
+    "ONBOARDING_SCHEDULES",
     "BILLING_SCHEDULES",
     "RETENTION_SCHEDULES",
     "ALL_SCHEDULES",
