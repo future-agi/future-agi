@@ -182,6 +182,26 @@ test("proof pack validator accepts a complete desktop and mobile Aha pack", asyn
   assert.equal(result.status, "passed");
   assert.equal(result.failed_checks.length, 0);
   assert.equal(result.children.length, 4);
+  assert.equal(
+    result.launch_metrics.schema_version,
+    "onboarding-real-signup-proof-pack-launch-metrics-2026-05-31.v1",
+  );
+  assert.equal(result.launch_metrics.ui_aha.real_proof_count, 2);
+  assert.equal(result.launch_metrics.ui_aha.backend_loop_completed_count, 2);
+  assert.equal(result.launch_metrics.ui_aha.ui_aha_count, 2);
+  assert.equal(result.launch_metrics.ui_aha.backend_to_ui_aha_rate, 1);
+  assert.equal(result.launch_metrics.ui_aha.daily_quality_available_count, 2);
+  assert.deepEqual(result.launch_metrics.ui_aha.quick_start_ids, ["observe"]);
+  assert.deepEqual(result.launch_metrics.ui_aha.activation_event_names, [
+    "first_quality_loop_completed",
+  ]);
+  assert.deepEqual(result.launch_metrics.ui_aha.activation_event_paths, [
+    "evals",
+  ]);
+  assert.equal(result.launch_metrics.sample.sample_proof_count, 2);
+  assert.equal(result.launch_metrics.sample.zero_click_count, 2);
+  assert.equal(result.launch_metrics.sample.activated_count, 0);
+  assert.equal(result.launch_metrics.guardrails.failed_check_count, 0);
 });
 
 test("proof pack validator rejects a failed child report", async () => {
@@ -251,6 +271,10 @@ test("proof pack validator rejects missing frontend Aha PostHog marker", async (
   const result = await validateProofPack(manifestPath);
 
   assert.equal(result.status, "failed");
+  assert.equal(result.launch_metrics.ui_aha.ui_aha_count, 1);
+  assert.equal(result.launch_metrics.ui_aha.backend_loop_completed_count, 2);
+  assert.equal(result.launch_metrics.ui_aha.backend_to_ui_aha_rate, 0.5);
+  assert.equal(result.launch_metrics.guardrails.missing_ui_aha_count, 1);
   assert(
     result.failed_checks.some(
       (check) => check.key === "signup-quick-start-real:real_loop:aha_posthog",

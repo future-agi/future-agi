@@ -8,6 +8,8 @@ const MANIFEST_SCHEMA =
 const REPORT_SCHEMA = "onboarding-real-signup-smoke-report-2026-05-29.v1";
 const VALIDATION_SCHEMA =
   "onboarding-real-signup-proof-pack-validation-2026-05-30.v1";
+const LAUNCH_METRICS_SCHEMA =
+  "onboarding-real-signup-proof-pack-launch-metrics-2026-05-31.v1";
 const SAMPLE_QUICK_START_ATTRIBUTION = Object.freeze({
   quick_start_goal: "explore_sample_data",
   quick_start_id: "sample_preview",
@@ -42,6 +44,18 @@ const EXPECTED_CHILDREN = [
     viewport: "mobile",
     proof: "real_quality_loop",
   },
+];
+const REQUIRED_AHA_PROPERTIES = [
+  "source",
+  "quick_start_goal",
+  "quick_start_id",
+  "quick_start_primary_path",
+  "primary_path",
+  "activation_stage",
+  "activation_event_name",
+  "activation_event_path",
+  "daily_quality_available",
+  "is_sample",
 ];
 
 function parseArgs(argv) {
@@ -187,6 +201,153 @@ function addEvidenceFieldChecks(checks, childId, evidence, fields) {
       `Evidence field ${field} is present.`,
     );
   }
+}
+
+function uniqueSorted(values) {
+  return [
+    ...new Set(values.filter((value) => value !== undefined && value !== null)),
+  ]
+    .map(String)
+    .sort();
+}
+
+function ratio(numerator, denominator) {
+  if (!denominator) return null;
+  return Number((numerator / denominator).toFixed(4));
+}
+
+function missingProperties(value, keys) {
+  const properties = value?.properties || {};
+  return keys.filter(
+    (key) =>
+      properties[key] === undefined ||
+      properties[key] === null ||
+      properties[key] === "",
+  );
+}
+
+function launchMetricReportEntry(child, expected, report) {
+  const evidence = report?.evidence || {};
+  const ahaProperties = evidence.aha_moment_posthog_event?.properties || {};
+  const uiAhaContractValid =
+    evidence.aha_moment_posthog_event?.event ===
+      "onboarding_aha_moment_reached" &&
+    ahaProperties.source === "onboarding" &&
+    ahaProperties.quick_start_goal === "monitor_production_ai_app" &&
+    ahaProperties.quick_start_id === "observe" &&
+    ahaProperties.quick_start_primary_path === "observe" &&
+    ahaProperties.primary_path === "observe" &&
+    ahaProperties.activation_stage === "activated" &&
+    ahaProperties.activation_event_name === "first_quality_loop_completed" &&
+    ahaProperties.activation_event_path === "evals" &&
+    ahaProperties.daily_quality_available === true &&
+    ahaProperties.is_sample !== true;
+  return {
+    id: expected.id,
+    mode: expected.mode,
+    proof: expected.proof,
+    report_status: report?.status || null,
+    runner_status: child?.runner_status || null,
+    viewport: report?.viewport?.name || expected.viewport,
+    setup_quick_start: evidence.setup_quick_start || null,
+    sample_is_activated: Boolean(
+      evidence.sample_open_state?.is_activated ||
+        evidence.sample_project_response?.result?.activation_state
+          ?.is_activated,
+    ),
+    sample_zero_click_entry:
+      evidence.sample_trace_entry?.clicks_after_quick_start === 0,
+    backend_loop_completed:
+      evidence.eval_first_quality_loop_completed_event?.event_name ===
+        "first_quality_loop_completed" &&
+      evidence.eval_first_quality_loop_completed_event?.is_sample !== true,
+    ui_aha_event:
+      evidence.aha_moment_posthog_event?.event ===
+      "onboarding_aha_moment_reached",
+    ui_aha_contract_valid: uiAhaContractValid,
+    ui_aha_required_properties_missing: missingProperties(
+      evidence.aha_moment_posthog_event,
+      REQUIRED_AHA_PROPERTIES,
+    ),
+    ui_aha_daily_quality_available:
+      ahaProperties.daily_quality_available === true,
+    ui_aha_is_sample: ahaProperties.is_sample === true,
+    ui_aha_quick_start_id: ahaProperties.quick_start_id || null,
+    ui_aha_quick_start_primary_path:
+      ahaProperties.quick_start_primary_path || null,
+    ui_aha_activation_event_name: ahaProperties.activation_event_name || null,
+    ui_aha_activation_event_path: ahaProperties.activation_event_path || null,
+  };
+}
+
+function buildLaunchMetrics(entries, checks) {
+  const realEntries = entries.filter(
+    (entry) => entry.proof === "real_quality_loop",
+  );
+  const sampleEntries = entries.filter((entry) => entry.proof === "sample");
+  const backendLoopCount = realEntries.filter(
+    (entry) => entry.backend_loop_completed,
+  ).length;
+  const uiAhaEntries = realEntries.filter(
+    (entry) => entry.ui_aha_contract_valid,
+  );
+  const uiAhaRequiredPropertyFailures = realEntries.filter(
+    (entry) =>
+      entry.ui_aha_event && entry.ui_aha_required_properties_missing.length > 0,
+  );
+  const failedChecks = checks.filter((check) => !check.passed);
+
+  return {
+    schema_version: LAUNCH_METRICS_SCHEMA,
+    dashboard_contract: "signup_to_aha_posthog_checks",
+    children: {
+      expected_count: EXPECTED_CHILDREN.length,
+      observed_count: entries.length,
+      passed_count: entries.filter(
+        (entry) =>
+          entry.report_status === "passed" && entry.runner_status === "passed",
+      ).length,
+    },
+    ui_aha: {
+      real_proof_count: realEntries.length,
+      backend_loop_completed_count: backendLoopCount,
+      ui_aha_count: uiAhaEntries.length,
+      backend_to_ui_aha_rate: ratio(uiAhaEntries.length, backendLoopCount),
+      daily_quality_available_count: uiAhaEntries.filter(
+        (entry) => entry.ui_aha_daily_quality_available,
+      ).length,
+      required_property_failure_count: uiAhaRequiredPropertyFailures.length,
+      quick_start_ids: uniqueSorted(
+        uiAhaEntries.map((entry) => entry.ui_aha_quick_start_id),
+      ),
+      quick_start_primary_paths: uniqueSorted(
+        uiAhaEntries.map((entry) => entry.ui_aha_quick_start_primary_path),
+      ),
+      activation_event_names: uniqueSorted(
+        uiAhaEntries.map((entry) => entry.ui_aha_activation_event_name),
+      ),
+      activation_event_paths: uniqueSorted(
+        uiAhaEntries.map((entry) => entry.ui_aha_activation_event_path),
+      ),
+    },
+    sample: {
+      sample_proof_count: sampleEntries.length,
+      zero_click_count: sampleEntries.filter(
+        (entry) => entry.sample_zero_click_entry,
+      ).length,
+      activated_count: sampleEntries.filter(
+        (entry) => entry.sample_is_activated,
+      ).length,
+    },
+    guardrails: {
+      failed_check_count: failedChecks.length,
+      failed_check_keys: failedChecks.map((check) => check.key),
+      sample_activation_count: sampleEntries.filter(
+        (entry) => entry.sample_is_activated,
+      ).length,
+      missing_ui_aha_count: Math.max(backendLoopCount - uiAhaEntries.length, 0),
+    },
+  };
 }
 
 function validateSampleEvidence(checks, childId, report) {
@@ -436,6 +597,7 @@ async function validateProofPack(manifestPath) {
   const manifest = await readJson(resolvedManifestPath);
   const checks = [];
   const children = [];
+  const launchMetricEntries = [];
 
   addCheck(
     checks,
@@ -538,6 +700,9 @@ async function validateProofPack(manifestPath) {
 
     if (report) {
       validateReport(checks, manifest, child, expected, report);
+      launchMetricEntries.push(
+        launchMetricReportEntry(child, expected, report),
+      );
       children.push({
         id: expected.id,
         mode: report.mode,
@@ -550,6 +715,7 @@ async function validateProofPack(manifestPath) {
   }
 
   const failedChecks = checks.filter((check) => !check.passed);
+  const launchMetrics = buildLaunchMetrics(launchMetricEntries, checks);
   return {
     schema_version: VALIDATION_SCHEMA,
     source: "onboarding_real_signup_proof_pack_validation",
@@ -559,6 +725,7 @@ async function validateProofPack(manifestPath) {
       manifest.report_output_dir || dirname(resolvedManifestPath),
     status: failedChecks.length ? "failed" : "passed",
     children,
+    launch_metrics: launchMetrics,
     failed_checks: failedChecks.map((check) => ({
       key: check.key,
       detail: check.detail,
@@ -574,6 +741,9 @@ function textOutput(result) {
     `manifest_path=${result.manifest_path}`,
     `report_output_dir=${result.report_output_dir}`,
     `children=${result.children.length}`,
+    `ui_aha=${result.launch_metrics.ui_aha.ui_aha_count}/${result.launch_metrics.ui_aha.backend_loop_completed_count}`,
+    `backend_to_ui_aha_rate=${result.launch_metrics.ui_aha.backend_to_ui_aha_rate}`,
+    `sample_activated=${result.launch_metrics.sample.activated_count}`,
     `failed_checks=${result.failed_checks.length}`,
   ];
   for (const failed of result.failed_checks) {
