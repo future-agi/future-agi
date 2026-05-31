@@ -16,7 +16,6 @@ import React, {
   useEffect,
   useImperativeHandle,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import Iconify from "src/components/iconify";
@@ -63,6 +62,36 @@ const COMMON_RUNTIME_LEAVES = [
   "stereo_recording_url",
 ];
 
+// Persona model fields the call-detail serializer surfaces under
+// persona_profile.<key>. Seeded with RUNTIME_PLACEHOLDER in preview so the
+// dropdown vocabulary is consistent with SimulationTestMode — actual values
+// resolve at simulation run time from the bound Persona model.
+const PERSONA_PROFILE_LEAVES = [
+  "name",
+  "description",
+  "gender",
+  "age_group",
+  "occupation",
+  "location",
+  "personality",
+  "communication_style",
+  "languages",
+  "accent",
+  "tone",
+  "verbosity",
+  "punctuation",
+  "emoji_usage",
+  "slang_usage",
+  "typos_frequency",
+  "regional_mix",
+  "conversation_speed",
+  "finished_speaking_sensitivity",
+  "interrupt_sensitivity",
+  "keywords",
+  "simulation_type",
+  "additional_instruction",
+];
+
 const PRIORITY_PREFIXES = [
   "call.transcript",
   "call.summary",
@@ -74,8 +103,8 @@ const PRIORITY_PREFIXES = [
   "call.customer_recording",
   "call.agent_prompt",
   "call.",
-  "scenario.columns.",
   "scenario.info.",
+  "scenario.metadata.",
   "scenario.",
   "simulation.",
   "agent.",
@@ -175,16 +204,11 @@ const CreateSimulationPreviewMode = React.forwardRef(
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 
-    // Track displayKey -> UUID for scenario columns. The backend
-    // resolver only accepts column UUIDs, so the saved eval mapping
-    // must persist UUIDs even though the dropdown shows the friendly
-    // `scenario_<name>` label.
-    const scenarioKeyMap = useRef({});
-
     // Build the nested vocabulary dict from the preview data. Real
     // values fill in what the user already chose in the form (agent,
-    // persona, scenario, prompt); placeholder strings seed the runtime
-    // keys so they render in the panel and are pickable in the dropdown.
+    // scenario, prompt); placeholder strings seed the runtime keys
+    // (persona.*, call.*, scenario columns) so they render in the panel
+    // and remain pickable in the dropdown.
     const callDetail = useMemo(() => {
       const ctx = previewData || {};
       const flat = {
@@ -192,10 +216,9 @@ const CreateSimulationPreviewMode = React.forwardRef(
         agent: {},
         persona: {},
         prompt: {},
-        scenario: { info: {}, columns: {} },
+        scenario: { info: {}, metadata: {} },
         call: {},
       };
-      scenarioKeyMap.current = {};
 
       const isText = ctx.sim_call_type === "text" || ctx.simCallType === "text";
 
@@ -224,16 +247,13 @@ const CreateSimulationPreviewMode = React.forwardRef(
         if (snap.description) flat.agent.description = snap.description;
       }
 
-      // ── Persona (simulator agent) ──
-      const persona = ctx.simulator_agent;
-      if (persona) {
-        if (persona.name) flat.persona.name = persona.name;
-        if (persona.prompt) flat.persona.prompt = persona.prompt;
-        if (persona.description) flat.persona.description = persona.description;
-        if (persona.voice_name) flat.persona.voice_name = persona.voice_name;
-        if (persona.model) flat.persona.model = persona.model;
-        if (persona.initial_message)
-          flat.persona.initial_message = persona.initial_message;
+      // Persona attributes (Persona model fields, not SimulatorAgent). At
+      // form-time the bound Persona is not yet resolved (selection happens
+      // via scenario.metadata.persona_ids or per-row row_data.persona at
+      // run time) — seed placeholders so the dropdown still surfaces the
+      // vocabulary.
+      for (const leaf of PERSONA_PROFILE_LEAVES) {
+        flat.persona[leaf] = RUNTIME_PLACEHOLDER;
       }
 
       // ── Prompt template (prompt-type sims) ──
@@ -255,15 +275,15 @@ const CreateSimulationPreviewMode = React.forwardRef(
         if (scenarioRow.source) flat.scenario.info.source = scenarioRow.source;
       }
 
-      // ── Scenario columns (per-row dataset cells) ──
-      // Shape: { <uuid>: { name, type } }. Display path is
-      // `scenario.columns.<name>`; persisted mapping value is the UUID.
+      // Scenario columns surface as `scenario.<column_name>` — backend
+      // resolver matches Column.name within the call's dataset (TH-4952).
+      // `info` and `metadata` are reserved sub-keys (backend resolver
+      // skips them before column lookup, see xl.py:683).
       const scenarioColumns = ctx.scenario_columns || {};
-      for (const [uuid, col] of Object.entries(scenarioColumns)) {
+      for (const col of Object.values(scenarioColumns)) {
         const colName = col?.name;
-        if (!colName) continue;
-        flat.scenario.columns[colName] = RUNTIME_PLACEHOLDER;
-        scenarioKeyMap.current[`scenario.columns.${colName}`] = uuid;
+        if (!colName || colName === "info" || colName === "metadata") continue;
+        flat.scenario[colName] = RUNTIME_PLACEHOLDER;
       }
 
       // ── Runtime vocabulary nested under `call.*` — always rendered
@@ -322,15 +342,7 @@ const CreateSimulationPreviewMode = React.forwardRef(
       });
     }, [variables, fieldNames]);
 
-    // Translate display keys → persistence keys (scenario UUIDs) before
-    // emitting to the parent. Same contract as SimulationTestMode.
-    const persistedMapping = useMemo(() => {
-      const out = {};
-      for (const [variable, field] of Object.entries(mapping)) {
-        out[variable] = scenarioKeyMap.current[field] || field;
-      }
-      return out;
-    }, [mapping, callDetail]);
+    const persistedMapping = useMemo(() => ({ ...mapping }), [mapping]);
 
     const isReady = useMemo(
       () => variables.length > 0 && variables.every((v) => !!mapping[v]),

@@ -75,8 +75,8 @@ const PRIORITY_PREFIXES = [
   "call.agent_prompt",
   "call.", // remaining call-level leaves
   "eval_", // resolved eval results (still flat)
-  "scenario.columns.",
   "scenario.info.",
+  "scenario.metadata.",
   "scenario.",
   "simulation.",
   "agent.",
@@ -249,18 +249,12 @@ const SimulationTestMode = React.forwardRef(
     const [tableSearch, setTableSearch] = useState("");
     const [expandedCols, setExpandedCols] = useState({});
 
-    // Variable mapping (stores display keys internally; scenario fields are
-    // translated to their UUID via scenarioKeyMap when emitted to the parent).
     // Seeded from `initialMapping` when editing an existing eval (TH-4302).
     const [mapping, setMapping] = useState(
       initialMapping && typeof initialMapping === "object"
         ? { ...initialMapping }
         : {},
     );
-    // displayKey ("scenario_<col_name>") -> scenario column UUID. The backend
-    // resolver at run time only accepts scenario column UUIDs, not names, so
-    // we persist the UUID while the dropdown still shows the friendly label.
-    const scenarioKeyMap = useRef({});
 
     // Eval result
     const [, setIsRunning] = useState(false);
@@ -436,6 +430,8 @@ const SimulationTestMode = React.forwardRef(
             "customer_call_id",
             "eval_outputs",
             "scenario_columns",
+            "persona_profile",
+            "scenario_metadata",
             "eval_metrics",
             "is_snapshot",
             "snapshot_timestamp",
@@ -477,7 +473,7 @@ const SimulationTestMode = React.forwardRef(
             simulation: {},
             agent: {},
             persona: {},
-            scenario: { info: {}, columns: {} },
+            scenario: { info: {}, metadata: {} },
             call: {},
           };
 
@@ -499,19 +495,6 @@ const SimulationTestMode = React.forwardRef(
               if (ad.description) flat.agent.description = ad.description;
             }
 
-            const persona = runTestContext.simulator_agent_detail;
-            if (persona) {
-              if (persona.name) flat.persona.name = persona.name;
-              if (persona.prompt) flat.persona.prompt = persona.prompt;
-              if (persona.description)
-                flat.persona.description = persona.description;
-              if (persona.voice_name)
-                flat.persona.voice_name = persona.voice_name;
-              if (persona.model) flat.persona.model = persona.model;
-              if (persona.initial_message)
-                flat.persona.initial_message = persona.initial_message;
-            }
-
             const promptTemplate = runTestContext.prompt_template_detail;
             if (promptTemplate) {
               flat.prompt = {};
@@ -521,17 +504,50 @@ const SimulationTestMode = React.forwardRef(
             }
           }
 
-          // -- Scenario columns: display key `scenario.columns.<name>`,
-          // persisted mapping value is the column UUID (backend resolver
-          // accepts UUIDs, not names).
+          // Scenario columns surface as `scenario.<column_name>` — backend
+          // resolver matches Column.name within the call's dataset (TH-4952).
+          // `info` and `metadata` are reserved sub-keys (backend resolver
+          // skips them before column lookup, see xl.py:683) so columns with
+          // those names cannot be addressed via the eval-mapping dropdown.
           const sc = callData.scenario_columns;
-          scenarioKeyMap.current = {};
           if (sc && typeof sc === "object") {
-            for (const [uuid, col] of Object.entries(sc)) {
-              if (col?.column_name && col?.value !== undefined) {
-                flat.scenario.columns[col.column_name] = col.value;
-                scenarioKeyMap.current[`scenario.columns.${col.column_name}`] =
-                  uuid;
+            for (const col of Object.values(sc)) {
+              if (
+                col?.column_name &&
+                col?.value !== undefined &&
+                col.column_name !== "info" &&
+                col.column_name !== "metadata"
+              ) {
+                flat.scenario[col.column_name] = col.value;
+              }
+            }
+          }
+
+          // Persona attributes (Persona model fields + Persona.metadata) —
+          // sourced from the new `persona_profile` field on CallExecutionDetailSerializer.
+          const personaProfile = callData.persona_profile;
+          if (personaProfile && typeof personaProfile === "object") {
+            for (const [key, value] of Object.entries(personaProfile)) {
+              if (key === "metadata" && value && typeof value === "object") {
+                for (const [metaKey, metaValue] of Object.entries(value)) {
+                  if (metaValue !== "" && metaValue != null) {
+                    flat.persona.metadata = flat.persona.metadata || {};
+                    flat.persona.metadata[metaKey] = metaValue;
+                  }
+                }
+              } else if (value !== "" && value != null) {
+                flat.persona[key] = value;
+              }
+            }
+          }
+
+          // Free-form Scenarios.metadata sub-keys — sourced from the new
+          // `scenario_metadata` field (internal keys already denylisted server-side).
+          const scenarioMeta = callData.scenario_metadata;
+          if (scenarioMeta && typeof scenarioMeta === "object") {
+            for (const [key, value] of Object.entries(scenarioMeta)) {
+              if (value !== "" && value != null) {
+                flat.scenario.metadata[key] = value;
               }
             }
           }
@@ -806,17 +822,7 @@ const SimulationTestMode = React.forwardRef(
       [selectedRunTestId, variables, mapping],
     );
 
-    // Translate scenario display keys → UUIDs before handing mapping to
-    // the parent. The backend resolver matches on column UUID, so without
-    // this, saved evals that reference scenario columns fail at run time
-    // with "Column mapping mismatch".
-    const persistedMapping = useMemo(() => {
-      const out = {};
-      for (const [variable, field] of Object.entries(mapping)) {
-        out[variable] = scenarioKeyMap.current[field] || field;
-      }
-      return out;
-    }, [mapping, callDetail]);
+    const persistedMapping = useMemo(() => ({ ...mapping }), [mapping]);
 
     useEffect(() => {
       onReadyChange?.(isReady, persistedMapping);

@@ -38,9 +38,19 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationInput,
     RunToolCallEvaluationOutput,
 )
+from simulate.utils.eval_context import (
+    flatten_jsonfield_value,
+    flatten_persona_for_resolver,
+    resolve_persona_for_call,
+    resolve_scenario_column_by_name,
+)
 from simulate.utils.eval_summary import derive_kpi_output_type
 
 logger = structlog.get_logger(__name__)
+
+_SCENARIO_METADATA_DENYLIST = frozenset(
+    {"persona_ids", "agent_definition_version_id"}
+)
 
 # ============================================================================
 # EVALUATION ACTIVITIES
@@ -372,19 +382,9 @@ CONTEXT_MAP_DOT_ALIASES = {
     "agent_model": "agent.model",
     "agent_language": "agent.language",
     "agent_description": "agent.description",
-    "persona_name": "persona.name",
-    "persona_prompt": "persona.prompt",
-    "persona_description": "persona.description",
-    "persona_voice_name": "persona.voice_name",
-    "persona_model": "persona.model",
-    "persona_initial_message": "persona.initial_message",
     "prompt_template": "prompt.name",
     "prompt_template_name": "prompt.name",
     "prompt_template_description": "prompt.description",
-    "scenario_info_name": "scenario.name",
-    "scenario_info_description": "scenario.description",
-    "scenario_info_type": "scenario.type",
-    "scenario_info_source": "scenario.source",
     "call_summary": "call.summary",
     "ended_reason": "call.ended_reason",
     "duration_seconds": "call.duration_seconds",
@@ -479,16 +479,14 @@ def _build_simulation_context_map(call_execution, agent_version):
     ctx["agent_description"] = _agent("description", "description")
     ctx["agent_model"] = _agent("model", "model")
 
-    if simulator_agent:
-        ctx["persona_name"] = _s(simulator_agent.name)
-        ctx["persona_prompt"] = _s(simulator_agent.prompt)
-        # Back-compat alias: the UI dropdown has historically shown
-        # "persona_description" (serializer exposed `prompt` under a
-        # `description` alias). Keep the mapping value resolvable.
-        ctx["persona_description"] = _s(simulator_agent.prompt)
-        ctx["persona_voice_name"] = _s(simulator_agent.voice_name)
-        ctx["persona_model"] = _s(simulator_agent.model)
-        ctx["persona_initial_message"] = _s(simulator_agent.initial_message)
+    persona = resolve_persona_for_call(call_execution)
+    ctx.update(flatten_persona_for_resolver(persona, simulator_agent))
+
+    # Underscore back-compat for pre-2026-04-13 configs that used persona_name etc.
+    for _suffix in ("name", "prompt", "description", "voice_name", "model", "initial_message"):
+        _dot = f"persona.{_suffix}"
+        if _dot in ctx:
+            ctx[f"persona_{_suffix}"] = ctx[_dot]
 
     if prompt_template:
         ctx["prompt_template_name"] = _s(prompt_template.name)
@@ -496,17 +494,22 @@ def _build_simulation_context_map(call_execution, agent_version):
         # Back-compat alias: the frontend flattens this as "prompt_template".
         ctx["prompt_template"] = _s(prompt_template.name)
 
-    # Scenario-row metadata (Scenarios FK on CallExecution). Dataset cell
-    # values are still resolved via the scenario-column-UUID branch in the
-    # main loop — these keys only cover the Scenarios row itself, prefixed
-    # `scenario_info_` so they don't collide with user-named dataset
-    # columns like `scenario_name`.
+    # scenario.info.* — keeps bare scenario.<X> free for dataset-column lookups.
     scenario = getattr(call_execution, "scenario", None)
     if scenario:
-        ctx["scenario_info_name"] = _s(scenario.name)
-        ctx["scenario_info_description"] = _s(scenario.description)
-        ctx["scenario_info_type"] = _s(scenario.scenario_type)
-        ctx["scenario_info_source"] = _s(scenario.source)
+        ctx["scenario.info.name"] = _s(scenario.name)
+        ctx["scenario.info.description"] = _s(scenario.description)
+        ctx["scenario.info.type"] = _s(scenario.scenario_type)
+        ctx["scenario.info.source"] = _s(scenario.source)
+        ctx["scenario_info_name"] = ctx["scenario.info.name"]
+        ctx["scenario_info_description"] = ctx["scenario.info.description"]
+        ctx["scenario_info_type"] = ctx["scenario.info.type"]
+        ctx["scenario_info_source"] = ctx["scenario.info.source"]
+
+        for _key, _value in (scenario.metadata or {}).items():
+            if _key in _SCENARIO_METADATA_DENYLIST:
+                continue
+            ctx[f"scenario.metadata.{_key}"] = flatten_jsonfield_value(_value)
 
     # Expose every entry under its dot-hierarchy alias too. This lets the
     # new frontend dropdowns persist `agent.name` style mapping values
@@ -589,6 +592,10 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                 # Dot-form alias for transcript_data / snapshot keys.
                 continue
             if value in context_map:
+                continue
+            if value.startswith("scenario."):
+                # Resolved by the scenario.<col> branch in the main loop;
+                # never a Column.id, so don't probe the mismatch table.
                 continue
             if value in scenario_column_order_set:
                 cell_column_ids.append(value)
@@ -673,6 +680,13 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     updated_mapping[key] = transcript_data.get(legacy_key, "")
             elif value in context_map:
                 updated_mapping[key] = context_map[value]
+            elif value.startswith("scenario.") and not (
+                value.startswith("scenario.info.")
+                or value.startswith("scenario.metadata.")
+            ):
+                updated_mapping[key] = resolve_scenario_column_by_name(
+                    call_execution, value[len("scenario.") :]
+                )
             elif value in scenario_column_order_set:
                 if not row_id:
                     updated_mapping[key] = ""
