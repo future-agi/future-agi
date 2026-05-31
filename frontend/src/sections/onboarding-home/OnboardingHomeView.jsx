@@ -784,9 +784,8 @@ export default function OnboardingHomeView() {
           }
         : {
             eyebrow: "First setup",
-            title: `Finish setup: ${selectedSetupQuickStart.buttonLabel}`,
-            description:
-              "Complete the checklist in order. Start with the next action below, then return here for the next step.",
+            title: "Set up your first workflow",
+            description: `You chose ${selectedSetupQuickStart.buttonLabel}. Start with Step 1 below, then continue through the remaining setup steps.`,
           }
       : quickStartMismatchAction
         ? {

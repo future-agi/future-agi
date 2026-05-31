@@ -3,6 +3,7 @@ import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import {
+  CurrentStepGuide,
   ObserveJourneyProgress,
   ObservePanelActions,
   ObservePanelHeader,
@@ -23,6 +24,8 @@ export default function ObserveSetupPanel({
 }) {
   const effectiveJourneyPlan = journeyPlan || observeFallbackJourneyPlan(stage);
   const currentStep = journeyCurrentStep(effectiveJourneyPlan, stage);
+  const steps = effectiveJourneyPlan?.steps || [];
+  const currentStepIndex = Math.max(steps.indexOf(currentStep), 0);
   const actionStep = currentStep || {
     stage,
     label: action?.title || "Connect observability",
@@ -53,21 +56,44 @@ export default function ObserveSetupPanel({
           }
           chips={effectiveJourneyPlan.chips || ["observe", "setup"]}
         />
+        {singleActionFocus ? (
+          <CurrentStepGuide
+            step={actionStep}
+            stage={stage}
+            stepNumber={currentStepIndex + 1}
+            totalSteps={steps.length || 1}
+          />
+        ) : null}
+        {singleActionFocus ? (
+          <ObservePanelActions
+            action={action}
+            fallbackAction={fallbackAction}
+            onPrimaryClick={onPrimaryClick}
+            onFallbackClick={onFallbackClick}
+            onCheckAgain={onCheckAgain}
+            isChecking={isChecking}
+            journeyStep={actionStep}
+            singleActionFocus={singleActionFocus}
+          />
+        ) : null}
         <ObserveJourneyProgress
           journeyPlan={effectiveJourneyPlan}
           singleActionFocus={singleActionFocus}
+          showCurrentStepGuide={!singleActionFocus}
           stage={stage}
         />
-        <ObservePanelActions
-          action={action}
-          fallbackAction={fallbackAction}
-          onPrimaryClick={onPrimaryClick}
-          onFallbackClick={onFallbackClick}
-          onCheckAgain={onCheckAgain}
-          isChecking={isChecking}
-          journeyStep={actionStep}
-          singleActionFocus={singleActionFocus}
-        />
+        {!singleActionFocus ? (
+          <ObservePanelActions
+            action={action}
+            fallbackAction={fallbackAction}
+            onPrimaryClick={onPrimaryClick}
+            onFallbackClick={onFallbackClick}
+            onCheckAgain={onCheckAgain}
+            isChecking={isChecking}
+            journeyStep={actionStep}
+            singleActionFocus={singleActionFocus}
+          />
+        ) : null}
       </Stack>
     </Box>
   );

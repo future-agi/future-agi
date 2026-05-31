@@ -66,6 +66,10 @@ export default function PathFocusPanel({
       ? null
       : Math.min(Math.max(derivedCurrentIndex, 0), plan.steps.length - 1);
   const currentStep = currentIndex === null ? null : plan.steps[currentIndex];
+  const visibleSteps =
+    singleActionFocus && currentIndex !== null
+      ? plan.steps.filter((_, index) => index !== currentIndex)
+      : plan.steps;
 
   return (
     <Box
@@ -86,101 +90,133 @@ export default function PathFocusPanel({
           chips={plan.chips}
         />
 
+        {singleActionFocus ? (
+          <CurrentStepGuide
+            step={currentStep}
+            stage={stage}
+            stepNumber={currentIndex === null ? undefined : currentIndex + 1}
+            totalSteps={plan.steps.length}
+          />
+        ) : null}
+
+        {singleActionFocus ? (
+          <ObservePanelActions
+            action={action}
+            fallbackAction={fallbackAction}
+            onPrimaryClick={onPrimaryClick}
+            onFallbackClick={onFallbackClick}
+            onCheckAgain={onCheckAgain}
+            isChecking={isChecking}
+            journeyStep={currentStep}
+            singleActionFocus={singleActionFocus}
+          />
+        ) : null}
+
         <Stack
           direction={{ xs: "column", sm: "row" }}
           spacing={1}
           alignItems={{ xs: "flex-start", sm: "center" }}
           justifyContent="space-between"
         >
-          <Typography variant="subtitle2">Setup checklist</Typography>
+          <Typography variant="subtitle2">
+            {singleActionFocus ? "What happens next" : "Setup checklist"}
+          </Typography>
           {singleActionFocus && currentIndex !== null ? (
             <Chip
               size="small"
               variant="outlined"
-              label={`Step ${currentIndex + 1} of ${plan.steps.length}`}
+              label={`${visibleSteps.length} remaining`}
             />
           ) : null}
         </Stack>
 
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              sm: "repeat(2, minmax(0, 1fr))",
-              lg: `repeat(${Math.min(plan.steps.length, 3)}, minmax(0, 1fr))`,
-            },
-            gap: 1,
-          }}
-        >
-          {plan.steps.map((step, index) => {
-            const status =
-              step.status || stepStatus({ index, activeIndex: currentIndex });
-            const statusCopy = STATUS_COPY[status] || STATUS_COPY.queued;
+        {visibleSteps.length ? (
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "repeat(2, minmax(0, 1fr))",
+                lg: `repeat(${Math.min(visibleSteps.length, 3)}, minmax(0, 1fr))`,
+              },
+              gap: 1,
+            }}
+          >
+            {visibleSteps.map((step) => {
+              const originalIndex = plan.steps.indexOf(step);
+              const status =
+                step.status ||
+                stepStatus({ index: originalIndex, activeIndex: currentIndex });
+              const statusCopy = STATUS_COPY[status] || STATUS_COPY.queued;
 
-            return (
-              <Box
-                key={step.stage}
-                data-testid={`path-focus-step-${step.stage}`}
-                sx={{
-                  border: "1px solid",
-                  borderColor:
-                    status === "current"
-                      ? "primary.main"
-                      : status === "complete"
-                        ? "success.main"
-                        : "divider",
-                  borderRadius: 1,
-                  p: 1.25,
-                  minHeight: 112,
-                  bgcolor: status === "current" ? "action.hover" : "inherit",
-                }}
-              >
-                <Stack spacing={0.75}>
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    justifyContent="space-between"
-                    spacing={1}
-                  >
-                    <Stack direction="row" alignItems="center" spacing={0.75}>
-                      <Iconify
-                        icon={statusCopy.icon}
-                        width={18}
-                        sx={{ color: statusCopy.color, flexShrink: 0 }}
+              return (
+                <Box
+                  key={step.stage}
+                  data-testid={`path-focus-step-${step.stage}`}
+                  sx={{
+                    border: "1px solid",
+                    borderColor:
+                      status === "current"
+                        ? "primary.main"
+                        : status === "complete"
+                          ? "success.main"
+                          : "divider",
+                    borderRadius: 1,
+                    p: 1.25,
+                    minHeight: 112,
+                    bgcolor: status === "current" ? "action.hover" : "inherit",
+                  }}
+                >
+                  <Stack spacing={0.75}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      justifyContent="space-between"
+                      spacing={1}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={0.75}>
+                        <Iconify
+                          icon={statusCopy.icon}
+                          width={18}
+                          sx={{ color: statusCopy.color, flexShrink: 0 }}
+                        />
+                        <Typography variant="subtitle2">
+                          {step.label}
+                        </Typography>
+                      </Stack>
+                      <Chip
+                        size="small"
+                        label={statusCopy.label}
+                        color={status === "complete" ? "success" : "default"}
+                        variant={status === "complete" ? "filled" : "outlined"}
                       />
-                      <Typography variant="subtitle2">{step.label}</Typography>
                     </Stack>
-                    <Chip
-                      size="small"
-                      label={statusCopy.label}
-                      color={status === "complete" ? "success" : "default"}
-                      variant={status === "complete" ? "filled" : "outlined"}
-                    />
+                    <Typography variant="body2" color="text.secondary">
+                      {step.description}
+                    </Typography>
                   </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    {step.description}
-                  </Typography>
-                </Stack>
-              </Box>
-            );
-          })}
-        </Box>
+                </Box>
+              );
+            })}
+          </Box>
+        ) : null}
 
-        <CurrentStepGuide step={currentStep} stage={stage} />
+        {!singleActionFocus ? (
+          <>
+            <CurrentStepGuide step={currentStep} stage={stage} />
 
-        <ObservePanelActions
-          action={action}
-          fallbackAction={
-            singleActionFocus && action?.href ? null : fallbackAction
-          }
-          onPrimaryClick={onPrimaryClick}
-          onFallbackClick={onFallbackClick}
-          onCheckAgain={onCheckAgain}
-          isChecking={isChecking}
-          journeyStep={currentStep}
-          singleActionFocus={singleActionFocus}
-        />
+            <ObservePanelActions
+              action={action}
+              fallbackAction={fallbackAction}
+              onPrimaryClick={onPrimaryClick}
+              onFallbackClick={onFallbackClick}
+              onCheckAgain={onCheckAgain}
+              isChecking={isChecking}
+              journeyStep={currentStep}
+              singleActionFocus={singleActionFocus}
+            />
+          </>
+        ) : null}
       </Stack>
     </Box>
   );

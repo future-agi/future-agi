@@ -367,18 +367,18 @@ async function main() {
         hasObserveQuickStartParams(setupOrgHomeUrl),
         `Expected setup-org Home URL quick-start attribution, got ${setupOrgHomeUrl}`,
       );
-      await expectVisibleText(page, "Finish setup: Connect your agent", {
+      await expectVisibleText(page, "Set up your first workflow", {
         exact: true,
         timeout: 45000,
       });
-      await expectNoVisibleText(page, "You chose Connect your agent", {
+      await expectVisibleText(page, "You chose Connect your agent", {
         timeout: 45000,
       });
-      await expectVisibleText(page, "Setup checklist", {
+      await expectVisibleText(page, "What happens next", {
         exact: true,
         timeout: 45000,
       });
-      await expectVisibleText(page, "Do this now", { timeout: 45000 });
+      await expectVisibleText(page, "Step 1 of 4", { timeout: 45000 });
       await clickVisibleButtonText(page, "Create Observe project", 45000);
       await page.waitForFunction(
         () => {

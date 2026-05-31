@@ -782,7 +782,7 @@ const SetupOrganization = ({ getStarted = false }) => {
       organization_role: "Member",
       disabled: false,
     });
-  }, [append, getStarted, memberToadd?.length, enqueueSnackbar]);
+  }, [append]);
 
   const removeMember = useCallback(
     (index) => {
@@ -952,7 +952,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           )}
 
           <Typography variant="m2" fontWeight="fontWeightMedium">
-            Invite people when you are ready
+            This is optional. You can add teammates later.
           </Typography>
 
           <Box
@@ -1022,33 +1022,26 @@ const SetupOrganization = ({ getStarted = false }) => {
             })}
 
             <Box sx={{ mt: 2 }}>
-              <Typography
-                variant={getStarted ? "body2" : "s1.2"}
+              <Button
+                variant="outlined"
+                size="small"
                 sx={{
-                  color: "primary.main",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  border: "1px solid",
-                  borderColor: "primary.main",
                   borderRadius: getStarted ? 1 : 0.5,
-                  padding: "4px 10px",
-                  transition: "all 0.2s",
+                  minHeight: 32,
                   fontWeight: !getStarted && 500,
-                  "&:hover": { bgcolor: "action.hover" },
                 }}
                 onClick={addMember}
-                disable={!getStarted && memberToadd?.length > 3}
+                disabled={!getStarted && memberToadd?.length > 3}
+                startIcon={
+                  <SvgColor
+                    src="/assets/icons/ic_add.svg"
+                    width={15}
+                    height={15}
+                  />
+                }
               >
-                <SvgColor
-                  src="/assets/icons/ic_add.svg"
-                  width={15}
-                  height={15}
-                  sx={{ mr: 1 }}
-                />
-
-                {getStarted ? "Add members" : "Add"}
-              </Typography>
+                {getStarted ? "Add members" : "Add teammate"}
+              </Button>
             </Box>
           </Box>
 
@@ -1065,7 +1058,7 @@ const SetupOrganization = ({ getStarted = false }) => {
               maxWidth: "100%",
             }}
           >
-            Continue to onboarding
+            {getStarted ? "Save invites" : "Continue setup"}
           </LoadingButton>
         </Stack>
       </form>
@@ -1122,7 +1115,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Invite your team later
+                Invite teammates, or continue alone
               </Typography>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -1133,7 +1126,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Continue now and review the first signal
+                This step is optional. Continue setup when you are ready.
               </Typography>
             </Box>
             {renderOrgSetup()}
@@ -1155,7 +1148,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Invite your team later
+                Invite teammates, or continue alone
               </Typography>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -1166,7 +1159,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Continue now and review the first signal
+                This step is optional. Continue setup when you are ready.
               </Typography>
             </Box>
             {renderOrgSetup()}

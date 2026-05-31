@@ -248,12 +248,12 @@ async function main() {
       await expectVisibleText(page, "Sample trace review");
       await expectVisibleText(page, "Connect your app", { exact: true });
     } else {
-      await expectVisibleText(page, `Finish setup: ${QUICK_START.buttonText}`, {
+      await expectVisibleText(page, "Set up your first workflow", {
         exact: true,
       });
-      await waitForNoVisibleText(page, `You chose ${QUICK_START.buttonText}`);
-      await expectVisibleText(page, "Setup checklist", { exact: true });
-      await expectVisibleText(page, "Do this now");
+      await expectVisibleText(page, `You chose ${QUICK_START.buttonText}`);
+      await expectVisibleText(page, "What happens next", { exact: true });
+      await expectVisibleText(page, "Step 1 of");
       await expectVisibleText(page, QUICK_START.expectedActionText, {
         exact: true,
       });

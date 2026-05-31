@@ -81,23 +81,33 @@ ObservePanelHeader.propTypes = {
   title: PropTypes.string.isRequired,
 };
 
-export function CurrentStepGuide({ step, stage }) {
+export function CurrentStepGuide({ step, stage, stepNumber, totalSteps }) {
   if (!step) return null;
+
+  const progressLabel =
+    stepNumber && totalSteps
+      ? `Step ${stepNumber} of ${totalSteps}`
+      : "Current step";
 
   return (
     <Box
       data-testid="current-step-guide"
       sx={{
         border: "1px solid",
-        borderColor: "divider",
+        borderColor: "primary.main",
         borderRadius: 1,
-        p: 1.25,
-        bgcolor: "background.neutral",
+        p: 1.5,
+        bgcolor: "action.hover",
       }}
     >
-      <Stack spacing={0.75}>
-        <Typography variant="subtitle2">Do this now</Typography>
-        <Typography variant="body2" color="text.primary">
+      <Stack spacing={0.75} sx={{ maxWidth: 720 }}>
+        <Chip
+          size="small"
+          variant="outlined"
+          label={progressLabel}
+          sx={{ alignSelf: "flex-start" }}
+        />
+        <Typography variant="h6" color="text.primary">
           {step.label}
         </Typography>
         <Typography variant="body2" color="text.secondary">
@@ -111,12 +121,15 @@ export function CurrentStepGuide({ step, stage }) {
 CurrentStepGuide.propTypes = {
   stage: PropTypes.string,
   step: PropTypes.object,
+  stepNumber: PropTypes.number,
+  totalSteps: PropTypes.number,
 };
 
 export function ObserveJourneyProgress({
   journeyPlan,
   singleActionFocus = false,
   stage,
+  showCurrentStepGuide = true,
 }) {
   const steps = journeyPlan?.steps || [];
 
@@ -124,90 +137,113 @@ export function ObserveJourneyProgress({
 
   const currentStep = journeyCurrentStep(journeyPlan, stage);
   const currentIndex = Math.max(steps.indexOf(currentStep), 0);
+  const visibleSteps =
+    singleActionFocus && currentStep
+      ? steps.filter((_, index) => index !== currentIndex)
+      : steps;
+
+  if (singleActionFocus && !showCurrentStepGuide && visibleSteps.length === 0) {
+    return null;
+  }
 
   return (
     <Stack spacing={1.25} data-testid="observe-journey-progress">
+      {showCurrentStepGuide ? (
+        <CurrentStepGuide
+          step={currentStep}
+          stage={stage}
+          stepNumber={currentIndex + 1}
+          totalSteps={steps.length}
+        />
+      ) : null}
       <Stack
         direction={{ xs: "column", sm: "row" }}
         spacing={1}
         alignItems={{ xs: "flex-start", sm: "center" }}
         justifyContent="space-between"
       >
-        <Typography variant="subtitle2">Setup checklist</Typography>
+        <Typography variant="subtitle2">
+          {singleActionFocus ? "What happens next" : "Setup checklist"}
+        </Typography>
         {singleActionFocus ? (
           <Chip
             size="small"
             variant="outlined"
-            label={`Step ${currentIndex + 1} of ${steps.length}`}
+            label={`${visibleSteps.length} remaining`}
           />
         ) : null}
       </Stack>
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: {
-            xs: "1fr",
-            sm: "repeat(2, minmax(0, 1fr))",
-            lg: `repeat(${Math.min(steps.length, 4)}, minmax(0, 1fr))`,
-          },
-          gap: 1,
-        }}
-      >
-        {steps.map((step, index) => {
-          const status =
-            step.status ||
-            fallbackStepStatus({ index, activeIndex: currentIndex });
-          const statusCopy = STATUS_COPY[status] || STATUS_COPY.queued;
+      {visibleSteps.length ? (
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "1fr",
+              sm: "repeat(2, minmax(0, 1fr))",
+              lg: `repeat(${Math.min(visibleSteps.length, 4)}, minmax(0, 1fr))`,
+            },
+            gap: 1,
+          }}
+        >
+          {visibleSteps.map((step) => {
+            const originalIndex = steps.indexOf(step);
+            const status =
+              step.status ||
+              fallbackStepStatus({
+                index: originalIndex,
+                activeIndex: currentIndex,
+              });
+            const statusCopy = STATUS_COPY[status] || STATUS_COPY.queued;
 
-          return (
-            <Box
-              key={step.id || step.stage}
-              data-testid={`observe-journey-step-${step.id || step.stage}`}
-              sx={{
-                border: "1px solid",
-                borderColor:
-                  status === "current"
-                    ? "primary.main"
-                    : status === "complete"
-                      ? "success.main"
-                      : "divider",
-                borderRadius: 1,
-                p: 1.25,
-                minHeight: 104,
-                bgcolor: status === "current" ? "action.hover" : "inherit",
-              }}
-            >
-              <Stack spacing={0.75}>
-                <Stack
-                  direction="row"
-                  alignItems="center"
-                  justifyContent="space-between"
-                  spacing={1}
-                >
-                  <Stack direction="row" alignItems="center" spacing={0.75}>
-                    <Iconify
-                      icon={statusCopy.icon}
-                      width={18}
-                      sx={{ color: statusCopy.color, flexShrink: 0 }}
+            return (
+              <Box
+                key={step.id || step.stage}
+                data-testid={`observe-journey-step-${step.id || step.stage}`}
+                sx={{
+                  border: "1px solid",
+                  borderColor:
+                    status === "current"
+                      ? "primary.main"
+                      : status === "complete"
+                        ? "success.main"
+                        : "divider",
+                  borderRadius: 1,
+                  p: 1.25,
+                  minHeight: 104,
+                  bgcolor: status === "current" ? "action.hover" : "inherit",
+                }}
+              >
+                <Stack spacing={0.75}>
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                    spacing={1}
+                  >
+                    <Stack direction="row" alignItems="center" spacing={0.75}>
+                      <Iconify
+                        icon={statusCopy.icon}
+                        width={18}
+                        sx={{ color: statusCopy.color, flexShrink: 0 }}
+                      />
+                      <Typography variant="subtitle2">{step.label}</Typography>
+                    </Stack>
+                    <Chip
+                      size="small"
+                      label={statusCopy.label}
+                      color={status === "complete" ? "success" : "default"}
+                      variant={status === "complete" ? "filled" : "outlined"}
                     />
-                    <Typography variant="subtitle2">{step.label}</Typography>
                   </Stack>
-                  <Chip
-                    size="small"
-                    label={statusCopy.label}
-                    color={status === "complete" ? "success" : "default"}
-                    variant={status === "complete" ? "filled" : "outlined"}
-                  />
+                  <Typography variant="body2" color="text.secondary">
+                    {step.description}
+                  </Typography>
                 </Stack>
-                <Typography variant="body2" color="text.secondary">
-                  {step.description}
-                </Typography>
-              </Stack>
-            </Box>
-          );
-        })}
-      </Box>
-      <CurrentStepGuide step={currentStep} stage={stage} />
+              </Box>
+            );
+          })}
+        </Box>
+      ) : null}
     </Stack>
   );
 }
@@ -215,6 +251,7 @@ export function ObserveJourneyProgress({
 ObserveJourneyProgress.propTypes = {
   journeyPlan: PropTypes.object,
   singleActionFocus: PropTypes.bool,
+  showCurrentStepGuide: PropTypes.bool,
   stage: PropTypes.string,
 };
 
