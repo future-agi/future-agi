@@ -270,6 +270,13 @@ const SMOKES = [
       "Stubbed proof from first-run Home gateway CTA through request send and log review.",
   },
   {
+    id: "eval-home-to-create-controlled",
+    mode: "controlled",
+    file: "eval-home-to-create-controlled-smoke.mjs",
+    description:
+      "Stubbed proof from first-run Home eval CTA into eval source creation.",
+  },
+  {
     id: "onboarding-first-signup-aha-coverage-controlled",
     mode: "controlled",
     suite: true,
