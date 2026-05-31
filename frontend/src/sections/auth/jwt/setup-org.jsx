@@ -288,6 +288,8 @@ const SetupOrganization = ({ getStarted = false }) => {
   const quickStartOptionRef = useRef(null);
   const quickStartsViewedRef = useRef(false);
   const [showRoleQuestions, setShowRoleQuestions] = useState(false);
+  const [showAlternativeQuickStarts, setShowAlternativeQuickStarts] =
+    useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const activeStep = parseInt(searchParams.get("step") || "0", 10);
   const finishSetup = useCallback((quickStartOption) => {
@@ -528,26 +530,94 @@ const SetupOrganization = ({ getStarted = false }) => {
     );
   };
 
+  const renderSampleQuickStart = (option) => (
+    <Box
+      data-testid="setup-org-primary-quick-start"
+      sx={{
+        border: "1px solid",
+        borderColor: "primary.main",
+        borderRadius: 1,
+        p: 1.5,
+        bgcolor: "action.hover",
+      }}
+    >
+      <Stack spacing={1.25}>
+        <Stack direction="row" alignItems="center" spacing={1}>
+          <Iconify icon={option.icon} width={20} />
+          <Typography variant="subtitle2">Fastest path to Aha</Typography>
+        </Stack>
+        <Typography variant="body2" color="text.secondary">
+          See trace context, one quality issue, and the evaluator step before
+          connecting your app.
+        </Typography>
+        <LoadingButton
+          fullWidth
+          sx={{ borderRadius: 0.5, minHeight: 48 }}
+          variant="contained"
+          loading={isSavingUserData}
+          disabled={isSavingUserData}
+          aria-label={option.buttonLabel}
+          onClick={() => handleProductLoopQuickStart(option)}
+          onPointerUp={(event) =>
+            handleProductLoopQuickStartPointerUp(event, option)
+          }
+          color="primary"
+          startIcon={<Iconify icon="mdi:chart-timeline-variant" width={18} />}
+        >
+          {option.buttonLabel}
+        </LoadingButton>
+      </Stack>
+    </Box>
+  );
+
   const renderProductLoopQuickStarts = () => {
-    const featuredQuickStarts = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
+    const primaryQuickStart = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.find(
       (option) => option.featured,
     );
-    const secondaryQuickStarts = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
+    const alternativeQuickStarts = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
       (option) => !option.featured,
     );
 
     return (
-      <Stack spacing={1}>
-        {featuredQuickStarts.map(renderProductLoopQuickStart)}
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
-            gap: 1,
-          }}
+      <Stack spacing={1.25}>
+        {primaryQuickStart ? renderSampleQuickStart(primaryQuickStart) : null}
+
+        <Button
+          variant="text"
+          color="primary"
+          data-testid="setup-org-alternative-quick-starts-toggle"
+          aria-expanded={showAlternativeQuickStarts}
+          onClick={() => setShowAlternativeQuickStarts((current) => !current)}
+          endIcon={
+            <Iconify
+              icon={
+                showAlternativeQuickStarts
+                  ? "mdi:chevron-up"
+                  : "mdi:chevron-down"
+              }
+              width={18}
+            />
+          }
+          sx={{ alignSelf: "flex-start", px: 0 }}
         >
-          {secondaryQuickStarts.map(renderProductLoopQuickStart)}
-        </Box>
+          Choose a different first loop
+        </Button>
+
+        {showAlternativeQuickStarts ? (
+          <Box
+            data-testid="setup-org-alternative-quick-starts"
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "repeat(2, minmax(0, 1fr))",
+              },
+              gap: 1,
+            }}
+          >
+            {alternativeQuickStarts.map(renderProductLoopQuickStart)}
+          </Box>
+        ) : null}
       </Stack>
     );
   };

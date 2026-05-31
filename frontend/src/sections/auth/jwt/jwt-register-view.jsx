@@ -15,7 +15,6 @@ import { paths } from "src/routes/paths";
 import { useAuthContext } from "src/auth/hooks";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
-import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
 import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
 import { trackTwitterSignup } from "src/utils/twitterAds";
@@ -33,6 +32,10 @@ import { GOOGLE_SITE_KEY } from "src/config-global";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
 import { getAuthErrorMessage } from "./auth-error-message";
+import {
+  SignupEntryEvents,
+  trackSignupEntryEvent,
+} from "./signup-entry-analytics";
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
@@ -122,11 +125,20 @@ export default function JwtRegisterView() {
 
   const { handleSubmit, watch } = methods;
   const email = watch("email");
+  const authFlow = onboarding_token ? "marketplace" : "email_password";
+  const returnTo = new URLSearchParams(search).get("returnTo");
 
   const handleSignup = async (data) => {
     persistReturnTo();
     const token = GOOGLE_SITE_KEY ? await executeRecaptcha("signup") : "";
     setErrorMsg("");
+    const analyticsContext = {
+      authFlow,
+      hasPassword: data?.password,
+      onboardingToken: onboarding_token,
+      returnTo,
+    };
+    trackSignupEntryEvent(SignupEntryEvents.signupSubmitted, analyticsContext);
     try {
       setLoading(true);
       const payload = {
@@ -153,10 +165,9 @@ export default function JwtRegisterView() {
             response?.result?.message || "Account created. Continuing setup.",
           autoHideDuration: 3000,
         });
-        trackEvent(Events.newUserSignUp, {
-          [PropertyName.method]: "email",
-          [PropertyName.email]: data.email,
-          [PropertyName.name]: data.fullName,
+        trackSignupEntryEvent(SignupEntryEvents.signupSucceeded, {
+          ...analyticsContext,
+          status: "success",
         });
         if (typeof window.gtag === "function") {
           trackSignupConversion({
@@ -200,6 +211,11 @@ export default function JwtRegisterView() {
     } catch (error) {
       setLoading(false);
       logger.error("Registration Error:", error);
+      trackSignupEntryEvent(SignupEntryEvents.signupFailed, {
+        ...analyticsContext,
+        error,
+        status: "failed",
+      });
       setErrorMsg(getAuthErrorMessage(error, "Registration failed"));
     } finally {
       setLoading(false);
@@ -210,9 +226,13 @@ export default function JwtRegisterView() {
     persistReturnTo();
     const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
 
-    trackEvent(Events.loginClicked, {
-      [PropertyName.status]: true,
-    });
+    const analyticsContext = {
+      authFlow: "signup_existing_account",
+      hasPassword: data?.password,
+      onboardingToken: onboarding_token,
+      returnTo,
+    };
+    trackSignupEntryEvent(SignupEntryEvents.loginSubmitted, analyticsContext);
     try {
       setLoading(true);
       const response = await axios.post(endpoints.auth.login, {
@@ -224,13 +244,19 @@ export default function JwtRegisterView() {
         await login(response);
         localStorage.setItem("signupProvider", "email");
         navigate(paths.auth.jwt.setup_org + search);
-        trackEvent(Events.loginClicked, {
-          [PropertyName.status]: true,
+        trackSignupEntryEvent(SignupEntryEvents.loginSucceeded, {
+          ...analyticsContext,
+          status: "success",
         });
       }
       setLoading(false);
     } catch (error) {
       setLoading(false);
+      trackSignupEntryEvent(SignupEntryEvents.loginFailed, {
+        ...analyticsContext,
+        error,
+        status: "failed",
+      });
       if (error?.detail === "User not found") {
         // setError("email", {message: "No account found with this email. Please sign up to create one.", type: "focus"}, { shouldFocus: true })
         setErrorMsg(

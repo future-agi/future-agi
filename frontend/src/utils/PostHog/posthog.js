@@ -7,14 +7,34 @@ import {
 } from "src/config-global";
 
 const posthogHost = POSTHOG_HOST || "https://us.i.posthog.com";
+const PLACEHOLDER_POSTHOG_KEYS = new Set([
+  "your_posthog_project_api_key",
+  "phc_your_project_api_key",
+]);
+const LOCAL_SMOKE_POSTHOG_KEY_PATTERN = /^phc_local_/i;
 
 let initialized = false;
 
+export const isUsablePostHogKey = (key = POSTHOG_KEY) => {
+  if (!key || typeof key !== "string") return false;
+  const normalizedKey = key.trim();
+  if (!normalizedKey) return false;
+  if (PLACEHOLDER_POSTHOG_KEYS.has(normalizedKey)) return false;
+  if (/^your[_-]/i.test(normalizedKey)) return false;
+  if (LOCAL_SMOKE_POSTHOG_KEY_PATTERN.test(normalizedKey)) {
+    return Boolean(
+      typeof window !== "undefined" &&
+        window.__FUTURE_AGI_ENABLE_POSTHOG_SMOKE__,
+    );
+  }
+  return true;
+};
+
 export const initPostHog = () => {
-  if (initialized || !POSTHOG_KEY) {
-    if (!POSTHOG_KEY) {
+  if (initialized || !isUsablePostHogKey()) {
+    if (!isUsablePostHogKey()) {
       logger.debug(
-        "PostHog: VITE_POSTHOG_KEY not set, skipping initialization",
+        "PostHog: usable VITE_POSTHOG_KEY not set, skipping initialization",
       );
     }
     return;
@@ -66,7 +86,7 @@ export const initPostHog = () => {
  * Identify user + set org & workspace as groups
  */
 export const identifyPostHogUser = (userData = {}) => {
-  if (!initialized || !POSTHOG_KEY) return;
+  if (!initialized || !isUsablePostHogKey()) return;
 
   const {
     id,
@@ -148,7 +168,7 @@ export const resetPostHogUser = () => {
  * Track custom event (for the few events you do want to track explicitly)
  */
 export const trackPostHogEvent = (eventName, properties = {}) => {
-  if (!initialized) return;
+  if (!initialized || !isUsablePostHogKey()) return;
   try {
     posthog.capture(eventName, properties);
   } catch (error) {

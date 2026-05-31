@@ -119,6 +119,7 @@ async function main() {
   await prepareBrowserLikeSmokeRuntime({ browser, page });
   await page.setViewport(VIEWPORT);
   await page.evaluateOnNewDocument((apiBase) => {
+    window.__FUTURE_AGI_ENABLE_POSTHOG_SMOKE__ = true;
     window.__FUTURE_AGI_CONFIG__ = {
       ...(window.__FUTURE_AGI_CONFIG__ || {}),
       VITE_HOST_API: apiBase,

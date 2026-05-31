@@ -250,9 +250,28 @@ async function main() {
       waitUntil: "domcontentloaded",
     });
     await expectVisibleText(page, "Start with your first quality loop");
+    await expectVisibleText(
+      page,
+      "See trace context, one quality issue, and the evaluator step before connecting your app.",
+    );
+    const quickStartInitiallyVisible = await isVisibleButtonText(
+      page,
+      QUICK_START.buttonText,
+    );
+    assert(
+      QUICK_START.directSampleTrace
+        ? quickStartInitiallyVisible
+        : !quickStartInitiallyVisible,
+      QUICK_START.directSampleTrace
+        ? "Expected sample preview to be the visible primary setup action."
+        : `Expected ${QUICK_START.buttonText} to stay hidden until alternatives expand.`,
+    );
     await page.evaluate(() => {
       localStorage.setItem("redirectUrl", "/dashboard/observe?project=stale");
     });
+    if (!QUICK_START.directSampleTrace) {
+      await clickVisibleButtonText(page, "Choose a different first loop");
+    }
     await clickVisibleButtonText(page, QUICK_START.buttonText);
     let homeParams = null;
     let handoffParams = null;
@@ -1087,6 +1106,30 @@ async function clickVisibleButtonText(page, text, timeout = 30000) {
     element.click();
   });
   await handle.dispose();
+}
+
+async function isVisibleButtonText(page, text) {
+  return page.evaluate((expectedText) => {
+    const normalized = (value) => String(value || "").trim();
+    const matchesButton = (element) =>
+      normalized(element.getAttribute("aria-label")) === expectedText ||
+      normalized(element.getAttribute("aria-label")).includes(expectedText) ||
+      normalized(element.textContent) === expectedText ||
+      normalized(element.textContent).includes(expectedText);
+    const isVisible = (element) => {
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.visibility !== "hidden" &&
+        style.display !== "none" &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
+    };
+    return Array.from(
+      document.querySelectorAll("button, [role='button']"),
+    ).some((element) => isVisible(element) && matchesButton(element));
+  }, text);
 }
 
 async function safeBodyText(page) {
