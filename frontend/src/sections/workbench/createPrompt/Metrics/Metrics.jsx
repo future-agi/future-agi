@@ -97,8 +97,12 @@ const MetricsTabs = () => {
       </Tabs>
 
       <Box sx={{ flex: 1, minHeight: 0, mt: 2 }}>
-        {activeTab === METRIC_TAB_IDS.METRICS && <MetricsContent />}
-        {activeTab === METRIC_TAB_IDS.LINKED_TRACES && <LinkedTracesContent />}
+        {activeTab === METRIC_TAB_IDS.METRICS && (
+          <MetricsContent isOnboarding={isMetricsOnboarding} />
+        )}
+        {activeTab === METRIC_TAB_IDS.LINKED_TRACES && (
+          <LinkedTracesContent isOnboarding={isMetricsOnboarding} />
+        )}
       </Box>
 
       <PromptMetricsOnboardingFocusPanel

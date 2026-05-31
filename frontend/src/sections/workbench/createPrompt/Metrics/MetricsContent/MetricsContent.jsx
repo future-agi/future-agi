@@ -1,5 +1,6 @@
 // MetricsContent.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import PropTypes from "prop-types";
 import "src/styles/clean-data-table.css";
 import { Box, Skeleton } from "@mui/material";
 import MetricsHeaderSection from "../MetricsHeaderSection";
@@ -24,7 +25,7 @@ const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
 };
 
-const MetricsContent = () => {
+const MetricsContent = ({ isOnboarding = false }) => {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.borderless);
   const gridApiRef = useRef(null);
   const { columns, setColumns, filters, setFilters, setIsFilterDrawerOpen } =
@@ -220,7 +221,7 @@ const MetricsContent = () => {
   }, [isLoading, hasData, hasActiveFiltersOrSearch, hasInitialLoad]);
 
   if (showEmptyState) {
-    return <MetricEmptyState />;
+    return <MetricEmptyState isOnboarding={isOnboarding} />;
   }
 
   return (
@@ -270,6 +271,10 @@ const MetricsContent = () => {
       />
     </Box>
   );
+};
+
+MetricsContent.propTypes = {
+  isOnboarding: PropTypes.bool,
 };
 
 export default MetricsContent;

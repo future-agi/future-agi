@@ -217,6 +217,17 @@ async function main() {
     await waitForVisibleText(page, "Review the prompt quality signal", {
       exact: true,
     });
+    await waitForVisibleText(page, "Evaluation run is queued", {
+      exact: true,
+    });
+    assert(
+      !(await visibleTextExists(
+        page,
+        "Add prompt to begin monitoring performance indicators",
+        { exact: true },
+      )),
+      "Prompt onboarding metrics showed the generic add-prompt empty state.",
+    );
     evidence.metrics_route = await currentRelativeUrl(page);
 
     assert(evalConfigPosts.length === 1, "Evaluation config POST missing.");
