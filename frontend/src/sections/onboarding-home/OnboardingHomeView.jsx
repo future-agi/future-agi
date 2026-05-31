@@ -284,6 +284,47 @@ const SAMPLE_PRIMARY_STAGES = new Set([
   "connect_real_data",
 ]);
 
+const SAMPLE_PREVIEW_AUTO_OPEN_STAGES = new Set([
+  "open_sample_project",
+  "review_sample_signal",
+]);
+
+const SAMPLE_CONNECT_REAL_DATA_STEP = {
+  id: "connect_real_data",
+  stage: "connect_real_data",
+  tourAnchor: "sample_connect_real_data_button",
+};
+
+const hrefWithParams = (href, values = {}) => {
+  if (!href || !href.startsWith("/") || href.startsWith("//")) return href;
+
+  const [withoutHash, hash] = href.split("#");
+  const [pathname, query = ""] = withoutHash.split("?");
+  const params = new URLSearchParams(query);
+
+  Object.entries(values).forEach(([key, value]) => {
+    if (value === null || value === undefined) {
+      params.delete(key);
+      return;
+    }
+    params.set(key, value);
+  });
+
+  const queryString = params.toString();
+  return `${pathname}${queryString ? `?${queryString}` : ""}${
+    hash ? `#${hash}` : ""
+  }`;
+};
+
+const sampleConnectRealDataHref = (href) =>
+  hrefWithJourneyGuide(
+    hrefWithParams(href || "/dashboard/observe", {
+      setup: "true",
+      source: "sample_trace_review",
+    }),
+    SAMPLE_CONNECT_REAL_DATA_STEP,
+  );
+
 const CURRENT_EMAIL_CONTEXT_STATUSES = new Set(["current", "fresh"]);
 
 const EMAIL_CONTEXT_RECOVERY_COPY = {
@@ -696,9 +737,10 @@ export default function OnboardingHomeView() {
     renderedState?.primaryPath === "observe" &&
     renderedState?.stage === "connect_observability";
   const sampleProject = renderedState?.sampleProject;
+  const renderedStage = renderedState?.stage;
   const showSampleAsPrimary = Boolean(
     shouldShowSampleAsPrimary(renderedState) &&
-      SAMPLE_PRIMARY_STAGES.has(renderedState?.stage),
+      SAMPLE_PRIMARY_STAGES.has(renderedStage),
   );
   const showSamplePanel = Boolean(
     !suppressCompetingSamplePanel &&
@@ -710,8 +752,18 @@ export default function OnboardingHomeView() {
         [
           "connect_observability",
           "waiting_for_first_trace_sample_available",
-        ].includes(renderedState?.stage)),
+        ].includes(renderedStage)),
   );
+  const canAutoOpenSamplePreview =
+    SAMPLE_PREVIEW_AUTO_OPEN_STAGES.has(renderedStage);
+  const sampleRealSetupHref = useMemo(() => {
+    if (!sampleProject || !renderedStage) return null;
+    const baseHref =
+      renderedStage === "connect_real_data"
+        ? sampleConnectRealDataHref(sampleProject.realSetupHref)
+        : sampleProject.realSetupHref;
+    return appendSetupQuickStartAttributionToHref(baseHref, trackContext);
+  }, [renderedStage, sampleProject, trackContext]);
 
   const handleOpenSample = useCallback(
     async (options = {}) => {
@@ -776,6 +828,7 @@ export default function OnboardingHomeView() {
       !isFirstRunQuickStartFocus ||
       !isSampleQuickStart ||
       !showSamplePanel ||
+      !canAutoOpenSamplePreview ||
       mutationPending(sampleProjectActions.openSampleProject) ||
       samplePreviewAutoOpenRef.current
     ) {
@@ -789,6 +842,7 @@ export default function OnboardingHomeView() {
     });
   }, [
     handleOpenSample,
+    canAutoOpenSamplePreview,
     isFirstRunQuickStartFocus,
     isSampleQuickStart,
     sampleProjectActions.openSampleProject,
@@ -1154,6 +1208,7 @@ export default function OnboardingHomeView() {
       sampleProject={sampleProject}
       activationStage={renderedState.stage}
       selectedGoal={renderedState.goal}
+      realSetupHref={sampleRealSetupHref}
       onOpenSample={handleOpenSample}
       onHideSample={handleHideSample}
       onConnectRealData={handleConnectRealData}

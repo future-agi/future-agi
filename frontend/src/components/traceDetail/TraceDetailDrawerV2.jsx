@@ -986,6 +986,9 @@ const TraceDetailDrawerV2 = ({
                 variant="contained"
                 startIcon={<Iconify icon="mdi:arrow-right" width={16} />}
                 onClick={onboardingBanner.primaryAction.onClick}
+                data-tour-anchor={
+                  onboardingBanner.primaryAction.tourAnchor || undefined
+                }
               >
                 {onboardingBanner.primaryAction.label}
               </Button>
@@ -1593,6 +1596,7 @@ TraceDetailDrawerV2.propTypes = {
     primaryAction: PropTypes.shape({
       label: PropTypes.string.isRequired,
       onClick: PropTypes.func.isRequired,
+      tourAnchor: PropTypes.string,
     }),
     title: PropTypes.string.isRequired,
   }),

@@ -1365,6 +1365,69 @@ describe("OnboardingHomeView", () => {
     );
   });
 
+  it("does not reopen the sample after review and routes to guided real setup", async () => {
+    const mutateAsync = vi.fn();
+    mocks.useSampleProject.mockReturnValue({
+      openSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync,
+      },
+      hideSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync: vi.fn(),
+      },
+    });
+    const state = normalizedFixture("sampleTraceReady");
+    mocks.useActivationState.mockReturnValue({
+      state: {
+        ...state,
+        stage: "connect_real_data",
+        sampleProject: {
+          ...state.sampleProject,
+          realSetupHref: "/dashboard/observe?setup=true&source=onboarding",
+        },
+      },
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=sample_preview&quick_start_goal=explore_sample_data&quick_start_primary_path=sample",
+    );
+
+    const samplePanel = screen.getByTestId("sample-project-panel");
+    const realSetupLink = within(samplePanel).getByRole("link", {
+      name: /connect real observability/i,
+    });
+    const params = new URLSearchParams(
+      realSetupLink.getAttribute("href").split("?")[1],
+    );
+
+    expect(realSetupLink.getAttribute("href")).toContain("/dashboard/observe?");
+    expect(params.get("setup")).toBe("true");
+    expect(params.get("source")).toBe("sample_trace_review");
+    expect(params.get("tour_anchor")).toBe("sample_connect_real_data_button");
+    expect(params.get("journey_step")).toBe("connect_real_data");
+    expect(params.get("quick_start_goal")).toBe("explore_sample_data");
+    expect(params.get("quick_start_id")).toBe("sample_preview");
+    expect(params.get("quick_start_primary_path")).toBe("sample");
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_home_viewed",
+        expect.objectContaining({
+          activation_stage: "connect_real_data",
+          quick_start_id: "sample_preview",
+        }),
+      ),
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
   it("drops unrecognized quick-start URL attribution before tracking", async () => {
     persistSetupQuickStartAttribution({
       quickStartGoal: "monitor_production_ai_app",

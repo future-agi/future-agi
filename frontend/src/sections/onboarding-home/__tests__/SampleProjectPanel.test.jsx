@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithRouter, screen } from "src/utils/test-utils";
+import { renderWithRouter, screen, within } from "src/utils/test-utils";
 import SampleProjectPanel from "../components/SampleProjectPanel";
 
 const sampleProject = {
@@ -37,9 +37,14 @@ describe("SampleProjectPanel", () => {
     expect(screen.getByTestId("sample-project-aha-preview")).toBeVisible();
     expect(screen.getByText("Quality issue")).toBeVisible();
     expect(screen.getByText("Turn it into an evaluator")).toBeVisible();
-    await userEvent.click(
-      screen.getByRole("button", { name: /open sample trace/i }),
+    const openSampleButton = screen.getByRole("button", {
+      name: /open sample trace/i,
+    });
+    expect(openSampleButton).toHaveAttribute(
+      "data-tour-anchor",
+      "sample_project_button",
     );
+    await userEvent.click(openSampleButton);
     await userEvent.click(
       screen.getByRole("link", { name: /connect real observability/i }),
     );
@@ -54,6 +59,7 @@ describe("SampleProjectPanel", () => {
         sampleProject={sampleProject}
         activationStage="connect_real_data"
         selectedGoal="explore_sample_data"
+        realSetupHref="/dashboard/observe?setup=true&source=sample_trace_review&tour_anchor=sample_connect_real_data_button&journey_step=connect_real_data"
         onOpenSample={vi.fn()}
         onConnectRealData={vi.fn()}
         onHideSample={vi.fn()}
@@ -68,6 +74,18 @@ describe("SampleProjectPanel", () => {
     expect(
       screen.getByText("Connect the same loop to real data"),
     ).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /connect real observability/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/observe?setup=true&source=sample_trace_review&tour_anchor=sample_connect_real_data_button&journey_step=connect_real_data",
+    );
+    expect(
+      within(panel).getByRole("link", { name: /connect real observability/i }),
+    ).toHaveAttribute("data-tour-anchor", "sample_connect_real_data_button");
+    expect(
+      within(panel).getByRole("button", { name: /open sample trace/i }),
+    ).toHaveAttribute("data-tour-anchor", "sample_trace_link");
     expect(controls.slice(0, 2)).toEqual([
       "Connect real observability",
       "Open sample trace",

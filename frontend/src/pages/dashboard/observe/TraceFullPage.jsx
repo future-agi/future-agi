@@ -129,6 +129,7 @@ export default function TraceFullPage() {
         primaryAction: {
           label: "Connect your app",
           onClick: handleConnectRealApp,
+          tourAnchor: "sample_connect_real_data_button",
         },
       };
     }
@@ -141,6 +142,7 @@ export default function TraceFullPage() {
         primaryAction: {
           label: "Create evaluator",
           onClick: handleCreateEvaluator,
+          tourAnchor: "observe_evaluator_button",
         },
       };
     }

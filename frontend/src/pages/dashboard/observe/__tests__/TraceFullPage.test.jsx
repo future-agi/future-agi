@@ -33,6 +33,7 @@ vi.mock("src/components/traceDetail/TraceDetailDrawerV2", () => ({
           <button
             type="button"
             onClick={onboardingBanner.primaryAction.onClick}
+            data-tour-anchor={onboardingBanner.primaryAction.tourAnchor}
           >
             {onboardingBanner.primaryAction.label}
           </button>
@@ -111,6 +112,10 @@ describe("TraceFullPage", () => {
     const { getByRole, getByText } = render(<TraceFullPage />);
 
     expect(getByText("Sample trace review")).toBeVisible();
+    expect(getByRole("button", { name: /connect your app/i })).toHaveAttribute(
+      "data-tour-anchor",
+      "sample_connect_real_data_button",
+    );
     getByRole("button", { name: /connect your app/i }).click();
 
     expect(mocks.mutate).toHaveBeenCalledWith({

@@ -18,6 +18,7 @@ export default function SampleProjectPanel({
   sampleProject,
   activationStage,
   selectedGoal,
+  realSetupHref: realSetupHrefOverride,
   onOpenSample,
   onHideSample,
   onConnectRealData,
@@ -35,6 +36,7 @@ export default function SampleProjectPanel({
   const hasRoute = hasSampleRoute(sampleProject);
   const canOpen = canOpenSample(sampleProject);
   const realSetupHref =
+    realSetupHrefOverride ||
     sampleProject.realSetupHref ||
     "/dashboard/observe?setup=true&source=onboarding";
   const statusLabel =
@@ -48,6 +50,10 @@ export default function SampleProjectPanel({
   const description = isRealDataStep
     ? "Use the sample trace as the reference, then connect real observability so the same quality loop runs on production data."
     : "Open a seeded trace, inspect the quality issue, then connect real observability with the product shape already clear.";
+  const openSampleTourAnchor =
+    activationStage === "review_sample_signal" || isRealDataStep
+      ? "sample_trace_link"
+      : "sample_project_button";
   const proofPoints = [
     {
       label: "Trace context",
@@ -141,6 +147,7 @@ export default function SampleProjectPanel({
               variant="contained"
               onClick={onOpenSample}
               disabled={!canOpen || isOpening}
+              data-tour-anchor={openSampleTourAnchor}
               startIcon={<Iconify icon="mdi:flask-outline" width={18} />}
               sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
             >
@@ -152,6 +159,9 @@ export default function SampleProjectPanel({
             component={RouterLink}
             href={realSetupHref}
             onClick={onConnectRealData}
+            data-tour-anchor={
+              isRealDataStep ? "sample_connect_real_data_button" : undefined
+            }
             startIcon={<Iconify icon="mdi:connection" width={18} />}
             sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
           >
@@ -162,6 +172,7 @@ export default function SampleProjectPanel({
               variant="outlined"
               onClick={onOpenSample}
               disabled={!canOpen || isOpening}
+              data-tour-anchor={openSampleTourAnchor}
               startIcon={<Iconify icon="mdi:flask-outline" width={18} />}
               sx={{ alignSelf: { xs: "stretch", sm: "flex-start" } }}
             >
@@ -191,6 +202,7 @@ SampleProjectPanel.propTypes = {
   onConnectRealData: PropTypes.func,
   onHideSample: PropTypes.func,
   onOpenSample: PropTypes.func,
+  realSetupHref: PropTypes.string,
   sampleProject: PropTypes.object,
   selectedGoal: PropTypes.string,
 };
