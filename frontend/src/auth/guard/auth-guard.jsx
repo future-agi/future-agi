@@ -18,6 +18,7 @@ import {
   OnboardingHomeEvents,
   trackOnboardingHomeEvent,
 } from "src/sections/onboarding-home/analytics/onboarding-events";
+import { isSetupCompletionHandoff } from "src/sections/auth/jwt/setup-org-routing";
 import { routeForAnalytics } from "src/sections/onboarding-home/utils/post-login-routing";
 import {
   buildCurrentFlowContext,
@@ -259,6 +260,10 @@ function Container({ children }) {
 
     // Onboarding not finished: keep every authenticated entry point on setup.
     if (!user?.onboarding_completed) {
+      if (isSetupCompletionHandoff(currentPath)) {
+        return;
+      }
+
       const targetRoute =
         postLoginDestination?.href || paths.auth.jwt.setup_org;
       trackPostLoginDecision("onboarding_incomplete", targetRoute);

@@ -4,11 +4,13 @@ import {
   buildSetupOrgInvitesSavedProperties,
   buildSetupOrgProfileSavedProperties,
   buildSetupOrgQuickStartClickedProperties,
+  buildSetupOrgQuickStartProfileSaveFailedProperties,
   buildSetupOrgQuickStartsViewedProperties,
   SetupOrgEvents,
   trackSetupOrgInvitesSaved,
   trackSetupOrgProfileSaved,
   trackSetupOrgQuickStartClicked,
+  trackSetupOrgQuickStartProfileSaveFailed,
   trackSetupOrgQuickStartsViewed,
 } from "./setup-org-analytics";
 
@@ -119,6 +121,24 @@ describe("setup-org analytics", () => {
     });
   });
 
+  it("builds quick-start profile save failure analytics without raw error text", () => {
+    expect(
+      buildSetupOrgQuickStartProfileSaveFailedProperties({
+        quickStartGoal: "explore_sample_data",
+        quickStartId: "sample_preview",
+        quickStartPrimaryPath: "sample",
+        reason: "network_error",
+        status: 500,
+      }),
+    ).toEqual({
+      quick_start_goal: "explore_sample_data",
+      quick_start_id: "sample_preview",
+      quick_start_primary_path: "sample",
+      reason: "network_error",
+      status: 500,
+    });
+  });
+
   it("tracks setup events through PostHog", () => {
     trackSetupOrgQuickStartsViewed({
       quickStarts: [
@@ -142,6 +162,13 @@ describe("setup-org analytics", () => {
       quickStartPrimaryPath: "observe",
       quickStartRequested: true,
       role: "AI Builder",
+    });
+    trackSetupOrgQuickStartProfileSaveFailed({
+      quickStartGoal: "explore_sample_data",
+      quickStartId: "sample_preview",
+      quickStartPrimaryPath: "sample",
+      reason: "network_error",
+      status: 500,
     });
     trackSetupOrgInvitesSaved({
       members: [{ email: "new@example.com", organization_role: "Admin" }],
@@ -182,6 +209,17 @@ describe("setup-org analytics", () => {
     );
     expect(trackPostHogEvent).toHaveBeenNthCalledWith(
       4,
+      SetupOrgEvents.quickStartProfileSaveFailed,
+      {
+        quick_start_goal: "explore_sample_data",
+        quick_start_id: "sample_preview",
+        quick_start_primary_path: "sample",
+        reason: "network_error",
+        status: 500,
+      },
+    );
+    expect(trackPostHogEvent).toHaveBeenNthCalledWith(
+      5,
       SetupOrgEvents.invitesSaved,
       {
         invited_member_count: 1,

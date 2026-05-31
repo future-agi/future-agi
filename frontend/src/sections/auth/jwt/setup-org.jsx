@@ -40,6 +40,7 @@ import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { useSearchParams } from "react-router-dom";
 import {
+  persistSetupCompletionReturnTo,
   resolveSetupCompletionHref,
   shouldShowInviteStepAfterProfileSave,
 } from "./setup-org-routing";
@@ -47,9 +48,13 @@ import {
   trackSetupOrgInvitesSaved,
   trackSetupOrgProfileSaved,
   trackSetupOrgQuickStartClicked,
+  trackSetupOrgQuickStartProfileSaveFailed,
   trackSetupOrgQuickStartsViewed,
 } from "./setup-org-analytics";
-import { SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS } from "./setup-org-quick-starts";
+import {
+  persistSetupQuickStartAttribution,
+  SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS,
+} from "./setup-org-quick-starts";
 
 const QUICK_START_ROLE = "AI Builder";
 
@@ -65,6 +70,12 @@ const goalMatchesSavedValue = (goal, savedGoal) => {
     (candidate) => normalizeGoalValue(candidate) === saved,
   );
 };
+
+const setupSaveFailureReason = (error) =>
+  error?.response?.data?.code ||
+  error?.response?.data?.result?.error_code ||
+  error?.code ||
+  "unknown_error";
 
 const DotsStepper = styled(MobileStepper)(({ theme }) => ({
   background: "transparent",
@@ -293,9 +304,11 @@ const SetupOrganization = ({ getStarted = false }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const activeStep = parseInt(searchParams.get("step") || "0", 10);
   const finishSetup = useCallback((quickStartOption) => {
+    const completionHref = resolveSetupCompletionHref(quickStartOption);
     localStorage.setItem("initial-render", "done");
     localStorage.removeItem("redirectUrl");
-    window.location.href = resolveSetupCompletionHref(quickStartOption);
+    persistSetupCompletionReturnTo(completionHref);
+    window.location.href = completionHref;
   }, []);
 
   const setActiveStep = useCallback(
@@ -404,8 +417,25 @@ const SetupOrganization = ({ getStarted = false }) => {
         finishSetup(quickStartOption);
       }
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      const quickStartOption = quickStartOptionRef.current;
+      const shouldFinishQuickStart = Boolean(quickStartOption);
       quickStartOptionRef.current = null;
+      if (shouldFinishQuickStart) {
+        trackSetupOrgQuickStartProfileSaveFailed({
+          quickStartGoal: quickStartOption.goal,
+          quickStartId: quickStartOption.id,
+          quickStartPrimaryPath: quickStartOption.primaryPath,
+          reason: setupSaveFailureReason(error),
+          status: error?.response?.status || error?.status,
+        });
+        updateUserData({
+          role: variables?.role,
+          goals: variables?.goals || [],
+        });
+        finishSetup(quickStartOption);
+        return;
+      }
       enqueueSnackbar(error?.message || "Failed to save profile", {
         variant: "error",
       });
@@ -450,6 +480,11 @@ const SetupOrganization = ({ getStarted = false }) => {
       }
 
       quickStartOptionRef.current = option;
+      persistSetupQuickStartAttribution({
+        quickStartGoal: option.goal,
+        quickStartId: option.id,
+        quickStartPrimaryPath: option.primaryPath,
+      });
       trackSetupOrgQuickStartClicked({
         quickStartGoal: option.goal,
         quickStartId: option.id,

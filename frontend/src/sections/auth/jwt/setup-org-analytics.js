@@ -2,6 +2,7 @@ import { trackPostHogEvent } from "src/utils/PostHog";
 
 export const SetupOrgEvents = {
   quickStartClicked: "setup_org_quick_start_clicked",
+  quickStartProfileSaveFailed: "setup_org_quick_start_profile_save_failed",
   quickStartsViewed: "setup_org_quick_starts_viewed",
   profileSaved: "setup_org_profile_saved",
   invitesSaved: "setup_org_invites_saved",
@@ -103,6 +104,21 @@ export const buildSetupOrgQuickStartClickedProperties = ({
     quick_start_primary_path: quickStartPrimaryPath,
   });
 
+export const buildSetupOrgQuickStartProfileSaveFailedProperties = ({
+  quickStartGoal,
+  quickStartId,
+  quickStartPrimaryPath,
+  reason,
+  status,
+} = {}) =>
+  compactProperties({
+    quick_start_goal: quickStartGoal,
+    quick_start_id: quickStartId,
+    quick_start_primary_path: quickStartPrimaryPath,
+    reason,
+    status,
+  });
+
 export const trackSetupOrgQuickStartsViewed = (properties) => {
   trackPostHogEvent(
     SetupOrgEvents.quickStartsViewed,
@@ -114,6 +130,13 @@ export const trackSetupOrgQuickStartClicked = (properties) => {
   trackPostHogEvent(
     SetupOrgEvents.quickStartClicked,
     buildSetupOrgQuickStartClickedProperties(properties),
+  );
+};
+
+export const trackSetupOrgQuickStartProfileSaveFailed = (properties) => {
+  trackPostHogEvent(
+    SetupOrgEvents.quickStartProfileSaveFailed,
+    buildSetupOrgQuickStartProfileSaveFailedProperties(properties),
   );
 };
 
