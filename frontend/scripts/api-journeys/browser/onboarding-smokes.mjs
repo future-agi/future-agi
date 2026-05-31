@@ -4,6 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
+import { validateProofPack } from "./validate-onboarding-proof-pack.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -471,12 +472,19 @@ async function runSmoke(smoke, stack, inheritedEnv) {
         console.error(`FAIL ${child.id}: ${message}`);
       }
     }
-    await writeSuiteManifest(smoke, childResults, failures);
+    const validation = await writeSuiteManifest(smoke, childResults, failures);
     if (failures.length > 0) {
       throw new Error(
         `${smoke.id} failed: ${failures
           .map((failure) => `${failure.id} (${failure.message})`)
           .join("; ")}`,
+      );
+    }
+    if (validation?.status === "failed") {
+      throw new Error(
+        `${smoke.id} validation failed: ${validation.failed_checks
+          .map((check) => check.key)
+          .join(", ")}`,
       );
     }
     console.log(`PASS ${smoke.id}`);
@@ -525,8 +533,12 @@ function reportOutputPath(smoke) {
   return resolve(args.reportOutputDir, `${smoke.id}.json`);
 }
 
+function proofPackValidationOutputPath() {
+  return resolve(args.reportOutputDir, "validation.json");
+}
+
 async function writeSuiteManifest(smoke, childResults, failures) {
-  if (!args.reportOutputDir || !smoke.continueOnFailure) return;
+  if (!args.reportOutputDir || !smoke.continueOnFailure) return null;
   const manifestPath = resolve(args.reportOutputDir, "manifest.json");
   const children = await Promise.all(
     childResults.map(async (child) => {
@@ -559,6 +571,17 @@ async function writeSuiteManifest(smoke, childResults, failures) {
     "utf8",
   );
   console.log(`WROTE ${manifestPath}`);
+  if (smoke.id !== "signup-real-proof-pack") return null;
+
+  const validation = await validateProofPack(manifestPath);
+  const validationPath = proofPackValidationOutputPath();
+  await writeFile(
+    validationPath,
+    `${JSON.stringify(validation, null, 2)}\n`,
+    "utf8",
+  );
+  console.log(`WROTE ${validationPath}`);
+  return validation;
 }
 
 async function readJsonFile(path) {
