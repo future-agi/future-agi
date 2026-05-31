@@ -57,6 +57,8 @@ import MoreActions from "./MoreActions";
 import { getColorMap as getTagColorMap } from "../VersionHistory/common";
 import PromptOnboardingFocusPanel from "./PromptOnboardingFocusPanel";
 import {
+  buildPromptTestRunCompletedPayload,
+  buildPromptVersionCreatedPayload,
   buildPromptCreatedHref,
   buildPromptEditorHref,
   countCommittedPromptVersions,
@@ -69,6 +71,7 @@ import {
   shouldAdvancePromptSaveOnboarding,
 } from "./promptOnboardingRoute";
 import { appendSetupQuickStartAttributionToHref } from "src/sections/auth/jwt/setup-org-quick-starts";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 
 const PromptActions = () => {
   const theme = useTheme();
@@ -114,7 +117,10 @@ const PromptActions = () => {
   const tabSx = useMemo(() => getMetricsTabSx(theme), [theme]);
 
   const timeoutRef = useRef(null);
+  const promptRunRecordedRef = useRef(new Set());
+  const promptVersionRecordedRef = useRef(new Set());
   const navigate = useNavigate();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const handleWritePrompt = () => {
     setCurrentTab("Playground");
     createDraft(createDraftPayload);
@@ -396,6 +402,20 @@ const PromptActions = () => {
       return;
     }
 
+    const payload = buildPromptTestRunCompletedPayload({
+      promptId: id,
+      search: searchParams,
+      versions: selectedVersions,
+    });
+    if (!promptRunRecordedRef.current.has(payload.idempotencyKey)) {
+      promptRunRecordedRef.current.add(payload.idempotencyKey);
+      recordActivationEvent(payload, {
+        onError: () => {
+          promptRunRecordedRef.current.delete(payload.idempotencyKey);
+        },
+      });
+    }
+
     navigate(
       buildPromptEditorHref({
         promptId: id,
@@ -413,6 +433,7 @@ const PromptActions = () => {
     navigate,
     onboardingMode,
     onboardingSource,
+    recordActivationEvent,
     searchParams,
     selectedVersions,
   ]);
@@ -433,6 +454,20 @@ const PromptActions = () => {
     });
     refetch();
 
+    const payload = buildPromptVersionCreatedPayload({
+      promptId: id,
+      search: searchParams,
+      version: promptSaveCommitTarget,
+    });
+    if (!promptVersionRecordedRef.current.has(payload.idempotencyKey)) {
+      promptVersionRecordedRef.current.add(payload.idempotencyKey);
+      recordActivationEvent(payload, {
+        onError: () => {
+          promptVersionRecordedRef.current.delete(payload.idempotencyKey);
+        },
+      });
+    }
+
     navigate(
       buildPromptEditorHref({
         journeyStep: postSaveJourneyStep,
@@ -449,8 +484,10 @@ const PromptActions = () => {
     onboardingMode,
     onboardingSource,
     queryClient,
+    recordActivationEvent,
     refetch,
     postSaveJourneyStep,
+    promptSaveCommitTarget,
     searchParams,
     selectedVersions,
   ]);

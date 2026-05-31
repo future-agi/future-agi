@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -20,7 +20,12 @@ import { enqueueSnackbar } from "notistack";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { createDraftPayload } from "src/sections/workbench/constant";
 import { usePromptStore } from "../store/usePromptStore";
-import { buildPromptCreatedHref } from "src/sections/workbench/createPrompt/promptActions/promptOnboardingRoute";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  buildPromptCreatedHref,
+  buildPromptCreatedPayload,
+  getPromptOnboardingRouteParams,
+} from "src/sections/workbench/createPrompt/promptActions/promptOnboardingRoute";
 
 function PromptItem({ name, desc, icon, onClick }) {
   const theme = useTheme();
@@ -83,8 +88,13 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [selectedOption, setSelectedOption] = useState(null);
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const { setSelectTemplateDrawerOpen, selectTemplateDrawerOpen } =
     usePromptStore();
+  const promptOnboardingParams = useMemo(
+    () => getPromptOnboardingRouteParams(searchParams),
+    [searchParams],
+  );
 
   const { mutate: createDraft, isPending: isLoadingCreate } = useMutation({
     mutationFn: (body) =>
@@ -97,6 +107,14 @@ export default function CreateNewPrompt({ open, onClose, isLoading }) {
         [PropertyName.click]: true,
       });
       const promptId = data?.data?.result?.rootTemplate;
+      if (promptOnboardingParams.isOnboarding && promptId) {
+        recordActivationEvent(
+          buildPromptCreatedPayload({
+            promptId,
+            search: searchParams,
+          }),
+        );
+      }
       navigate(buildPromptCreatedHref({ promptId, search: searchParams }), {
         state: { fromOption: selectedOption },
       });

@@ -7,6 +7,7 @@ import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
 import CreateNewPrompt from "./CreateNewPrompt";
 
+const mockRecordActivationEvent = vi.hoisted(() => vi.fn());
 const mockOnClose = vi.fn();
 
 vi.mock("src/utils/axios", () => ({
@@ -36,6 +37,12 @@ vi.mock("src/utils/Mixpanel", () => ({
     type: "type",
   },
   trackEvent: vi.fn(),
+}));
+
+vi.mock("src/sections/onboarding-home/hooks/useRecordActivationEvent", () => ({
+  useRecordActivationEvent: () => ({
+    mutate: mockRecordActivationEvent,
+  }),
 }));
 
 import axios from "src/utils/axios";
@@ -112,6 +119,20 @@ describe("CreateNewPrompt onboarding routes", () => {
       expect(params.get("quick_start_id")).toBe("prompt");
       expect(params.get("quick_start_primary_path")).toBe("prompt");
     });
+    expect(mockRecordActivationEvent).toHaveBeenCalledWith({
+      eventName: "prompt_created",
+      primaryPath: "prompt",
+      stage: "start_prompt",
+      source: "prompt_template",
+      metadata: {
+        step: "create-prompt",
+        template_id: "prompt-1",
+      },
+      quickStartGoal: "improve_prompts",
+      quickStartId: "prompt",
+      quickStartPrimaryPath: "prompt",
+      idempotencyKey: "prompt_onboarding:prompt_created:prompt-1",
+    });
   });
 
   it("keeps non-onboarding prompt creation routes clean", async () => {
@@ -124,5 +145,6 @@ describe("CreateNewPrompt onboarding routes", () => {
         "/dashboard/workbench/create/prompt-1",
       ),
     );
+    expect(mockRecordActivationEvent).not.toHaveBeenCalled();
   });
 });

@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildPromptComparisonCompletedPayload,
   buildPromptCreatedHref,
+  buildPromptCreatedPayload,
   buildPromptEditorHref,
   buildPromptFirstQualityLoopCompletedPayload,
+  buildPromptTestRunCompletedPayload,
+  buildPromptVersionCreatedPayload,
   countCommittedPromptVersions,
   getPromptOnboardingRouteParams,
   getSelectedPromptVersionsFromSearch,
@@ -425,6 +428,69 @@ describe("promptOnboardingRoute", () => {
       },
       idempotencyKey:
         "prompt_onboarding:prompt_comparison_completed:prompt-1:v1-v2",
+    });
+  });
+
+  it("builds a safe prompt creation activation payload", () => {
+    expect(
+      buildPromptCreatedPayload({
+        promptId: "prompt-1",
+        search:
+          "?quick_start_goal=improve_prompts&quick_start_id=prompt&quick_start_primary_path=prompt",
+      }),
+    ).toEqual({
+      eventName: "prompt_created",
+      primaryPath: "prompt",
+      stage: "start_prompt",
+      source: "prompt_template",
+      metadata: {
+        step: PROMPT_ONBOARDING_MODES.CREATE_PROMPT,
+        template_id: "prompt-1",
+      },
+      quickStartGoal: "improve_prompts",
+      quickStartId: "prompt",
+      quickStartPrimaryPath: "prompt",
+      idempotencyKey: "prompt_onboarding:prompt_created:prompt-1",
+    });
+  });
+
+  it("builds a safe prompt test-run completion payload", () => {
+    expect(
+      buildPromptTestRunCompletedPayload({
+        promptId: "prompt-1",
+        versions: [{ version: "v1" }],
+      }),
+    ).toEqual({
+      eventName: "prompt_test_run_completed",
+      primaryPath: "prompt",
+      stage: "run_prompt_test",
+      source: "prompt_playground",
+      metadata: {
+        step: PROMPT_ONBOARDING_MODES.RUN_TEST,
+        template_id: "prompt-1",
+        version_count: 1,
+      },
+      idempotencyKey: "prompt_onboarding:prompt_test_run_completed:prompt-1:v1",
+    });
+  });
+
+  it("builds a safe prompt version-created payload", () => {
+    expect(
+      buildPromptVersionCreatedPayload({
+        promptId: "prompt-1",
+        version: { version: "v1" },
+      }),
+    ).toEqual({
+      eventName: "prompt_version_created",
+      primaryPath: "prompt",
+      stage: "save_prompt_version",
+      source: "prompt_template",
+      metadata: {
+        step: PROMPT_ONBOARDING_MODES.SAVE_VERSION,
+        template_id: "prompt-1",
+        version: "v1",
+      },
+      idempotencyKey: "prompt_onboarding:prompt_version_created:prompt-1:v1",
     });
   });
 

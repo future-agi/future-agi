@@ -81,6 +81,18 @@ const setupQuickStartAttributionFromSearch = (search = "") => {
   };
 };
 
+const setupQuickStartPayloadFromSearch = (search = "") => {
+  const attribution = setupQuickStartAttributionFromSearch(search);
+  return Object.entries({
+    quickStartGoal: attribution.quick_start_goal,
+    quickStartId: attribution.quick_start_id,
+    quickStartPrimaryPath: attribution.quick_start_primary_path,
+  }).reduce((result, [key, value]) => {
+    if (value) result[key] = value;
+    return result;
+  }, {});
+};
+
 const safeKeyPart = (value, fallback) =>
   String(value || fallback)
     .replace(/[^a-zA-Z0-9_-]/g, "-")
@@ -270,6 +282,88 @@ export const shouldAdvancePromptCompareOnboarding = ({
 
 export const isPromptFailureCaptureOnboarding = ({ mode, source } = {}) =>
   source === "onboarding" && mode === PROMPT_ONBOARDING_MODES.ADD_FAILURE;
+
+export const buildPromptCreatedPayload = ({ promptId, search } = {}) => {
+  const safePromptId = safeKeyPart(promptId, "prompt");
+
+  return {
+    eventName: "prompt_created",
+    primaryPath: "prompt",
+    stage: "start_prompt",
+    source: "prompt_template",
+    metadata: {
+      step: PROMPT_ONBOARDING_MODES.CREATE_PROMPT,
+      template_id: promptId,
+    },
+    ...setupQuickStartPayloadFromSearch(search),
+    idempotencyKey: ["prompt_onboarding", "prompt_created", safePromptId]
+      .filter(Boolean)
+      .join(":"),
+  };
+};
+
+export const buildPromptTestRunCompletedPayload = ({
+  promptId,
+  search,
+  versions = [],
+} = {}) => {
+  const safePromptId = safeKeyPart(promptId, "prompt");
+  const safeVersions = versions.map((version, index) =>
+    safeKeyPart(promptVersionKey(version), `version-${index + 1}`),
+  );
+
+  return {
+    eventName: "prompt_test_run_completed",
+    primaryPath: "prompt",
+    stage: "run_prompt_test",
+    source: "prompt_playground",
+    metadata: {
+      step: PROMPT_ONBOARDING_MODES.RUN_TEST,
+      template_id: promptId,
+      version_count: versions.length,
+    },
+    ...setupQuickStartPayloadFromSearch(search),
+    idempotencyKey: [
+      "prompt_onboarding",
+      "prompt_test_run_completed",
+      safePromptId,
+      safeVersions.join("-"),
+    ]
+      .filter(Boolean)
+      .join(":"),
+  };
+};
+
+export const buildPromptVersionCreatedPayload = ({
+  promptId,
+  search,
+  version,
+} = {}) => {
+  const safePromptId = safeKeyPart(promptId, "prompt");
+  const versionKey = promptVersionKey(version);
+  const safeVersion = safeKeyPart(versionKey, "version");
+
+  return {
+    eventName: "prompt_version_created",
+    primaryPath: "prompt",
+    stage: "save_prompt_version",
+    source: "prompt_template",
+    metadata: {
+      step: PROMPT_ONBOARDING_MODES.SAVE_VERSION,
+      template_id: promptId,
+      version: versionKey,
+    },
+    ...setupQuickStartPayloadFromSearch(search),
+    idempotencyKey: [
+      "prompt_onboarding",
+      "prompt_version_created",
+      safePromptId,
+      safeVersion,
+    ]
+      .filter(Boolean)
+      .join(":"),
+  };
+};
 
 export const buildPromptComparisonCompletedPayload = ({
   promptId,
