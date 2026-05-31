@@ -101,6 +101,73 @@ ERROR_RESPONSES = {
 }
 
 
+def _users_attr_enrichment_query(project_id=None):
+    """Build the Observe-Users span-attribute enrichment query (UsersView.get).
+
+    P3b step1.5 (DESIGN §3 / id_remap_sql) — DUAL id-remap resolution so a
+    cross-cutover straddler's attributes unify under the OLD curated id:
+
+      1. MATCH: the per-user filter is keyed by the OLD curated ``EndUser.id``
+         (``%(eu_ids)s``), but a straddler's NEW (deterministic-id) spans carry
+         ``end_user_id = new_id``. Resolve each span new→old through
+         ``end_user_id_remap`` and filter on the RESOLVED id, so the old-id set
+         pulls in the new-id spans too.
+      2. KEY: re-project the RESOLVED id AS ``end_user_id`` so the caller's
+         Python aggregation (``user_attrs[uid]``) buckets a straddler's new-id
+         spans under the OLD id — without this the attributes would land under
+         the raw new id and never merge into the (old-id) user row.
+
+    The committed read used ``PREWHERE end_user_id IN %(eu_ids)s``; PREWHERE
+    cannot reference a joined column, so the resolve+filter moves to a wrapped
+    scan's ``WHERE`` (``resolved_id_expr`` is the zero-uuid-guarded new→old map —
+    NOT a COALESCE; an unmatched LEFT JOIN fills ``old_id`` with the zero-uuid,
+    not NULL; see id_remap_sql). Pre-flip NO span matches a ``new_id`` so the
+    resolved id == the span's own id and this is result-identical to the
+    committed read (acceptance gate B).
+
+    Returns ``(sql, params)`` where ``params`` carries the project binding (if
+    any); the caller binds ``%(eu_ids)s`` (and ``%(attr_pid)s`` when scoped).
+    """
+    from tracer.services.clickhouse.v2.id_remap_sql import (
+        remap_left_join,
+        resolved_id_expr,
+    )
+
+    params: dict = {}
+    project_clause = ""
+    if project_id:
+        params["attr_pid"] = str(project_id)
+        project_clause = "AND project_id = toUUID(%(attr_pid)s)"
+
+    remap_join = remap_left_join("end_user_id", "end_user_id_remap")
+    resolved = resolved_id_expr("end_user_id")
+    sql = f"""
+    SELECT
+        resolved_end_user_id AS end_user_id,
+        attributes_extra,
+        attrs_string,
+        attrs_number
+    FROM (
+        SELECT
+            {resolved} AS resolved_end_user_id,
+            attributes_extra,
+            attrs_string,
+            attrs_number
+        FROM spans
+        {remap_join}
+        WHERE is_deleted = 0
+          {project_clause}
+          AND (
+            (attributes_extra != '{{}}' AND attributes_extra != '')
+            OR length(mapKeys(attrs_string)) > 0
+            OR length(mapKeys(attrs_number)) > 0
+          )
+    )
+    WHERE resolved_end_user_id IN %(eu_ids)s
+    """
+    return sql, params
+
+
 class TraceTagsUpdateSerializer(serializers.Serializer):
     tags = serializers.ListField(child=serializers.CharField(), allow_empty=True)
 
@@ -4703,28 +4770,13 @@ class UsersView(APIView):
                         "input.value",
                         "output.value",
                     )
-                    attr_params = {"eu_ids": tuple(str(e) for e in end_user_ids)}
-                    project_clause = ""
-                    if project_id:
-                        attr_params["attr_pid"] = str(project_id)
-                        project_clause = "AND project_id = toUUID(%(attr_pid)s)"
-
-                    attr_query = f"""
-                    SELECT
-                        end_user_id,
-                        attributes_extra,
-                        attrs_string,
-                        attrs_number
-                    FROM spans
-                    PREWHERE end_user_id IN %(eu_ids)s
-                    WHERE is_deleted = 0
-                      {project_clause}
-                      AND (
-                        (attributes_extra != '{{}}' AND attributes_extra != '')
-                        OR length(mapKeys(attrs_string)) > 0
-                        OR length(mapKeys(attrs_number)) > 0
-                      )
-                    """
+                    # P3b step1.5: resolve end_user_id new→old (filter + key) so a
+                    # straddler's new-id span attributes unify under the OLD id.
+                    # See `_users_attr_enrichment_query`.
+                    attr_query, attr_params = _users_attr_enrichment_query(
+                        project_id=project_id
+                    )
+                    attr_params["eu_ids"] = tuple(str(e) for e in end_user_ids)
                     attr_result = analytics.execute_ch_query(
                         attr_query, attr_params, timeout_ms=30000
                     )

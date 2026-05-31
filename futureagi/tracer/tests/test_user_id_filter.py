@@ -27,13 +27,13 @@ class UserIdFilterTests(unittest.TestCase):
     def _user_id_filter(self, value, col_type=None):
         # Default to NORMAL because that's what the frontend's user scope
         # filter sends when no explicit ``col_type`` is present.
-        return dict(
-            col_id="user_id",
-            col_type=col_type or ClickHouseFilterBuilder.NORMAL,
-            filter_type="text",
-            filter_op="equals",
-            filter_value=value,
-        )
+        return {
+            "col_id": "user_id",
+            "col_type": col_type or ClickHouseFilterBuilder.NORMAL,
+            "filter_type": "text",
+            "filter_op": "equals",
+            "filter_value": value,
+        }
 
     def test_user_id_single_string_resolves_via_tracer_enduser(self):
         b = self._build()
@@ -56,9 +56,7 @@ class UserIdFilterTests(unittest.TestCase):
     def test_user_id_special_chars(self):
         """Dots / hyphens in the user_id string shouldn't be treated as SQL."""
         b = self._build()
-        sql = b._build_condition(
-            **self._user_id_filter("user-11771490488.8493178")
-        )
+        sql = b._build_condition(**self._user_id_filter("user-11771490488.8493178"))
         self.assertIsNotNone(sql)
         # Value always passes via bound parameter — never inlined into SQL.
         self.assertNotIn("user-11771490488.8493178", sql)
@@ -166,11 +164,18 @@ class UserIdFilterTests(unittest.TestCase):
             filter_value="08ad78f8-1974-45c1-b6bc-4f2b2ba0b243",
         )
         self.assertIsNotNone(sql)
-        # The classic TRACE_END_USER path wraps on end_user_id directly — no
-        # tracer_enduser subquery required because the caller already has
-        # the UUID.
-        self.assertIn("end_user_id IN", sql)
+        # The classic TRACE_END_USER path matches on the end_user_id UUID
+        # column directly — NO tracer_enduser string-resolution subquery
+        # (the caller already has the UUID). That distinction is the point of
+        # this regression test (TH-4436) and must hold.
         self.assertNotIn("FROM tracer_enduser", sql)
+        # P3b step1.5: the match is now id-remap-resolved (new→old) so a
+        # cross-cutover straddler unifies. Assert the resolution is present on
+        # the end_user_id column (proves we still operate on the UUID column,
+        # just resolved — not via tracer_enduser).
+        self.assertIn("end_user_id_remap", sql)
+        self.assertIn("id_remap.new_id", sql)
+        self.assertIn("%(eu_1)s", sql)
 
     def test_user_id_contains(self):
         b = self._build()
@@ -203,7 +208,10 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertEqual(b._params.get("col_1"), "%admin%")
 
     def test_user_id_null_ops_do_not_query_tracer_enduser(self):
-        for op, outer in (("is_null", "trace_id NOT IN ("), ("is_not_null", "trace_id IN (")):
+        for op, outer in (
+            ("is_null", "trace_id NOT IN ("),
+            ("is_not_null", "trace_id IN ("),
+        ):
             b = self._build()
             sql = b._build_condition(
                 col_id="user_id",
