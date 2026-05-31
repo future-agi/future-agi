@@ -56,6 +56,9 @@ EMAIL_CONTEXT_METADATA_FIELDS = (
     "link_issued_at",
     "stale_reason",
     "context_status",
+    "quick_start_goal",
+    "quick_start_id",
+    "quick_start_primary_path",
 )
 
 

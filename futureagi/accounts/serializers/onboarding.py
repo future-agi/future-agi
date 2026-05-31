@@ -1602,7 +1602,8 @@ class ActivationStateQuerySerializer(serializers.Serializer):
         allow_blank=True,
         allow_null=True,
     )
-    quick_start_id = serializers.CharField(
+    quick_start_id = serializers.RegexField(
+        regex=r"^[a-z0-9_:-]{1,80}$",
         required=False,
         allow_blank=True,
         allow_null=True,
@@ -1978,6 +1979,22 @@ class SampleProjectRequestSerializer(serializers.Serializer):
     )
     context_status = serializers.ChoiceField(
         choices=choices(EMAIL_CONTEXT_STATUSES),
+        required=False,
+        allow_null=True,
+    )
+    quick_start_goal = serializers.ChoiceField(
+        choices=choices(ONBOARDING_GOALS),
+        required=False,
+        allow_null=True,
+    )
+    quick_start_id = serializers.RegexField(
+        regex=r"^[a-z0-9_:-]{1,80}$",
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+    )
+    quick_start_primary_path = serializers.ChoiceField(
+        choices=choices(PRODUCT_PATHS),
         required=False,
         allow_null=True,
     )

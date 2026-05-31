@@ -76,7 +76,8 @@ describe("TraceFullPage", () => {
   });
 
   it("records a sample trace review activation event for sample routes", async () => {
-    mocks.locationSearch = "?sample=true&from=onboarding";
+    mocks.locationSearch =
+      "?sample=true&from=onboarding&quick_start_goal=explore_sample_data&quick_start_id=sample_preview&quick_start_primary_path=sample";
 
     render(<TraceFullPage />);
 
@@ -90,6 +91,9 @@ describe("TraceFullPage", () => {
         artifactId: "trace-1",
         projectId: "observe-1",
         isSample: true,
+        quickStartGoal: "explore_sample_data",
+        quickStartId: "sample_preview",
+        quickStartPrimaryPath: "sample",
         metadata: {
           entry: "trace_full_page",
           is_sample_route: true,
@@ -99,7 +103,10 @@ describe("TraceFullPage", () => {
   });
 
   it("routes sample trace users back to real setup", async () => {
-    mocks.locationSearch = "?sample=true&from=onboarding";
+    mocks.locationSearch =
+      "?sample=true&from=onboarding&quick_start_goal=explore_sample_data&quick_start_id=sample_preview&quick_start_primary_path=sample";
+    const realSetupHref =
+      "/dashboard/observe?setup=true&source=sample_trace_review&quick_start_goal=explore_sample_data&quick_start_id=sample_preview&quick_start_primary_path=sample";
 
     const { getByRole, getByText } = render(<TraceFullPage />);
 
@@ -115,15 +122,15 @@ describe("TraceFullPage", () => {
       artifactId: "trace-1",
       projectId: "observe-1",
       isSample: true,
+      quickStartGoal: "explore_sample_data",
+      quickStartId: "sample_preview",
+      quickStartPrimaryPath: "sample",
       metadata: {
         entry: "trace_full_page",
-        target_route:
-          "/dashboard/observe?setup=true&source=sample_trace_review",
+        target_route: realSetupHref,
       },
     });
-    expect(mocks.navigate).toHaveBeenCalledWith(
-      "/dashboard/observe?setup=true&source=sample_trace_review",
-    );
+    expect(mocks.navigate).toHaveBeenCalledWith(realSetupHref);
   });
 
   it("routes onboarding trace reviews directly to evaluator creation", async () => {

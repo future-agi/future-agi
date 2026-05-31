@@ -923,6 +923,17 @@ describe("OnboardingHomeView", () => {
         quickStartPrimaryPath: "sample",
       }),
     );
+    await waitFor(() =>
+      expect(window.location.pathname + window.location.search).toContain(
+        "/dashboard/home?sample=true",
+      ),
+    );
+    const attributionParams = new URLSearchParams(window.location.search);
+    expect(attributionParams.get("quick_start_goal")).toBe(
+      "explore_sample_data",
+    );
+    expect(attributionParams.get("quick_start_id")).toBe("sample_preview");
+    expect(attributionParams.get("quick_start_primary_path")).toBe("sample");
     expect(refetch).toHaveBeenCalledTimes(1);
   });
 

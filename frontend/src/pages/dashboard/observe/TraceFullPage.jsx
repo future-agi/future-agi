@@ -2,6 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import { useLocation, useNavigate, useParams } from "react-router";
 import { Helmet } from "react-helmet-async";
 import TraceDetailDrawerV2 from "src/components/traceDetail/TraceDetailDrawerV2";
+import {
+  appendSetupQuickStartAttributionToHref,
+  normalizeSetupQuickStartAttribution,
+} from "src/sections/auth/jwt/setup-org-quick-starts";
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import {
   buildObserveEvaluatorCreateHref,
@@ -15,8 +19,18 @@ export default function TraceFullPage() {
   const location = useLocation();
   const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const recordedTraceRef = useRef(null);
-  const isSampleTrace =
-    new URLSearchParams(location.search).get("sample") === "true";
+  const sampleTraceSearchContext = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return {
+      isSampleTrace: params.get("sample") === "true",
+      quickStartAttribution: normalizeSetupQuickStartAttribution({
+        quickStartGoal: params.get("quick_start_goal"),
+        quickStartId: params.get("quick_start_id"),
+        quickStartPrimaryPath: params.get("quick_start_primary_path"),
+      }),
+    };
+  }, [location.search]);
+  const { isSampleTrace, quickStartAttribution } = sampleTraceSearchContext;
   const traceReviewOnboardingParams = useMemo(
     () => getObserveTraceReviewOnboardingParams(location.search),
     [location.search],
@@ -25,6 +39,14 @@ export default function TraceFullPage() {
     !isSampleTrace &&
     traceReviewOnboardingParams.mode ===
       OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE;
+  const realSetupHref = useMemo(
+    () =>
+      appendSetupQuickStartAttributionToHref(
+        "/dashboard/observe?setup=true&source=sample_trace_review",
+        quickStartAttribution,
+      ),
+    [quickStartAttribution],
+  );
 
   const handleConnectRealApp = useCallback(() => {
     recordActivationEvent({
@@ -36,14 +58,21 @@ export default function TraceFullPage() {
       artifactId: traceId,
       projectId: observeId,
       isSample: true,
+      ...quickStartAttribution,
       metadata: {
         entry: "trace_full_page",
-        target_route:
-          "/dashboard/observe?setup=true&source=sample_trace_review",
+        target_route: realSetupHref,
       },
     });
-    navigate("/dashboard/observe?setup=true&source=sample_trace_review");
-  }, [navigate, observeId, recordActivationEvent, traceId]);
+    navigate(realSetupHref);
+  }, [
+    navigate,
+    observeId,
+    quickStartAttribution,
+    realSetupHref,
+    recordActivationEvent,
+    traceId,
+  ]);
 
   const handleCreateEvaluator = useCallback(() => {
     navigate(buildObserveEvaluatorCreateHref({ observeId }));
@@ -77,12 +106,19 @@ export default function TraceFullPage() {
       artifactId: traceId,
       projectId: observeId,
       isSample: isSampleTrace,
+      ...quickStartAttribution,
       metadata: {
         entry: "trace_full_page",
         is_sample_route: isSampleTrace,
       },
     });
-  }, [isSampleTrace, observeId, recordActivationEvent, traceId]);
+  }, [
+    isSampleTrace,
+    observeId,
+    quickStartAttribution,
+    recordActivationEvent,
+    traceId,
+  ]);
 
   const onboardingBanner = useMemo(() => {
     if (isSampleTrace) {

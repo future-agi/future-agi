@@ -479,6 +479,9 @@ describe("onboarding home API", () => {
       sendLogId: "send-sample",
       targetStage: "waiting_for_first_trace_sample_available",
       targetEvent: "onboarding_sample_project_opened",
+      quickStartGoal: "explore_sample_data",
+      quickStartId: "sample_preview",
+      quickStartPrimaryPath: "sample",
     });
     const hidden = await hideSampleProject({
       source: "onboarding_home",
@@ -495,6 +498,9 @@ describe("onboarding home API", () => {
       send_log_id: "send-sample",
       target_stage: "waiting_for_first_trace_sample_available",
       target_event: "onboarding_sample_project_opened",
+      quick_start_goal: "explore_sample_data",
+      quick_start_id: "sample_preview",
+      quick_start_primary_path: "sample",
     });
     expect(axios.post).toHaveBeenNthCalledWith(
       2,

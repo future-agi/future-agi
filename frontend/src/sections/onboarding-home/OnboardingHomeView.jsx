@@ -15,6 +15,7 @@ import { useLocation, useNavigate } from "react-router-dom";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import {
+  appendSetupQuickStartAttributionToHref,
   normalizeSetupQuickStartAttribution,
   persistSetupQuickStartAttribution,
 } from "src/sections/auth/jwt/setup-org-quick-starts";
@@ -485,7 +486,9 @@ export default function OnboardingHomeView() {
           nextState?.sampleProject?.entryRoute ||
           nextState?.sampleProject?.entryRoutes?.[0];
         if (entryRoute) {
-          navigate(entryRoute);
+          navigate(
+            appendSetupQuickStartAttributionToHref(entryRoute, trackContext),
+          );
         }
         refetch?.();
       } catch (sampleError) {

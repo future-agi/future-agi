@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  appendSetupQuickStartAttributionToHref,
   normalizeSetupQuickStartAttribution,
   persistSetupQuickStartAttribution,
   readPersistedSetupQuickStartAttribution,
@@ -117,6 +118,51 @@ describe("setup org product-loop quick starts", () => {
         quickStartPrimaryPath: "voice",
       }),
     ).toEqual({});
+  });
+
+  it("adds sanitized quick-start attribution to internal routes", () => {
+    expect(
+      appendSetupQuickStartAttributionToHref(
+        "/dashboard/observe/observe-1/trace/trace-1?sample=true#details",
+        {
+          quickStartGoal: "explore_sample_data",
+          quickStartId: "sample_preview",
+          quickStartPrimaryPath: "sample",
+        },
+      ),
+    ).toBe(
+      "/dashboard/observe/observe-1/trace/trace-1?sample=true&quick_start_goal=explore_sample_data&quick_start_id=sample_preview&quick_start_primary_path=sample#details",
+    );
+
+    expect(
+      appendSetupQuickStartAttributionToHref(
+        "/dashboard/home?quick_start_id=observe",
+        {
+          quick_start_goal: "explore_sample_data",
+          quick_start_id: "sample_preview",
+          quick_start_primary_path: "sample",
+        },
+      ),
+    ).toBe(
+      "/dashboard/home?quick_start_id=sample_preview&quick_start_goal=explore_sample_data&quick_start_primary_path=sample",
+    );
+  });
+
+  it("does not add invalid quick-start attribution to routes", () => {
+    expect(
+      appendSetupQuickStartAttributionToHref("/dashboard/home?sample=true", {
+        quickStartGoal: "secret",
+        quickStartId: "user@example.com",
+        quickStartPrimaryPath: "observe",
+      }),
+    ).toBe("/dashboard/home?sample=true");
+    expect(
+      appendSetupQuickStartAttributionToHref("//example.com/path", {
+        quickStartGoal: "explore_sample_data",
+        quickStartId: "sample_preview",
+        quickStartPrimaryPath: "sample",
+      }),
+    ).toBe("//example.com/path");
   });
 
   it("persists only normalized quick-start attribution", () => {

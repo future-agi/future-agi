@@ -54,6 +54,9 @@ def test_sample_project_endpoint_creates_sample_and_returns_activation_state(
             "send_log_id": "00000000-0000-0000-0000-000000000322",
             "target_stage": "waiting_for_first_trace_sample_available",
             "target_event": "onboarding_sample_project_opened",
+            "quick_start_goal": "explore_sample_data",
+            "quick_start_id": "sample_preview",
+            "quick_start_primary_path": "sample",
         },
         format="json",
     )
@@ -76,6 +79,9 @@ def test_sample_project_endpoint_creates_sample_and_returns_activation_state(
     assert event.metadata["email_key"] == "observe_sample_bridge_v1"
     assert event.metadata["send_log_id"] == "00000000-0000-0000-0000-000000000322"
     assert event.metadata["target_event"] == "onboarding_sample_project_opened"
+    assert event.metadata["quick_start_goal"] == "explore_sample_data"
+    assert event.metadata["quick_start_id"] == "sample_preview"
+    assert event.metadata["quick_start_primary_path"] == "sample"
 
 
 @pytest.mark.django_db

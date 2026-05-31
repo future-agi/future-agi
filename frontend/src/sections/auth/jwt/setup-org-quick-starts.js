@@ -111,6 +111,52 @@ export const normalizeSetupQuickStartAttribution = ({
   return attribution;
 };
 
+const quickStartAttributionInput = (input = {}) => ({
+  quickStartGoal: input.quickStartGoal ?? input.quick_start_goal,
+  quickStartId: input.quickStartId ?? input.quick_start_id,
+  quickStartPrimaryPath:
+    input.quickStartPrimaryPath ?? input.quick_start_primary_path,
+});
+
+export const setupQuickStartAttributionParams = (input = {}) => {
+  const attribution = normalizeSetupQuickStartAttribution(
+    quickStartAttributionInput(input),
+  );
+  if (!attribution.quickStartId) return {};
+  return {
+    quick_start_goal: attribution.quickStartGoal,
+    quick_start_id: attribution.quickStartId,
+    quick_start_primary_path: attribution.quickStartPrimaryPath,
+  };
+};
+
+export const appendSetupQuickStartAttributionToHref = (href, input = {}) => {
+  const params = setupQuickStartAttributionParams(input);
+  if (
+    !href ||
+    typeof href !== "string" ||
+    !href.startsWith("/") ||
+    href.startsWith("//") ||
+    Object.keys(params).length === 0
+  ) {
+    return href;
+  }
+
+  const hashIndex = href.indexOf("#");
+  const route = hashIndex >= 0 ? href.slice(0, hashIndex) : href;
+  const hash = hashIndex >= 0 ? href.slice(hashIndex) : "";
+  const queryIndex = route.indexOf("?");
+  const pathname = queryIndex >= 0 ? route.slice(0, queryIndex) : route;
+  const existingQuery = queryIndex >= 0 ? route.slice(queryIndex + 1) : "";
+  const searchParams = new URLSearchParams(existingQuery);
+  Object.entries(params).forEach(([key, value]) => {
+    searchParams.set(key, value);
+  });
+  const query = searchParams.toString();
+
+  return `${pathname}${query ? `?${query}` : ""}${hash}`;
+};
+
 const setupQuickStartStorage = () => {
   if (typeof window === "undefined") return null;
   try {

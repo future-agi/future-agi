@@ -270,6 +270,7 @@ const sampleProjectPayload = (payload = {}) =>
     link_issued_at: payload.linkIssuedAt ?? payload.link_issued_at,
     stale_reason: payload.staleReason ?? payload.stale_reason,
     context_status: payload.contextStatus ?? payload.context_status,
+    ...setupQuickStartAttributionParams(payload),
   });
 
 export const openSampleProject = async (payload = {}) => {
