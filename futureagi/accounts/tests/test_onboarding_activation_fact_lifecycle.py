@@ -2,6 +2,7 @@ import io
 import json
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 from django.core.management import call_command
@@ -16,6 +17,7 @@ from accounts.services.onboarding.activation_exporter import (
     ACTIVATION_EXPORT_SCHEMA_VERSION,
 )
 from accounts.services.onboarding.activation_fact_lifecycle import (
+    _receipt_metadata,
     import_activation_fact_lifecycle_evaluations,
     receipt_backed_lifecycle_cohort_report,
 )
@@ -64,11 +66,25 @@ def _receipt(organization, workspace, user, **overrides):
                     "stage": "waiting_for_first_trace",
                     "primary_path": "observe",
                     "is_activated": False,
-                }
+                },
+                "lifecycle": {
+                    "delivery": {
+                        "send_enabled": True,
+                        "dry_run_only": False,
+                        "target_route": "/dashboard/observe/project-1/llm-tracing",
+                    }
+                },
             }
         },
         "evaluated_at": now,
-        "metadata": {"source": "activation_fact_receiver"},
+        "metadata": {
+            "source": "activation_fact_receiver",
+            "lifecycle_send_enabled": True,
+            "lifecycle_dry_run_only": False,
+            "lifecycle_target_route": "/dashboard/observe/project-1/llm-tracing",
+            "lifecycle_target_action_id": "send_first_trace",
+            "lifecycle_target_success_event": "trace_received",
+        },
     }
     fields.update(overrides)
     return OnboardingActivationFactReceipt.no_workspace_objects.create(**fields)
@@ -82,6 +98,47 @@ def _user(organization, email):
         organization=organization,
         organization_role="owner",
     )
+
+
+def test_receipt_lifecycle_metadata_keeps_receipt_send_disabled():
+    receipt = SimpleNamespace(
+        id=uuid.uuid4(),
+        idempotency_key="receipt-key",
+        export_log_id=uuid.uuid4(),
+        payload_hash="a" * 64,
+        deployment_mode="cloud",
+        deployment_region="us",
+        plan_tier="payg",
+        primary_cohort_key="observe_waiting_first_trace",
+        cohort_keys=["observe_waiting_first_trace"],
+        journey_config_schema_version="onboarding-activation-export-config-2026-05-30.v1",
+        lifecycle_template_key="observe_waiting_for_first_trace_v1",
+        metadata={
+            "lifecycle_send_enabled": True,
+            "lifecycle_dry_run_only": False,
+            "lifecycle_target_route": "/dashboard/observe/project-1/llm-tracing",
+            "lifecycle_target_action_id": "send_first_trace",
+            "lifecycle_target_success_event": "trace_received",
+        },
+    )
+
+    metadata = _receipt_metadata(receipt)
+
+    assert metadata["send_enabled"] is False
+    assert metadata["receipt_lifecycle_send_enabled"] is True
+    assert metadata["receipt_lifecycle_dry_run_only"] is False
+    assert metadata["receipt_lifecycle_target_route"] == (
+        "/dashboard/observe/project-1/llm-tracing"
+    )
+    assert metadata["receipt_lifecycle_target_action_id"] == "send_first_trace"
+
+    receipt.metadata["lifecycle_send_enabled"] = "false"
+    receipt.metadata["lifecycle_dry_run_only"] = "true"
+    string_metadata = _receipt_metadata(receipt)
+
+    assert string_metadata["send_enabled"] is False
+    assert string_metadata["receipt_lifecycle_send_enabled"] is False
+    assert string_metadata["receipt_lifecycle_dry_run_only"] is False
 
 
 @pytest.mark.django_db
@@ -110,6 +167,13 @@ def test_activation_fact_lifecycle_import_writes_eligible_log(
     assert log.eligible_at == receipt.evaluated_at
     assert log.metadata["source"] == "activation_fact_receipt"
     assert log.metadata["send_enabled"] is False
+    assert log.metadata["receipt_lifecycle_send_enabled"] is True
+    assert log.metadata["receipt_lifecycle_dry_run_only"] is False
+    assert log.metadata["receipt_lifecycle_target_route"] == (
+        "/dashboard/observe/project-1/llm-tracing"
+    )
+    assert log.metadata["receipt_lifecycle_target_action_id"] == "send_first_trace"
+    assert log.metadata["receipt_lifecycle_target_success_event"] == "trace_received"
     assert log.metadata["receipt_id"] == str(receipt.id)
     assert log.metadata["cohort_keys"] == ["observe_waiting_first_trace"]
 

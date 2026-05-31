@@ -1,4 +1,5 @@
 import json
+import uuid
 from decimal import Decimal
 
 import pytest
@@ -17,6 +18,7 @@ from accounts.services.onboarding.activation_export_registry import (
 )
 from accounts.services.onboarding.activation_exporter import (
     assert_activation_export_payload_safe,
+    build_activation_export_payload,
     export_activation_fact,
 )
 from accounts.services.onboarding.activation_plane import (
@@ -87,6 +89,11 @@ def _activation_state(now=None):
             "template_version": "v1",
             "status": "eligible",
             "suppression_reason": None,
+            "target_action_id": "send_first_trace",
+            "target_success_event": "trace_received",
+            "target_url": "/dashboard/observe/project-1/llm-tracing",
+            "send_enabled": False,
+            "dry_run_only": True,
         },
         "email_eligibility": {
             "eligible": True,
@@ -113,6 +120,11 @@ class _DeliveryResponse:
 
     def raise_for_status(self):
         return None
+
+
+class _Entity:
+    def __init__(self):
+        self.id = uuid.uuid4()
 
 
 @pytest.fixture
@@ -210,7 +222,144 @@ def test_paid_cloud_export_write_is_idempotent_and_sanitized(
         cohort["cohort_key"] for cohort in payload["journey"]["cohorts"]
     }
     assert "href" not in payload["route_availability"]["path_observe"]
+    assert payload["lifecycle"]["campaign"]["target_action_id"] == "send_first_trace"
+    assert payload["lifecycle"]["campaign"]["target_success_event"] == "trace_received"
+    assert payload["lifecycle"]["delivery"] == {
+        "send_enabled": False,
+        "dry_run_only": True,
+        "target_route": "/dashboard/observe/project-1/llm-tracing",
+    }
     assert "last_meaningful_event" not in payload
+
+
+@pytest.mark.django_db
+def test_paid_cloud_export_strips_external_lifecycle_target_route(
+    monkeypatch,
+    organization,
+    workspace,
+    user,
+    paid_decision,
+):
+    monkeypatch.setattr(
+        "accounts.services.onboarding.activation_exporter.activation_export_decision",
+        lambda organization: paid_decision,
+    )
+    state = {
+        **_activation_state(),
+        "lifecycle": {
+            **_activation_state()["lifecycle"],
+            "target_url": "https://example.test/dashboard",
+            "send_enabled": True,
+            "dry_run_only": False,
+        },
+    }
+
+    result = export_activation_fact(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        activation_state=state,
+        write=False,
+    )
+
+    assert result.fact_payload["lifecycle"]["delivery"] == {
+        "send_enabled": True,
+        "dry_run_only": False,
+        "target_route": None,
+    }
+
+
+def test_activation_export_payload_sanitizes_lifecycle_route_evidence(paid_decision):
+    internal_state = {
+        **_activation_state(),
+        "lifecycle": {
+            **_activation_state()["lifecycle"],
+            "target_url": (
+                "/dashboard/observe/project-1/llm-tracing?"
+                "source=onboarding&onboarding=send-first-trace&"
+                "campaign_key=first_trace_recovery&target_event=trace_received"
+            ),
+        },
+    }
+    unsafe_routes = (
+        "//example.test/dashboard",
+        "https://example.test/dashboard",
+        "/dashboard/observe?token=unsafe",
+        "/dashboard/observe?api_key=unsafe",
+        "/dashboard/observe#access_token=unsafe",
+        "/dashboard/observe\nSet-Cookie: unsafe",
+        123,
+    )
+
+    def _payload_for_target_route(target_route):
+        state = {
+            **_activation_state(),
+            "lifecycle": {
+                **_activation_state()["lifecycle"],
+                "target_url": target_route,
+                "send_enabled": True,
+                "dry_run_only": False,
+            },
+        }
+        return build_activation_export_payload(
+            user=_Entity(),
+            organization=_Entity(),
+            workspace=_Entity(),
+            activation_state=state,
+            decision=paid_decision,
+            evaluated_at=timezone.now(),
+        )
+
+    internal_payload = build_activation_export_payload(
+        user=_Entity(),
+        organization=_Entity(),
+        workspace=_Entity(),
+        activation_state=internal_state,
+        decision=paid_decision,
+        evaluated_at=timezone.now(),
+    )
+
+    assert internal_payload["lifecycle"]["delivery"] == {
+        "send_enabled": False,
+        "dry_run_only": True,
+        "target_route": (
+            "/dashboard/observe/project-1/llm-tracing?"
+            "source=onboarding&onboarding=send-first-trace&"
+            "campaign_key=first_trace_recovery&target_event=trace_received"
+        ),
+    }
+    for unsafe_route in unsafe_routes:
+        payload = _payload_for_target_route(unsafe_route)
+        assert payload["lifecycle"]["delivery"] == {
+            "send_enabled": True,
+            "dry_run_only": False,
+            "target_route": None,
+        }
+
+
+def test_activation_export_payload_respects_explicit_lifecycle_dry_run_false(
+    paid_decision,
+):
+    base_state = _activation_state()
+    state = {
+        **base_state,
+        "lifecycle": {
+            **base_state["lifecycle"],
+            "send_enabled": True,
+            "dry_run_only": False,
+        },
+    }
+
+    payload = build_activation_export_payload(
+        user=_Entity(),
+        organization=_Entity(),
+        workspace=_Entity(),
+        activation_state=state,
+        decision=paid_decision,
+        evaluated_at=timezone.now(),
+    )
+
+    assert payload["lifecycle"]["delivery"]["dry_run_only"] is False
 
 
 @pytest.mark.django_db

@@ -139,10 +139,28 @@ def _receipt_activation_state(receipt, campaign):
     }
 
 
+def _metadata_bool(value):
+    return value if isinstance(value, bool) else False
+
+
 def _receipt_metadata(receipt):
+    source_metadata = receipt.metadata if isinstance(receipt.metadata, dict) else {}
     return {
         "source": RECEIPT_IMPORT_SOURCE,
         "send_enabled": False,
+        "receipt_lifecycle_send_enabled": _metadata_bool(
+            source_metadata.get("lifecycle_send_enabled")
+        ),
+        "receipt_lifecycle_dry_run_only": _metadata_bool(
+            source_metadata.get("lifecycle_dry_run_only")
+        ),
+        "receipt_lifecycle_target_route": source_metadata.get("lifecycle_target_route"),
+        "receipt_lifecycle_target_action_id": source_metadata.get(
+            "lifecycle_target_action_id"
+        ),
+        "receipt_lifecycle_target_success_event": source_metadata.get(
+            "lifecycle_target_success_event"
+        ),
         "receipt_id": str(receipt.id),
         "idempotency_key": receipt.idempotency_key,
         "export_log_id": str(receipt.export_log_id),

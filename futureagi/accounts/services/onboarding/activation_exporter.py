@@ -5,6 +5,7 @@ import json
 import uuid
 from collections import Counter
 from dataclasses import dataclass
+from urllib.parse import parse_qsl, urlsplit
 
 from django.core.exceptions import ValidationError
 from django.core.serializers.json import DjangoJSONEncoder
@@ -32,6 +33,28 @@ from accounts.services.onboarding.signal_resolver import (
 )
 
 ACTIVATION_EXPORT_SCHEMA_VERSION = "onboarding-activation-export-2026-05-30.v1"
+SAFE_TARGET_ROUTE_QUERY_KEYS = frozenset(
+    {
+        "action",
+        "agent_definition_id",
+        "call_id",
+        "campaign_key",
+        "eval_id",
+        "from",
+        "onboarding",
+        "reason",
+        "request_id",
+        "run_id",
+        "sample",
+        "source",
+        "source_id",
+        "source_type",
+        "status",
+        "step",
+        "tab",
+        "target_event",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -132,9 +155,29 @@ def _safe_route_availability(activation_state):
     return _json_safe(safe_routes)
 
 
+def _safe_internal_route(value):
+    if not isinstance(value, str):
+        return None
+    route = value.strip()
+    if not route or not route.startswith("/") or route.startswith("//"):
+        return None
+    if any(ord(character) < 32 for character in route):
+        return None
+    parts = urlsplit(route)
+    if parts.scheme or parts.netloc or parts.fragment:
+        return None
+    for key, _value in parse_qsl(parts.query, keep_blank_values=True):
+        if key.lower() not in SAFE_TARGET_ROUTE_QUERY_KEYS:
+            return None
+    return route
+
+
 def _safe_lifecycle(activation_state):
     lifecycle = activation_state.get("lifecycle") or {}
     email_eligibility = activation_state.get("email_eligibility") or {}
+    dry_run_only = lifecycle.get("dry_run_only")
+    if dry_run_only is None:
+        dry_run_only = email_eligibility.get("dry_run_only")
     return _json_safe(
         {
             "campaign": {
@@ -144,6 +187,8 @@ def _safe_lifecycle(activation_state):
                 "template_version": lifecycle.get("template_version"),
                 "status": lifecycle.get("status"),
                 "suppression_reason": lifecycle.get("suppression_reason"),
+                "target_action_id": lifecycle.get("target_action_id"),
+                "target_success_event": lifecycle.get("target_success_event"),
             },
             "email_eligibility": {
                 "eligible": email_eligibility.get("eligible"),
@@ -155,6 +200,11 @@ def _safe_lifecycle(activation_state):
                     "frequency_cap_remaining"
                 ),
                 "dry_run_only": email_eligibility.get("dry_run_only"),
+            },
+            "delivery": {
+                "send_enabled": bool(lifecycle.get("send_enabled")),
+                "dry_run_only": bool(dry_run_only),
+                "target_route": _safe_internal_route(lifecycle.get("target_url")),
             },
         }
     )

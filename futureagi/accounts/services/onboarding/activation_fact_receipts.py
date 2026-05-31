@@ -5,6 +5,7 @@ import hmac
 import json
 import uuid
 from dataclasses import dataclass
+from urllib.parse import parse_qsl, urlsplit
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured, ValidationError
@@ -18,6 +19,7 @@ from accounts.models import (
 )
 from accounts.services.onboarding.activation_exporter import (
     ACTIVATION_EXPORT_SCHEMA_VERSION,
+    SAFE_TARGET_ROUTE_QUERY_KEYS,
     assert_activation_export_payload_safe,
 )
 
@@ -207,7 +209,24 @@ def _string(value, default=""):
 
 
 def _bool(value):
-    return bool(value) if value is not None else False
+    return value if isinstance(value, bool) else False
+
+
+def _safe_internal_route(value):
+    if not isinstance(value, str):
+        return None
+    route = value.strip()
+    if not route or not route.startswith("/") or route.startswith("//"):
+        return None
+    if any(ord(character) < 32 for character in route):
+        return None
+    parts = urlsplit(route)
+    if parts.scheme or parts.netloc or parts.fragment:
+        return None
+    for key, _value in parse_qsl(parts.query, keep_blank_values=True):
+        if key.lower() not in SAFE_TARGET_ROUTE_QUERY_KEYS:
+            return None
+    return route
 
 
 def _cohort_keys(cohorts):
@@ -219,6 +238,25 @@ def _cohort_keys(cohorts):
         if cohort_key:
             keys.append(str(cohort_key))
     return keys
+
+
+def _lifecycle_receipt_metadata(lifecycle):
+    campaign = (
+        lifecycle.get("campaign") if isinstance(lifecycle.get("campaign"), dict) else {}
+    )
+    delivery = (
+        lifecycle.get("delivery") if isinstance(lifecycle.get("delivery"), dict) else {}
+    )
+    return {
+        "source": "activation_fact_receiver",
+        "lifecycle_send_enabled": _bool(delivery.get("send_enabled")),
+        "lifecycle_dry_run_only": _bool(delivery.get("dry_run_only")),
+        "lifecycle_target_route": _safe_internal_route(delivery.get("target_route")),
+        "lifecycle_target_action_id": _string(campaign.get("target_action_id"))[:96],
+        "lifecycle_target_success_event": _string(campaign.get("target_success_event"))[
+            :96
+        ],
+    }
 
 
 def _validate_headers(payload, headers, body, now):
@@ -398,7 +436,7 @@ def _receipt_fields(payload, fact, payload_hash_value, now):
         "payload": _json_safe(payload),
         "evaluated_at": payload.get("evaluated_at"),
         "received_at": now,
-        "metadata": {"source": "activation_fact_receiver"},
+        "metadata": _lifecycle_receipt_metadata(lifecycle),
     }
 
 

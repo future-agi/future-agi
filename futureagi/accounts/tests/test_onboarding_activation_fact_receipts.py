@@ -17,6 +17,7 @@ from accounts.services.onboarding.activation_exporter import (
 )
 from accounts.services.onboarding.activation_fact_receipts import (
     RECEIPT_TYPE,
+    _lifecycle_receipt_metadata,
     activation_fact_signature,
 )
 
@@ -75,11 +76,18 @@ def _payload(organization, workspace, user):
                 "next_campaign_key": "first_trace_recovery",
                 "template_key": "observe_first_trace",
                 "status": "eligible",
+                "target_action_id": "send_first_trace",
+                "target_success_event": "trace_received",
             },
             "email_eligibility": {
                 "eligible": True,
                 "suppressed": False,
                 "next_email_key": "observe_first_trace",
+            },
+            "delivery": {
+                "send_enabled": True,
+                "dry_run_only": False,
+                "target_route": "/dashboard/observe/project-1/llm-tracing",
             },
         },
         "journey": {
@@ -136,7 +144,97 @@ def test_activation_fact_receiver_accepts_signed_payload_once(
     assert receipt.payload["fact"]["journey"]["cohorts"][0]["cohort_key"] == (
         "observe_waiting_first_trace"
     )
+    assert receipt.metadata == {
+        "source": "activation_fact_receiver",
+        "lifecycle_send_enabled": True,
+        "lifecycle_dry_run_only": False,
+        "lifecycle_target_route": "/dashboard/observe/project-1/llm-tracing",
+        "lifecycle_target_action_id": "send_first_trace",
+        "lifecycle_target_success_event": "trace_received",
+    }
     assert OnboardingActivationFactReceiptRejection.no_workspace_objects.count() == 0
+
+
+def test_activation_fact_receipt_metadata_sanitizes_lifecycle_route():
+    internal = _lifecycle_receipt_metadata(
+        {
+            "campaign": {
+                "target_action_id": "send_first_trace",
+                "target_success_event": "trace_received",
+            },
+            "delivery": {
+                "send_enabled": True,
+                "dry_run_only": False,
+                "target_route": (
+                    "/dashboard/observe/project-1/llm-tracing?"
+                    "source=onboarding&onboarding=send-first-trace&"
+                    "campaign_key=first_trace_recovery&target_event=trace_received"
+                ),
+            },
+        }
+    )
+    unsafe_routes = (
+        "//example.test/dashboard",
+        "https://example.test/dashboard",
+        "/dashboard/observe?token=unsafe",
+        "/dashboard/observe?api_key=unsafe",
+        "/dashboard/observe#access_token=unsafe",
+        "/dashboard/observe\nSet-Cookie: unsafe",
+        123,
+    )
+    string_booleans = _lifecycle_receipt_metadata(
+        {
+            "delivery": {
+                "send_enabled": "false",
+                "dry_run_only": "true",
+                "target_route": "/dashboard/observe/project-1/llm-tracing",
+            },
+        }
+    )
+
+    assert internal["lifecycle_target_route"] == (
+        "/dashboard/observe/project-1/llm-tracing?"
+        "source=onboarding&onboarding=send-first-trace&"
+        "campaign_key=first_trace_recovery&target_event=trace_received"
+    )
+    assert internal["lifecycle_send_enabled"] is True
+    assert internal["lifecycle_dry_run_only"] is False
+    assert string_booleans["lifecycle_send_enabled"] is False
+    assert string_booleans["lifecycle_dry_run_only"] is False
+    for unsafe_route in unsafe_routes:
+        external = _lifecycle_receipt_metadata(
+            {
+                "delivery": {
+                    "send_enabled": True,
+                    "dry_run_only": False,
+                    "target_route": unsafe_route,
+                },
+            }
+        )
+        assert external["lifecycle_target_route"] is None
+
+
+@pytest.mark.django_db
+@override_settings(ONBOARDING_ACTIVATION_FACT_RECEIVER_SHARED_SECRET=SECRET)
+def test_activation_fact_receiver_strips_external_lifecycle_target_route(
+    api_client,
+    organization,
+    workspace,
+    user,
+):
+    payload = _payload(organization, workspace, user)
+    payload["fact"]["lifecycle"]["delivery"]["target_route"] = (
+        "https://example.test/dashboard"
+    )
+
+    response = _post(api_client, payload)
+
+    assert response.status_code == status.HTTP_200_OK
+    receipt = OnboardingActivationFactReceipt.no_workspace_objects.get()
+    assert receipt.metadata["lifecycle_target_route"] is None
+    assert receipt.payload["fact"]["lifecycle"]["delivery"]["target_route"] == (
+        "https://example.test/dashboard"
+    )
 
 
 @pytest.mark.django_db
