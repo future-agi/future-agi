@@ -17,16 +17,19 @@ import {
 import PropTypes from "prop-types";
 import { SelectedPromptTemplateDrawer } from "../../workbench/SelectedPromptTemplateDrawer";
 import { useParams } from "react-router";
+import { useSearchParams } from "react-router-dom";
 import { useDebounce } from "../../../hooks/use-debounce";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "../../../utils/axios";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
-import { EMPTY_MESSAGE } from "../common";
+import { EMPTY_MESSAGE, ONBOARDING_EMPTY_MESSAGE } from "../common";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { getPromptOnboardingRouteParams } from "src/sections/workbench/createPrompt/promptActions/promptOnboardingRoute";
 
 export default function FolderListView({ sortConfig }) {
   const { folder } = useParams();
+  const [searchParams] = useSearchParams();
   const [page, setPage] = useState(1);
   const [pageLimit, setPageLimit] = useState(10);
   const { role } = useAuthContext();
@@ -136,6 +139,13 @@ export default function FolderListView({ sortConfig }) {
     !debouncedSearchQuery &&
     page === 1 &&
     (!combinedData?.data || combinedData?.data?.length === 0);
+  const promptOnboardingParams = getPromptOnboardingRouteParams(searchParams);
+  const emptyMessage =
+    folder === "my-templates"
+      ? EMPTY_MESSAGE.template
+      : promptOnboardingParams.isOnboarding
+        ? ONBOARDING_EMPTY_MESSAGE.prompt
+        : EMPTY_MESSAGE.prompt;
 
   useEffect(() => {
     return () => {
@@ -146,9 +156,7 @@ export default function FolderListView({ sortConfig }) {
   if (isEmpty) {
     return (
       <EmptyLayout
-        {...(folder === "my-templates"
-          ? EMPTY_MESSAGE.template
-          : EMPTY_MESSAGE.prompt)}
+        {...emptyMessage}
         linkText={"Check docs"}
         link="https://docs.futureagi.com/docs/prompt"
         sx={{
