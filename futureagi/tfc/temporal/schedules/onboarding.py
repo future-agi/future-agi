@@ -7,7 +7,7 @@ from tfc.temporal.schedules.config import ScheduleConfig
 
 
 def _cloud_jobs_enabled() -> bool:
-    if not getattr(settings, "ONBOARDING_CLOUD_ACTIVATION_JOBS_ENABLED", True):
+    if not getattr(settings, "ONBOARDING_CLOUD_ACTIVATION_JOBS_ENABLED", False):
         return False
     try:
         from ee.usage.deployment import DeploymentMode
@@ -23,6 +23,22 @@ def _setting_int(name: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(1, value)
+
+
+def _activation_export_delivery_skip_reason() -> str | None:
+    endpoint_url = str(
+        getattr(settings, "ONBOARDING_ACTIVATION_EXPORT_DELIVERY_URL", "") or ""
+    )
+    shared_secret = str(
+        getattr(settings, "ONBOARDING_ACTIVATION_EXPORT_SHARED_SECRET", "") or ""
+    )
+    if not endpoint_url:
+        return "activation_export_delivery_url_missing"
+    if not endpoint_url.startswith("https://"):
+        return "activation_export_delivery_url_invalid"
+    if not shared_secret:
+        return "activation_export_shared_secret_missing"
+    return None
 
 
 def _skipped(job: str, reason: str = "cloud_jobs_disabled") -> dict[str, Any]:
@@ -69,6 +85,8 @@ def run_onboarding_activation_export_scheduled_activity():
 def deliver_onboarding_activation_exports_scheduled_activity():
     if not _cloud_jobs_enabled():
         return _skipped("activation_export_delivery")
+    if reason := _activation_export_delivery_skip_reason():
+        return _skipped("activation_export_delivery", reason=reason)
     from accounts.services.onboarding.activation_export_delivery import (
         run_onboarding_activation_export_delivery,
     )

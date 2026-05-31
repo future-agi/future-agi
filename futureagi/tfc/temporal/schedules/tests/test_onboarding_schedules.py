@@ -46,6 +46,13 @@ def test_onboarding_schedule_activities_are_imported_for_workers():
     assert "tfc.temporal.schedules.onboarding" in TEMPORAL_ACTIVITY_MODULES
 
 
+def test_onboarding_scheduled_activities_skip_by_default():
+    results = _run_all_scheduled_activities()
+
+    assert {result["status"] for result in results} == {"skipped"}
+    assert {result["reason"] for result in results} == {"cloud_jobs_disabled"}
+
+
 def test_onboarding_scheduled_activities_skip_when_cloud_jobs_disabled(settings):
     settings.ONBOARDING_CLOUD_ACTIVATION_JOBS_ENABLED = False
 
@@ -154,6 +161,10 @@ def test_onboarding_activation_export_delivery_schedule_calls_service(
     settings,
 ):
     calls = []
+    settings.ONBOARDING_ACTIVATION_EXPORT_DELIVERY_URL = (
+        "https://activation.example/receive"
+    )
+    settings.ONBOARDING_ACTIVATION_EXPORT_SHARED_SECRET = "test-secret"
     settings.ONBOARDING_ACTIVATION_EXPORT_DELIVERY_SCHEDULE_LIMIT = 29
     monkeypatch.setattr(
         "tfc.temporal.schedules.onboarding._cloud_jobs_enabled",
@@ -183,6 +194,76 @@ def test_onboarding_activation_export_delivery_schedule_calls_service(
             "retry_failed": False,
         }
     ]
+
+
+def test_onboarding_activation_export_delivery_schedule_skips_missing_config(
+    monkeypatch,
+    settings,
+):
+    settings.ONBOARDING_ACTIVATION_EXPORT_DELIVERY_URL = ""
+    settings.ONBOARDING_ACTIVATION_EXPORT_SHARED_SECRET = "test-secret"
+    monkeypatch.setattr(
+        "tfc.temporal.schedules.onboarding._cloud_jobs_enabled",
+        lambda: True,
+    )
+
+    def _run(**kwargs):
+        raise AssertionError("delivery service should not run without config")
+
+    monkeypatch.setattr(
+        "accounts.services.onboarding.activation_export_delivery.run_onboarding_activation_export_delivery",
+        _run,
+    )
+
+    result = deliver_onboarding_activation_exports_scheduled_activity()
+
+    assert result == {
+        "job": "activation_export_delivery",
+        "status": "skipped",
+        "reason": "activation_export_delivery_url_missing",
+    }
+
+
+def test_onboarding_activation_export_delivery_schedule_skips_invalid_url(
+    monkeypatch,
+    settings,
+):
+    settings.ONBOARDING_ACTIVATION_EXPORT_DELIVERY_URL = "http://activation.example"
+    settings.ONBOARDING_ACTIVATION_EXPORT_SHARED_SECRET = "test-secret"
+    monkeypatch.setattr(
+        "tfc.temporal.schedules.onboarding._cloud_jobs_enabled",
+        lambda: True,
+    )
+
+    result = deliver_onboarding_activation_exports_scheduled_activity()
+
+    assert result == {
+        "job": "activation_export_delivery",
+        "status": "skipped",
+        "reason": "activation_export_delivery_url_invalid",
+    }
+
+
+def test_onboarding_activation_export_delivery_schedule_skips_missing_secret(
+    monkeypatch,
+    settings,
+):
+    settings.ONBOARDING_ACTIVATION_EXPORT_DELIVERY_URL = (
+        "https://activation.example/receive"
+    )
+    settings.ONBOARDING_ACTIVATION_EXPORT_SHARED_SECRET = ""
+    monkeypatch.setattr(
+        "tfc.temporal.schedules.onboarding._cloud_jobs_enabled",
+        lambda: True,
+    )
+
+    result = deliver_onboarding_activation_exports_scheduled_activity()
+
+    assert result == {
+        "job": "activation_export_delivery",
+        "status": "skipped",
+        "reason": "activation_export_shared_secret_missing",
+    }
 
 
 def test_onboarding_activation_fact_import_schedule_calls_service(
