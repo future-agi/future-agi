@@ -11,6 +11,7 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import { RouterLink } from "src/routes/components";
 import {
   destinationTourStorageIdentity,
   dismissDestinationTourAnchor,
@@ -42,6 +43,8 @@ export default function DestinationTourAnchor({ maxAttempts = 12 }) {
   const isReplay = isDestinationTourReplay(searchParams);
   const storageIdentity = destinationTourStorageIdentity();
   const [targetEl, setTargetEl] = useState(null);
+  const [targetMissing, setTargetMissing] = useState(false);
+  const [retryAttempt, setRetryAttempt] = useState(0);
   const [dismissedAnchors, setDismissedAnchors] = useState(() =>
     readDestinationTourDismissals({ identity: storageIdentity }),
   );
@@ -65,6 +68,7 @@ export default function DestinationTourAnchor({ maxAttempts = 12 }) {
 
   useEffect(() => {
     setTargetEl(null);
+    setTargetMissing(false);
     if (hidden) return undefined;
 
     let cancelled = false;
@@ -82,7 +86,9 @@ export default function DestinationTourAnchor({ maxAttempts = 12 }) {
       attempt += 1;
       if (attempt < maxAttempts) {
         timeoutId = window.setTimeout(resolveTarget, 150);
+        return;
       }
+      setTargetMissing(true);
     };
 
     resolveTarget();
@@ -91,7 +97,7 @@ export default function DestinationTourAnchor({ maxAttempts = 12 }) {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [hidden, maxAttempts, tourAnchor]);
+  }, [hidden, maxAttempts, retryAttempt, tourAnchor]);
 
   useEffect(() => {
     if (!targetEl || hidden) return undefined;
@@ -101,7 +107,83 @@ export default function DestinationTourAnchor({ maxAttempts = 12 }) {
     };
   }, [hidden, targetEl]);
 
-  if (hidden || !targetEl) {
+  if (hidden) {
+    return null;
+  }
+
+  if (!targetEl && targetMissing) {
+    const homeParams = new URLSearchParams();
+    homeParams.set("source", "destination_tour_fallback");
+    if (journeyStep) homeParams.set("journey_step", journeyStep);
+    if (tourAnchor) homeParams.set("tour_anchor", tourAnchor);
+
+    return (
+      <Paper
+        data-testid="destination-tour-missing-anchor"
+        elevation={6}
+        sx={{
+          position: "fixed",
+          right: { xs: 12, sm: 20 },
+          bottom: { xs: 12, sm: 20 },
+          zIndex: (theme) => theme.zIndex.modal + 1,
+          border: "1px solid",
+          borderColor: "primary.main",
+          borderRadius: 1,
+          maxWidth: { xs: "calc(100vw - 24px)", sm: 360 },
+          p: 1.5,
+        }}
+      >
+        <Stack spacing={1}>
+          <Stack direction="row" spacing={0.75} alignItems="center">
+            <Chip size="small" color="primary" label="Current step" />
+            <Typography variant="subtitle2">{copy.label}</Typography>
+          </Stack>
+          <Typography variant="body2" color="text.secondary">
+            {copy.description}
+          </Typography>
+          <Typography variant="caption" color="text.secondary">
+            This page changed or is still loading. Return to Home for the latest
+            step, or try finding the action again.
+          </Typography>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <Button
+              size="small"
+              variant="contained"
+              component={RouterLink}
+              href={`/dashboard/home?${homeParams.toString()}`}
+              startIcon={<Iconify icon="mdi:home-outline" width={16} />}
+            >
+              Back to Home
+            </Button>
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => setRetryAttempt((current) => current + 1)}
+              startIcon={<Iconify icon="mdi:refresh" width={16} />}
+            >
+              Try again
+            </Button>
+            <Button
+              size="small"
+              variant="text"
+              onClick={() =>
+                setDismissedAnchors(
+                  dismissDestinationTourAnchor({
+                    anchor: tourAnchor,
+                    identity: storageIdentity,
+                  }),
+                )
+              }
+            >
+              Dismiss
+            </Button>
+          </Stack>
+        </Stack>
+      </Paper>
+    );
+  }
+
+  if (!targetEl) {
     return null;
   }
 

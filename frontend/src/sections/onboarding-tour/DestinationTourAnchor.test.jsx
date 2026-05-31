@@ -114,4 +114,34 @@ describe("DestinationTourAnchor", () => {
       ).toEqual([]),
     );
   });
+
+  it("shows recovery guidance when the destination action is missing", async () => {
+    renderWithRouter(<DestinationTourAnchor maxAttempts={1} />, {
+      route:
+        "/dashboard/gateway?tour_anchor=gateway_request_button&journey_step=run_gateway_request",
+    });
+
+    const recovery = await screen.findByTestId(
+      "destination-tour-missing-anchor",
+    );
+    expect(recovery).toBeVisible();
+    expect(screen.getByText("Send request")).toBeVisible();
+    expect(screen.getByRole("link", { name: /back to home/i })).toHaveAttribute(
+      "href",
+      "/dashboard/home?source=destination_tour_fallback&journey_step=run_gateway_request&tour_anchor=gateway_request_button",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+
+    await waitFor(() =>
+      expect(
+        screen.queryByTestId("destination-tour-missing-anchor"),
+      ).toBeNull(),
+    );
+    expect(
+      JSON.parse(
+        window.localStorage.getItem(destinationTourDismissalKey("usr-tour")),
+      ),
+    ).toEqual(["gateway_request_button"]);
+  });
 });
