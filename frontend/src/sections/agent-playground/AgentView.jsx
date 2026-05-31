@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import React, { useEffect } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { LoadingButton } from "@mui/lab";
 import Box from "@mui/material/Box";
@@ -12,6 +12,8 @@ import {
 } from "./store";
 import { useCreateGraph } from "../../api/agent-playground/agent-playground";
 import AgentOnboardingFocusPanel from "./components/AgentOnboardingFocusPanel";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import { agentSetupQuickStartAttributionFromSearch } from "./agentOnboardingEvents";
 
 export default function AgentView() {
   const { data, isLoading } = useQuery({
@@ -37,17 +39,24 @@ export default function AgentView() {
 
 function AgentEmptyState() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const { setCurrentAgent } = useAgentPlaygroundStoreShallow((s) => ({
     setCurrentAgent: s.setCurrentAgent,
   }));
   const showCreateFocus = searchParams.get("onboarding") === "create";
   const tourAnchor = searchParams.get("tour_anchor");
+  const quickStartAttribution = agentSetupQuickStartAttributionFromSearch(
+    location.search,
+  );
 
   const { mutate: createGraph, isPending } = useCreateGraph({
     navigate,
     onboardingMode: showCreateFocus ? "run-scenario" : null,
+    quickStartAttribution,
+    recordActivationEvent,
     setCurrentAgent,
     onSuccess: () => {
       queryClient.invalidateQueries({

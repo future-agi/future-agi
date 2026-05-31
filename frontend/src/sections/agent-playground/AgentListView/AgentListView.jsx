@@ -9,7 +9,7 @@ import {
 import { LoadingButton } from "@mui/lab";
 import React, { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { format } from "date-fns";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import SvgColor from "src/components/svg-color";
@@ -25,6 +25,11 @@ import {
   useDeleteGraphs,
 } from "../../../api/agent-playground/agent-playground";
 import { useSearchParams } from "react-router-dom";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  agentSetupQuickStartAttributionFromSearch,
+  buildAgentBuilderHref,
+} from "../agentOnboardingEvents";
 
 const PAGE_SIZE_DEFAULT = 25;
 
@@ -47,8 +52,10 @@ const mapGraph = (graph) => {
 
 export default function AgentListView() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const { setCurrentAgent } = useAgentPlaygroundStoreShallow((s) => ({
     setCurrentAgent: s.setCurrentAgent,
   }));
@@ -108,17 +115,40 @@ export default function AgentListView() {
     deleteMutation.mutate({ ids });
   };
 
-  const { mutate: createAgent, isPending: isCreatingAgent } = useCreateGraph({
-    navigate,
-    onboardingMode:
-      searchParams.get("onboarding") === "create" ? "run-scenario" : null,
-    setCurrentAgent,
-  });
   const showCreateFocus = searchParams.get("onboarding") === "create";
   const tourAnchor = searchParams.get("tour_anchor");
+  const quickStartAttribution = useMemo(
+    () => agentSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const { mutate: createAgent, isPending: isCreatingAgent } = useCreateGraph({
+    navigate,
+    onboardingMode: showCreateFocus ? "run-scenario" : null,
+    quickStartAttribution,
+    recordActivationEvent,
+    setCurrentAgent,
+  });
+
+  const handleOpenAgentForOnboarding = useCallback(
+    (row) => {
+      if (!row?.id) return;
+      navigate(
+        buildAgentBuilderHref({
+          agentId: row.id,
+          quickStartAttribution,
+          versionId: row.activeVersionId,
+        }),
+      );
+    },
+    [navigate, quickStartAttribution],
+  );
 
   const handleRowClick = useCallback(
     (row) => {
+      if (showCreateFocus) {
+        handleOpenAgentForOnboarding(row);
+        return;
+      }
       if (!row?.activeVersionId) {
         navigate(`/dashboard/agents/playground/${row.id}/build`);
       } else {
@@ -127,22 +157,7 @@ export default function AgentListView() {
         );
       }
     },
-    [navigate],
-  );
-
-  const handleOpenAgentForOnboarding = useCallback(
-    (row) => {
-      if (!row?.id) return;
-      const params = new URLSearchParams();
-      if (row.activeVersionId) {
-        params.set("version", row.activeVersionId);
-      }
-      params.set("onboarding", "run-scenario");
-      navigate(
-        `/dashboard/agents/playground/${row.id}/build?${params.toString()}`,
-      );
-    },
-    [navigate],
+    [handleOpenAgentForOnboarding, navigate, showCreateFocus],
   );
 
   const columns = useMemo(

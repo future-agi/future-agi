@@ -16,6 +16,10 @@ import { useGetExecutions } from "src/api/agent-playground/agent-playground";
 import ExecutionsList from "./ExecutionsList";
 import ExecutionDetailView from "./ExecutionDetailView";
 import AgentOnboardingFocusPanel from "../components/AgentOnboardingFocusPanel";
+import {
+  agentSetupQuickStartAttributionFromSearch,
+  buildAgentBuilderHref,
+} from "../agentOnboardingEvents";
 
 export default function Executions() {
   const { agentId } = useParams();
@@ -50,21 +54,21 @@ export default function Executions() {
     ) || executions[0];
   const showReviewFocus = searchParams.get("onboarding") === "review-run";
   const tourAnchor = searchParams.get("tour_anchor");
+  const quickStartAttribution = useMemo(
+    () => agentSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
 
   const buildRoute = useCallback(
     (onboardingMode) => {
-      const params = new URLSearchParams();
-      const version = searchParams.get("version");
-      if (version) {
-        params.set("version", version);
-      }
-      if (onboardingMode) {
-        params.set("onboarding", onboardingMode);
-      }
-      const search = params.toString();
-      return `/dashboard/agents/playground/${agentId}/build${search ? `?${search}` : ""}`;
+      return buildAgentBuilderHref({
+        agentId,
+        onboarding: onboardingMode,
+        quickStartAttribution,
+        versionId: searchParams.get("version"),
+      });
     },
-    [agentId, searchParams],
+    [agentId, quickStartAttribution, searchParams],
   );
 
   useEffect(() => {

@@ -9,6 +9,8 @@ import {
   voiceSetupQuickStartAttributionFromSearch,
   VOICE_ONBOARDING_MODES,
 } from "src/sections/test/onboardingVoiceRouteEvents";
+import { agentSetupQuickStartAttributionFromSearch } from "src/sections/agent-playground/agentOnboardingEvents";
+import { setupQuickStartAttributionParams } from "src/sections/auth/jwt/setup-org-quick-starts";
 
 const TestExecutionCallDetail = () => {
   const { testId, executionId } = useParams();
@@ -20,6 +22,10 @@ const TestExecutionCallDetail = () => {
   );
   const voiceQuickStartAttribution = useMemo(
     () => voiceSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const agentQuickStartAttribution = useMemo(
+    () => agentSetupQuickStartAttributionFromSearch(location.search),
     [location.search],
   );
   const isVoiceReview = voiceParams.mode === VOICE_ONBOARDING_MODES.REVIEW_CALL;
@@ -55,8 +61,10 @@ const TestExecutionCallDetail = () => {
       },
       idempotencyKey: `agent_trace_reviewed:${testId}:${executionId}:call-details`,
       isSample: false,
+      ...setupQuickStartAttributionParams(agentQuickStartAttribution),
     });
   }, [
+    agentQuickStartAttribution,
     executionId,
     isAgentOnboardingReview,
     isVoiceReview,

@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  buildAgentBuilderHref,
+  buildAgentCreatedPayload,
+} from "src/sections/agent-playground/agentOnboardingEvents";
 
 // Shared mapping from API response → currentAgent store shape.
 // Uses snake_case to match the store fields written by updateVersion(),
@@ -33,6 +37,8 @@ export const mapGraphToAgent = (result) => ({
 export const useCreateGraph = ({
   navigate,
   onboardingMode,
+  quickStartAttribution,
+  recordActivationEvent,
   setCurrentAgent,
   onSuccess,
 } = {}) =>
@@ -57,8 +63,23 @@ export const useCreateGraph = ({
       }
       const search = searchParams.toString();
       setCurrentAgent?.(agent);
+      if (onboardingMode) {
+        recordActivationEvent?.(
+          buildAgentCreatedPayload({
+            agentId: result.id,
+            quickStartAttribution,
+          }),
+        );
+      }
       navigate?.(
-        `/dashboard/agents/playground/${result.id}/build${search ? `?${search}` : ""}`,
+        onboardingMode
+          ? buildAgentBuilderHref({
+              agentId: result.id,
+              onboarding: onboardingMode,
+              quickStartAttribution,
+              versionId: result.active_version?.id,
+            })
+          : `/dashboard/agents/playground/${result.id}/build${search ? `?${search}` : ""}`,
       );
       onSuccess?.(agent);
     },

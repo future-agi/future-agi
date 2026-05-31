@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { useQueryClient } from "@tanstack/react-query";
@@ -11,6 +17,10 @@ import { useGetExecutionDetail } from "src/api/agent-playground/agent-playground
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import useResolvedExecution from "../hooks/useResolvedExecution";
 import { EXECUTION_STATUS } from "../utils/workflowExecution";
+import {
+  agentSetupQuickStartAttributionFromSearch,
+  buildAgentTraceReviewedPayload,
+} from "../agentOnboardingEvents";
 
 export default function ExecutionDetailView({ graphId, executionId }) {
   const queryClient = useQueryClient();
@@ -110,6 +120,10 @@ export default function ExecutionDetailView({ graphId, executionId }) {
   const { nodeExecutionId: selectedNodeExecutionId, resolvedExecutionId } =
     useResolvedExecution({ selectedNodeId, executionData, executionId });
   const onboardingMode = new URLSearchParams(location.search).get("onboarding");
+  const quickStartAttribution = useMemo(
+    () => agentSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
 
   useEffect(() => {
     if (
@@ -120,24 +134,18 @@ export default function ExecutionDetailView({ graphId, executionId }) {
       return;
     }
     recordActivationEvent?.({
-      eventName: "agent_trace_reviewed",
-      primaryPath: "agent",
-      stage: "review_agent_trace",
-      source: "agent_playground",
-      artifactType: "graph_execution",
-      artifactId: executionId,
-      metadata: {
-        agent_id: graphId,
-        graph_execution_id: executionId,
-        node_execution_id: selectedNodeExecutionId,
-      },
-      idempotencyKey: `agent_trace_reviewed:${executionId}:${selectedNodeExecutionId}`,
-      isSample: false,
+      ...buildAgentTraceReviewedPayload({
+        agentId: graphId,
+        executionId,
+        nodeExecutionId: selectedNodeExecutionId,
+        quickStartAttribution,
+      }),
     });
   }, [
     executionId,
     graphId,
     onboardingMode,
+    quickStartAttribution,
     recordActivationEvent,
     selectedNodeExecutionId,
   ]);

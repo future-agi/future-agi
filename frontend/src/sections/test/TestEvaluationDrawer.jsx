@@ -6,7 +6,6 @@ import { useLocation, useNavigate, useParams } from "react-router";
 
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
-import { paths } from "src/routes/paths";
 import {
   EvalPickerDrawer,
   serializeEvalConfig,
@@ -32,6 +31,10 @@ import {
   buildAgentEvalCoveragePayload,
   isEvalOnboardingMode,
 } from "./testOnboardingModes";
+import {
+  agentSetupQuickStartAttributionFromSearch,
+  buildAgentOnboardingReturnHref,
+} from "src/sections/agent-playground/agentOnboardingEvents";
 
 const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
   const { openTestEvaluation, setOpenTestEvaluation } =
@@ -50,6 +53,10 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
   );
   const voiceQuickStartAttribution = useMemo(
     () => voiceSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const agentQuickStartAttribution = useMemo(
+    () => agentSetupQuickStartAttributionFromSearch(location.search),
     [location.search],
   );
   const routeMode = new URLSearchParams(location.search).get("onboarding");
@@ -171,6 +178,7 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
             mode: evalOnboardingMode,
             testId,
             executionIds,
+            quickStartAttribution: agentQuickStartAttribution,
             evalConfig: {
               ...payload,
               id: editing?.id,
@@ -182,10 +190,9 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
             } else {
               recordActivationEvent?.(eventPayload);
             }
-            navigate(
-              `${paths.dashboard.home}?mode=daily-quality&source=onboarding&target_event=${eventPayload.eventName}`,
-              { replace: true },
-            );
+            navigate(buildAgentOnboardingReturnHref(eventPayload), {
+              replace: true,
+            });
           } catch {
             enqueueSnackbar(
               "Eval saved, but onboarding could not be completed. Please try again.",
@@ -210,6 +217,7 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
       editingEvalItem,
       evalOnboardingMode,
       executionIds,
+      agentQuickStartAttribution,
       isSuccessCriteriaMode,
       navigate,
       recordActivationEvent,

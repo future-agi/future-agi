@@ -18,6 +18,11 @@ describe("testOnboardingModes", () => {
         mode: TEST_ONBOARDING_MODES.SAVE_EVAL,
         testId: "test-1",
         executionIds: ["exec-1", "exec-2"],
+        quickStartAttribution: {
+          quick_start_goal: "build_ai_agent",
+          quick_start_id: "agent",
+          quick_start_primary_path: "agent",
+        },
         evalConfig: {
           id: "eval-1",
           template_id: "template-1",
@@ -40,6 +45,9 @@ describe("testOnboardingModes", () => {
       idempotencyKey:
         "agent_onboarding:agent_scenario_saved_as_eval:test-1:eval-1",
       isSample: false,
+      quick_start_goal: "build_ai_agent",
+      quick_start_id: "agent",
+      quick_start_primary_path: "agent",
     });
   });
 

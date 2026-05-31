@@ -1466,6 +1466,29 @@ describe("OnboardingHomeView", () => {
     expect(screen.getAllByText("agent").length).toBeGreaterThan(0);
   });
 
+  it("keeps setup quick-start attribution on the agent primary action", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("agentNoAgent"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=agent&quick_start_goal=build_ai_agent&quick_start_primary_path=agent",
+    );
+
+    const panel = screen.getByTestId("path-focus-panel-agent");
+    expect(
+      within(panel).getByRole("link", { name: /create agent/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/agents?onboarding=create&quick_start_goal=build_ai_agent&quick_start_id=agent&quick_start_primary_path=agent&tour_anchor=agent_create_button&journey_step=create_agent",
+    );
+  });
+
   it("renders gateway onboarding as a focused gateway path panel", () => {
     mocks.useActivationState.mockReturnValue({
       state: normalizedFixture("gatewayKeyNoRequest"),

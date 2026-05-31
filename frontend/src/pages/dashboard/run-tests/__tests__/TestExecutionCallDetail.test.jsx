@@ -58,7 +58,8 @@ describe("TestExecutionCallDetail", () => {
   });
 
   it("preserves agent review behavior for legacy onboarding links", async () => {
-    mocks.search = "?from=onboarding";
+    mocks.search =
+      "?from=onboarding&quick_start_goal=build_ai_agent&quick_start_id=agent&quick_start_primary_path=agent";
 
     render(<TestExecutionCallDetail />);
 
@@ -70,6 +71,9 @@ describe("TestExecutionCallDetail", () => {
           stage: "review_agent_trace",
           artifactType: "test_execution",
           artifactId: "execution-1",
+          quick_start_goal: "build_ai_agent",
+          quick_start_id: "agent",
+          quick_start_primary_path: "agent",
         }),
       ),
     );

@@ -1,3 +1,5 @@
+import { setupQuickStartAttributionParams } from "src/sections/auth/jwt/setup-org-quick-starts";
+
 export const TEST_ONBOARDING_MODES = {
   CREATE_EVAL: "create-eval",
   SAVE_EVAL: "save-eval",
@@ -23,6 +25,7 @@ export const buildAgentEvalCoveragePayload = ({
   evalConfig,
   executionIds = [],
   mode,
+  quickStartAttribution,
   testId,
 } = {}) => {
   if (!testId || !isEvalOnboardingMode(mode)) {
@@ -68,5 +71,6 @@ export const buildAgentEvalCoveragePayload = ({
       safeEvalPart,
     ].join(":"),
     isSample: false,
+    ...setupQuickStartAttributionParams(quickStartAttribution),
   });
 };
