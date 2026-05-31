@@ -243,11 +243,15 @@ export default function SharedView() {
             <CircularProgress size={32} />
           </Box>
         ) : isVoice ? (
-          {/* Voice call view — transcript + audio player, read-only */}
-          <SharedVoiceView resourceData={resourceData} />
+          <>
+            {/* Voice call view — transcript + audio player, read-only */}
+            <SharedVoiceView resourceData={resourceData} />
+          </>
         ) : isDashboard ? (
-          /* Dashboard view — read-only widgets */
-          <SharedDashboardView resourceData={resourceData} />
+          <>
+            {/* Dashboard view — read-only widgets */}
+            <SharedDashboardView resourceData={resourceData} />
+          </>
         ) : isTrace ? (
           /* Trace view */
           <Box
