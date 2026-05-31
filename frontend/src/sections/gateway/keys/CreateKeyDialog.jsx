@@ -18,13 +18,20 @@ import {
 import Iconify from "src/components/iconify";
 import { useCreateApiKey } from "./hooks/useApiKeys";
 
-const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
+const CreateKeyDialog = ({
+  open,
+  onClose,
+  gatewayId,
+  onDone,
+  onKeyCreated,
+}) => {
   const [step, setStep] = useState("form"); // "form" | "success"
   const [name, setName] = useState("");
   const [owner, setOwner] = useState("");
   const [allowedModels, setAllowedModels] = useState([]);
   const [allowedProviders, setAllowedProviders] = useState([]);
   const [createdKey, setCreatedKey] = useState("");
+  const [createdKeyRecord, setCreatedKeyRecord] = useState(null);
   const [copied, setCopied] = useState(false);
 
   const createMutation = useCreateApiKey();
@@ -36,11 +43,19 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
     setAllowedModels([]);
     setAllowedProviders([]);
     setCreatedKey("");
+    setCreatedKeyRecord(null);
     setCopied(false);
   };
 
   const handleClose = () => {
     resetForm();
+    onClose();
+  };
+
+  const handleDone = () => {
+    const keyRecord = createdKeyRecord;
+    resetForm();
+    onDone?.(keyRecord);
     onClose();
   };
 
@@ -56,6 +71,14 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
       {
         onSuccess: (result) => {
           setCreatedKey(result?.key || "");
+          setCreatedKeyRecord(result || null);
+          onKeyCreated?.(result, {
+            allowedModels,
+            allowedProviders,
+            gatewayId,
+            keyName: name,
+            owner,
+          });
           setStep("success");
         },
       },
@@ -111,7 +134,7 @@ const CreateKeyDialog = ({ open, onClose, gatewayId }) => {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button variant="contained" onClick={handleClose}>
+          <Button variant="contained" onClick={handleDone}>
             Done
           </Button>
         </DialogActions>
@@ -216,6 +239,8 @@ CreateKeyDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
+  onDone: PropTypes.func,
+  onKeyCreated: PropTypes.func,
 };
 
 export default CreateKeyDialog;

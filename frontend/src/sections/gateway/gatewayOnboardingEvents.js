@@ -179,6 +179,74 @@ export const buildGatewayRequestSeenPayload = ({
   };
 };
 
+export const buildGatewayProviderAddedPayload = ({
+  apiFormat,
+  gatewayId = DEFAULT_GATEWAY_ID,
+  modelCount,
+  providerName,
+  quickStartAttribution,
+  source = "gateway_provider_onboarding",
+} = {}) => ({
+  eventName: "gateway_provider_added",
+  primaryPath: "gateway",
+  stage: "configure_gateway_provider",
+  source,
+  artifactType: "gateway_provider",
+  artifactId: safeKeyPart(providerName || gatewayId, "gateway-provider"),
+  metadata: compactMetadata({
+    gateway_id: gatewayId || DEFAULT_GATEWAY_ID,
+    provider_name: providerName,
+    api_format: apiFormat,
+    model_count: modelCount,
+  }),
+  idempotencyKey: [
+    "gateway_provider_added",
+    safeKeyPart(providerName, "provider"),
+    safeKeyPart(gatewayId, DEFAULT_GATEWAY_ID),
+  ].join(":"),
+  isSample: false,
+  ...setupQuickStartAttributionParams(quickStartAttribution),
+});
+
+export const buildGatewayKeyCreatedPayload = ({
+  allowedModels = [],
+  allowedProviders = [],
+  gatewayId = DEFAULT_GATEWAY_ID,
+  key,
+  keyName,
+  owner,
+  quickStartAttribution,
+  source = "gateway_key_onboarding",
+} = {}) => {
+  const keyId = key?.id || key?.gatewayKeyId || key?.gateway_key_id || keyName;
+
+  return {
+    eventName: "gateway_key_created",
+    primaryPath: "gateway",
+    stage: "create_gateway_key",
+    source,
+    artifactType: "gateway_key",
+    artifactId: safeKeyPart(keyId || gatewayId, "gateway-key"),
+    metadata: compactMetadata({
+      gateway_id: gatewayId || DEFAULT_GATEWAY_ID,
+      gateway_key_id: key?.gatewayKeyId || key?.gateway_key_id,
+      key_id: key?.id,
+      key_prefix: key?.keyPrefix || key?.key_prefix,
+      key_name: keyName || key?.name,
+      owner: owner || key?.owner,
+      allowed_model_count: allowedModels.length,
+      allowed_provider_count: allowedProviders.length,
+    }),
+    idempotencyKey: [
+      "gateway_key_created",
+      safeKeyPart(keyId, "key"),
+      safeKeyPart(gatewayId, DEFAULT_GATEWAY_ID),
+    ].join(":"),
+    isSample: false,
+    ...setupQuickStartAttributionParams(quickStartAttribution),
+  };
+};
+
 export const buildGatewayPolicyCreatedPayload = ({
   gatewayId = DEFAULT_GATEWAY_ID,
   policyId,

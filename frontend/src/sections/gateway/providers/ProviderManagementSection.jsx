@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { Box, Stack, Tab, Tabs, Card, Skeleton } from "@mui/material";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
@@ -22,9 +22,12 @@ import AddProviderDialog from "./AddProviderDialog";
 import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
 import {
   appendGatewayOnboardingAttributionToHref,
+  buildGatewayProviderAddedPayload,
   GATEWAY_ONBOARDING_MODES,
+  gatewaySetupQuickStartAttributionFromSearch,
   getGatewayOnboardingRouteParams,
 } from "../gatewayOnboardingEvents";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 
 const TAB_SLUGS = ["health", "config", "routing", "cache"];
 
@@ -40,6 +43,7 @@ const ProviderManagementSection = () => {
   const { tab: tabSlug } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const tab = tabSlugToIndex(tabSlug);
 
   const handleTabChange = useCallback(
@@ -56,6 +60,10 @@ const ProviderManagementSection = () => {
   );
   const onboardingHref = useCallback(
     (href) => appendGatewayOnboardingAttributionToHref(href, searchParams),
+    [searchParams],
+  );
+  const gatewayQuickStartAttribution = useMemo(
+    () => gatewaySetupQuickStartAttributionFromSearch(searchParams),
     [searchParams],
   );
   const [addProviderOpen, setAddProviderOpen] = useState(false);
@@ -91,6 +99,26 @@ const ProviderManagementSection = () => {
         enqueueSnackbar("Failed to reload config", { variant: "error" });
       },
     });
+  };
+
+  const handleProviderSaved = (providerPayload) => {
+    if (!showOnboardingFocus) return;
+
+    recordActivationEvent(
+      buildGatewayProviderAddedPayload({
+        ...providerPayload,
+        quickStartAttribution: gatewayQuickStartAttribution,
+      }),
+      {
+        onSettled: () => {
+          navigate(
+            onboardingHref(
+              "/dashboard/gateway/keys?source=onboarding&onboarding=create-key&journey_step=create_gateway_key&tour_anchor=gateway_key_button",
+            ),
+          );
+        },
+      },
+    );
   };
 
   if (isLoading) {
@@ -223,6 +251,7 @@ const ProviderManagementSection = () => {
         open={addProviderOpen}
         onClose={() => setAddProviderOpen(false)}
         gatewayId={gatewayId}
+        onProviderSaved={handleProviderSaved}
       />
     </Box>
   );

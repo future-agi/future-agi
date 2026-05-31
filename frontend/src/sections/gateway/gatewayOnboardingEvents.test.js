@@ -3,8 +3,10 @@ import {
   buildGatewayRequestReviewHref,
   buildGatewayRequestSeenPayload,
   buildGatewayFallbackPolicyCreatedPayload,
+  buildGatewayKeyCreatedPayload,
   buildGatewayOnboardingCompletionHref,
   buildGatewayPolicyCreatedPayload,
+  buildGatewayProviderAddedPayload,
   GATEWAY_ONBOARDING_MODES,
   gatewayPlaygroundRequestId,
   gatewaySetupQuickStartAttributionFromSearch,
@@ -71,6 +73,76 @@ describe("gatewayOnboardingEvents", () => {
       },
       idempotencyKey: "gateway_request_seen:req-123:gateway-1",
       isSample: false,
+    });
+  });
+
+  it("builds gateway provider and key creation payloads without secrets", () => {
+    const quickStartAttribution = gatewaySetupQuickStartAttributionFromSearch(
+      GATEWAY_QUICK_START_SEARCH,
+    );
+
+    expect(
+      buildGatewayProviderAddedPayload({
+        apiFormat: "openai",
+        gatewayId: "gateway-1",
+        modelCount: 2,
+        providerName: "openai",
+        quickStartAttribution,
+      }),
+    ).toMatchObject({
+      eventName: "gateway_provider_added",
+      primaryPath: "gateway",
+      stage: "configure_gateway_provider",
+      source: "gateway_provider_onboarding",
+      artifactType: "gateway_provider",
+      artifactId: "openai",
+      metadata: {
+        gateway_id: "gateway-1",
+        provider_name: "openai",
+        api_format: "openai",
+        model_count: 2,
+      },
+      idempotencyKey: "gateway_provider_added:openai:gateway-1",
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
+    });
+
+    expect(
+      buildGatewayKeyCreatedPayload({
+        allowedModels: ["gpt-4o-mini"],
+        allowedProviders: ["openai"],
+        gatewayId: "gateway-1",
+        key: {
+          gatewayKeyId: "gw-key-1",
+          id: "key-1",
+          keyPrefix: "fagi_",
+        },
+        keyName: "production",
+        owner: "backend",
+        quickStartAttribution,
+      }),
+    ).toMatchObject({
+      eventName: "gateway_key_created",
+      primaryPath: "gateway",
+      stage: "create_gateway_key",
+      source: "gateway_key_onboarding",
+      artifactType: "gateway_key",
+      artifactId: "key-1",
+      metadata: {
+        gateway_id: "gateway-1",
+        gateway_key_id: "gw-key-1",
+        key_id: "key-1",
+        key_prefix: "fagi_",
+        key_name: "production",
+        owner: "backend",
+        allowed_model_count: 1,
+        allowed_provider_count: 1,
+      },
+      idempotencyKey: "gateway_key_created:key-1:gateway-1",
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
     });
   });
 

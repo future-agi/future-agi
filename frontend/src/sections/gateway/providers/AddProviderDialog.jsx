@@ -131,7 +131,13 @@ const API_FORMATS = [
   "bedrock",
 ];
 
-const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
+const AddProviderDialog = ({
+  open,
+  onClose,
+  gatewayId,
+  onProviderSaved,
+  provider,
+}) => {
   const isEditMode = Boolean(provider);
 
   const [name, setName] = useState("openai");
@@ -376,6 +382,14 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               : `Provider "${name}" added`,
             { variant: "success" },
           );
+          if (!isEditMode) {
+            onProviderSaved?.({
+              apiFormat,
+              gatewayId,
+              modelCount: models.length,
+              providerName: name,
+            });
+          }
           handleClose();
         },
         onError: () => {
@@ -720,6 +734,7 @@ AddProviderDialog.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
+  onProviderSaved: PropTypes.func,
   provider: PropTypes.shape({
     name: PropTypes.string.isRequired,
     config: PropTypes.object,

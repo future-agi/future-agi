@@ -32,9 +32,12 @@ import KeyDetailDrawer from "./KeyDetailDrawer";
 import { formatDate } from "../utils/formatters";
 import {
   appendGatewayOnboardingAttributionToHref,
+  buildGatewayKeyCreatedPayload,
   GATEWAY_ONBOARDING_MODES,
+  gatewaySetupQuickStartAttributionFromSearch,
   getGatewayOnboardingRouteParams,
 } from "../gatewayOnboardingEvents";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 
 const STATUS_COLORS = {
   active: "success",
@@ -57,12 +60,17 @@ const KeyManagementSection = () => {
   const [selectedKeyId, setSelectedKeyId] = useState(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const { gatewayId } = useGatewayContext();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
 
   const { data: keys, isLoading, error, refetch } = useApiKeys(gatewayId);
   const syncMutation = useSyncApiKeys();
   const onboardingHref = useMemo(
     () => (href) =>
       appendGatewayOnboardingAttributionToHref(href, searchParams),
+    [searchParams],
+  );
+  const gatewayQuickStartAttribution = useMemo(
+    () => gatewaySetupQuickStartAttributionFromSearch(searchParams),
     [searchParams],
   );
   const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
@@ -104,6 +112,28 @@ const KeyManagementSection = () => {
         });
       },
     });
+  };
+
+  const handleKeyCreated = (key, context) => {
+    if (!showOnboardingFocus) return;
+
+    recordActivationEvent(
+      buildGatewayKeyCreatedPayload({
+        ...context,
+        key,
+        quickStartAttribution: gatewayQuickStartAttribution,
+      }),
+    );
+  };
+
+  const handleKeyDone = (key) => {
+    if (!showOnboardingFocus || !key) return;
+
+    navigate(
+      onboardingHref(
+        "/dashboard/gateway?source=onboarding&onboarding=test-request&journey_step=run_gateway_request&tour_anchor=gateway_request_button",
+      ),
+    );
   };
 
   if (isLoading) {
@@ -364,6 +394,8 @@ const KeyManagementSection = () => {
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
         gatewayId={gatewayId}
+        onDone={handleKeyDone}
+        onKeyCreated={handleKeyCreated}
       />
 
       {/* Detail drawer */}
