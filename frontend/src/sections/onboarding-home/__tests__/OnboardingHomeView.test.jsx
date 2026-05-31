@@ -2114,4 +2114,162 @@ describe("OnboardingHomeView", () => {
 
     expect(refetch).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    {
+      goal: "monitor_production_ai_app",
+      id: "observe",
+      label: "Connect observability",
+      pathname: "/dashboard/observe",
+      primaryPath: "observe",
+      title: "Continue with observability setup",
+      routeParams: {
+        setup: "true",
+        source: "onboarding",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+      },
+    },
+    {
+      goal: "improve_prompts",
+      id: "prompt",
+      label: "Create prompt",
+      pathname: "/dashboard/workbench/all",
+      primaryPath: "prompt",
+      title: "Continue with prompt setup",
+      routeParams: {
+        source: "onboarding",
+        action: "create-prompt",
+        tour_anchor: "prompt_create_button",
+        journey_step: "start_prompt",
+      },
+    },
+    {
+      goal: "build_ai_agent",
+      id: "agent",
+      label: "Create agent",
+      pathname: "/dashboard/agents",
+      primaryPath: "agent",
+      title: "Continue with agent setup",
+      routeParams: {
+        onboarding: "create",
+        tour_anchor: "agent_create_button",
+        journey_step: "create_agent",
+      },
+    },
+    {
+      goal: "control_model_traffic",
+      id: "gateway",
+      label: "Add provider",
+      pathname: "/dashboard/gateway/providers",
+      primaryPath: "gateway",
+      title: "Continue with gateway setup",
+      routeParams: {
+        source: "onboarding",
+        tour_anchor: "gateway_provider_button",
+        journey_step: "configure_gateway_provider",
+      },
+    },
+    {
+      goal: "evaluate_quality",
+      id: "evals",
+      label: "Create dataset",
+      pathname: "/dashboard/evaluations/create",
+      primaryPath: "evals",
+      title: "Continue with eval setup",
+      routeParams: {
+        source: "onboarding",
+        step: "dataset",
+        tour_anchor: "eval_dataset_button",
+        journey_step: "create_eval_dataset",
+      },
+    },
+    {
+      goal: "connect_voice_ai_agent",
+      id: "voice",
+      label: "Create agent",
+      pathname:
+        "/dashboard/simulate/agent-definitions/create-new-agent-definition",
+      primaryPath: "voice",
+      title: "Continue with voice setup",
+      routeParams: {
+        source: "onboarding",
+        onboarding: "create-voice-agent",
+        tour_anchor: "voice_agent_button",
+        journey_step: "create_voice_agent",
+      },
+    },
+  ])(
+    "keeps setup $id quick-start on its selected first action when activation state fails",
+    ({ goal, id, label, pathname, primaryPath, routeParams, title }) => {
+      mocks.useActivationState.mockReturnValue({
+        state: null,
+        isLoading: false,
+        isError: true,
+        error: { message: "Activation state failed" },
+        refetch: vi.fn(),
+      });
+
+      renderView(setupQuickStartRoute({ goal, id, primaryPath }));
+
+      expect(screen.getByText(title)).toBeVisible();
+      const fallbackLink = screen.getByRole("link", { name: label });
+      const fallbackUrl = new URL(
+        fallbackLink.getAttribute("href"),
+        "https://futureagi.test",
+      );
+      expect(fallbackUrl.pathname).toBe(pathname);
+      expectRouteParams({
+        params: fallbackUrl.searchParams,
+        values: {
+          ...routeParams,
+          quick_start_goal: goal,
+          quick_start_id: id,
+          quick_start_primary_path: primaryPath,
+        },
+      });
+      expect(screen.queryByRole("link", { name: /get started/i })).toBeNull();
+    },
+  );
+
+  it("keeps sample preview errors on an attributed real setup fallback", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: null,
+      isLoading: false,
+      isError: true,
+      error: { message: "Activation state failed" },
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      setupQuickStartRoute({
+        goal: "explore_sample_data",
+        id: "sample_preview",
+        primaryPath: "sample",
+      }),
+    );
+
+    expect(screen.getByText("Continue with real setup")).toBeVisible();
+    const fallbackLink = screen.getByRole("link", {
+      name: "Connect observability",
+    });
+    const fallbackUrl = new URL(
+      fallbackLink.getAttribute("href"),
+      "https://futureagi.test",
+    );
+    expect(fallbackUrl.pathname).toBe("/dashboard/observe");
+    expectRouteParams({
+      params: fallbackUrl.searchParams,
+      values: {
+        setup: "true",
+        source: "onboarding",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+        quick_start_goal: "explore_sample_data",
+        quick_start_id: "sample_preview",
+        quick_start_primary_path: "sample",
+      },
+    });
+    expect(screen.queryByRole("link", { name: /get started/i })).toBeNull();
+  });
 });

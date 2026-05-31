@@ -32,6 +32,13 @@ const OBSERVE_QUICK_START_METADATA = {
   quick_start_goal: OBSERVE_QUICK_START_PARAMS.quick_start_goal,
   quick_start_primary_path: OBSERVE_QUICK_START_PARAMS.quick_start_primary_path,
 };
+const OBSERVE_DIRECT_HANDOFF_PARAMS = {
+  setup: "true",
+  source: "onboarding",
+  tour_anchor: "observe_create_project_button",
+  journey_step: "connect_observability",
+  ...OBSERVE_QUICK_START_METADATA,
+};
 const SAMPLE_QUICK_START_METADATA = {
   quick_start_id: "sample_preview",
   quick_start_goal: "explore_sample_data",
@@ -303,7 +310,7 @@ async function main() {
         : "Connect observability first",
     );
 
-    let setupOrgHomeUrl = null;
+    const setupOrgHomeUrl = null;
     let setupOrgEntryUrl = null;
     if (SAMPLE_ONLY) {
       await waitForSampleTraceRoute(page, { timeout: 45000 });
@@ -317,8 +324,11 @@ async function main() {
         () => {
           const params = new URLSearchParams(window.location.search);
           return (
-            window.location.pathname === "/dashboard/home" &&
-            params.get("source") === "setup_org" &&
+            window.location.pathname === "/dashboard/observe" &&
+            params.get("setup") === "true" &&
+            params.get("source") === "onboarding" &&
+            params.get("tour_anchor") === "observe_create_project_button" &&
+            params.get("journey_step") === "connect_observability" &&
             params.get("quick_start_id") === "observe" &&
             params.get("quick_start_goal") === "monitor_production_ai_app" &&
             params.get("quick_start_primary_path") === "observe"
@@ -326,49 +336,24 @@ async function main() {
         },
         { timeout: 45000 },
       );
-      setupOrgHomeUrl = page.url();
+      setupOrgEntryUrl = relativeUrl(page.url());
       assert(
-        hasObserveQuickStartParams(setupOrgHomeUrl),
-        `Expected setup-org home URL quick-start attribution, got ${setupOrgHomeUrl}`,
+        hasObserveDirectHandoffParams(setupOrgEntryUrl),
+        `Expected setup-org direct handoff URL, got ${setupOrgEntryUrl}`,
+      );
+      assert(
+        new URL(page.url()).pathname !== "/dashboard/home",
+        `Expected setup quick-start to hand off directly, got ${page.url()}`,
       );
       await expectNoVisibleText(page, "Invite your team later", {
         timeout: 1000,
       });
     }
 
-    let observeCtaHref = null;
+    const observeCtaHref = null;
     let observeSetupUrl = null;
     let sampleTraceUrl = setupOrgEntryUrl;
     if (!SAMPLE_ONLY) {
-      await expectVisibleText(page, "Connect observability", {
-        timeout: 45000,
-      });
-      await expectVisibleTestId(page, "observe-setup-panel", {
-        timeout: 45000,
-      });
-      await expectVisibleText(page, "Connect one observe project", {
-        exact: true,
-        timeout: 45000,
-      });
-      observeCtaHref = await expectVisibleActionHref(
-        page,
-        "Connect observability",
-        "/dashboard/observe?setup=true&source=onboarding",
-        { timeout: 45000 },
-      );
-      await clickVisibleActionHref(
-        page,
-        "Connect observability",
-        "/dashboard/observe?setup=true&source=onboarding",
-      );
-      await page.waitForFunction(
-        () =>
-          window.location.pathname === "/dashboard/observe" &&
-          new URLSearchParams(window.location.search).get("setup") === "true" &&
-          new URLSearchParams(window.location.search).get("source") ===
-            "onboarding",
-        { timeout: 45000 },
-      );
       await expectVisibleTestId(page, "observe-onboarding-focus", {
         timeout: 45000,
       });
@@ -1432,6 +1417,7 @@ async function main() {
             payload?.source === "sample_trace_review",
         ),
         sample_trace_url: sampleTraceUrl,
+        setup_org_entry_url: setupOrgEntryUrl,
         setup_org_home_url: setupOrgHomeUrl,
         real_setup_return_url: realSetupReturnUrl,
         screenshot: SCREENSHOT_PATH,
@@ -2245,6 +2231,13 @@ function summarizeEvalUsageResponse(payload = {}) {
 function hasObserveQuickStartParams(value) {
   const params = paramsObject(value);
   return Object.entries(OBSERVE_QUICK_START_PARAMS).every(
+    ([key, expected]) => params?.[key] === expected,
+  );
+}
+
+function hasObserveDirectHandoffParams(value) {
+  const params = paramsObject(value);
+  return Object.entries(OBSERVE_DIRECT_HANDOFF_PARAMS).every(
     ([key, expected]) => params?.[key] === expected,
   );
 }

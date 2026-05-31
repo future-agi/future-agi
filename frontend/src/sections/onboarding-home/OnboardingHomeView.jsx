@@ -162,6 +162,58 @@ const SETUP_QUICK_START_DIRECT_HANDOFFS = {
   },
 };
 
+const SETUP_QUICK_START_ERROR_FALLBACKS = {
+  agent: {
+    description:
+      "Your setup was saved. Continue directly to the first agent action.",
+    href: "/dashboard/agents?onboarding=create&tour_anchor=agent_create_button&journey_step=create_agent",
+    label: "Create agent",
+    title: "Continue with agent setup",
+  },
+  evals: {
+    description:
+      "Your setup was saved. Continue directly to the first eval action.",
+    href: "/dashboard/evaluations/create?source=onboarding&step=dataset&tour_anchor=eval_dataset_button&journey_step=create_eval_dataset",
+    label: "Create dataset",
+    title: "Continue with eval setup",
+  },
+  gateway: {
+    description:
+      "Your setup was saved. Continue directly to the first gateway action.",
+    href: "/dashboard/gateway/providers?source=onboarding&tour_anchor=gateway_provider_button&journey_step=configure_gateway_provider",
+    label: "Add provider",
+    title: "Continue with gateway setup",
+  },
+  observe: {
+    description:
+      "Your setup was saved. Continue directly to observability setup.",
+    href: "/dashboard/observe?setup=true&source=onboarding&tour_anchor=observe_create_project_button&journey_step=connect_observability",
+    label: "Connect observability",
+    title: "Continue with observability setup",
+  },
+  prompt: {
+    description:
+      "Your setup was saved. Continue directly to the first prompt action.",
+    href: "/dashboard/workbench/all?source=onboarding&action=create-prompt&tour_anchor=prompt_create_button&journey_step=start_prompt",
+    label: "Create prompt",
+    title: "Continue with prompt setup",
+  },
+  sample_preview: {
+    description:
+      "The sample preview did not load. Continue with real observability setup.",
+    href: "/dashboard/observe?setup=true&source=onboarding&tour_anchor=observe_create_project_button&journey_step=connect_observability",
+    label: "Connect observability",
+    title: "Continue with real setup",
+  },
+  voice: {
+    description:
+      "Your setup was saved. Continue directly to the first voice action.",
+    href: "/dashboard/simulate/agent-definitions/create-new-agent-definition?source=onboarding&onboarding=create-voice-agent&tour_anchor=voice_agent_button&journey_step=create_voice_agent",
+    label: "Create agent",
+    title: "Continue with voice setup",
+  },
+};
+
 const setupQuickStartHandoffStep = ({ handoff, state }) => {
   const planStep = journeyCurrentStep(state.journeyPlan, state.stage);
   if (planStep?.stage === state.stage) return planStep;
@@ -203,6 +255,17 @@ const setupQuickStartDirectHandoffHref = ({ searchContext, state }) => {
     ),
     searchContext,
   );
+};
+
+const setupQuickStartErrorFallbackAction = (searchContext = {}) => {
+  if (searchContext.source !== "setup_org") return null;
+  const attribution = normalizeSetupQuickStartAttribution(searchContext);
+  const fallback = SETUP_QUICK_START_ERROR_FALLBACKS[attribution.quickStartId];
+  if (!fallback) return null;
+  return {
+    ...fallback,
+    href: appendSetupQuickStartAttributionToHref(fallback.href, attribution),
+  };
 };
 
 const OBSERVE_PANEL_STAGES = new Set([
@@ -361,6 +424,10 @@ export default function OnboardingHomeView() {
           })
         : null,
     [renderedState, searchContext],
+  );
+  const setupQuickStartErrorFallback = useMemo(
+    () => setupQuickStartErrorFallbackAction(searchContext),
+    [searchContext],
   );
   const goalOptions = useMemo(
     () => getGoalOptionsForState(renderedState),
@@ -734,7 +801,13 @@ export default function OnboardingHomeView() {
   }
 
   if (isError) {
-    return <OnboardingHomeError error={error} onRetry={refetch} />;
+    return (
+      <OnboardingHomeError
+        error={error}
+        fallbackAction={setupQuickStartErrorFallback}
+        onRetry={refetch}
+      />
+    );
   }
 
   const copy = getStageCopy(renderedState);

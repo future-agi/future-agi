@@ -9,11 +9,23 @@ import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
 import { paths } from "src/routes/paths";
 
-export default function OnboardingHomeError({ error, onRetry }) {
+const defaultFallbackAction = {
+  description: "The existing setup checklist is still available.",
+  href: paths.dashboard.getstarted,
+  label: "Get Started",
+  title: "Open Get Started instead",
+};
+
+export default function OnboardingHomeError({
+  error,
+  fallbackAction,
+  onRetry,
+}) {
   const message =
     error?.result?.message ||
     error?.message ||
     "Home could not load right now.";
+  const action = fallbackAction || defaultFallbackAction;
 
   return (
     <Box
@@ -30,9 +42,9 @@ export default function OnboardingHomeError({ error, onRetry }) {
           {message}
         </Alert>
         <Stack spacing={0.75}>
-          <Typography variant="h4">Open Get Started instead</Typography>
+          <Typography variant="h4">{action.title}</Typography>
           <Typography variant="body2" color="text.secondary">
-            The existing setup checklist is still available.
+            {action.description}
           </Typography>
         </Stack>
         <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25}>
@@ -46,10 +58,10 @@ export default function OnboardingHomeError({ error, onRetry }) {
           <Button
             variant="outlined"
             component={RouterLink}
-            href={paths.dashboard.getstarted}
+            href={action.href}
             startIcon={<Iconify icon="mdi:arrow-right" width={18} />}
           >
-            Get Started
+            {action.label}
           </Button>
         </Stack>
       </Stack>
@@ -59,5 +71,11 @@ export default function OnboardingHomeError({ error, onRetry }) {
 
 OnboardingHomeError.propTypes = {
   error: PropTypes.object,
+  fallbackAction: PropTypes.shape({
+    description: PropTypes.string.isRequired,
+    href: PropTypes.string.isRequired,
+    label: PropTypes.string.isRequired,
+    title: PropTypes.string.isRequired,
+  }),
   onRetry: PropTypes.func,
 };

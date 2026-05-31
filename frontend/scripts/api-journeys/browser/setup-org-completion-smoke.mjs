@@ -27,15 +27,22 @@ const SAMPLE_QUICK_START_METADATA = {
 
 const QUICK_STARTS = {
   observe: {
-    buttonText: "Connect observability first",
+    buttonText: "Connect real observability",
     expectedAttribution: {
       quick_start_goal: "monitor_production_ai_app",
       quick_start_id: "observe",
       quick_start_primary_path: "observe",
     },
     expectedGoal: "Monitor a production AI app",
-    expectedSelector: '[data-testid="observe-setup-panel"]',
-    expectedTexts: ["Connect one observe project"],
+    expectedDirectHandoff: {
+      pathname: "/dashboard/observe",
+      params: {
+        setup: "true",
+        source: "onboarding",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+      },
+    },
     fixture: "newWorkspaceNoGoal",
   },
   sample_preview: {
@@ -47,8 +54,6 @@ const QUICK_STARTS = {
       quick_start_primary_path: "sample",
     },
     expectedGoal: "Explore with sample data",
-    expectedSelector: '[data-testid="sample-project-panel"]',
-    expectedTexts: ["Fastest path to Aha", "Open sample trace"],
     fixture: "sampleFirstRunStart",
   },
   prompt: {
@@ -59,8 +64,15 @@ const QUICK_STARTS = {
       quick_start_primary_path: "prompt",
     },
     expectedGoal: "Test and improve prompts",
-    expectedSelector: '[data-testid="path-focus-panel-prompt"]',
-    expectedTexts: ["Build a prompt quality loop", "Create prompt"],
+    expectedDirectHandoff: {
+      pathname: "/dashboard/workbench/all",
+      params: {
+        source: "onboarding",
+        action: "create-prompt",
+        tour_anchor: "prompt_create_button",
+        journey_step: "start_prompt",
+      },
+    },
     fixture: "promptNoPrompt",
   },
   agent: {
@@ -71,8 +83,14 @@ const QUICK_STARTS = {
       quick_start_primary_path: "agent",
     },
     expectedGoal: "Build or prototype an AI agent",
-    expectedSelector: '[data-testid="path-focus-panel-agent"]',
-    expectedTexts: ["Prototype an agent with a quality check", "Create agent"],
+    expectedDirectHandoff: {
+      pathname: "/dashboard/agents",
+      params: {
+        onboarding: "create",
+        tour_anchor: "agent_create_button",
+        journey_step: "create_agent",
+      },
+    },
     fixture: "agentNoAgent",
   },
   gateway: {
@@ -83,8 +101,14 @@ const QUICK_STARTS = {
       quick_start_primary_path: "gateway",
     },
     expectedGoal: "Route LLM traffic safely",
-    expectedSelector: '[data-testid="path-focus-panel-gateway"]',
-    expectedTexts: ["Route one request safely", "Add provider"],
+    expectedDirectHandoff: {
+      pathname: "/dashboard/gateway/providers",
+      params: {
+        source: "onboarding",
+        tour_anchor: "gateway_provider_button",
+        journey_step: "configure_gateway_provider",
+      },
+    },
     fixture: "gatewayNoProvider",
   },
   evals: {
@@ -95,11 +119,15 @@ const QUICK_STARTS = {
       quick_start_primary_path: "evals",
     },
     expectedGoal: "Evaluate quality on data or traces",
-    expectedSelector: '[data-testid="path-focus-panel-evals"]',
-    expectedTexts: [
-      "Create one eval and review the first failure",
-      "Create dataset",
-    ],
+    expectedDirectHandoff: {
+      pathname: "/dashboard/evaluations/create",
+      params: {
+        source: "onboarding",
+        step: "dataset",
+        tour_anchor: "eval_dataset_button",
+        journey_step: "create_eval_dataset",
+      },
+    },
     activationState: pathFocusActivationState,
     primaryPath: "evals",
   },
@@ -111,8 +139,16 @@ const QUICK_STARTS = {
       quick_start_primary_path: "voice",
     },
     expectedGoal: "Connect a voice AI agent",
-    expectedSelector: '[data-testid="path-focus-panel-voice"]',
-    expectedTexts: ["Connect a voice agent quality loop", "Create agent"],
+    expectedDirectHandoff: {
+      pathname:
+        "/dashboard/simulate/agent-definitions/create-new-agent-definition",
+      params: {
+        source: "onboarding",
+        onboarding: "create-voice-agent",
+        tour_anchor: "voice_agent_button",
+        journey_step: "create_voice_agent",
+      },
+    },
     activationState: pathFocusActivationState,
     primaryPath: "voice",
   },
@@ -219,7 +255,8 @@ async function main() {
     });
     await clickVisibleButtonText(page, QUICK_START.buttonText);
     let homeParams = null;
-    let primaryActionHref = null;
+    let handoffParams = null;
+    let handoffUrl = null;
     let sampleTraceUrl = null;
     if (QUICK_START.directSampleTrace) {
       await waitForSampleTraceRoute(page, { timeout: 30000 });
@@ -232,40 +269,27 @@ async function main() {
       await expectVisibleText(page, "Sample trace review");
       await expectVisibleText(page, "Connect your app", { exact: true });
     } else {
-      await page.waitForFunction(
-        () =>
-          window.location.pathname === "/dashboard/home" &&
-          new URLSearchParams(window.location.search).get("source") ===
-            "setup_org",
-        { timeout: 30000 },
+      handoffUrl = await waitForDirectHandoffRoute(
+        page,
+        QUICK_START.expectedDirectHandoff,
+      );
+      handoffParams = paramsObject(handoffUrl);
+      assertExpectedRoute(handoffUrl, QUICK_START.expectedDirectHandoff);
+      assertExpectedAttribution(handoffParams, QUICK_START.expectedAttribution);
+      assert(
+        new URL(handoffUrl, APP_BASE).pathname !== "/dashboard/home",
+        `Expected setup quick-start to hand off directly, got ${handoffUrl}`,
       );
 
-      homeParams = await page.evaluate(() =>
-        Object.fromEntries(new URL(window.location.href).searchParams),
+      await waitForCondition(
+        () => activationStateRequests.length === 1,
+        `Expected one activation-state request, got ${activationStateRequests.length}`,
       );
+      homeParams = activationStateRequests[0];
       assertExpectedAttribution(homeParams, {
         ...QUICK_START.expectedAttribution,
         source: "setup_org",
       });
-
-      await expectSelector(page, QUICK_START.expectedSelector);
-      for (const text of QUICK_START.expectedTexts) {
-        await expectVisibleText(page, text, {
-          exact: true,
-        });
-      }
-      primaryActionHref = await firstPanelHref(
-        page,
-        QUICK_START.expectedSelector,
-      );
-      assert(
-        primaryActionHref,
-        `Expected primary action href in ${QUICK_START.expectedSelector}.`,
-      );
-      assertExpectedAttribution(
-        paramsObject(primaryActionHref),
-        QUICK_START.expectedAttribution,
-      );
     }
 
     const browserState = await page.evaluate(() => ({
@@ -369,8 +393,9 @@ async function main() {
             browser_state: browserState,
             console_messages: consoleMessages,
             home_params: homeParams,
+            direct_handoff_params: handoffParams,
+            direct_handoff_url: handoffUrl,
             onboarding_post: onboardingPosts[0],
-            primary_action_href: primaryActionHref,
             request_failures: requestFailures,
             sample_project_post: sampleProjectPosts[0],
             sample_project_response: sampleProjectResponses[0],
@@ -439,6 +464,19 @@ function assertExpectedAttribution(actual, expected) {
       )}`,
     );
   }
+}
+
+function assertExpectedRoute(value, expected) {
+  const url = safeUrl(value);
+  assert(url, `Expected valid route URL, got ${value}`);
+  assert(
+    url.pathname === expected.pathname,
+    `Expected route ${expected.pathname}, got ${url.pathname}`,
+  );
+  assertExpectedAttribution(
+    Object.fromEntries(url.searchParams),
+    expected.params,
+  );
 }
 
 async function installRuntime(
@@ -965,8 +1003,25 @@ async function waitForSampleTraceRoute(page, { timeout = 30000 } = {}) {
   );
 }
 
-async function expectSelector(page, selector, timeout = 30000) {
-  await page.waitForSelector(selector, { timeout, visible: true });
+async function waitForDirectHandoffRoute(
+  page,
+  { pathname, params },
+  { timeout = 30000 } = {},
+) {
+  const handle = await page.waitForFunction(
+    (expected) => {
+      if (window.location.pathname !== expected.pathname) return false;
+      const searchParams = new URLSearchParams(window.location.search);
+      const matched = Object.entries(expected.params).every(
+        ([key, value]) => searchParams.get(key) === value,
+      );
+      if (!matched) return false;
+      return `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    },
+    { timeout },
+    { pathname, params },
+  );
+  return handle.jsonValue();
 }
 
 async function expectVisibleText(
@@ -1000,11 +1055,12 @@ async function expectVisibleText(
 }
 
 async function clickVisibleButtonText(page, text, timeout = 30000) {
-  await page.waitForFunction(
+  const handle = await page.waitForFunction(
     (expectedText) => {
       const normalized = (value) => String(value || "").trim();
       const matchesButton = (element) =>
         normalized(element.getAttribute("aria-label")) === expectedText ||
+        normalized(element.getAttribute("aria-label")).includes(expectedText) ||
         normalized(element.textContent) === expectedText ||
         normalized(element.textContent).includes(expectedText);
       const isVisible = (element) => {
@@ -1017,27 +1073,20 @@ async function clickVisibleButtonText(page, text, timeout = 30000) {
           rect.height > 0
         );
       };
-      return Array.from(document.querySelectorAll("button")).some(
-        (element) => isVisible(element) && matchesButton(element),
-      );
+      return Array.from(
+        document.querySelectorAll("button, [role='button']"),
+      ).find((element) => isVisible(element) && matchesButton(element));
     },
     { timeout },
     text,
   );
-  await page.evaluate((expectedText) => {
-    const normalized = (value) => String(value || "").trim();
-    const matchesButton = (element) =>
-      normalized(element.getAttribute("aria-label")) === expectedText ||
-      normalized(element.textContent) === expectedText ||
-      normalized(element.textContent).includes(expectedText);
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (element) => matchesButton(element),
-    );
-    if (!button) {
-      throw new Error(`Button not found: ${expectedText}`);
-    }
-    button.click();
-  }, text);
+  if (!handle.asElement()) {
+    throw new Error(`Button not found: ${text}`);
+  }
+  await handle.evaluate((element) => {
+    element.click();
+  });
+  await handle.dispose();
 }
 
 async function safeBodyText(page) {
@@ -1078,14 +1127,6 @@ function hasSampleQuickStartParams(value) {
   return Object.entries(SAMPLE_QUICK_START_METADATA).every(
     ([key, expected]) => params?.[key] === expected,
   );
-}
-
-async function firstPanelHref(page, selector) {
-  return page.evaluate((panelSelector) => {
-    const panel = document.querySelector(panelSelector);
-    const link = panel?.querySelector("a[href]");
-    return link?.getAttribute("href") || null;
-  }, selector);
 }
 
 function paramsObject(value) {

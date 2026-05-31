@@ -14,7 +14,7 @@ const SMOKES = [
     mode: "controlled",
     file: "setup-org-completion-smoke.mjs",
     description:
-      "Stubbed auth proof for setup-org quick start into onboarding Home.",
+      "Stubbed auth proof for setup-org Observe quick start into the first action route.",
     env: {
       ONBOARDING_SMOKE_STUB_AUTH: "1",
     },
@@ -35,7 +35,7 @@ const SMOKES = [
     mode: "controlled",
     file: "setup-org-completion-smoke.mjs",
     description:
-      "Stubbed auth proof for setup-org prompt quick start into the prompt path focus.",
+      "Stubbed auth proof for setup-org prompt quick start into the first prompt action.",
     env: {
       ONBOARDING_SMOKE_SETUP_QUICK_START: "prompt",
       ONBOARDING_SMOKE_STUB_AUTH: "1",
@@ -46,7 +46,7 @@ const SMOKES = [
     mode: "controlled",
     file: "setup-org-completion-smoke.mjs",
     description:
-      "Stubbed auth proof for setup-org agent quick start into the agent path focus.",
+      "Stubbed auth proof for setup-org agent quick start into the first agent action.",
     env: {
       ONBOARDING_SMOKE_SETUP_QUICK_START: "agent",
       ONBOARDING_SMOKE_STUB_AUTH: "1",
@@ -57,7 +57,7 @@ const SMOKES = [
     mode: "controlled",
     file: "setup-org-completion-smoke.mjs",
     description:
-      "Stubbed auth proof for setup-org gateway quick start into the gateway path focus.",
+      "Stubbed auth proof for setup-org gateway quick start into the first gateway action.",
     env: {
       ONBOARDING_SMOKE_SETUP_QUICK_START: "gateway",
       ONBOARDING_SMOKE_STUB_AUTH: "1",
@@ -68,7 +68,7 @@ const SMOKES = [
     mode: "controlled",
     file: "setup-org-completion-smoke.mjs",
     description:
-      "Stubbed auth proof for setup-org eval quick start into the eval path focus.",
+      "Stubbed auth proof for setup-org eval quick start into the first eval action.",
     env: {
       ONBOARDING_SMOKE_SETUP_QUICK_START: "evals",
       ONBOARDING_SMOKE_STUB_AUTH: "1",
@@ -79,7 +79,7 @@ const SMOKES = [
     mode: "controlled",
     file: "setup-org-completion-smoke.mjs",
     description:
-      "Stubbed auth proof for setup-org voice quick start into the voice path focus.",
+      "Stubbed auth proof for setup-org voice quick start into the first voice action.",
     env: {
       ONBOARDING_SMOKE_SETUP_QUICK_START: "voice",
       ONBOARDING_SMOKE_STUB_AUTH: "1",
