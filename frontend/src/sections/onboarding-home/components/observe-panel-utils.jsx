@@ -114,12 +114,30 @@ CurrentStepGuide.propTypes = {
   step: PropTypes.object,
 };
 
-export function ObserveJourneyProgress({ journeyPlan, stage }) {
+export function ObserveJourneyProgress({
+  journeyPlan,
+  singleActionFocus = false,
+  stage,
+}) {
   const steps = journeyPlan?.steps || [];
   if (!steps.length) return null;
 
   const currentStep = journeyCurrentStep(journeyPlan, stage);
   const currentIndex = Math.max(steps.indexOf(currentStep), 0);
+
+  if (singleActionFocus) {
+    return (
+      <Stack spacing={1.25} data-testid="observe-journey-progress">
+        <Chip
+          size="small"
+          variant="outlined"
+          label={`Step ${currentIndex + 1} of ${steps.length}`}
+          sx={{ alignSelf: "flex-start" }}
+        />
+        <CurrentStepGuide step={currentStep} stage={stage} />
+      </Stack>
+    );
+  }
 
   return (
     <Stack spacing={1.25} data-testid="observe-journey-progress">
@@ -195,6 +213,7 @@ export function ObserveJourneyProgress({ journeyPlan, stage }) {
 
 ObserveJourneyProgress.propTypes = {
   journeyPlan: PropTypes.object,
+  singleActionFocus: PropTypes.bool,
   stage: PropTypes.string,
 };
 
@@ -207,18 +226,21 @@ export function ObservePanelActions({
   isChecking = false,
   journeyStep,
   primaryVariant = "contained",
+  singleActionFocus = false,
 }) {
   const primaryHref = hrefWithJourneyGuide(
     observeActionHref(action),
     journeyStep,
   );
   const replayHref =
+    !singleActionFocus &&
     primaryHref &&
     journeyStep?.tourAnchor &&
     isDestinationTourAnchorDismissed({ anchor: journeyStep.tourAnchor })
       ? hrefWithJourneyGuide(primaryHref, journeyStep, { replay: true })
       : null;
   const fallbackHref = observeActionHref(fallbackAction);
+  const showSecondaryRoutes = !singleActionFocus || !primaryHref;
 
   return (
     <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
@@ -242,7 +264,7 @@ export function ObservePanelActions({
           Show tip
         </Button>
       ) : null}
-      {fallbackAction ? (
+      {fallbackAction && showSecondaryRoutes ? (
         <Button
           variant="outlined"
           component={fallbackHref ? RouterLink : "button"}
@@ -276,4 +298,5 @@ ObservePanelActions.propTypes = {
   onFallbackClick: PropTypes.func,
   onPrimaryClick: PropTypes.func,
   primaryVariant: PropTypes.oneOf(["contained", "outlined", "text"]),
+  singleActionFocus: PropTypes.bool,
 };

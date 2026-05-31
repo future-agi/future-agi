@@ -20,6 +20,7 @@ export default function FirstSignalPanel({
   onFallbackClick,
   onCheckAgain,
   isChecking = false,
+  singleActionFocus = false,
 }) {
   const isImprovement = stage === "create_trace_evaluator";
   const currentStep = journeyCurrentStep(journeyPlan, stage);
@@ -50,7 +51,11 @@ export default function FirstSignalPanel({
           }
           chips={["observe", isImprovement ? "improve" : "review"]}
         />
-        <ObserveJourneyProgress journeyPlan={journeyPlan} stage={stage} />
+        <ObserveJourneyProgress
+          journeyPlan={journeyPlan}
+          singleActionFocus={singleActionFocus}
+          stage={stage}
+        />
         <Box
           sx={{
             display: "grid",
@@ -93,6 +98,7 @@ export default function FirstSignalPanel({
           onCheckAgain={onCheckAgain}
           isChecking={isChecking}
           journeyStep={currentStep}
+          singleActionFocus={singleActionFocus}
         />
       </Stack>
     </Box>
@@ -107,6 +113,7 @@ FirstSignalPanel.propTypes = {
   onCheckAgain: PropTypes.func,
   onFallbackClick: PropTypes.func,
   onPrimaryClick: PropTypes.func,
+  singleActionFocus: PropTypes.bool,
   signals: PropTypes.object,
   stage: PropTypes.string,
 };

@@ -4,6 +4,7 @@ import Box from "@mui/material/Box";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import {
+  CurrentStepGuide,
   ObserveJourneyProgress,
   ObservePanelActions,
   ObservePanelHeader,
@@ -18,9 +19,16 @@ export default function ObserveSetupPanel({
   onFallbackClick,
   onCheckAgain,
   isChecking = false,
+  singleActionFocus = false,
   stage = "connect_observability",
 }) {
   const currentStep = journeyCurrentStep(journeyPlan, stage);
+  const fallbackCurrentStep = currentStep || {
+    label: action?.title || "Connect observability",
+    description:
+      action?.description ||
+      "Create the observe project and prepare the first trace.",
+  };
 
   return (
     <Box
@@ -41,7 +49,13 @@ export default function ObserveSetupPanel({
           chips={["observe", "setup"]}
         />
         {journeyPlan ? (
-          <ObserveJourneyProgress journeyPlan={journeyPlan} stage={stage} />
+          <ObserveJourneyProgress
+            journeyPlan={journeyPlan}
+            singleActionFocus={singleActionFocus}
+            stage={stage}
+          />
+        ) : singleActionFocus ? (
+          <CurrentStepGuide step={fallbackCurrentStep} stage={stage} />
         ) : (
           <Box
             sx={{
@@ -78,6 +92,7 @@ export default function ObserveSetupPanel({
           onCheckAgain={onCheckAgain}
           isChecking={isChecking}
           journeyStep={currentStep}
+          singleActionFocus={singleActionFocus}
         />
       </Stack>
     </Box>
@@ -92,5 +107,6 @@ ObserveSetupPanel.propTypes = {
   onCheckAgain: PropTypes.func,
   onFallbackClick: PropTypes.func,
   onPrimaryClick: PropTypes.func,
+  singleActionFocus: PropTypes.bool,
   stage: PropTypes.string,
 };

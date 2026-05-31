@@ -1,6 +1,7 @@
 import React from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
+import Button from "@mui/material/Button";
 import Chip from "@mui/material/Chip";
 import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
@@ -51,9 +52,17 @@ export default function PathFocusPanel({
   onFallbackClick,
   onPrimaryClick,
   primaryPath,
+  singleActionFocus = false,
   stage,
 }) {
+  const [showFullJourney, setShowFullJourney] =
+    React.useState(!singleActionFocus);
   const plan = journeyPlan || PATH_FOCUS_PLANS[primaryPath];
+
+  React.useEffect(() => {
+    setShowFullJourney(!singleActionFocus);
+  }, [singleActionFocus, primaryPath, stage]);
+
   if (!plan || !plan.steps?.length) return null;
 
   const derivedCurrentIndex =
@@ -85,82 +94,109 @@ export default function PathFocusPanel({
           chips={plan.chips}
         />
 
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              sm: "repeat(2, minmax(0, 1fr))",
-              lg: `repeat(${Math.min(plan.steps.length, 3)}, minmax(0, 1fr))`,
-            },
-            gap: 1,
-          }}
-        >
-          {plan.steps.map((step, index) => {
-            const status =
-              step.status || stepStatus({ index, activeIndex: currentIndex });
-            const statusCopy = STATUS_COPY[status] || STATUS_COPY.queued;
+        {singleActionFocus && currentIndex !== null ? (
+          <Chip
+            size="small"
+            variant="outlined"
+            label={`Step ${currentIndex + 1} of ${plan.steps.length}`}
+            sx={{ alignSelf: "flex-start" }}
+          />
+        ) : null}
 
-            return (
-              <Box
-                key={step.stage}
-                data-testid={`path-focus-step-${step.stage}`}
-                sx={{
-                  border: "1px solid",
-                  borderColor:
-                    status === "current"
-                      ? "primary.main"
-                      : status === "complete"
-                        ? "success.main"
-                        : "divider",
-                  borderRadius: 1,
-                  p: 1.25,
-                  minHeight: 112,
-                  bgcolor: status === "current" ? "action.hover" : "inherit",
-                }}
-              >
-                <Stack spacing={0.75}>
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    justifyContent="space-between"
-                    spacing={1}
-                  >
-                    <Stack direction="row" alignItems="center" spacing={0.75}>
-                      <Iconify
-                        icon={statusCopy.icon}
-                        width={18}
-                        sx={{ color: statusCopy.color, flexShrink: 0 }}
+        {showFullJourney ? (
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: {
+                xs: "1fr",
+                sm: "repeat(2, minmax(0, 1fr))",
+                lg: `repeat(${Math.min(plan.steps.length, 3)}, minmax(0, 1fr))`,
+              },
+              gap: 1,
+            }}
+          >
+            {plan.steps.map((step, index) => {
+              const status =
+                step.status || stepStatus({ index, activeIndex: currentIndex });
+              const statusCopy = STATUS_COPY[status] || STATUS_COPY.queued;
+
+              return (
+                <Box
+                  key={step.stage}
+                  data-testid={`path-focus-step-${step.stage}`}
+                  sx={{
+                    border: "1px solid",
+                    borderColor:
+                      status === "current"
+                        ? "primary.main"
+                        : status === "complete"
+                          ? "success.main"
+                          : "divider",
+                    borderRadius: 1,
+                    p: 1.25,
+                    minHeight: 112,
+                    bgcolor: status === "current" ? "action.hover" : "inherit",
+                  }}
+                >
+                  <Stack spacing={0.75}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      justifyContent="space-between"
+                      spacing={1}
+                    >
+                      <Stack direction="row" alignItems="center" spacing={0.75}>
+                        <Iconify
+                          icon={statusCopy.icon}
+                          width={18}
+                          sx={{ color: statusCopy.color, flexShrink: 0 }}
+                        />
+                        <Typography variant="subtitle2">
+                          {step.label}
+                        </Typography>
+                      </Stack>
+                      <Chip
+                        size="small"
+                        label={statusCopy.label}
+                        color={status === "complete" ? "success" : "default"}
+                        variant={status === "complete" ? "filled" : "outlined"}
                       />
-                      <Typography variant="subtitle2">{step.label}</Typography>
                     </Stack>
-                    <Chip
-                      size="small"
-                      label={statusCopy.label}
-                      color={status === "complete" ? "success" : "default"}
-                      variant={status === "complete" ? "filled" : "outlined"}
-                    />
+                    <Typography variant="body2" color="text.secondary">
+                      {step.description}
+                    </Typography>
                   </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    {step.description}
-                  </Typography>
-                </Stack>
-              </Box>
-            );
-          })}
-        </Box>
+                </Box>
+              );
+            })}
+          </Box>
+        ) : null}
 
         <CurrentStepGuide step={currentStep} stage={stage} />
 
         <ObservePanelActions
           action={action}
-          fallbackAction={fallbackAction}
+          fallbackAction={
+            singleActionFocus && action?.href ? null : fallbackAction
+          }
           onPrimaryClick={onPrimaryClick}
           onFallbackClick={onFallbackClick}
           onCheckAgain={onCheckAgain}
           isChecking={isChecking}
           journeyStep={currentStep}
+          singleActionFocus={singleActionFocus}
         />
+
+        {singleActionFocus && !showFullJourney ? (
+          <Button
+            variant="text"
+            size="small"
+            onClick={() => setShowFullJourney(true)}
+            sx={{ alignSelf: "flex-start" }}
+          >
+            Show full path
+          </Button>
+        ) : null}
       </Stack>
     </Box>
   );
@@ -175,5 +211,6 @@ PathFocusPanel.propTypes = {
   onFallbackClick: PropTypes.func,
   onPrimaryClick: PropTypes.func,
   primaryPath: PropTypes.string,
+  singleActionFocus: PropTypes.bool,
   stage: PropTypes.string,
 };

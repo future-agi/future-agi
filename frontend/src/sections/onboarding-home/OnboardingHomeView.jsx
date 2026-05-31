@@ -892,6 +892,7 @@ export default function OnboardingHomeView() {
           <ObserveSetupPanel
             {...observePanelProps}
             journeyPlan={renderedState.journeyPlan}
+            singleActionFocus={isFirstRunQuickStartFocus}
             stage={renderedState.stage}
           />
         ) : null}
@@ -902,6 +903,7 @@ export default function OnboardingHomeView() {
           <WaitingForSignalPanel
             {...observePanelProps}
             journeyPlan={renderedState.journeyPlan}
+            singleActionFocus={isFirstRunQuickStartFocus}
             signals={renderedState.signals}
             stage={renderedState.stage}
           />
@@ -912,6 +914,7 @@ export default function OnboardingHomeView() {
           <FirstSignalPanel
             {...observePanelProps}
             journeyPlan={renderedState.journeyPlan}
+            singleActionFocus={isFirstRunQuickStartFocus}
             signals={renderedState.signals}
             stage={renderedState.stage}
           />
@@ -931,6 +934,7 @@ export default function OnboardingHomeView() {
         {...observePanelProps}
         journeyPlan={renderedState.journeyPlan}
         primaryPath={renderedState.primaryPath}
+        singleActionFocus={isFirstRunQuickStartFocus}
         stage={renderedState.stage}
       />
     ) : null;

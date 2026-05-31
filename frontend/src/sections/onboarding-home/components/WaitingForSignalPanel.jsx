@@ -20,6 +20,7 @@ export default function WaitingForSignalPanel({
   onFallbackClick,
   onCheckAgain,
   isChecking = false,
+  singleActionFocus = false,
 }) {
   const currentStep = journeyCurrentStep(journeyPlan, stage);
 
@@ -41,7 +42,11 @@ export default function WaitingForSignalPanel({
           description="The observe project exists. The next step unlocks after the first real trace arrives."
           chips={["observe", "waiting"]}
         />
-        <ObserveJourneyProgress journeyPlan={journeyPlan} stage={stage} />
+        <ObserveJourneyProgress
+          journeyPlan={journeyPlan}
+          singleActionFocus={singleActionFocus}
+          stage={stage}
+        />
         <Box
           sx={{
             border: "1px solid",
@@ -64,6 +69,7 @@ export default function WaitingForSignalPanel({
           onCheckAgain={onCheckAgain}
           isChecking={isChecking}
           journeyStep={currentStep}
+          singleActionFocus={singleActionFocus}
         />
       </Stack>
     </Box>
@@ -78,6 +84,7 @@ WaitingForSignalPanel.propTypes = {
   onCheckAgain: PropTypes.func,
   onFallbackClick: PropTypes.func,
   onPrimaryClick: PropTypes.func,
+  singleActionFocus: PropTypes.bool,
   signals: PropTypes.object,
   stage: PropTypes.string,
 };

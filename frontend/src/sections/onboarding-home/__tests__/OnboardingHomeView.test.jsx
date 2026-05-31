@@ -651,6 +651,13 @@ describe("OnboardingHomeView", () => {
     expect(params.get("quick_start_primary_path")).toBe("prompt");
     expect(params.get("tour_anchor")).toBe("prompt_create_button");
     expect(params.get("journey_step")).toBe("start_prompt");
+    expect(within(panel).getByText("Step 1 of 6")).toBeVisible();
+    expect(
+      screen.queryByTestId("path-focus-step-start_prompt"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).queryByRole("link", { name: /open workbench/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the post-aha screen after the first observe quality loop", () => {
