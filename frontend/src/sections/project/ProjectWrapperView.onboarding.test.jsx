@@ -208,6 +208,53 @@ describe("ProjectWrapperView observe setup onboarding", () => {
     });
   });
 
+  it("keeps returned credential users focused on pasting keys and sending a trace", async () => {
+    const user = userEvent.setup();
+
+    renderWithRouter(<ProjectWrapperView />, {
+      route:
+        "/dashboard/observe?setup=true&source=onboarding&credential_step=done",
+    });
+
+    expect(screen.getByText("Credentials copied")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Paste both copied values into the setup snippet, then run one real or test request.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByText("Keys")).toBeVisible();
+
+    await waitFor(() => {
+      expect(mocks.recordActivationEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          artifactType: "observe_setup",
+          eventName: "onboarding_observe_route_focus_viewed",
+          metadata: {
+            credential_step: "done",
+            route_mode: "setup-observe",
+            setup: true,
+          },
+          primaryPath: "observe",
+          stage: "connect_observability",
+        }),
+      );
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /open first trace step/i }),
+    );
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(
+        "/dashboard/observe/project-1/llm-tracing",
+      );
+      const params = new URLSearchParams(window.location.search);
+      expect(params.get("source")).toBe("onboarding");
+      expect(params.get("onboarding")).toBe("send-first-trace");
+      expect(params.get("selectedTab")).toBe("trace");
+    });
+  });
+
   it("shows setup focus from Home journey-step params", async () => {
     renderWithRouter(<ProjectWrapperView />, {
       route:

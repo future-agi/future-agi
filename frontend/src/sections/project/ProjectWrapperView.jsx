@@ -148,10 +148,15 @@ const ProjectWrapperView = () => {
     () =>
       showObserveSetupFocus
         ? getObserveOnboardingCopy(OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE, {
+            credentialsCopied: observeSetupOnboardingParams.credentialsCopied,
             source: observeSetupOnboardingParams.source,
           })
         : null,
-    [observeSetupOnboardingParams.source, showObserveSetupFocus],
+    [
+      observeSetupOnboardingParams.credentialsCopied,
+      observeSetupOnboardingParams.source,
+      showObserveSetupFocus,
+    ],
   );
   const canOpenObserveSetupSample =
     !isSampleReviewReturn &&
@@ -165,11 +170,13 @@ const ProjectWrapperView = () => {
     recordedObserveSetupFocusRef.current = true;
     recordActivationEvent?.(
       buildObserveRouteFocusPayload({
+        credentialStep: observeSetupOnboardingParams.credentialStep,
         mode: OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE,
         setupSource: observeSetupOnboardingParams.source,
       }),
     );
   }, [
+    observeSetupOnboardingParams.credentialStep,
     observeSetupOnboardingParams.source,
     recordActivationEvent,
     showObserveSetupFocus,

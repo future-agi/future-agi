@@ -64,6 +64,8 @@ describe("observeOnboardingRoute", () => {
     expect(
       getObserveSetupOnboardingParams("?setup=true&source=onboarding"),
     ).toEqual({
+      credentialStep: null,
+      credentialsCopied: false,
       isOnboarding: true,
       mode: OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE,
       source: OBSERVE_ONBOARDING_SOURCES.ONBOARDING,
@@ -77,6 +79,8 @@ describe("observeOnboardingRoute", () => {
         "?tour_anchor=observe_create_project_button&journey_step=connect_observability",
       ),
     ).toEqual({
+      credentialStep: null,
+      credentialsCopied: false,
       isOnboarding: true,
       mode: OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE,
       source: OBSERVE_ONBOARDING_SOURCES.ONBOARDING,
@@ -88,9 +92,26 @@ describe("observeOnboardingRoute", () => {
     expect(
       getObserveSetupOnboardingParams("?setup=true&source=sample_trace_review"),
     ).toEqual({
+      credentialStep: null,
+      credentialsCopied: false,
       isOnboarding: true,
       mode: OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE,
       source: OBSERVE_ONBOARDING_SOURCES.SAMPLE_TRACE_REVIEW,
+      tourAnchor: null,
+    });
+  });
+
+  it("reads the returned-credentials setup state", () => {
+    expect(
+      getObserveSetupOnboardingParams(
+        "?setup=true&source=onboarding&credential_step=done",
+      ),
+    ).toEqual({
+      credentialStep: "done",
+      credentialsCopied: true,
+      isOnboarding: true,
+      mode: OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE,
+      source: OBSERVE_ONBOARDING_SOURCES.ONBOARDING,
       tourAnchor: null,
     });
   });
@@ -260,6 +281,15 @@ describe("observeOnboardingRoute", () => {
     });
     expect(
       getObserveOnboardingCopy(OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE, {
+        credentialsCopied: true,
+      }),
+    ).toMatchObject({
+      currentStep: "Credentials ready",
+      primaryLabel: "Paste keys and run trace",
+      title: "Credentials copied",
+    });
+    expect(
+      getObserveOnboardingCopy(OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE, {
         source: OBSERVE_ONBOARDING_SOURCES.SAMPLE_TRACE_REVIEW,
       }),
     ).toMatchObject({
@@ -296,6 +326,7 @@ describe("observeOnboardingRoute", () => {
   it("builds a safe setup route-focus payload", () => {
     expect(
       buildObserveRouteFocusPayload({
+        credentialStep: "done",
         mode: OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE,
       }),
     ).toMatchObject({
@@ -306,11 +337,12 @@ describe("observeOnboardingRoute", () => {
       artifactType: "observe_setup",
       artifactId: "observe-setup",
       metadata: {
+        credential_step: "done",
         route_mode: "setup-observe",
         setup: true,
       },
       idempotencyKey:
-        "onboarding_observe_route_focus_viewed:setup-observe:observe-setup",
+        "onboarding_observe_route_focus_viewed:done:setup-observe:observe-setup",
       isSample: false,
     });
   });

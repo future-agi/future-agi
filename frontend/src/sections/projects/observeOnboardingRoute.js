@@ -14,6 +14,10 @@ export const OBSERVE_ONBOARDING_SOURCES = {
   SAMPLE_TRACE_REVIEW: "sample_trace_review",
 };
 
+export const OBSERVE_ONBOARDING_CREDENTIAL_STEPS = {
+  DONE: "done",
+};
+
 const projectModeSet = new Set([
   OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR,
   OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
@@ -65,6 +69,7 @@ export const getObserveOnboardingParams = (search = "") => {
 export const getObserveSetupOnboardingParams = (search = "") => {
   const params = new URLSearchParams(search);
   const source = params.get("source");
+  const credentialStep = params.get("credential_step");
   const journeyMode = journeyStepMode[params.get("journey_step")] || null;
   const isSetupJourney = journeyMode === OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE;
   const isOnboarding = setupSourceSet.has(source) || isSetupJourney;
@@ -83,6 +88,10 @@ export const getObserveSetupOnboardingParams = (search = "") => {
       : isSetupJourney
         ? OBSERVE_ONBOARDING_SOURCES.ONBOARDING
         : null,
+    credentialStep: isOnboarding ? credentialStep : null,
+    credentialsCopied:
+      isOnboarding &&
+      credentialStep === OBSERVE_ONBOARDING_CREDENTIAL_STEPS.DONE,
     tourAnchor: params.get("tour_anchor"),
   };
 };
@@ -120,7 +129,10 @@ export const observeOnboardingStage = (mode) => {
   return "waiting_for_first_trace";
 };
 
-export const getObserveOnboardingCopy = (mode, { source } = {}) => {
+export const getObserveOnboardingCopy = (
+  mode,
+  { credentialsCopied, source } = {},
+) => {
   if (mode === OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE) {
     if (source === OBSERVE_ONBOARDING_SOURCES.SAMPLE_TRACE_REVIEW) {
       return {
@@ -135,6 +147,22 @@ export const getObserveOnboardingCopy = (mode, { source } = {}) => {
           { label: "Trace", complete: false },
         ],
         title: "Connect your app",
+      };
+    }
+
+    if (credentialsCopied) {
+      return {
+        currentStep: "Credentials ready",
+        description:
+          "Paste both copied values into the setup snippet, then run one real or test request.",
+        primaryLabel: "Paste keys and run trace",
+        secondaryLabel: null,
+        steps: [
+          { label: "Keys", complete: true },
+          { label: "Trace", complete: false },
+          { label: "Review", complete: false },
+        ],
+        title: "Credentials copied",
       };
     }
 
@@ -258,6 +286,7 @@ export const getFirstTraceIdFromTraceListResult = (result = {}) => {
 };
 
 export const buildObserveRouteFocusPayload = ({
+  credentialStep,
   observeId,
   mode,
   setupSource,
@@ -289,6 +318,7 @@ export const buildObserveRouteFocusPayload = ({
     projectId: isSetupMode ? undefined : observeId,
     metadata: compactMetadata({
       project_id: isSetupMode ? undefined : observeId,
+      credential_step: isSetupMode ? credentialStep : undefined,
       route_mode: normalizedMode,
       setup_source: isSampleReviewSetup ? setupSource : undefined,
       setup: isSetupMode ? true : undefined,
@@ -296,6 +326,7 @@ export const buildObserveRouteFocusPayload = ({
     idempotencyKey: [
       "onboarding_observe_route_focus_viewed",
       isSampleReviewSetup ? setupSource : undefined,
+      isSetupMode ? credentialStep : undefined,
       safeKeyPart(normalizedMode, "mode"),
       artifactId,
     ]
