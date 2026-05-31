@@ -3725,6 +3725,33 @@ export const SampleProjectRequestApiContextStatus = {
   route_unavailable: 'route_unavailable',
 } as const;
 
+export type SampleProjectRequestApiQuickStartGoal = typeof SampleProjectRequestApiQuickStartGoal[keyof typeof SampleProjectRequestApiQuickStartGoal];
+
+
+export const SampleProjectRequestApiQuickStartGoal = {
+  monitor_production_ai_app: 'monitor_production_ai_app',
+  improve_prompts: 'improve_prompts',
+  build_ai_agent: 'build_ai_agent',
+  control_model_traffic: 'control_model_traffic',
+  evaluate_quality: 'evaluate_quality',
+  connect_voice_ai_agent: 'connect_voice_ai_agent',
+  explore_sample_data: 'explore_sample_data',
+} as const;
+
+export type SampleProjectRequestApiQuickStartPrimaryPath = typeof SampleProjectRequestApiQuickStartPrimaryPath[keyof typeof SampleProjectRequestApiQuickStartPrimaryPath];
+
+
+export const SampleProjectRequestApiQuickStartPrimaryPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
 export interface SampleProjectRequestApi {
   /** @minLength 1 */
   path?: string;
@@ -3742,6 +3769,10 @@ export interface SampleProjectRequestApi {
   link_issued_at?: string;
   stale_reason?: string;
   context_status?: SampleProjectRequestApiContextStatus;
+  quick_start_goal?: SampleProjectRequestApiQuickStartGoal;
+  /** @pattern ^[a-z0-9_:-]{1,80}$ */
+  quick_start_id?: string;
+  quick_start_primary_path?: SampleProjectRequestApiQuickStartPrimaryPath;
 }
 
 export interface SampleProjectResponseApi {
@@ -24879,6 +24910,9 @@ stale_reason?: string;
 context_status?: AccountsActivationStateListContextStatus;
 mode?: string;
 quick_start_goal?: string;
+/**
+ * @pattern ^[a-z0-9_:-]{1,80}$
+ */
 quick_start_id?: string;
 quick_start_primary_path?: string;
 debug?: boolean;

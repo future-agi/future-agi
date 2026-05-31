@@ -223,6 +223,10 @@ async function main() {
     if (QUICK_START.directSampleTrace) {
       await waitForSampleTraceRoute(page, { timeout: 30000 });
       sampleTraceUrl = relativeUrl(page.url());
+      assert(
+        hasSampleQuickStartParams(sampleTraceUrl),
+        `Expected sample trace URL quick-start attribution, got ${sampleTraceUrl}`,
+      );
       await expectVisibleText(page, "Trace", { exact: true });
       await expectVisibleText(page, "Sample trace review");
       await expectVisibleText(page, "Connect your app", { exact: true });
@@ -312,6 +316,10 @@ async function main() {
         sampleProjectPosts[0]?.open_after_create === true,
         `Expected open_after_create=true, got ${sampleProjectPosts[0]?.open_after_create}`,
       );
+      assertExpectedAttribution(
+        sampleProjectPosts[0],
+        QUICK_START.expectedAttribution,
+      );
       assert(
         sampleProjectResponses[0]?.activation_state?.is_activated === false,
         `Sample preview must not activate the workspace; got ${sampleProjectResponses[0]?.activation_state?.is_activated}`,
@@ -358,7 +366,9 @@ async function main() {
             sample_trace_entry: QUICK_START.directSampleTrace
               ? {
                   clicks_after_quick_start: 0,
+                  quick_start_goal: "explore_sample_data",
                   quick_start_id: "sample_preview",
+                  quick_start_primary_path: "sample",
                   source: "setup_org",
                 }
               : null,
@@ -896,7 +906,7 @@ function slashPath(path) {
 
 function safeUrl(value) {
   try {
-    return new URL(value);
+    return new URL(value, APP_BASE);
   } catch {
     return null;
   }
@@ -1046,6 +1056,13 @@ function hasSampleQuickStartMetadata(payload) {
   const metadata = paramsObject(payload?.metadata);
   return Object.entries(SAMPLE_QUICK_START_METADATA).every(
     ([key, expected]) => metadata?.[key] === expected,
+  );
+}
+
+function hasSampleQuickStartParams(value) {
+  const params = paramsObject(value);
+  return Object.entries(SAMPLE_QUICK_START_METADATA).every(
+    ([key, expected]) => params?.[key] === expected,
   );
 }
 

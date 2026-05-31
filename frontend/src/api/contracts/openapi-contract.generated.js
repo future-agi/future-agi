@@ -68581,6 +68581,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "route_unavailable"
           ],
           "x-nullable": true
+        },
+        "quick_start_goal": {
+          "title": "Quick start goal",
+          "type": "string",
+          "enum": [
+            "monitor_production_ai_app",
+            "improve_prompts",
+            "build_ai_agent",
+            "control_model_traffic",
+            "evaluate_quality",
+            "connect_voice_ai_agent",
+            "explore_sample_data"
+          ],
+          "x-nullable": true
+        },
+        "quick_start_id": {
+          "title": "Quick start id",
+          "type": "string",
+          "pattern": "^[a-z0-9_:-]{1,80}$",
+          "x-nullable": true
+        },
+        "quick_start_primary_path": {
+          "title": "Quick start primary path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ],
+          "x-nullable": true
         }
       }
     },

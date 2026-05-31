@@ -303,6 +303,10 @@ async function main() {
     if (SAMPLE_ONLY) {
       await waitForSampleTraceRoute(page, { timeout: 45000 });
       setupOrgEntryUrl = relativeUrl(page.url());
+      assert(
+        hasSampleQuickStartParams(setupOrgEntryUrl),
+        `Expected sample trace URL quick-start attribution, got ${setupOrgEntryUrl}`,
+      );
     } else {
       await page.waitForFunction(
         () => {
@@ -484,6 +488,12 @@ async function main() {
         `Expected sample open_after_create=true, got ${evidence.sampleProjectPosts[0]?.open_after_create}`,
       );
       assert(
+        hasSampleQuickStartParams(evidence.sampleProjectPosts[0]),
+        `Expected sample project POST quick-start attribution, got ${JSON.stringify(
+          evidence.sampleProjectPosts[0],
+        )}`,
+      );
+      assert(
         browserState.initialRender === "done",
         `Expected initial-render=done, got ${browserState.initialRender}`,
       );
@@ -513,7 +523,9 @@ async function main() {
           sample_project_response: evidence.sampleProjectResponses[0],
           sample_trace_entry: {
             clicks_after_quick_start: 0,
+            quick_start_goal: "explore_sample_data",
             quick_start_id: "sample_preview",
+            quick_start_primary_path: "sample",
             source: "setup_org",
           },
           setup_quick_start: "sample_preview",
@@ -1996,7 +2008,7 @@ function redactSensitiveAuth(value) {
 
 function safeUrl(value) {
   try {
-    return new URL(value);
+    return new URL(value, APP_BASE);
   } catch {
     return null;
   }
@@ -2112,6 +2124,13 @@ function hasSampleQuickStartMetadata(payload) {
   const metadata = paramsObject(payload?.metadata);
   return Object.entries(SAMPLE_QUICK_START_METADATA).every(
     ([key, expected]) => metadata?.[key] === expected,
+  );
+}
+
+function hasSampleQuickStartParams(value) {
+  const params = paramsObject(value);
+  return Object.entries(SAMPLE_QUICK_START_METADATA).every(
+    ([key, expected]) => params?.[key] === expected,
   );
 }
 

@@ -31,20 +31,34 @@ function reportFor(child, dir, overrides = {}) {
         activation_state: { is_activated: false },
         sample_project: {
           created: true,
-          entry_route: "/dashboard/observe/sample/trace/sample?sample=true",
+          entry_route:
+            "/dashboard/observe/sample/trace/sample?sample=true&from=onboarding",
         },
       },
+    },
+    sample_project_post: {
+      quick_start_goal: "explore_sample_data",
+      quick_start_id: "sample_preview",
+      quick_start_primary_path: "sample",
     },
     sample_trace_activation_event: {
       event_name: "sample_trace_detail_opened",
       is_sample: true,
+      metadata: {
+        quick_start_goal: "explore_sample_data",
+        quick_start_id: "sample_preview",
+        quick_start_primary_path: "sample",
+      },
     },
     sample_trace_entry: {
       clicks_after_quick_start: 0,
+      quick_start_goal: "explore_sample_data",
       quick_start_id: "sample_preview",
+      quick_start_primary_path: "sample",
       source: "setup_org",
     },
-    sample_trace_url: "/dashboard/observe/sample/trace/sample?sample=true",
+    sample_trace_url:
+      "/dashboard/observe/sample/trace/sample?sample=true&from=onboarding&quick_start_goal=explore_sample_data&quick_start_id=sample_preview&quick_start_primary_path=sample",
     screenshot: "/tmp/sample.png",
     setup_quick_start: "sample_preview",
     signup_post: { email: "new@example.com", password: "[redacted]" },
@@ -206,7 +220,9 @@ test("proof pack validator rejects sample proof that needs a second click", asyn
         evidence: {
           sample_trace_entry: {
             clicks_after_quick_start: 1,
+            quick_start_goal: "explore_sample_data",
             quick_start_id: "sample_preview",
+            quick_start_primary_path: "sample",
             source: "setup_org",
           },
         },
@@ -221,6 +237,55 @@ test("proof pack validator rejects sample proof that needs a second click", asyn
     result.failed_checks.some(
       (check) =>
         check.key === "signup-sample-open-real:sample:zero_click_entry",
+    ),
+  );
+});
+
+test("proof pack validator rejects sample proof without route attribution", async () => {
+  const { manifestPath } = await writeProofPack({
+    reports: {
+      "signup-sample-open-real": {
+        evidence: {
+          sample_trace_url:
+            "/dashboard/observe/sample/trace/sample?sample=true&from=onboarding",
+        },
+      },
+    },
+  });
+
+  const result = await validateProofPack(manifestPath);
+
+  assert.equal(result.status, "failed");
+  assert(
+    result.failed_checks.some(
+      (check) =>
+        check.key === "signup-sample-open-real:sample:route_attribution",
+    ),
+  );
+});
+
+test("proof pack validator rejects sample proof without sample project POST attribution", async () => {
+  const { manifestPath } = await writeProofPack({
+    reports: {
+      "signup-sample-open-real": {
+        evidence: {
+          sample_project_post: {
+            source: "setup_org",
+            reason: "sample_preview",
+          },
+        },
+      },
+    },
+  });
+
+  const result = await validateProofPack(manifestPath);
+
+  assert.equal(result.status, "failed");
+  assert(
+    result.failed_checks.some(
+      (check) =>
+        check.key ===
+        "signup-sample-open-real:sample:sample_project_post_attribution",
     ),
   );
 });

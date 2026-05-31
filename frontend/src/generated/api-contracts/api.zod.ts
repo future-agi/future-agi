@@ -1304,6 +1304,9 @@ export const AccountsActivationEventsCreateResponse = zod.object({
 })
 
 
+export const accountsActivationStateListQueryQuickStartIdRegExp = new RegExp('^[a-z0-9_:-]{1,80}$');
+
+
 export const AccountsActivationStateListQueryParams = zod.object({
   "source": zod.string().optional(),
   "campaign_key": zod.string().optional(),
@@ -1319,7 +1322,7 @@ export const AccountsActivationStateListQueryParams = zod.object({
   "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']).optional(),
   "mode": zod.string().optional(),
   "quick_start_goal": zod.string().optional(),
-  "quick_start_id": zod.string().optional(),
+  "quick_start_id": zod.string().regex(accountsActivationStateListQueryQuickStartIdRegExp).optional(),
   "quick_start_primary_path": zod.string().optional(),
   "debug": zod.boolean().optional()
 })
@@ -4847,6 +4850,8 @@ export const AccountsResendInvitationEmailsCreateResponse = zod.array(AccountsRe
 export const accountsSampleProjectCreateBodyPathDefault = `observe`;
 
 export const accountsSampleProjectCreateBodyOpenAfterCreateDefault = false;
+export const accountsSampleProjectCreateBodyQuickStartIdRegExp = new RegExp('^[a-z0-9_:-]{1,80}$');
+
 
 export const AccountsSampleProjectCreateBody = zod.object({
   "path": zod.string().min(1).default(accountsSampleProjectCreateBodyPathDefault),
@@ -4863,7 +4868,10 @@ export const AccountsSampleProjectCreateBody = zod.object({
   "target_event": zod.string().optional(),
   "link_issued_at": zod.string().optional(),
   "stale_reason": zod.string().optional(),
-  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']).optional()
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']).optional(),
+  "quick_start_goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']).optional(),
+  "quick_start_id": zod.string().regex(accountsSampleProjectCreateBodyQuickStartIdRegExp).optional(),
+  "quick_start_primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
 })
 
 export const accountsSampleProjectCreateResponseStatusDefault = true;

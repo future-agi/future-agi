@@ -8,6 +8,14 @@ const MANIFEST_SCHEMA =
 const REPORT_SCHEMA = "onboarding-real-signup-smoke-report-2026-05-29.v1";
 const VALIDATION_SCHEMA =
   "onboarding-real-signup-proof-pack-validation-2026-05-30.v1";
+const SAMPLE_QUICK_START_ATTRIBUTION = Object.freeze({
+  quick_start_goal: "explore_sample_data",
+  quick_start_id: "sample_preview",
+  quick_start_primary_path: "sample",
+});
+const QUICK_START_QUERY_KEYS = Object.freeze(
+  Object.keys(SAMPLE_QUICK_START_ATTRIBUTION),
+);
 
 const EXPECTED_CHILDREN = [
   {
@@ -107,6 +115,61 @@ function isRedactedAuth(payload) {
   );
 }
 
+function safeUrl(value) {
+  if (!value || typeof value !== "string") return null;
+  try {
+    return new URL(value, "https://futureagi.local");
+  } catch {
+    return null;
+  }
+}
+
+function paramsObject(value) {
+  if (!value) return {};
+  if (typeof value === "string") {
+    const url = safeUrl(value);
+    if (url && (value.startsWith("/") || value.includes("?"))) {
+      return Object.fromEntries(url.searchParams);
+    }
+    try {
+      return JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  if (value instanceof URLSearchParams) {
+    return Object.fromEntries(value);
+  }
+  if (typeof value === "object") {
+    return value;
+  }
+  return {};
+}
+
+function hasSampleQuickStartAttribution(value) {
+  const params = paramsObject(value);
+  return Object.entries(SAMPLE_QUICK_START_ATTRIBUTION).every(
+    ([key, expected]) => params?.[key] === expected,
+  );
+}
+
+function sameSampleTraceRoute(responseEntryRoute, browserRoute) {
+  const responseUrl = safeUrl(responseEntryRoute);
+  const browserUrl = safeUrl(browserRoute);
+  if (!responseUrl || !browserUrl) return false;
+  QUICK_START_QUERY_KEYS.forEach((key) => {
+    browserUrl.searchParams.delete(key);
+  });
+
+  return (
+    responseUrl.pathname === browserUrl.pathname &&
+    responseUrl.searchParams.get("sample") === "true" &&
+    browserUrl.searchParams.get("sample") === "true" &&
+    (responseUrl.searchParams.get("from") || "") ===
+      (browserUrl.searchParams.get("from") || "")
+  );
+}
+
 function childById(manifest, id) {
   return (manifest.children || []).find((child) => child?.id === id);
 }
@@ -132,6 +195,7 @@ function validateSampleEvidence(checks, childId, report) {
     "browser_state",
     "onboarding_post",
     "sample_open_state",
+    "sample_project_post",
     "sample_project_response",
     "sample_trace_activation_event",
     "sample_trace_entry",
@@ -149,18 +213,37 @@ function validateSampleEvidence(checks, childId, report) {
   addCheck(
     checks,
     evidence.sample_trace_entry?.clicks_after_quick_start === 0 &&
+      evidence.sample_trace_entry?.quick_start_goal ===
+        SAMPLE_QUICK_START_ATTRIBUTION.quick_start_goal &&
       evidence.sample_trace_entry?.quick_start_id === "sample_preview" &&
+      evidence.sample_trace_entry?.quick_start_primary_path ===
+        SAMPLE_QUICK_START_ATTRIBUTION.quick_start_primary_path &&
       evidence.sample_trace_entry?.source === "setup_org",
     `${childId}:sample:zero_click_entry`,
     "Sample proof opened the sample trace directly from setup quick start.",
   );
   addCheck(
     checks,
+    hasSampleQuickStartAttribution(evidence.sample_trace_url),
+    `${childId}:sample:route_attribution`,
+    "Sample proof keeps quick-start attribution on the browser trace route.",
+  );
+  addCheck(
+    checks,
+    hasSampleQuickStartAttribution(evidence.sample_project_post),
+    `${childId}:sample:sample_project_post_attribution`,
+    "Sample proof sends quick-start attribution when opening the sample project.",
+  );
+  addCheck(
+    checks,
     evidence.sample_trace_activation_event?.event_name ===
       "sample_trace_detail_opened" &&
-      evidence.sample_trace_activation_event?.is_sample === true,
+      evidence.sample_trace_activation_event?.is_sample === true &&
+      hasSampleQuickStartAttribution(
+        evidence.sample_trace_activation_event?.metadata,
+      ),
     `${childId}:sample:event`,
-    "Sample proof records sample trace detail as sample-only evidence.",
+    "Sample proof records sample trace detail as attributed sample-only evidence.",
   );
   addCheck(
     checks,
@@ -173,8 +256,10 @@ function validateSampleEvidence(checks, childId, report) {
     checks,
     evidence.sample_project_response?.result?.sample_project?.created ===
       true &&
-      evidence.sample_project_response?.result?.sample_project?.entry_route ===
-        evidence.sample_trace_url &&
+      sameSampleTraceRoute(
+        evidence.sample_project_response?.result?.sample_project?.entry_route,
+        evidence.sample_trace_url,
+      ) &&
       evidence.sample_project_response?.result?.activation_state
         ?.is_activated === false,
     `${childId}:sample:response_contract`,
