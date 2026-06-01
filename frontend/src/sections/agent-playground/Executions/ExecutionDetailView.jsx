@@ -253,6 +253,7 @@ export default function ExecutionDetailView({ graphId, executionId }) {
             label: "Review another node",
             onClick: () => setSelectedNodeId(null),
           }}
+          singleActionFocus={showCoverageHandoff}
           steps={[
             { label: "Agent", complete: true },
             { label: "Scenario", complete: true },

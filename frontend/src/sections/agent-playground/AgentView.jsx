@@ -84,6 +84,7 @@ function AgentEmptyState() {
           onClick: () => createGraph(),
           disabled: isPending,
         }}
+        singleActionFocus={showCreateFocus}
         steps={[
           { label: "Agent", complete: false },
           { label: "Scenario", complete: false },
@@ -98,15 +99,17 @@ function AgentEmptyState() {
         description="Break down complex tasks into sequential steps that build upon each other."
         sx={{ flex: 1, minHeight: 0 }}
         action={
-          <LoadingButton
-            loading={isPending}
-            onClick={() => createGraph()}
-            size="small"
-            variant="contained"
-            color="primary"
-          >
-            Start creating
-          </LoadingButton>
+          showCreateFocus ? null : (
+            <LoadingButton
+              loading={isPending}
+              onClick={() => createGraph()}
+              size="small"
+              variant="contained"
+              color="primary"
+            >
+              Start creating
+            </LoadingButton>
+          )
         }
       />
     </Box>

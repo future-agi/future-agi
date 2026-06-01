@@ -70,6 +70,24 @@ describe("AgentOnboardingFocusPanel", () => {
     expect(screen.getByText("Add one node first")).toBeVisible();
   });
 
+  it("hides secondary actions in single-action focus mode", () => {
+    render(
+      <AgentOnboardingFocusPanel
+        singleActionFocus
+        currentStep="Agent"
+        description="Create one agent and run it once."
+        primaryAction={{ label: "Create Agent", onClick: vi.fn() }}
+        secondaryAction={{ label: "Open first agent", onClick: vi.fn() }}
+        title="Create the first agent"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /create agent/i })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /open first agent/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("uses the first incomplete step when current step copy is omitted", () => {
     render(
       <AgentOnboardingFocusPanel

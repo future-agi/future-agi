@@ -160,6 +160,30 @@ export default function AgentListView() {
     [handleOpenAgentForOnboarding, navigate, showCreateFocus],
   );
 
+  const onboardingPrimaryAction = useMemo(() => {
+    if (items[0]) {
+      return {
+        label: "Open first agent",
+        onClick: () => handleOpenAgentForOnboarding(items[0]),
+      };
+    }
+
+    return {
+      label: "Create Agent",
+      onClick: () => createAgent(),
+      disabled: isCreatingAgent,
+    };
+  }, [createAgent, handleOpenAgentForOnboarding, isCreatingAgent, items]);
+
+  const onboardingSecondaryAction = useMemo(() => {
+    if (!items[0]) return null;
+    return {
+      label: "Create Agent",
+      onClick: () => createAgent(),
+      disabled: isCreatingAgent,
+    };
+  }, [createAgent, isCreatingAgent, items]);
+
   const columns = useMemo(
     () => [
       {
@@ -339,47 +363,43 @@ export default function AgentListView() {
             other
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          size="small"
-          sx={{ borderRadius: "4px", height: 30, px: "4px", minWidth: 105 }}
-          component="a"
-          href="https://docs.futureagi.com/docs/agent-playground"
-          target="_blank"
-        >
-          <SvgColor
-            src="/assets/icons/agent/docs.svg"
-            sx={{ height: 16, width: 16, mr: 1 }}
-          />
-          <Typography typography="s2" fontWeight="fontWeightMedium">
-            View Docs
-          </Typography>
-        </Button>
+        {!showCreateFocus ? (
+          <Button
+            variant="outlined"
+            size="small"
+            sx={{ borderRadius: "4px", height: 30, px: "4px", minWidth: 105 }}
+            component="a"
+            href="https://docs.futureagi.com/docs/agent-playground"
+            target="_blank"
+          >
+            <SvgColor
+              src="/assets/icons/agent/docs.svg"
+              sx={{ height: 16, width: 16, mr: 1 }}
+            />
+            <Typography typography="s2" fontWeight="fontWeightMedium">
+              View Docs
+            </Typography>
+          </Button>
+        ) : null}
       </Box>
 
       <AgentOnboardingFocusPanel
         currentStep="Agent"
-        description="Create or open one agent workflow so it can be run and reviewed from the builder."
-        hidden={!showCreateFocus}
-        primaryAction={{
-          label: "Create Agent",
-          onClick: () => createAgent(),
-          disabled: isCreatingAgent,
-        }}
-        secondaryAction={
+        description={
           items[0]
-            ? {
-                label: "Open first agent",
-                onClick: () => handleOpenAgentForOnboarding(items[0]),
-              }
-            : null
+            ? "Open an existing agent workflow, then run it once from the builder."
+            : "Create one agent workflow, then run it once from the builder."
         }
+        hidden={!showCreateFocus}
+        primaryAction={onboardingPrimaryAction}
+        secondaryAction={onboardingSecondaryAction}
+        singleActionFocus={showCreateFocus}
         steps={[
           { label: "Agent", complete: items.length > 0 },
           { label: "Scenario", complete: false },
           { label: "Review", complete: false },
         ]}
-        title="Create the first agent"
+        title={items[0] ? "Open an agent to run" : "Create the first agent"}
         tourAnchor={tourAnchor}
       />
 
@@ -462,7 +482,7 @@ export default function AgentListView() {
               </Typography>
             </Button>
           </Box>
-        ) : (
+        ) : showCreateFocus ? null : (
           <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
             <Button
               variant="outlined"

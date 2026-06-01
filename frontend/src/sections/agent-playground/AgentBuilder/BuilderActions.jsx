@@ -177,6 +177,7 @@ export default function BuilderActions({
                 }
               : null
           }
+          singleActionFocus={showRunScenarioFocus}
           steps={[
             { label: "Create", complete: true },
             { label: "Prompt", complete: true },

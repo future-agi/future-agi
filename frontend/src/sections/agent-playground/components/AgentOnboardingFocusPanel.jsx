@@ -24,6 +24,7 @@ export default function AgentOnboardingFocusPanel({
   hidden = false,
   primaryAction,
   secondaryAction,
+  singleActionFocus = false,
   steps = [],
   sx,
   title,
@@ -93,17 +94,6 @@ export default function AgentOnboardingFocusPanel({
           ) : null}
         </Stack>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          {secondaryAction ? (
-            <Button
-              variant="outlined"
-              onClick={secondaryAction.onClick}
-              disabled={secondaryAction.disabled}
-              startIcon={<Iconify icon="mdi:arrow-right" width={18} />}
-              sx={{ whiteSpace: "nowrap" }}
-            >
-              {secondaryAction.label}
-            </Button>
-          ) : null}
           {primaryAction ? (
             <Button
               data-tour-anchor={primaryAction.tourAnchor || tourAnchor}
@@ -114,6 +104,17 @@ export default function AgentOnboardingFocusPanel({
               sx={{ whiteSpace: "nowrap" }}
             >
               {primaryAction.label}
+            </Button>
+          ) : null}
+          {secondaryAction && !singleActionFocus ? (
+            <Button
+              variant="outlined"
+              onClick={secondaryAction.onClick}
+              disabled={secondaryAction.disabled}
+              startIcon={<Iconify icon="mdi:arrow-right" width={18} />}
+              sx={{ whiteSpace: "nowrap" }}
+            >
+              {secondaryAction.label}
             </Button>
           ) : null}
         </Stack>
@@ -136,6 +137,7 @@ AgentOnboardingFocusPanel.propTypes = {
   hidden: PropTypes.bool,
   primaryAction: actionShape,
   secondaryAction: actionShape,
+  singleActionFocus: PropTypes.bool,
   steps: PropTypes.arrayOf(
     PropTypes.shape({
       complete: PropTypes.bool,

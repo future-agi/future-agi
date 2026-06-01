@@ -177,6 +177,7 @@ export default function Executions() {
             label: "Run another scenario",
             onClick: () => navigate(buildRoute("run-scenario")),
           }}
+          singleActionFocus={showReviewFocus}
           steps={[
             { label: "Agent", complete: true },
             { label: "Scenario", complete: true },
