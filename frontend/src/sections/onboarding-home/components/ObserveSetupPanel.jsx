@@ -16,15 +16,15 @@ import { journeyCurrentStep } from "./journey-guide-utils";
 const OBSERVE_PACKAGE_OPTIONS = [
   { id: "openai", label: "OpenAI", languages: ["python", "typescript"] },
   { id: "anthropic", label: "Anthropic", languages: ["python", "typescript"] },
-  { id: "langchain", label: "LangChain", languages: ["python", "typescript"] },
+  { id: "langchain", label: "LangChain", languages: ["python"] },
   {
     id: "openai_agents",
     label: "OpenAI Agents",
-    languages: ["python", "typescript"],
+    languages: ["python"],
   },
   { id: "llamaindex", label: "LlamaIndex", languages: ["python"] },
   { id: "bedrock", label: "Bedrock", languages: ["python"] },
-  { id: "mcp", label: "MCP", languages: ["python", "typescript"] },
+  { id: "mcp", label: "MCP", languages: ["python"] },
 ];
 
 const LANGUAGE_OPTIONS = [
@@ -58,6 +58,16 @@ const normalizeLanguage = ({ language, provider }) => {
   return selectedPackage.languages.includes(normalizedLanguage)
     ? normalizedLanguage
     : selectedPackage.languages[0];
+};
+
+const packageSetupLabel = ({ language, provider }) => {
+  const selectedPackage =
+    OBSERVE_PACKAGE_OPTIONS.find((option) => option.id === provider) ||
+    OBSERVE_PACKAGE_OPTIONS[0];
+  const languageLabel =
+    LANGUAGE_OPTIONS.find((option) => option.id === language)?.label ||
+    "Python";
+  return `${selectedPackage.label} ${languageLabel}`;
 };
 
 const hrefWithObservePackage = (href, { language, provider } = {}) => {
@@ -199,12 +209,19 @@ export default function ObserveSetupPanel({
 
   const packageAwareAction = useMemo(() => {
     if (!shouldShowPackagePicker || !action?.href) return action;
+    const setupLabel = packageSetupLabel({
+      language: selectedLanguage,
+      provider: selectedProvider,
+    });
     return {
       ...action,
+      ctaLabel: `Open ${setupLabel} setup`,
+      description: `Open setup with ${setupLabel} install, instrumentation, smoke-test code, and trace checks.`,
       href: hrefWithObservePackage(action.href, {
         language: selectedLanguage,
         provider: selectedProvider,
       }),
+      title: `Open ${setupLabel} setup`,
     };
   }, [action, selectedLanguage, selectedProvider, shouldShowPackagePicker]);
   const actionSlot = (

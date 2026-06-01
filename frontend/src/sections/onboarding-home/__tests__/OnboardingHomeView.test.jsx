@@ -405,7 +405,7 @@ describe("OnboardingHomeView", () => {
     const setupUrl = new URL(
       within(panel)
         .getByRole("link", {
-          name: /create observe project/i,
+          name: /open openai python setup/i,
         })
         .getAttribute("href"),
       "https://futureagi.test",
@@ -507,7 +507,7 @@ describe("OnboardingHomeView", () => {
 
     const setupUrl = new URL(
       screen
-        .getByRole("link", { name: /create observe project/i })
+        .getByRole("link", { name: /open anthropic typescript setup/i })
         .getAttribute("href"),
       "https://futureagi.test",
     );
@@ -520,7 +520,7 @@ describe("OnboardingHomeView", () => {
     });
 
     await userEvent.click(
-      screen.getByRole("link", { name: /create observe project/i }),
+      screen.getByRole("link", { name: /open anthropic typescript setup/i }),
     );
 
     expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
@@ -939,6 +939,8 @@ describe("OnboardingHomeView", () => {
       routeParams: {
         setup: "true",
         source: "onboarding",
+        provider: "openai",
+        language: "python",
         tour_anchor: "observe_create_project_button",
         journey_step: "connect_observability",
       },
@@ -1158,8 +1160,12 @@ describe("OnboardingHomeView", () => {
       );
       expect(within(panel).getByText("Later steps")).toBeVisible();
       expect(within(panel).queryByText("Show full path")).toBeNull();
+      const primaryLinkName =
+        quickStartPrimaryPath === "observe"
+          ? /open openai python setup/i
+          : new RegExp(primaryLabel, "i");
       const primaryLink = within(panel).getByRole("link", {
-        name: new RegExp(primaryLabel, "i"),
+        name: primaryLinkName,
       });
       const primaryUrl = new URL(
         primaryLink.getAttribute("href"),
@@ -1195,7 +1201,10 @@ describe("OnboardingHomeView", () => {
       }
       expect(
         within(panel).queryByRole("link", {
-          name: /open|get started|fallback/i,
+          name:
+            quickStartPrimaryPath === "observe"
+              ? /get started|fallback/i
+              : /open|get started|fallback/i,
         }),
       ).not.toBeInTheDocument();
       expect(screen.queryByTestId("onboarding-state-summary")).toBeNull();
@@ -1255,7 +1264,7 @@ describe("OnboardingHomeView", () => {
     expect(within(panel).getByText("Send first trace")).toBeVisible();
     expect(within(panel).getByText("Review first trace")).toBeVisible();
     const setupLink = screen.getByRole("link", {
-      name: /create observe project/i,
+      name: /open anthropic typescript setup/i,
     });
     const setupUrl = new URL(
       setupLink.getAttribute("href"),
@@ -1280,6 +1289,59 @@ describe("OnboardingHomeView", () => {
     expect(screen.queryByTestId("onboarding-state-summary")).toBeNull();
     expect(screen.queryByTestId("onboarding-product-loop-stepper")).toBeNull();
     expect(screen.queryByTestId("onboarding-path-card-grid")).toBeNull();
+  });
+
+  it("keeps observe setup links on supported package languages", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      setupQuickStartRoute({
+        goal: "monitor_production_ai_app",
+        id: "observe",
+        primaryPath: "observe",
+      }),
+    );
+
+    const panel = screen.getByTestId("observe-setup-panel");
+    await userEvent.click(
+      within(panel).getByRole("button", { name: /typescript/i }),
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", { name: /langchain/i }),
+    );
+
+    expect(
+      within(panel).getByRole("button", { name: /typescript/i }),
+    ).toBeDisabled();
+
+    const setupUrl = new URL(
+      within(panel)
+        .getByRole("link", { name: /open langchain python setup/i })
+        .getAttribute("href"),
+      "https://futureagi.test",
+    );
+    expect(setupUrl.pathname).toBe("/dashboard/observe");
+    expectRouteParams({
+      params: setupUrl.searchParams,
+      values: {
+        setup: "true",
+        source: "onboarding",
+        provider: "langchain",
+        language: "python",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+      },
+    });
   });
 
   it("shows the selected setup checklist when saved state points at another path", () => {
