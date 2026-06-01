@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { paths } from "src/routes/paths";
 
-import { normalizeActivationState } from "../activation-state-utils";
+import {
+  DEFAULT_PRODUCT_SETUP_HREF,
+  normalizeActivationState,
+} from "../activation-state-utils";
 import { getActivationStateFixture } from "../fixtures/activation-state.fixtures";
 import {
   isSafePostLoginReturnTo,
@@ -232,7 +235,7 @@ describe("post-login routing", () => {
       activationState: state("featureDisabled"),
     });
 
-    expect(destination.href).toBe(paths.dashboard.getstarted);
+    expect(destination.href).toBe(DEFAULT_PRODUCT_SETUP_HREF);
     expect(destination.reason).toBe("activation_feature_disabled");
   });
 

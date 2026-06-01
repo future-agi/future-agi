@@ -448,7 +448,7 @@ function evalHomeActivationState(auth) {
       completion_event: "eval_dataset_created",
       is_sample: false,
       route_available: true,
-      fallback_href: "/dashboard/get-started",
+      fallback_href: "/dashboard/home?path=evals",
       analytics: {
         event_name: "onboarding_recommended_action_clicked",
         source: "home",
@@ -457,8 +457,10 @@ function evalHomeActivationState(auth) {
     },
     fallback_action: {
       ...activationState.fallback_action,
-      title: "Open Get Started",
-      href: "/dashboard/get-started",
+      title: "Continue with Observe setup",
+      href: "/dashboard/observe?setup=true&source=onboarding",
+      cta_label: "Continue setup",
+      fallback_href: "/dashboard/observe",
     },
     available_paths: [
       {

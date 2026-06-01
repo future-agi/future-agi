@@ -50,6 +50,9 @@ describe("onboarding home events", () => {
     expect(OnboardingHomeEvents.recommendedActionClicked).toBe(
       "onboarding_recommended_action_clicked",
     );
+    expect(OnboardingHomeEvents.activationReached).toBe(
+      "onboarding_aha_moment_reached",
+    );
     expect(OnboardingHomeEvents.ahaMomentReached).toBe(
       "onboarding_aha_moment_reached",
     );

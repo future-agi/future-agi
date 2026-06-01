@@ -1,5 +1,9 @@
 export const ACTIVATION_STATE_SCHEMA_VERSION = "activation-state-2026-05-26.v1";
 
+export const DEFAULT_PRODUCT_SETUP_HREF =
+  "/dashboard/observe?setup=true&source=onboarding";
+export const DEFAULT_PRODUCT_SETUP_FALLBACK_HREF = "/dashboard/observe";
+
 const DEFAULT_PROGRESS = Object.freeze({
   build: "not_started",
   test: "not_started",
@@ -151,9 +155,10 @@ const normalizeStageCopy = (raw) => {
   if (!raw) return null;
   return {
     eyebrow: raw.eyebrow || "Setup",
-    title: raw.title || "Open Get Started",
+    title: raw.title || "Continue product setup",
     description:
-      raw.description || "The existing setup checklist is available.",
+      raw.description ||
+      "Create an Observe project, send one trace, and review it.",
   };
 };
 
@@ -1101,18 +1106,18 @@ export const makeActivationStateErrorFallback = (error) => {
     error?.message ||
     error?.detail ||
     "Activation state could not be loaded";
-  const getStartedRoute = {
-    href: "/dashboard/get-started",
+  const productSetupRoute = {
+    href: DEFAULT_PRODUCT_SETUP_HREF,
     is_available: true,
     reason: null,
   };
   const action = {
-    id: "open_get_started",
+    id: "continue_observe_setup",
     kind: "fallback",
-    title: "Open Get Started",
-    description: "Use the existing setup checklist.",
-    href: "/dashboard/get-started",
-    cta_label: "Open Get Started",
+    title: "Continue with Observe setup",
+    description: "Create an Observe project, send one trace, and review it.",
+    href: DEFAULT_PRODUCT_SETUP_HREF,
+    cta_label: "Continue setup",
     estimated_minutes: null,
     priority: 10,
     blocked: false,
@@ -1121,11 +1126,11 @@ export const makeActivationStateErrorFallback = (error) => {
     completion_event: null,
     is_sample: false,
     route_available: true,
-    fallback_href: "/dashboard/get-started",
+    fallback_href: DEFAULT_PRODUCT_SETUP_FALLBACK_HREF,
     analytics: {
       event_name: "onboarding_recommended_action_clicked",
       source: "api_error",
-      target_path: null,
+      target_path: "observe",
     },
   };
   return normalizeActivationState({
@@ -1183,7 +1188,7 @@ export const makeActivationStateErrorFallback = (error) => {
       onboarding_activation_state_api: false,
     },
     route_availability: {
-      get_started: getStartedRoute,
+      observe_setup: productSetupRoute,
     },
     email_context: null,
     last_meaningful_event: null,

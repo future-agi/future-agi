@@ -4,6 +4,7 @@ import {
   getActivationStateFixture,
 } from "../fixtures/activation-state.fixtures";
 import {
+  DEFAULT_PRODUCT_SETUP_HREF,
   hasOnePrimaryAction,
   hasSampleRoute,
   isInternalHref,
@@ -383,7 +384,7 @@ describe("activation-state utilities", () => {
     });
 
     expect(fallback.stage).toBe("feature_disabled");
-    expect(fallback.fallbackAction.href).toBe("/dashboard/get-started");
+    expect(fallback.fallbackAction.href).toBe(DEFAULT_PRODUCT_SETUP_HREF);
     expect(fallback.warnings).toContain("activation_state_request_failed");
   });
 

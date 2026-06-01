@@ -150,8 +150,8 @@ const isPreviewOnlyGoal = (goal) =>
 export const ONBOARDING_STAGE_COPY = {
   feature_disabled: {
     eyebrow: "Setup",
-    title: "Start with the setup checklist",
-    description: "The existing checklist is available for this workspace.",
+    title: "Continue product setup",
+    description: "Product setup is available for this workspace.",
   },
   workspace_missing: {
     eyebrow: "Workspace",
@@ -369,8 +369,8 @@ export const getStageCopy = (state) =>
   state?.stageCopy ||
   ONBOARDING_STAGE_COPY[state?.stage] || {
     eyebrow: "Setup",
-    title: "Open Get Started",
-    description: "The existing setup checklist is available.",
+    title: "Continue product setup",
+    description: "Create an Observe project, send one trace, and review it.",
   };
 
 export const readableToken = (value) =>

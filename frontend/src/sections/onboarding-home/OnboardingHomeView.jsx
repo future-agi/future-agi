@@ -412,7 +412,7 @@ export default function OnboardingHomeView() {
   const sampleProjectActions = useSampleProject();
   const [selectedGoal, setSelectedGoal] = useState(null);
   const activationEmailContextRef = useRef({});
-  const ahaMomentTrackedRef = useRef(new Set());
+  const activationReachedTrackedRef = useRef(new Set());
 
   const searchContext = useMemo(() => {
     const params = new URLSearchParams(location.search);
@@ -694,17 +694,17 @@ export default function OnboardingHomeView() {
     if (!trackContext || isError || !renderedState?.isActivated) return;
 
     const activationEvent = renderedState.lastMeaningfulEvent;
-    const ahaKey = [
+    const activationReachedKey = [
       renderedState.workspaceId || workspaceId || "workspace",
       renderedState.primaryPath || "path",
       renderedState.activatedAt ||
         activationEvent?.occurredAt ||
         renderedState.stage,
     ].join(":");
-    if (ahaMomentTrackedRef.current.has(ahaKey)) return;
+    if (activationReachedTrackedRef.current.has(activationReachedKey)) return;
 
-    ahaMomentTrackedRef.current.add(ahaKey);
-    trackOnboardingHomeEvent(OnboardingHomeEvents.ahaMomentReached, {
+    activationReachedTrackedRef.current.add(activationReachedKey);
+    trackOnboardingHomeEvent(OnboardingHomeEvents.activationReached, {
       ...trackContext,
       home_mode: renderedState.homeMode,
       activated_at: renderedState.activatedAt,
@@ -1505,7 +1505,7 @@ export default function OnboardingHomeView() {
 
         {renderedState.stage === "feature_disabled" ? (
           <Alert severity="info" sx={{ borderRadius: 1 }}>
-            The existing setup checklist is available for this workspace.
+            Continue with Observe setup to create a project and send a trace.
           </Alert>
         ) : null}
 

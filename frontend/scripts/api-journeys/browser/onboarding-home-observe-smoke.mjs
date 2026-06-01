@@ -135,7 +135,9 @@ const EXISTING_PROJECT = envFlag("ONBOARDING_SMOKE_EXISTING_PROJECT");
 const EXISTING_TRACE =
   EXISTING_PROJECT && envFlag("ONBOARDING_SMOKE_EXISTING_TRACE");
 const OPEN_SAMPLE_HOME = envFlag("ONBOARDING_SMOKE_OPEN_SAMPLE");
-const POST_AHA_HOME = envFlag("ONBOARDING_SMOKE_POST_AHA_HOME");
+const POST_ACTIVATION_HOME =
+  envFlag("ONBOARDING_SMOKE_POST_ACTIVATION_HOME") ||
+  envFlag("ONBOARDING_SMOKE_POST_AHA_HOME");
 const FEATURE_DISABLED_HOME = envFlag("ONBOARDING_SMOKE_FEATURE_DISABLED_HOME");
 const PATH_FOCUS = process.env.ONBOARDING_SMOKE_PATH_FOCUS || "";
 const ASSERT_DESTINATION_TOUR = envFlag(
@@ -163,8 +165,8 @@ const SCREENSHOT_PATH =
   }${EXISTING_TRACE ? "-first-trace" : ""}${
     OPEN_SAMPLE_HOME ? "-sample-open" : ""
   }${
-    POST_AHA_HOME ? "-post-aha-fallback" : ""
-  }${FEATURE_DISABLED_HOME ? "-get-started-fallback" : ""}${
+    POST_ACTIVATION_HOME ? "-post-activation-fallback" : ""
+  }${FEATURE_DISABLED_HOME ? "-product-setup-fallback" : ""}${
     PATH_FOCUS ? `-${PATH_FOCUS}-path-focus` : ""
   }${ASSERT_DESTINATION_TOUR ? "-destination-tour" : ""}${
     MISSING_DESTINATION_TOUR ? "-missing-tour-anchor" : ""
@@ -198,7 +200,8 @@ async function main() {
     setup_provider: SETUP_PROVIDER,
     setup_language: SETUP_LANGUAGE,
     open_sample_home: OPEN_SAMPLE_HOME,
-    post_aha_home: POST_AHA_HOME,
+    post_activation_home: POST_ACTIVATION_HOME,
+    post_aha_home: POST_ACTIVATION_HOME,
     feature_disabled_home: FEATURE_DISABLED_HOME,
     path_focus: PATH_FOCUS,
     assert_destination_tour: ASSERT_DESTINATION_TOUR,
@@ -283,25 +286,25 @@ async function main() {
       );
 
       await expectSelector(page, '[data-testid="onboarding-home-view"]');
-      await expectVisibleText(page, "Start with the setup checklist", {
+      await expectVisibleText(page, "Continue product setup", {
         exact: true,
       });
       await expectVisibleText(
         page,
-        "The existing setup checklist is available for this workspace.",
+        "Product setup is available for this workspace.",
         { exact: true },
       );
-      await expectVisibleText(page, "Open Get Started", { exact: true });
-      const getStartedHref = await visibleLinkHrefByText(
+      await expectVisibleText(page, "Continue setup", { exact: true });
+      const productSetupHref = await visibleLinkHrefByText(
         page,
-        "Open Get Started",
+        "Continue setup",
         { rootSelector: '[data-testid="onboarding-primary-action"]' },
       );
       assert(
-        getStartedHref === "/dashboard/get-started",
-        `Unexpected Get Started fallback CTA href: ${getStartedHref}`,
+        productSetupHref === "/dashboard/observe?setup=true&source=onboarding",
+        `Unexpected product setup fallback CTA href: ${productSetupHref}`,
       );
-      evidence.get_started_href = getStartedHref;
+      evidence.product_setup_href = productSetupHref;
       await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
       evidence.screenshot = SCREENSHOT_PATH;
       evidence.activation_state_requests = activationStateRequests.length;
@@ -327,7 +330,7 @@ async function main() {
       return;
     }
 
-    if (POST_AHA_HOME) {
+    if (POST_ACTIVATION_HOME) {
       await page.goto(`${APP_BASE}/dashboard/home?source=onboarding`, {
         waitUntil: "domcontentloaded",
       });
@@ -356,7 +359,7 @@ async function main() {
       );
       assert(
         !hasDailyQualityAction,
-        "Post-Aha fallback should not show a Daily Quality action when the route is unavailable.",
+        "Post-activation fallback should not show a Daily Quality action when the route is unavailable.",
       );
       const openObserveHref = await visibleLinkHrefByText(
         page,
@@ -367,8 +370,9 @@ async function main() {
       );
       assert(
         openObserveHref === "/dashboard/observe/observe-1",
-        `Unexpected post-Aha Observe CTA href: ${openObserveHref}`,
+        `Unexpected post-activation Observe CTA href: ${openObserveHref}`,
       );
+      evidence.post_activation_open_observe_href = openObserveHref;
       evidence.post_aha_open_observe_href = openObserveHref;
       await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
       evidence.screenshot = SCREENSHOT_PATH;
@@ -489,13 +493,13 @@ async function main() {
       });
       await expectVisibleText(page, "Start here", { exact: true });
       await expectVisibleText(page, "What happens next", { exact: true });
-      const getStartedVisible = await visibleActionExists(
+      const genericSetupVisible = await visibleActionExists(
         page,
-        "Open Get Started",
+        "Continue setup",
       );
       assert(
-        !getStartedVisible,
-        "Path focus state should not show the generic Get Started action.",
+        !genericSetupVisible,
+        "Path focus state should not show the generic setup action.",
       );
       if (pathProfile.disabled) {
         const isDisabled = await visibleActionDisabled(page, pathProfile.cta, {
@@ -1260,20 +1264,20 @@ function stubbedActivationState(auth, { firstTraceReady = false } = {}) {
 
   const fixtureName = FEATURE_DISABLED_HOME
     ? "featureDisabled"
-    : POST_AHA_HOME
+    : POST_ACTIVATION_HOME
       ? "observeFirstLoopComplete"
       : firstTraceReady
         ? "observeFirstTraceReady"
         : "observeNoSetup";
   const activationState = getActivationStateFixture(fixtureName);
-  if (FEATURE_DISABLED_HOME || POST_AHA_HOME) {
+  if (FEATURE_DISABLED_HOME || POST_ACTIVATION_HOME) {
     return {
       ...activationState,
       request_id: "onboarding_home_observe_smoke",
       organization_id: auth.organizationId,
       workspace_id: auth.workspaceId,
       user_id: auth.user.id,
-      route_availability: POST_AHA_HOME
+      route_availability: POST_ACTIVATION_HOME
         ? {
             ...activationState.route_availability,
             daily_quality_home: {
@@ -1505,7 +1509,7 @@ function pathFocusActivationState(auth, pathFocus) {
       completion_event: profile.completionEvent,
       is_sample: false,
       route_available: !profile.disabled,
-      fallback_href: "/dashboard/get-started",
+      fallback_href: `/dashboard/home?path=${profile.primaryPath}`,
       analytics: {
         event_name: "onboarding_recommended_action_clicked",
         source: "home",

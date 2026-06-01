@@ -219,8 +219,8 @@ export function resolvePostLoginDestination({
 
   if (!user?.organization_role) {
     return makeDestination({
-      href: paths.dashboard.getstarted,
-      reason: "no_org_role_get_started",
+      href: paths.auth.jwt.setup_org,
+      reason: "no_org_role_setup_org",
       currentPath,
       returnTo,
       fallbackDestination: fallbackHref,

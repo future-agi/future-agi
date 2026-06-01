@@ -9,6 +9,7 @@ export const OnboardingHomeEvents = {
   homePathClicked: "onboarding_home_path_clicked",
   recommendedActionViewed: "onboarding_recommended_action_viewed",
   recommendedActionClicked: "onboarding_recommended_action_clicked",
+  activationReached: "onboarding_aha_moment_reached",
   ahaMomentReached: "onboarding_aha_moment_reached",
   activationEventRecorded: "onboarding_activation_event_recorded",
   dailyQualityHomeViewed: "daily_quality_home_viewed",

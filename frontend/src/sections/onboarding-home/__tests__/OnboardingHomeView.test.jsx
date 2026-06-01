@@ -303,7 +303,7 @@ describe("OnboardingHomeView", () => {
     expect(screen.getByTestId("onboarding-home-skeleton")).toBeInTheDocument();
   });
 
-  it("falls back to Get Started when onboarding home is feature disabled", () => {
+  it("falls back to Observe setup when onboarding home is feature disabled", () => {
     mocks.useActivationState.mockReturnValue({
       state: normalizedFixture("featureDisabled"),
       isLoading: false,
@@ -314,12 +314,13 @@ describe("OnboardingHomeView", () => {
 
     renderView();
 
-    expect(screen.getByText("Start with the setup checklist")).toBeVisible();
-    expect(screen.getAllByText("Open Get Started").length).toBeGreaterThan(0);
+    expect(screen.getByText("Continue product setup")).toBeVisible();
     expect(
-      screen.getByText(
-        "The existing setup checklist is available for this workspace.",
-      ),
+      screen.getAllByText("Continue with Observe setup").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("Continue setup").length).toBeGreaterThan(0);
+    expect(
+      screen.getByText("Product setup is available for this workspace."),
     ).toBeVisible();
   });
 
@@ -831,7 +832,7 @@ describe("OnboardingHomeView", () => {
     ).toHaveAttribute("href", "/dashboard/observe/observe-1");
   });
 
-  it("keeps the post-aha screen actionable when daily quality is unavailable", () => {
+  it("keeps the post-activation screen actionable when daily quality is unavailable", () => {
     const activatedState = normalizedFixture("observeFirstLoopComplete");
     activatedState.routeAvailability.daily_quality_home = {
       href: "/dashboard/home?mode=daily-quality",
@@ -864,10 +865,10 @@ describe("OnboardingHomeView", () => {
     ).toHaveAttribute("href", "/dashboard/observe/observe-1");
   });
 
-  it("uses the post-aha screen for activated non-observe paths", () => {
+  it("uses the post-activation screen for activated non-observe paths", () => {
     const activatedState = normalizedFixture("promptActivated");
     activatedState.routeAvailability.daily_quality_home = {
-      href: "/dashboard/home?mode=daily-quality&source=post-aha-test",
+      href: "/dashboard/home?mode=daily-quality&source=post-activation-test",
       isAvailable: true,
       reason: null,
     };
@@ -894,7 +895,7 @@ describe("OnboardingHomeView", () => {
       within(panel).getByRole("link", { name: /review daily quality/i }),
     ).toHaveAttribute(
       "href",
-      "/dashboard/home?mode=daily-quality&source=post-aha-test",
+      "/dashboard/home?mode=daily-quality&source=post-activation-test",
     );
     expect(
       within(panel).getByRole("link", { name: /open prompt metrics/i }),
@@ -937,15 +938,15 @@ describe("OnboardingHomeView", () => {
       ),
     );
 
-    const ahaCalls = () =>
+    const activationReachedCalls = () =>
       mocks.trackOnboardingHomeEvent.mock.calls.filter(
         ([eventName]) => eventName === "onboarding_aha_moment_reached",
       );
-    expect(ahaCalls()).toHaveLength(1);
+    expect(activationReachedCalls()).toHaveLength(1);
 
     rerender(<OnboardingHomeView />);
 
-    expect(ahaCalls()).toHaveLength(1);
+    expect(activationReachedCalls()).toHaveLength(1);
   });
 
   it("keeps setup quick-start attribution on the completed setup route", async () => {
@@ -1514,7 +1515,7 @@ describe("OnboardingHomeView", () => {
     );
   });
 
-  it("shows the selected setup checklist when saved state points at another path", () => {
+  it("shows the selected setup path when saved state points at another path", () => {
     mocks.useActivationState.mockReturnValue({
       state: normalizedFixture("observeNoSetup"),
       isLoading: false,
@@ -2561,7 +2562,7 @@ describe("OnboardingHomeView", () => {
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
       "Run it once and open the result.",
     );
-    expect(screen.queryByText("Open Get Started")).not.toBeInTheDocument();
+    expect(screen.queryByText("Continue setup")).not.toBeInTheDocument();
     expect(cta).toHaveAttribute(
       "href",
       `${href}&tour_anchor=eval_run_button&journey_step=run_eval`,
@@ -2616,7 +2617,7 @@ describe("OnboardingHomeView", () => {
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
       "Inspect the transcript and outcome.",
     );
-    expect(screen.queryByText("Open Get Started")).not.toBeInTheDocument();
+    expect(screen.queryByText("Continue setup")).not.toBeInTheDocument();
     expect(cta).toBeDisabled();
     expect(cta).not.toHaveAttribute("href");
   });

@@ -23,6 +23,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { persistSetupQuickStartAttribution } from "src/sections/auth/jwt/setup-org-quick-starts";
 import { getActivationStateFixture } from "../fixtures/activation-state.fixtures";
 import { useActivationState } from "../hooks/useActivationState";
+import { DEFAULT_PRODUCT_SETUP_HREF } from "../activation-state-utils";
 import {
   fetchActivationState,
   hideSampleProject,
@@ -135,7 +136,7 @@ describe("onboarding home API", () => {
     const state = await fetchActivationState();
 
     expect(state.stage).toBe("feature_disabled");
-    expect(state.fallbackAction.href).toBe("/dashboard/get-started");
+    expect(state.fallbackAction.href).toBe(DEFAULT_PRODUCT_SETUP_HREF);
   });
 
   it("saves the onboarding goal through the goal endpoint", async () => {
@@ -386,7 +387,7 @@ describe("onboarding home API", () => {
     const state = await fetchActivationState();
 
     expect(state.stage).toBe("feature_disabled");
-    expect(state.recommendedAction.href).toBe("/dashboard/get-started");
+    expect(state.recommendedAction.href).toBe(DEFAULT_PRODUCT_SETUP_HREF);
   });
 
   it("uses stable activation-state query keys", () => {
@@ -420,7 +421,7 @@ describe("onboarding home API", () => {
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.state.stage).toBe("feature_disabled");
     expect(result.current.state.fallbackAction.href).toBe(
-      "/dashboard/get-started",
+      DEFAULT_PRODUCT_SETUP_HREF,
     );
   });
 

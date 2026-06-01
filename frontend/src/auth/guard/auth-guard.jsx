@@ -128,10 +128,9 @@ function Container({ children }) {
     check();
   }, [check]);
 
-  // Handle initial-render redirect (get-started vs develop) — runs once
-  // when user data first becomes available. Also fires the Google Ads
-  // signup conversion for new OAuth/SSO users (email signups are fired
-  // from jwt-register-view.jsx at API-success time).
+  // Handle initial-render redirect once user data first becomes available.
+  // Also fires the Google Ads signup conversion for new OAuth/SSO users
+  // (email signups are fired from jwt-register-view.jsx at API-success time).
   useEffect(() => {
     // Skip redirect logic for standalone pages (e.g. MCP OAuth consent)
     if (window.location.pathname.startsWith("/mcp/")) return;
@@ -316,10 +315,10 @@ function Container({ children }) {
         }
       } else {
         trackPostLoginDecision(
-          "no_org_role_get_started",
-          "/dashboard/get-started",
+          "no_org_role_setup_org",
+          paths.auth.jwt.setup_org,
         );
-        router.replace("/dashboard/get-started");
+        router.replace(paths.auth.jwt.setup_org);
       }
       localStorage.setItem("initial-render", "done");
       localStorage.removeItem("redirectUrl");

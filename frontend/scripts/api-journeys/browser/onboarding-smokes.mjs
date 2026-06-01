@@ -111,7 +111,7 @@ const SMOKES = [
     mode: "controlled",
     file: "onboarding-home-observe-smoke.mjs",
     description:
-      "Stubbed auth proof that Home sample Aha CTA opens the seeded trace route.",
+      "Stubbed auth proof that Home sample preview CTA opens the seeded trace route.",
     env: {
       ONBOARDING_SMOKE_STUB_AUTH: "1",
       ONBOARDING_SMOKE_OPEN_SAMPLE: "1",
@@ -140,34 +140,37 @@ const SMOKES = [
     },
   },
   {
-    id: "onboarding-post-aha-fallback-controlled",
+    id: "onboarding-post-activation-fallback-controlled",
+    aliases: ["onboarding-post-aha-fallback-controlled"],
     mode: "controlled",
     file: "onboarding-home-observe-smoke.mjs",
     description:
-      "Stubbed auth proof that post-Aha Home stays actionable without Daily Quality.",
+      "Stubbed auth proof that post-activation Home stays actionable without Daily Quality.",
     env: {
       ONBOARDING_SMOKE_STUB_AUTH: "1",
-      ONBOARDING_SMOKE_POST_AHA_HOME: "1",
+      ONBOARDING_SMOKE_POST_ACTIVATION_HOME: "1",
     },
   },
   {
-    id: "onboarding-post-aha-fallback-mobile-controlled",
+    id: "onboarding-post-activation-fallback-mobile-controlled",
+    aliases: ["onboarding-post-aha-fallback-mobile-controlled"],
     mode: "controlled",
     file: "onboarding-home-observe-smoke.mjs",
     description:
-      "Mobile stubbed proof that post-Aha Home stays actionable without Daily Quality.",
+      "Mobile stubbed proof that post-activation Home stays actionable without Daily Quality.",
     env: {
       ONBOARDING_SMOKE_STUB_AUTH: "1",
-      ONBOARDING_SMOKE_POST_AHA_HOME: "1",
+      ONBOARDING_SMOKE_POST_ACTIVATION_HOME: "1",
       ONBOARDING_SMOKE_VIEWPORT: "mobile",
     },
   },
   {
-    id: "onboarding-get-started-fallback-controlled",
+    id: "onboarding-product-setup-fallback-controlled",
+    aliases: ["onboarding-get-started-fallback-controlled"],
     mode: "controlled",
     file: "onboarding-home-observe-smoke.mjs",
     description:
-      "Stubbed auth proof that disabled onboarding Home keeps Get Started available.",
+      "Stubbed auth proof that disabled onboarding Home keeps product setup available.",
     env: {
       ONBOARDING_SMOKE_STUB_AUTH: "1",
       ONBOARDING_SMOKE_FEATURE_DISABLED_HOME: "1",
@@ -400,7 +403,8 @@ const SMOKES = [
       "Local API proof for notification settings, Slack channel tests, and usage-budget preferences.",
   },
   {
-    id: "onboarding-first-signup-aha-coverage-controlled",
+    id: "onboarding-first-signup-activation-coverage-controlled",
+    aliases: ["onboarding-first-signup-aha-coverage-controlled"],
     mode: "controlled",
     suite: true,
     sequence: [
@@ -415,13 +419,14 @@ const SMOKES = [
       "onboarding-home-sample-open-controlled",
       "onboarding-observe-project-first-trace-controlled",
       "onboarding-first-trace-review-controlled",
-      "onboarding-post-aha-fallback-controlled",
+      "onboarding-post-activation-fallback-controlled",
     ],
     description:
-      "Composite controlled proof for the first-signup Aha screen sequence.",
+      "Composite controlled proof for the first-signup activation screen sequence.",
   },
   {
-    id: "onboarding-first-signup-aha-coverage-mobile-controlled",
+    id: "onboarding-first-signup-activation-coverage-mobile-controlled",
+    aliases: ["onboarding-first-signup-aha-coverage-mobile-controlled"],
     mode: "controlled",
     suite: true,
     sequence: [
@@ -436,10 +441,10 @@ const SMOKES = [
       "onboarding-home-sample-open-controlled",
       "onboarding-observe-project-first-trace-controlled",
       "onboarding-first-trace-review-controlled",
-      "onboarding-post-aha-fallback-controlled",
+      "onboarding-post-activation-fallback-controlled",
     ],
     description:
-      "Mobile composite controlled proof for the first-signup Aha screen sequence.",
+      "Mobile composite controlled proof for the first-signup activation screen sequence.",
     env: {
       ONBOARDING_SMOKE_VIEWPORT: "mobile",
     },
@@ -511,15 +516,26 @@ if (args.list) {
     const target = smoke.sequence
       ? `suite:${smoke.sequence.join(",")}`
       : `node scripts/api-journeys/browser/${smoke.file}`;
-    console.log([smoke.id, smoke.mode, target, smoke.description].join("\t"));
+    const aliases = smoke.aliases?.length
+      ? ` aliases:${smoke.aliases.join(",")}`
+      : "";
+    console.log(
+      [smoke.id, smoke.mode, target, `${smoke.description}${aliases}`].join(
+        "\t",
+      ),
+    );
   }
   process.exit(0);
 }
 
+const matchesOnly = (smoke) =>
+  args.only.has(smoke.id) ||
+  smoke.aliases?.some((alias) => args.only.has(alias));
+
 const selected = SMOKES.filter((smoke) => {
   if (args.mode && smoke.mode !== args.mode) return false;
-  if (args.only.size && !args.only.has(smoke.id)) return false;
-  if (smoke.suite && !args.only.has(smoke.id)) return false;
+  if (args.only.size && !matchesOnly(smoke)) return false;
+  if (smoke.suite && !matchesOnly(smoke)) return false;
   return true;
 });
 

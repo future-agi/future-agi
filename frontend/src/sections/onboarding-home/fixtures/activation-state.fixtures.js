@@ -260,7 +260,7 @@ const action = (overrides = {}) => ({
   completion_event: "observe_project_created",
   is_sample: false,
   route_available: true,
-  fallback_href: "/dashboard/get-started",
+  fallback_href: "/dashboard/observe",
   analytics: {
     event_name: "onboarding_recommended_action_clicked",
     source: "home",
@@ -271,12 +271,12 @@ const action = (overrides = {}) => ({
 
 const fallbackAction = (overrides = {}) =>
   action({
-    id: "open_get_started",
+    id: "continue_observe_setup",
     kind: "fallback",
-    title: "Open Get Started",
-    description: "Use the existing setup checklist.",
-    href: "/dashboard/get-started",
-    cta_label: "Open Get Started",
+    title: "Continue with Observe setup",
+    description: "Create an Observe project, send one trace, and review it.",
+    href: "/dashboard/observe?setup=true&source=onboarding",
+    cta_label: "Continue setup",
     estimated_minutes: null,
     priority: 10,
     blocked: false,
@@ -285,11 +285,11 @@ const fallbackAction = (overrides = {}) =>
     completion_event: null,
     is_sample: false,
     route_available: true,
-    fallback_href: "/dashboard/get-started",
+    fallback_href: "/dashboard/observe",
     analytics: {
       event_name: "onboarding_recommended_action_clicked",
       source: "fallback",
-      target_path: null,
+      target_path: "observe",
     },
     ...overrides,
   });
@@ -347,7 +347,7 @@ const promptFallbackAction = (overrides = {}) =>
     priority: 20,
     requires_permission: null,
     completion_event: null,
-    fallback_href: "/dashboard/get-started",
+    fallback_href: "/dashboard/home?path=prompt",
     ...overrides,
   });
 
@@ -701,7 +701,7 @@ const sampleAction = (overrides = {}) =>
     completion_event: "sample_signal_viewed",
     is_sample: true,
     route_available: true,
-    fallback_href: "/dashboard/get-started",
+    fallback_href: "/dashboard/home?path=sample",
     analytics: {
       event_name: "onboarding_recommended_action_clicked",
       source: "home",
@@ -730,7 +730,7 @@ const dailyQualityPrimaryAction = (overrides = {}) => ({
   label: "Review trace",
   body: "Open the failed trace and inspect the failure context.",
   route: "/dashboard/observe/observe-1/trace/trace-2",
-  fallback_route: "/dashboard/get-started",
+  fallback_route: "/dashboard/home",
   route_available: true,
   source_type: "trace",
   source_id: "trace-2",
@@ -1709,7 +1709,7 @@ export const activationStateFixtures = {
     daily_quality: dailyQualityState({
       primary_action: dailyQualityPrimaryAction({
         route: "/dashboard/not-available",
-        fallback_route: "/dashboard/get-started",
+        fallback_route: "/dashboard/home",
         route_available: false,
       }),
       diagnostics: ["route_fallback_used"],
