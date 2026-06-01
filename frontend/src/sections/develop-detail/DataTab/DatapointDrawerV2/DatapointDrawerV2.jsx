@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  useAddEvaluationFeebackStore,
+  useAddDevelopEvalFeedbackStore,
   useDatapointDrawerStore,
   useImprovePromptStore,
 } from "../../states";
@@ -213,7 +213,7 @@ const DatapointDrawerChild = () => {
     setDatapoint(null);
     setDrawerColumn(null);
   };
-  const { setAddEvaluationFeeback } = useAddEvaluationFeebackStore();
+  const { setAddDevelopEvalFeedbackTarget } = useAddDevelopEvalFeedbackStore();
   const { setImprovePrompt } = useImprovePromptStore();
 
   const totalRowCount =
@@ -971,10 +971,10 @@ const DatapointDrawerChild = () => {
                     fullWidth
                     size="small"
                     onClick={() => {
-                      setAddEvaluationFeeback({
+                      setAddDevelopEvalFeedbackTarget({
                         ...column?.col,
                         ...datapoint,
-                        rowData: datapoint?.rowData,
+                        row_data: datapoint?.rowData,
                       });
                       setEvalOpen(null);
                       trackEvent(Events.datasetAddFeedbackClicked, {

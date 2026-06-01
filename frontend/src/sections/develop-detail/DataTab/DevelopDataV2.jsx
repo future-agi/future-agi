@@ -52,8 +52,8 @@ import {
 const EditColumnName = lazy(() => import("./EditColumnName"));
 const EditColumnType = lazy(() => import("./EditColumnType"));
 const ConfirmDeleteColumn = lazy(() => import("./DeleteColumn"));
-const AddEvaluationFeeback = lazy(
-  () => import("./AddEvaluationFeeback/AddEvaluationFeeback"),
+const AddDevelopEvalFeedbackDrawer = lazy(
+  () => import("./AddEvaluationFeedback/AddDevelopEvalFeedbackDrawer"),
 );
 const ImprovePrompt = lazy(() => import("./ImprovePrompt/ImprovePrompt"));
 const DoubleClickEditCell = lazy(
@@ -1320,7 +1320,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
         <EditColumnName />
         <EditColumnType />
         <ConfirmDeleteColumn dataset={dataset} />
-        <AddEvaluationFeeback />
+        <AddDevelopEvalFeedbackDrawer />
         <ImprovePrompt />
         <DoubleClickEditCell dataset={dataset} />
         <PdfPreviewDrawer />

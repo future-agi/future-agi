@@ -33,7 +33,7 @@ import DatapointDrawer from "./DatapointDrawer/DatapointDrawer";
 import ConfirmDeleteColumn from "./DeleteColumn";
 import SingleImageViewerProvider from "../Common/SingleImageViewer/SingleImageViewerProvider";
 import AddRowData from "./AddRowData";
-import AddEvaluationFeeback from "./AddEvaluationFeeback/AddEvaluationFeeback";
+import AddDevelopEvalFeedbackDrawer from "./AddEvaluationFeedback/AddDevelopEvalFeedbackDrawer";
 import ImprovePrompt from "./ImprovePrompt/ImprovePrompt";
 import {
   reorderMenuList,
@@ -1061,15 +1061,7 @@ const DevelopData = React.forwardRef(
           params={editCell}
           onCellValueChanged={onCellValueChanged}
         />
-        <AddEvaluationFeeback
-          open={Boolean(feedBack)}
-          onClose={() => setFeedBack(null)}
-          data={feedBack}
-          refreshGrid={() => {
-            refreshGrid();
-            refreshColumns();
-          }}
-        />
+        <AddDevelopEvalFeedbackDrawer />
         <ImprovePrompt
           open={Boolean(improvement)}
           onClose={() => setImprovement(null)}

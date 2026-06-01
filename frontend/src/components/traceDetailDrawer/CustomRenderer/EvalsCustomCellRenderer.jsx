@@ -8,9 +8,6 @@ import {
   buttonSx,
   OutputTypes,
 } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
-import AddToFeedBackModal, {
-  SubmitFeedBackModal,
-} from "../DrawerRightRenderer/AddToFeedBackModal";
 import { ShowComponent } from "src/components/show/ShowComponent";
 import CellMarkdown from "src/sections/common/CellMarkdown";
 import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
@@ -22,8 +19,6 @@ const TooltipContent = ({
   showViewDetail = true,
   showAddFeedback = true,
 }) => {
-  const [isAddFeedBack, setIsAddFeedBack] = React.useState(false);
-  const [openSubmitFeedback, setOpenSubmitFeedback] = React.useState(false);
   const [expanded, setExpanded] = useState(false);
   const showMoreCondition =
     !expanded && explanation && explanation.length > 150;
@@ -95,15 +90,6 @@ const TooltipContent = ({
             </Button>
           </ShowComponent>
         </Box>
-        <AddToFeedBackModal
-          open={isAddFeedBack}
-          handleClose={() => setIsAddFeedBack(false)}
-          setOpenSubmitFeedback={setOpenSubmitFeedback}
-        />
-        <SubmitFeedBackModal
-          openSubmitFeedback={openSubmitFeedback}
-          handleSubmitFeedBackClose={() => setOpenSubmitFeedback(false)}
-        />
       </Box>
     </Box>
   );

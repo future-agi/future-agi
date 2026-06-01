@@ -27,7 +27,7 @@ import axios from "src/utils/axios";
 import {
   AddFeedbackValidationSchema,
   feedbackSubmittedValidationSchema,
-} from "../AddEvaluationFeeback/validation";
+} from "src/sections/common/EvalFeedback/validation";
 import { enqueueSnackbar } from "notistack";
 import { LoadingButton } from "@mui/lab";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";

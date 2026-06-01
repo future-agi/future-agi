@@ -777,11 +777,11 @@ const DatapointDrawerChild = ({
               onClick={() => {
                 datapoint.feedBackClick({
                   ...datapoint,
-                  rowData: datapoint?.rowData,
-                  sourceId: runEval?.evalMetricId
+                  row_data: datapoint?.rowData,
+                  source_id: runEval?.evalMetricId
                     ? runEval?.evalMetricId
                     : datapoint?.sourceId,
-                  valueInfos: runEval?.valueInfos
+                  value_infos: runEval?.valueInfos
                     ? runEval?.valueInfos
                     : datapoint?.valueInfos,
                   name: runEval?.valueInfos?.name
