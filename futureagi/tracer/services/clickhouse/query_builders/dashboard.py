@@ -243,14 +243,19 @@ def _prefix_spans_columns(clause: str) -> str:
 # new deterministic-UUIDv5 spans) therefore OVER-counts (two distinct ids in a
 # `uniq`) and SPLITS into two breakdown buckets (the new id misses the curated
 # `enduser_dict`, falling back to its raw UUID string — a different label than
-# the old id's `user_id`). To fix this we resolve each span's id new→old through
-# the id-remap BEFORE it is counted / grouped / dict-looked-up.
+# the old id's `user_id`). To fix this we resolve each span's id through the
+# id-remap SURVIVOR MAP BEFORE it is counted / grouped / dict-looked-up.
 #
-# The map is keyed `old_id → new_id`; the resolve direction is new→old, so we
-# LEFT JOIN the remap on `spans.<id> = remap.new_id` and fall back to `old_id`
-# (the still-primary curated key) via the zero-uuid-guarded `resolved_id_expr`
-# (see id_remap_sql for why a bare COALESCE breaks — CH fills the unmatched
-# LEFT-JOIN side with the column DEFAULT, the zero-uuid, NOT NULL).
+# The map is many-to-one (NULL-type enduser dupes / rename-bug sessions collapse
+# several old ids onto one new id), so resolution maps EVERY id — each old AND
+# the shared new — to ONE canonical survivor old per new_id group (the
+# argMin-string old; see id_remap_sql). A straddler AND a many-old→one-new
+# consolidation group thus both collapse to ONE id with NO fan-out (the gate-C2
+# bug a naive `= new_id` join hit). We LEFT JOIN the derived survivor map on
+# `spans.<id> = <alias>.any_id` and resolve to `<alias>.survivor_id` via the
+# zero-uuid-guarded `resolved_id_expr` (see id_remap_sql for why a bare COALESCE
+# breaks — CH fills the unmatched LEFT-JOIN side with the column DEFAULT, the
+# zero-uuid, NOT NULL).
 #
 # Rather than restructure every flat dashboard query into CTEs, we swap the bare
 # `spans` table reference for a DERIVED TABLE that re-projects the two ids as
@@ -262,10 +267,11 @@ def _prefix_spans_columns(clause: str) -> str:
 # two id columns now carry resolved values. This is the "thin outer layer"
 # id_remap_sql is designed for.
 #
-# GATE B (byte-identical result-set pre/post on the all-old-id baseline): pre-
-# flip EVERY span carries an old id, whose id lives in the remap's `old_id`
-# column (NOT `new_id`), so NO span matches any `new_id`, the LEFT JOINs add
-# nothing, and `resolved_id_expr` returns each span's own id unchanged. The
+# GATE B (byte-identical result-set pre/post on the all-old-id 1:1 baseline):
+# pre-flip EVERY span carries an old id, and a non-consolidated old is its OWN
+# survivor (argMin of a singleton group), so the survivor map resolves it to
+# itself, the LEFT JOINs add nothing, and `resolved_id_expr` returns each span's
+# own id unchanged (the gate-B island has no consolidation groups). The
 # derived table is then a transparent pass-through — same rows, same id values,
 # same result set. `SELECT * EXCEPT(...)` only reorders the two id columns to the
 # end of the row tuple; the dashboard queries SELECT explicit output columns

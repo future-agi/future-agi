@@ -175,12 +175,13 @@ class UserIdFilterTests(unittest.TestCase):
         # (the caller already has the UUID). That distinction is the point of
         # this regression test (TH-4436) and must hold.
         self.assertNotIn("FROM end_users", sql)
-        # P3b step1.5: the match is now id-remap-resolved (new→old) so a
-        # cross-cutover straddler unifies. Assert the resolution is present on
-        # the end_user_id column (proves we still operate on the UUID column,
-        # just resolved — not via the `end_users` string subquery).
+        # P3b step1.5: the match is now id-remap-resolved (survivor-collapse) so
+        # a cross-cutover straddler AND a many-old→one-new consolidation group
+        # unify. Assert the resolution is present on the end_user_id column
+        # (proves we still operate on the UUID column, just resolved through the
+        # survivor map — not via the `end_users` string subquery).
         self.assertIn("end_user_id_remap", sql)
-        self.assertIn("id_remap.new_id", sql)
+        self.assertIn("id_remap.survivor_id", sql)
         self.assertIn("%(eu_1)s", sql)
 
     def test_user_id_contains(self):
@@ -298,12 +299,13 @@ class EndUserAndIdColumnFilterTests(unittest.TestCase):
             )
             self.assertIsNotNone(sql)
             # P3b step1.5: session-id membership is now id-remap-resolved
-            # (new→old via trace_session_id_remap) so a cross-cutover straddler
-            # unifies under the OLD curated session id — NOT the bare
+            # (survivor-collapse via trace_session_id_remap) so a cross-cutover
+            # straddler AND a many-old→one-new consolidation group unify under
+            # the survivor (old) session id — NOT the bare
             # `toString(trace_session_id) IN` form. Parallel to the user path
             # (test_user_id_does_not_affect_plain_user_filter).
             self.assertIn("trace_session_id_remap", sql)
-            self.assertIn("id_remap.new_id", sql)
+            self.assertIn("id_remap.survivor_id", sql)
             self.assertIn("%(sess_1)s", sql)
             self.assertNotIn("toString(trace_session_id) IN", sql)
 

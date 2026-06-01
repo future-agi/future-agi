@@ -219,28 +219,35 @@ class UserListQueryBuilder(BaseQueryBuilder):
               {span_extra}
         ),
         filtered_spans AS (
-            -- P3b step1.5 (DESIGN §3 / §10.1): resolve each span's `end_user_id`
-            -- through the id-remap BEFORE the enduser-set membership check and
-            -- BEFORE grouping, so a cross-cutover straddler (old-id spans + new
-            -- deterministic-id spans for the SAME identity) reads as ONE user.
-            -- The map is keyed `old_id → new_id`; the resolve direction is
-            -- new→old, so LEFT JOIN on `raw_spans.end_user_id = id_remap.new_id`
-            -- and fall back to `old_id` (the curated key, still primary) via the
-            -- zero-uuid-guarded `resolved_id_expr` (see id_remap_sql for why a
-            -- bare COALESCE breaks: CH fills an unmatched LEFT JOIN side with the
-            -- column DEFAULT — the zero-uuid — NOT NULL). An OLD-id span's id is
-            -- in `old_id` (NOT `new_id`) → no join match → resolves to itself
-            -- (unchanged). A NEW-id span (post-flip) matches `new_id` → its
-            -- `old_id`. Pre-flip the map has NO span matching any `new_id`, so the
-            -- join adds nothing and this is a byte-identical no-op (gate B). The
-            -- resolved id is projected AS `end_user_id`, so the
-            -- `IN (filtered_end_users)` check and every downstream CTE group on
-            -- the UNIFIED id with no further change. The raw scan above keeps the
-            -- committed `{project_filter}`/`{span_extra}` predicates on the bare
-            -- `spans` columns intact (the remap join is a thin outer layer).
-            -- `trace_session_id` is ALSO resolved new→old (its remap join), so the
-            -- per-user `num_sessions`/`avg_session_duration` below treat a
-            -- straddler's old+new session ids as ONE session.
+            -- P3b step1.5 (DESIGN §3 / §3.1 / §10.1): resolve each span's
+            -- `end_user_id` through the id-remap SURVIVOR MAP BEFORE the
+            -- enduser-set membership check and BEFORE grouping, so a cross-cutover
+            -- straddler (old-id + new deterministic-id spans for ONE identity)
+            -- AND a many-old→one-new consolidation group (NULL-type dupes that the
+            -- deterministic id collapses) each read as ONE user. The remap is
+            -- many-to-one, so resolution maps EVERY id — each old AND the shared
+            -- new — to ONE canonical survivor old per new_id group (the
+            -- argMin-string old; see id_remap_sql). LEFT JOIN the derived survivor
+            -- map on `raw_spans.end_user_id = eu_remap.any_id` and resolve to
+            -- `eu_remap.survivor_id` via the zero-uuid-guarded `resolved_id_expr`
+            -- (see id_remap_sql for why a bare COALESCE breaks: CH fills an
+            -- unmatched LEFT JOIN side with the column DEFAULT — the zero-uuid —
+            -- NOT NULL). The map's outer `GROUP BY any_id` yields ONE row per id,
+            -- so a span matches AT MOST one row → NO fan-out (the gate-C2
+            -- double-count a naive `= new_id` join hit: a new-id span matched BOTH
+            -- duplicate remap rows and split the user; the dedup also guards the
+            -- Session §3.1 carve-out identity row `old==new`). Pre-flip a
+            -- non-consolidated old is its OWN survivor → resolves to itself →
+            -- byte-identical no-op on the 1:1 baseline (gate B; the island has no
+            -- consolidation groups). The resolved id is projected AS
+            -- `end_user_id`, so the `IN (filtered_end_users)` check and every
+            -- downstream CTE group on the UNIFIED id with no further change. The
+            -- raw scan above keeps the committed `{project_filter}`/`{span_extra}`
+            -- predicates on the bare `spans` columns intact (the remap join is a
+            -- thin outer layer). `trace_session_id` is ALSO survivor-resolved (its
+            -- remap join), so the per-user `num_sessions`/`avg_session_duration`
+            -- below treat a straddler's / consolidation group's old+new session
+            -- ids as ONE session.
             SELECT
                 rs.id AS id,
                 rs.trace_id AS trace_id,

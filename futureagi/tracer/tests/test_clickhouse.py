@@ -2489,7 +2489,12 @@ class TestSessionListQueryBuilder:
         builder.build()
         query, params = builder.build_count_query()
         assert "count(DISTINCT trace_session_id)" in query
-        assert "GROUP BY" not in query
+        # The id-remap survivor map (id_remap_sql) embeds internal
+        # `GROUP BY new_id` + `GROUP BY any_id` in its join subquery; the simple
+        # count path must have no OTHER (session-level) GROUP BY — strip the
+        # remap's first.
+        stripped = query.replace("GROUP BY new_id", "").replace("GROUP BY any_id", "")
+        assert "GROUP BY" not in stripped
 
     def test_build_count_query_with_having(self):
         """build_count_query() with HAVING filters uses full aggregation subquery."""
@@ -2619,9 +2624,10 @@ class TestSessionListQueryBuilder:
 
         query, params = builder.build()
 
-        # Resolved-membership form (id_remap_sql), not the legacy toString cast.
+        # Resolved-membership form (id_remap_sql survivor-collapse), not the
+        # legacy toString cast.
         assert "trace_session_id_remap" in query
-        assert "id_remap.new_id" in query
+        assert "id_remap.survivor_id" in query
         assert "IN %(sess_1)s" in query
         assert "toString(trace_session_id) IN" not in query
         assert session_id in next(
