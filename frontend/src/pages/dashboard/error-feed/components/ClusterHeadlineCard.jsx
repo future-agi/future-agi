@@ -342,9 +342,10 @@ function AnalyzedState({
         onRerun={onRerun}
       />
 
-      {/* Same horizontal step chips shown while analyzing — kept after
-          completion (all done) so the box height stays constant. */}
-      <StepChips activeStepIdx={ANALYSIS_STEP_LABELS.length} />
+      {/* Step chips are intentionally NOT rendered post-completion. Earlier
+          we kept them visible (all-done) to keep the box height stable
+          across analyzing → analyzed, but the resulting card was too tall
+          for an at-a-glance result; we'd rather have a compact summary. */}
 
       <Typography
         fontSize="14px"
