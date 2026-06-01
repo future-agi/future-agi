@@ -2171,3 +2171,203 @@ class TestResponseFormatterOutputFormat:
         """The common string path is unchanged — raw content is returned."""
         formatted = self._format("This is a plain answer.", "string")
         assert formatted == "This is a plain answer."
+
+
+# =============================================================================
+# Smallest AI TTS + STT Tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestSmallestAITTSParameters:
+    """Unit tests for Smallest AI TTS parameter schema helpers."""
+
+    def test_tts_parameters_lightning_v3_1(self):
+        from agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response import (
+            get_smallest_ai_tts_parameters,
+        )
+
+        params = get_smallest_ai_tts_parameters("lightning_v3.1")
+        assert "dropdowns" in params
+        assert "sliders" in params
+        voice_dropdown = next(d for d in params["dropdowns"] if d["label"] == "voice_id")
+        assert "avery" in voice_dropdown["options"]
+        assert "neel" in voice_dropdown["options"]
+        speed_slider = next(s for s in params["sliders"] if s["label"] == "speed")
+        assert speed_slider["min"] == 0.5
+        assert speed_slider["max"] == 2.0
+
+    def test_tts_parameters_lightning_v3_1_pro(self):
+        from agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response import (
+            get_smallest_ai_tts_parameters,
+        )
+
+        params = get_smallest_ai_tts_parameters("lightning_v3.1_pro")
+        voice_dropdown = next(d for d in params["dropdowns"] if d["label"] == "voice_id")
+        # Pro voices only — no US voices like avery
+        assert "benedict" in voice_dropdown["options"]
+        assert "rhea" in voice_dropdown["options"]
+        # Pro language set is restricted to en/hi/auto
+        lang_dropdown = next(d for d in params["dropdowns"] if d["label"] == "language")
+        assert lang_dropdown["options"] == ["en", "hi", "auto"]
+
+    def test_stt_parameters_pulse(self):
+        from agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response import (
+            get_smallest_ai_stt_parameters,
+        )
+
+        params = get_smallest_ai_stt_parameters("pulse")
+        assert "dropdowns" in params
+        lang_dropdown = next(d for d in params["dropdowns"] if d["label"] == "language")
+        assert "en" in lang_dropdown["options"]
+        assert "hi" in lang_dropdown["options"]
+
+
+@pytest.mark.unit
+class TestSmallestAIWavHelper:
+    """Unit tests for _ensure_wav_container helper."""
+
+    def test_passthrough_when_riff_present(self):
+        from agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response import (
+            _ensure_wav_container,
+        )
+        import wave
+        from io import BytesIO
+
+        buf = BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(24000)
+            w.writeframes(b"\x00\x00" * 100)
+        wav_bytes = buf.getvalue()
+
+        result = _ensure_wav_container(wav_bytes)
+        assert result is wav_bytes  # unchanged
+
+    def test_wraps_raw_pcm(self):
+        from agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response import (
+            _ensure_wav_container,
+        )
+
+        raw_pcm = b"\x00\x01" * 500
+        result = _ensure_wav_container(raw_pcm, sample_rate=24000)
+        assert result[:4] == b"RIFF"
+        assert result[8:12] == b"WAVE"
+
+
+@pytest.mark.unit
+class TestSmallestAIManagerRegistration:
+    """Verify smallest_ai is registered in OtherServicesManager."""
+
+    def test_speech_handler_registered(self):
+        from agentic_eval.core_evals.run_prompt.other_services.manager import (
+            OtherServicesManager,
+        )
+
+        mgr = OtherServicesManager()
+        handler = mgr.get_speech_handler("smallest_ai")
+        assert handler is not None
+
+    def test_transcription_handler_registered(self):
+        from agentic_eval.core_evals.run_prompt.other_services.manager import (
+            OtherServicesManager,
+        )
+
+        mgr = OtherServicesManager()
+        handler = mgr.get_transcription_handler("smallest_ai")
+        assert handler is not None
+
+    def test_tts_parameter_handler_registered(self):
+        from agentic_eval.core_evals.run_prompt.other_services.manager import (
+            TTS_PARAMETER_HANDLERS,
+        )
+
+        assert "smallest_ai" in TTS_PARAMETER_HANDLERS
+
+    def test_stt_parameter_handler_registered(self):
+        from agentic_eval.core_evals.run_prompt.other_services.manager import (
+            STT_PARAMETER_HANDLERS,
+        )
+
+        assert "smallest_ai" in STT_PARAMETER_HANDLERS
+
+
+@pytest.mark.integration
+class TestSmallestAIHandlerExecution:
+    """Integration tests for Smallest AI TTS + STT handlers with mocked HTTP."""
+
+    def test_tts_handler_returns_audio(self, tts_messages):
+        import wave
+        from io import BytesIO
+        from unittest.mock import patch, MagicMock
+        from agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response import (
+            smallest_ai_speech_response,
+        )
+
+        # Build a minimal valid WAV as the "PCM" the API returns
+        buf = BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(24000)
+            w.writeframes(b"\x01\x02" * 1000)
+        fake_pcm = buf.getvalue()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.iter_content.return_value = iter([fake_pcm])
+        mock_response.raise_for_status.return_value = None
+
+        stub = MagicMock()
+        stub.model = "smallest_ai/lightning_v3.1"
+        stub.run_prompt_config = {"voice_id": "avery", "language": "en", "sample_rate": 24000}
+        stub._get_input_text_from_messages.return_value = "Hello world"
+        stub._format_audio_output.return_value = (fake_pcm, {"model": "smallest_ai/lightning_v3.1"})
+
+        with patch("requests.post", return_value=mock_response):
+            import time
+            result = smallest_ai_speech_response(stub, time.time(), "test-api-key")
+
+        stub._format_audio_output.assert_called_once()
+        audio_bytes = stub._format_audio_output.call_args[0][0]
+        assert audio_bytes[:4] == b"RIFF"
+
+    def test_stt_handler_returns_transcript(self, audio_messages):
+        import time
+        from unittest.mock import patch, MagicMock
+        from agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response import (
+            smallest_ai_transcription_response,
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "status": "success",
+            "transcription": "Hello world",
+            "words": [],
+            "utterances": [],
+            "metadata": {"duration": 1.0, "fileSize": 1000},
+        }
+
+        stub = MagicMock()
+        stub.model = "smallest_ai/pulse"
+        stub.run_prompt_config = {"language": "en"}
+        stub._get_input_audio_from_messages.return_value = base64.b64encode(b"\x00\x01" * 100).decode()
+
+        with (
+            patch("requests.post", return_value=mock_response),
+            patch(
+                "agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response.audio_bytes_from_url_or_base64",
+                return_value=b"\x00\x01" * 100,
+            ),
+            patch(
+                "agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response.get_audio_duration",
+                return_value=1.0,
+            ),
+        ):
+            transcript, info = smallest_ai_transcription_response(stub, time.time(), "test-api-key")
+
+        assert transcript == "Hello world"
+        assert info["data"]["response"] == "Hello world"
