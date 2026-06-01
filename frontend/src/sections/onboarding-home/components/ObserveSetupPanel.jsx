@@ -214,6 +214,27 @@ export default function ObserveSetupPanel({
     tourAnchor: "observe_create_project_button",
   };
   const shouldShowPackagePicker = stage === "connect_observability";
+  const selectedSetupLabel = selectedProvider
+    ? packageSetupLabel({
+        language: selectedLanguage,
+        provider: selectedProvider,
+      })
+    : "";
+  const packageAwareStep =
+    shouldShowPackagePicker && selectedSetupLabel
+      ? {
+          ...actionStep,
+          label: `Open ${selectedSetupLabel} setup`,
+          description: `The next page shows the ${selectedSetupLabel} install command, Future AGI key setup, provider key setup, package setup code, and a ready-to-run request. Keep it open after the request; Future AGI waits for the first trace, then guides trace review and evaluator setup.`,
+        }
+      : shouldShowPackagePicker
+        ? {
+            ...actionStep,
+            label: "Choose SDK package",
+            description:
+              "Select the SDK package that sends your model call. The next page will show matching install code, setup code, a request example, trace wait, trace review, and evaluator setup.",
+          }
+        : actionStep;
 
   useEffect(() => {
     setSelectedProvider(normalizedInitialProvider);
@@ -243,21 +264,23 @@ export default function ObserveSetupPanel({
         title: "Choose SDK package",
       };
     }
-    const setupLabel = packageSetupLabel({
-      language: selectedLanguage,
-      provider: selectedProvider,
-    });
     return {
       ...action,
-      ctaLabel: `Open ${setupLabel} setup`,
-      description: `Open setup with ${setupLabel} install, package setup code, a ready-to-run request, and trace checks.`,
+      ctaLabel: `Open ${selectedSetupLabel} setup`,
+      description: `Open setup with ${selectedSetupLabel} install, provider key setup, package setup code, a ready-to-run request, and trace checks.`,
       href: hrefWithObservePackage(action.href, {
         language: selectedLanguage,
         provider: selectedProvider,
       }),
-      title: `Open ${setupLabel} setup`,
+      title: `Open ${selectedSetupLabel} setup`,
     };
-  }, [action, selectedLanguage, selectedProvider, shouldShowPackagePicker]);
+  }, [
+    action,
+    selectedLanguage,
+    selectedProvider,
+    selectedSetupLabel,
+    shouldShowPackagePicker,
+  ]);
   const actionSlot = (
     <ObservePanelActions
       action={packageAwareAction}
@@ -266,7 +289,7 @@ export default function ObserveSetupPanel({
       onFallbackClick={onFallbackClick}
       onCheckAgain={onCheckAgain}
       isChecking={isChecking}
-      journeyStep={actionStep}
+      journeyStep={packageAwareStep}
       singleActionFocus={singleActionFocus || Boolean(actionStep)}
     />
   );
@@ -302,12 +325,30 @@ export default function ObserveSetupPanel({
             provider={selectedProvider}
           />
         ) : null}
+        {shouldShowPackagePicker && selectedSetupLabel ? (
+          <Alert
+            severity="success"
+            data-testid="observe-selected-package-handoff"
+            sx={{ alignItems: "flex-start", borderRadius: 1 }}
+          >
+            <Stack spacing={0.25}>
+              <Typography variant="subtitle2">
+                {selectedSetupLabel} path selected
+              </Typography>
+              <Typography variant="body2">
+                Setup opens with package-specific code and stays in the same
+                loop: copy code, run one request, wait for trace, review it,
+                then create an evaluator.
+              </Typography>
+            </Stack>
+          </Alert>
+        ) : null}
         {actionStep ? (
           <CurrentStepGuide
             actionSlot={actionSlot}
             label={singleActionFocus ? "Current step" : "Start here"}
             nextStep={nextStep}
-            step={actionStep}
+            step={packageAwareStep}
             stage={stage}
             stepNumber={currentStepIndex + 1}
             totalSteps={steps.length || 1}

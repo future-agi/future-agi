@@ -401,7 +401,7 @@ describe("OnboardingHomeView", () => {
     ).toBeVisible();
     expect(within(currentStep).getByText("Current")).toBeVisible();
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
-      "Create the observe project and prepare the first trace.",
+      "Select the SDK package that sends your model call.",
     );
     expect(
       within(panel).getByRole("button", {
@@ -1254,11 +1254,14 @@ describe("OnboardingHomeView", () => {
       });
       if (quickStartPrimaryPath === "observe") {
         expect(
-          within(panel).getAllByText("Open package setup").length,
+          within(panel).getAllByText("Open OpenAI Python setup").length,
         ).toBeGreaterThan(0);
         expect(
+          within(panel).getByTestId("observe-selected-package-handoff"),
+        ).toHaveTextContent("OpenAI Python path selected");
+        expect(
           within(panel).getByTestId("current-step-guide"),
-        ).toHaveTextContent("Open package setup");
+        ).toHaveTextContent("Open OpenAI Python setup");
         expect(
           screen.getByTestId("observe-journey-step-send_first_trace"),
         ).toBeVisible();
@@ -1320,7 +1323,7 @@ describe("OnboardingHomeView", () => {
       within(panel).queryByRole("heading", { name: "Connect your agent" }),
     ).not.toBeInTheDocument();
     expect(
-      within(panel).getAllByText("Open package setup").length,
+      within(panel).getAllByText("Choose SDK package").length,
     ).toBeGreaterThan(0);
     expect(within(panel).getAllByText("Step 1 of 4").length).toBeGreaterThan(0);
     expect(within(panel).getByText("Later steps")).toBeVisible();
@@ -1328,6 +1331,15 @@ describe("OnboardingHomeView", () => {
     expect(within(panel).getByTestId("observe-package-picker")).toBeVisible();
     await userEvent.click(
       within(panel).getByRole("button", { name: /anthropic/i }),
+    );
+    expect(
+      within(panel).getByTestId("observe-selected-package-handoff"),
+    ).toHaveTextContent("Anthropic Python path selected");
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Open Anthropic Python setup",
+    );
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "package setup code",
     );
     const pythonSetupUrl = new URL(
       screen
@@ -1353,6 +1365,9 @@ describe("OnboardingHomeView", () => {
     await userEvent.click(
       within(panel).getByRole("button", { name: /typescript/i }),
     );
+    expect(
+      within(panel).getByTestId("observe-selected-package-handoff"),
+    ).toHaveTextContent("Anthropic TypeScript path selected");
     expect(within(panel).getByText("Send first trace")).toBeVisible();
     expect(within(panel).getByText("Review first trace")).toBeVisible();
     const setupLink = screen.getByRole("link", {

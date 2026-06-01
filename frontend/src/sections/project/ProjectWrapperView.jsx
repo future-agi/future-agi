@@ -517,9 +517,9 @@ const ProjectWrapperView = () => {
     return {
       description: hasObserveProject
         ? observeSetupPackageLabel
-          ? `Run one ${observeSetupPackageLabel} request after pasting the setup. Keep this setup open; we will open review when the trace arrives.`
-          : "Run one request after pasting the setup. Keep this setup open; we will open review when the trace arrives."
-        : "Keep this page open after running your app. We check every few seconds and move you forward when data arrives.",
+          ? `Run one ${observeSetupPackageLabel} request after pasting the setup. Keep this setup open; we will open review when the trace arrives, then guide evaluator setup.`
+          : "Run one request after pasting the setup. Keep this setup open; we will open review when the trace arrives, then guide evaluator setup."
+        : "Keep this page open after running your app. We check every few seconds, open trace review when data arrives, then guide evaluator setup.",
       primaryAction: hasObserveProject
         ? {
             label: waitLabel,
