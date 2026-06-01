@@ -89,7 +89,7 @@ async function main() {
     });
     await waitForVisibleText(
       page,
-      "Start with Create dataset. After that, we will show Add scorer.",
+      "Do first: Create dataset. Next: Add scorer.",
     );
     await waitForVisibleText(page, "Start here", { exact: true });
     await waitForVisibleText(page, "Step 1 of 5", { exact: true });

@@ -87,10 +87,7 @@ async function main() {
       { waitUntil: "domcontentloaded" },
     );
     await waitForVisibleText(page, "Set up gateway", { exact: true });
-    await waitForVisibleText(
-      page,
-      "Start with Send request. After that, we will show Review log.",
-    );
+    await waitForVisibleText(page, "Do first: Send request. Next: Review log.");
     await waitForVisibleText(page, "Start here", { exact: true });
     await waitForVisibleText(page, "Step 3 of 6", { exact: true });
     await waitForVisibleText(page, "Send request", { exact: true });

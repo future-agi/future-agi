@@ -99,7 +99,7 @@ async function main() {
     await waitForVisibleText(page, "Prototype agent", { exact: true });
     await waitForVisibleText(
       page,
-      "Start with Create agent. After that, we will show Add starter prompt.",
+      "Do first: Create agent. Next: Add starter prompt.",
     );
     await waitForVisibleText(page, "Start here", { exact: true });
     await waitForVisibleText(page, "Step 1 of 6", { exact: true });
