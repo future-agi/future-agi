@@ -36,13 +36,21 @@ services:
       - "8123:8123"
       - "9000:9000"
     volumes:
+      # The v2 spans table declares `SETTINGS storage_policy='tiered'`. That
+      # policy is a SERVER config (NOT a schema .sql), so it must live in
+      # config.d — mirror docker-compose.test.yml. Without it, init fails on
+      # 002_spans_v2.sql with "Unknown storage policy `tiered`".
+      - ../futureagi/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro
+      - ../futureagi/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro
       # Mount the spans schema files so an init script can apply them.
       - ../futureagi/tracer/services/clickhouse/v2/schema:/docker-entrypoint-initdb.d:ro
       - ch-data:/var/lib/clickhouse
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      # clickhouse-server:alpine ships no wget; use the bundled client so the
+      # container reports healthy (the collector's depends_on gate needs it).
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 2s
-      timeout: 1s
+      timeout: 2s
       retries: 30
 
   fi-collector:
