@@ -153,7 +153,7 @@ describe("TraceFullPage", () => {
     getByRole("button", { name: /create evaluator/i }).click();
 
     expect(mocks.navigate).toHaveBeenCalledWith(
-      "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=observe-1",
+      "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=observe-1&trace_id=trace-1",
     );
   });
 
@@ -186,7 +186,7 @@ describe("TraceFullPage", () => {
     getByRole("button", { name: /create evaluator/i }).click();
 
     expect(mocks.navigate).toHaveBeenCalledWith(
-      "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=observe-1&provider=anthropic&language=python",
+      "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=observe-1&trace_id=trace-1&provider=anthropic&language=python",
     );
   });
 

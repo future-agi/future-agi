@@ -69,10 +69,13 @@ import {
   buildEvalSourceFixHref,
   EVAL_FIX_RERUN_ORIGINS,
   EVAL_REVIEW_ACTIONS,
+  evalUsageLogMatchesRun,
   evalSetupQuickStartAttributionFromSearch,
   getEvalDetailTabFromSearch,
   getEvalReviewOnboardingCopy,
   getEvalReviewOnboardingParams,
+  getEvalUsageLogId,
+  getEvalUsageReviewOutcome,
 } from "./evalCreateOnboarding";
 
 const extract_selected_tools = (tools) => {
@@ -241,15 +244,21 @@ const EvalDetailPage = () => {
       evalId,
       quickStartAttribution: onboardingQuickStartAttribution,
       runId: reviewOnboardingParams.runId,
+      setupLanguage: reviewOnboardingParams.setupLanguage,
+      setupProvider: reviewOnboardingParams.setupProvider,
       sourceId: reviewOnboardingParams.sourceId,
       sourceType: reviewOnboardingParams.sourceType,
+      traceId: reviewOnboardingParams.traceId,
     });
   }, [
     evalId,
     reviewOnboardingParams.isOnboarding,
     reviewOnboardingParams.runId,
+    reviewOnboardingParams.setupLanguage,
+    reviewOnboardingParams.setupProvider,
     reviewOnboardingParams.sourceId,
     reviewOnboardingParams.sourceType,
+    reviewOnboardingParams.traceId,
     onboardingQuickStartAttribution,
   ]);
   const reviewScorerEditHref = useMemo(() => {
@@ -260,15 +269,21 @@ const EvalDetailPage = () => {
       previousRunId: reviewOnboardingParams.runId,
       quickStartAttribution: onboardingQuickStartAttribution,
       rerunFrom: EVAL_FIX_RERUN_ORIGINS.SCORER_EDIT,
+      setupLanguage: reviewOnboardingParams.setupLanguage,
+      setupProvider: reviewOnboardingParams.setupProvider,
       sourceId: reviewOnboardingParams.sourceId,
       sourceType: reviewOnboardingParams.sourceType,
+      traceId: reviewOnboardingParams.traceId,
     });
   }, [
     evalId,
     reviewOnboardingParams.isOnboarding,
     reviewOnboardingParams.runId,
+    reviewOnboardingParams.setupLanguage,
+    reviewOnboardingParams.setupProvider,
     reviewOnboardingParams.sourceId,
     reviewOnboardingParams.sourceType,
+    reviewOnboardingParams.traceId,
     onboardingQuickStartAttribution,
   ]);
   const handleReviewActionPreferenceChange = useCallback((nextPreference) => {
@@ -299,15 +314,11 @@ const EvalDetailPage = () => {
     reviewActionPreference?.runId === reviewOnboardingParams.runId
       ? reviewActionPreference.reviewOutcome
       : null;
-  const isCompletedRepairReview =
+  const isCompletedReview =
     reviewOnboardingParams.isOnboarding &&
-    Boolean(reviewOnboardingParams.rerunFrom) &&
     reviewOutcomeForRun === "result_summary_reviewed";
-  const postRepairHomeHref = useMemo(() => {
-    if (
-      !reviewOnboardingParams.isOnboarding ||
-      !reviewOnboardingParams.rerunFrom
-    ) {
+  const reviewCompletionHomeHref = useMemo(() => {
+    if (!reviewOnboardingParams.isOnboarding) {
       return null;
     }
 
@@ -316,16 +327,22 @@ const EvalDetailPage = () => {
       quickStartAttribution: onboardingQuickStartAttribution,
       rerunFrom: reviewOnboardingParams.rerunFrom,
       runId: reviewOnboardingParams.runId,
+      setupLanguage: reviewOnboardingParams.setupLanguage,
+      setupProvider: reviewOnboardingParams.setupProvider,
       sourceId: reviewOnboardingParams.sourceId,
       sourceType: reviewOnboardingParams.sourceType,
+      traceId: reviewOnboardingParams.traceId,
     });
   }, [
     reviewOnboardingParams.isOnboarding,
     reviewOnboardingParams.previousRunId,
     reviewOnboardingParams.rerunFrom,
     reviewOnboardingParams.runId,
+    reviewOnboardingParams.setupLanguage,
+    reviewOnboardingParams.setupProvider,
     reviewOnboardingParams.sourceId,
     reviewOnboardingParams.sourceType,
+    reviewOnboardingParams.traceId,
     onboardingQuickStartAttribution,
   ]);
 
@@ -342,6 +359,11 @@ const EvalDetailPage = () => {
           rerunFrom: reviewOnboardingParams.rerunFrom,
           route: "eval_detail",
           runId: reviewOnboardingParams.runId,
+          setupLanguage: reviewOnboardingParams.setupLanguage,
+          setupProvider: reviewOnboardingParams.setupProvider,
+          sourceId: reviewOnboardingParams.sourceId,
+          sourceType: reviewOnboardingParams.sourceType,
+          traceId: reviewOnboardingParams.traceId,
         }),
       );
     }
@@ -369,46 +391,71 @@ const EvalDetailPage = () => {
     },
     [setSearchParams],
   );
-  const handlePostRepairContinue = useCallback(() => {
-    if (!postRepairHomeHref) return;
+  const handleReviewComplete = useCallback(
+    ({ row } = {}) => {
+      if (!reviewCompletionHomeHref) return;
+      if (
+        row &&
+        reviewOnboardingParams.runId &&
+        !evalUsageLogMatchesRun(row, reviewOnboardingParams.runId)
+      ) {
+        return;
+      }
 
-    const navigateToQualityHome = () => navigate(postRepairHomeHref);
-    if (recordActivationEvent) {
-      recordActivationEvent(
-        buildEvalFirstQualityLoopCompletedPayload({
-          evalId,
-          evalLogId: reviewActionPreference?.evalLogId,
-          previousRunId: reviewOnboardingParams.previousRunId,
-          quickStartAttribution: onboardingQuickStartAttribution,
-          rerunFrom: reviewOnboardingParams.rerunFrom,
-          reviewOutcome: reviewOutcomeForRun,
-          runId: reviewOnboardingParams.runId,
-          sourceId: reviewOnboardingParams.sourceId,
-          sourceType: reviewOnboardingParams.sourceType,
-        }),
-        { onSettled: navigateToQualityHome },
-      );
-    } else {
-      navigateToQualityHome();
-    }
-  }, [
-    evalId,
-    navigate,
-    onboardingQuickStartAttribution,
-    postRepairHomeHref,
-    recordActivationEvent,
-    reviewActionPreference?.evalLogId,
-    reviewOnboardingParams.previousRunId,
-    reviewOnboardingParams.rerunFrom,
-    reviewOnboardingParams.runId,
-    reviewOnboardingParams.sourceId,
-    reviewOnboardingParams.sourceType,
-    reviewOutcomeForRun,
-  ]);
+      const evalLogId =
+        getEvalUsageLogId(row) || reviewActionPreference?.evalLogId;
+      const reviewOutcome = row
+        ? getEvalUsageReviewOutcome(row)
+        : reviewOutcomeForRun;
+      if (reviewOutcome !== "result_summary_reviewed") {
+        return;
+      }
+
+      const navigateToQualityHome = () => navigate(reviewCompletionHomeHref);
+      if (recordActivationEvent) {
+        recordActivationEvent(
+          buildEvalFirstQualityLoopCompletedPayload({
+            evalId,
+            evalLogId,
+            previousRunId: reviewOnboardingParams.previousRunId,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            rerunFrom: reviewOnboardingParams.rerunFrom,
+            reviewOutcome,
+            runId: reviewOnboardingParams.runId,
+            setupLanguage: reviewOnboardingParams.setupLanguage,
+            setupProvider: reviewOnboardingParams.setupProvider,
+            sourceId: reviewOnboardingParams.sourceId,
+            sourceType: reviewOnboardingParams.sourceType,
+            traceId: reviewOnboardingParams.traceId,
+          }),
+          { onSettled: navigateToQualityHome },
+        );
+      } else {
+        navigateToQualityHome();
+      }
+    },
+    [
+      evalId,
+      navigate,
+      onboardingQuickStartAttribution,
+      recordActivationEvent,
+      reviewActionPreference?.evalLogId,
+      reviewCompletionHomeHref,
+      reviewOnboardingParams.previousRunId,
+      reviewOnboardingParams.rerunFrom,
+      reviewOnboardingParams.runId,
+      reviewOnboardingParams.setupLanguage,
+      reviewOnboardingParams.setupProvider,
+      reviewOnboardingParams.sourceId,
+      reviewOnboardingParams.sourceType,
+      reviewOnboardingParams.traceId,
+      reviewOutcomeForRun,
+    ],
+  );
 
   const handleReviewPrimaryAction = useCallback(() => {
-    if (isCompletedRepairReview && postRepairHomeHref) {
-      handlePostRepairContinue();
+    if (isCompletedReview && reviewCompletionHomeHref) {
+      handleReviewComplete();
       return;
     }
 
@@ -421,8 +468,11 @@ const EvalDetailPage = () => {
             fixRoute: reviewSourceFixHref,
             quickStartAttribution: onboardingQuickStartAttribution,
             runId: reviewOnboardingParams.runId,
+            setupLanguage: reviewOnboardingParams.setupLanguage,
+            setupProvider: reviewOnboardingParams.setupProvider,
             sourceId: reviewOnboardingParams.sourceId,
             sourceType: reviewOnboardingParams.sourceType,
+            traceId: reviewOnboardingParams.traceId,
           }),
           { onSettled: navigateToFix },
         );
@@ -441,8 +491,11 @@ const EvalDetailPage = () => {
             evalId,
             quickStartAttribution: onboardingQuickStartAttribution,
             runId: reviewOnboardingParams.runId,
+            setupLanguage: reviewOnboardingParams.setupLanguage,
+            setupProvider: reviewOnboardingParams.setupProvider,
             sourceId: reviewOnboardingParams.sourceId,
             sourceType: reviewOnboardingParams.sourceType,
+            traceId: reviewOnboardingParams.traceId,
           }),
           { onSettled: navigateToScorer },
         );
@@ -452,15 +505,18 @@ const EvalDetailPage = () => {
     }
   }, [
     evalId,
-    handlePostRepairContinue,
-    isCompletedRepairReview,
+    handleReviewComplete,
+    isCompletedReview,
     navigate,
     onboardingQuickStartAttribution,
-    postRepairHomeHref,
     recordActivationEvent,
+    reviewCompletionHomeHref,
     reviewOnboardingParams.runId,
+    reviewOnboardingParams.setupLanguage,
+    reviewOnboardingParams.setupProvider,
     reviewOnboardingParams.sourceId,
     reviewOnboardingParams.sourceType,
+    reviewOnboardingParams.traceId,
     reviewScorerEditHref,
     reviewSourceFixHref,
     useReviewSourceFix,
@@ -468,15 +524,18 @@ const EvalDetailPage = () => {
   const reviewPrimaryAction = useMemo(() => {
     if (!reviewOnboardingParams.isOnboarding) return null;
     if (!hasResolvedReviewAction) return null;
-    if (isCompletedRepairReview && postRepairHomeHref) {
+    if (isCompletedReview && reviewCompletionHomeHref) {
       return {
-        label: "Continue to quality home",
+        label: "Continue to Home",
         onClick: handleReviewPrimaryAction,
       };
     }
     if (useReviewSourceFix && reviewSourceFixHref) {
       return {
-        label: "Open source fix",
+        label:
+          reviewOnboardingParams.sourceType === "trace_project"
+            ? "Fix trace source"
+            : "Open source fix",
         onClick: handleReviewPrimaryAction,
       };
     }
@@ -490,9 +549,10 @@ const EvalDetailPage = () => {
   }, [
     handleReviewPrimaryAction,
     hasResolvedReviewAction,
-    isCompletedRepairReview,
-    postRepairHomeHref,
+    isCompletedReview,
+    reviewCompletionHomeHref,
     reviewOnboardingParams.isOnboarding,
+    reviewOnboardingParams.sourceType,
     reviewScorerActionLabel,
     reviewScorerEditHref,
     reviewSourceFixHref,
@@ -2247,7 +2307,7 @@ const EvalDetailPage = () => {
             outputType={outputType}
             evalType={evalType}
             onReviewActionPreferenceChange={handleReviewActionPreferenceChange}
-            onPostRepairContinue={handlePostRepairContinue}
+            onReviewComplete={handleReviewComplete}
           />
         </Box>
       )}

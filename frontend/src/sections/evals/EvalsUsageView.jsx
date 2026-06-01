@@ -168,6 +168,11 @@ const EvalsUsageView = () => {
         rerunFrom: reviewOnboardingParams.rerunFrom,
         route: "eval_usage_list",
         runId: reviewOnboardingParams.runId,
+        setupLanguage: reviewOnboardingParams.setupLanguage,
+        setupProvider: reviewOnboardingParams.setupProvider,
+        sourceId: reviewOnboardingParams.sourceId,
+        sourceType: reviewOnboardingParams.sourceType,
+        traceId: reviewOnboardingParams.traceId,
       }),
     );
   }, [

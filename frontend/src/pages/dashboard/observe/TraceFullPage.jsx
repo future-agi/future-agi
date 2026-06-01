@@ -97,13 +97,17 @@ export default function TraceFullPage() {
     navigate(
       buildObserveEvaluatorCreateHref({
         observeId,
+        search: location.search,
         setupLanguage: traceReviewOnboardingParams.setupLanguage,
         setupProvider: traceReviewOnboardingParams.setupProvider,
+        traceId,
       }),
     );
   }, [
+    location.search,
     navigate,
     observeId,
+    traceId,
     traceReviewOnboardingParams.setupLanguage,
     traceReviewOnboardingParams.setupProvider,
   ]);

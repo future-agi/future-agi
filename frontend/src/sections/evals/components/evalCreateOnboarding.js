@@ -18,6 +18,7 @@ export const EVAL_FIX_RERUN_ORIGINS = {
 };
 
 export const EVAL_REVIEW_ACTIONS = {
+  COMPLETE: "complete",
   SCORER_EDIT: "scorer_edit",
   SOURCE_FIX: "source_fix",
 };
@@ -198,7 +199,7 @@ const EVAL_REVIEW_COPY = {
 const EVAL_REPAIR_REVIEW_COPY = {
   currentStep: "Review rerun",
   description:
-    "This run follows a repair action. If the rerun is healthy, continue to the quality home. If it still looks weak, fix the source again.",
+    "This run follows a repair action. If the rerun is healthy, continue to Home. If it still looks weak, fix the source again.",
   sourceSummary: {
     description: "The previous run is linked for repair-loop measurement.",
     label: "Repair rerun complete",
@@ -210,6 +211,35 @@ const EVAL_REPAIR_REVIEW_COPY = {
     { label: "Rerun", complete: true },
     { label: "Inspect", complete: false },
   ],
+};
+
+const traceProjectReviewCopy = ({ setupLanguage, setupProvider } = {}) => {
+  const setupPackageLabel = observeSetupPackageLabel({
+    setupLanguage,
+    setupProvider,
+  });
+  const traceEvaluatorLabel = setupPackageLabel
+    ? `${setupPackageLabel} trace evaluator`
+    : "Trace evaluator";
+
+  return {
+    currentStep: "Review result",
+    description: setupPackageLabel
+      ? `Review the first ${setupPackageLabel} evaluator result. A healthy result completes setup; a weak or failed result points back to the trace source.`
+      : "Review the first trace evaluator result. A healthy result completes setup; a weak or failed result points back to the trace source.",
+    sourceSummary: {
+      description:
+        "The evaluator is tied to the trace project you reviewed during setup.",
+      label: `${traceEvaluatorLabel} run`,
+    },
+    title: "Review trace evaluator result",
+    steps: [
+      { label: "Trace source", complete: true },
+      { label: "Evaluator", complete: true },
+      { label: "Run", complete: true },
+      { label: "Review", complete: false },
+    ],
+  };
 };
 
 const EVAL_SOURCE_FIX_COPY = {
@@ -385,6 +415,7 @@ const setupIntentMetadata = (options = {}) => {
 const observeSetupPackageLabel = ({ setupLanguage, setupProvider } = {}) => {
   const providerLabel =
     OBSERVE_SETUP_PROVIDER_LABELS[normalizeObserveSetupProvider(setupProvider)];
+  if (!providerLabel) return "";
   const languageLabel =
     OBSERVE_SETUP_LANGUAGE_LABELS[normalizeObserveSetupLanguage(setupLanguage)];
   return [providerLabel, languageLabel].filter(Boolean).join(" ");
@@ -404,6 +435,14 @@ const appendEvalFixRerunParams = (
   if (previousRunId) params.set("previous_run_id", previousRunId);
 };
 
+const appendTraceContextParams = (params, { traceId } = {}) => {
+  if (traceId) params.set("trace_id", traceId);
+};
+
+const traceContextMetadata = ({ traceId } = {}) => ({
+  trace_id: traceId || undefined,
+});
+
 export const getEvalCreateOnboardingParams = (search = "") => {
   const params = toSearchParams(search);
   const rawStep = params.get("step");
@@ -422,6 +461,7 @@ export const getEvalCreateOnboardingParams = (search = "") => {
     sourceId: params.get("source_id"),
     sourceType: params.get("source_type"),
     step,
+    traceId: params.get("trace_id"),
     tourAnchor: params.get("tour_anchor"),
   };
 };
@@ -454,6 +494,8 @@ export const shouldAutoSaveEvalOnboardingStarterScorer = ({
 
 export const getEvalCreateOnboardingCopy = ({
   rerunFrom,
+  setupLanguage,
+  setupProvider,
   sourceType,
   step,
 } = {}) => {
@@ -461,10 +503,36 @@ export const getEvalCreateOnboardingCopy = ({
     return EVAL_RERUN_COPY;
   }
   if (sourceType === "trace_project") {
-    return (
+    const setupPackageLabel = observeSetupPackageLabel({
+      setupLanguage,
+      setupProvider,
+    });
+    const fallbackCopy =
       TRACE_PROJECT_STEP_COPY[step] ||
-      TRACE_PROJECT_STEP_COPY[EVAL_CREATE_ONBOARDING_STEPS.SCORER]
-    );
+      TRACE_PROJECT_STEP_COPY[EVAL_CREATE_ONBOARDING_STEPS.SCORER];
+    if (!setupPackageLabel) return fallbackCopy;
+
+    if (step === EVAL_CREATE_ONBOARDING_STEPS.DATA) {
+      return {
+        ...fallbackCopy,
+        description: `${setupPackageLabel} trace source is selected. Next, create an evaluator from that trace source.`,
+        title: `Use ${setupPackageLabel} trace source`,
+      };
+    }
+
+    if (step === EVAL_CREATE_ONBOARDING_STEPS.RUN) {
+      return {
+        ...fallbackCopy,
+        description: `Run the saved evaluator on ${setupPackageLabel} traces so the first result is reviewable.`,
+        title: `Run ${setupPackageLabel} evaluator`,
+      };
+    }
+
+    return {
+      ...fallbackCopy,
+      description: `A starter evaluator is loaded for ${setupPackageLabel} traces. Create it, then run it once.`,
+      title: `Create ${setupPackageLabel} evaluator`,
+    };
   }
   return STEP_COPY[step] || STEP_COPY[EVAL_CREATE_ONBOARDING_STEPS.SCORER];
 };
@@ -559,7 +627,7 @@ export const getEvalStarterScorer = ({ sourceId, sourceType } = {}) => {
   return {
     code: EVAL_STARTER_SCORER_CODE,
     codeLanguage: "python",
-    description: `Starter scorer for ${sourceLabel.toLowerCase()} onboarding.`,
+    description: `Starter scorer for ${sourceLabel.toLowerCase()}.`,
     evalType: "code",
     name: `output-quality-${sourceSlug}`.toLowerCase(),
     outputType: "percentage",
@@ -590,12 +658,14 @@ export const buildEvalScorerSourceHref = ({
   setupProvider,
   sourceId,
   sourceType = "dataset",
+  traceId,
 } = {}) => {
   const params = new URLSearchParams();
   params.set("source", "onboarding");
   params.set("step", EVAL_CREATE_ONBOARDING_STEPS.SCORER);
   params.set("source_type", sourceType || "dataset");
   if (sourceId) params.set("source_id", sourceId);
+  appendTraceContextParams(params, { traceId });
   appendSetupIntentParams(params, {
     search,
     setupIntent,
@@ -620,6 +690,7 @@ export const buildEvalScorerEditHref = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   if (!evalId) return null;
 
@@ -629,6 +700,7 @@ export const buildEvalScorerEditHref = ({
   if (sourceType) params.set("source_type", sourceType);
   if (sourceId) params.set("source_id", sourceId);
   appendEvalFixRerunParams(params, { previousRunId, rerunFrom });
+  appendTraceContextParams(params, { traceId });
   appendSetupIntentParams(params, {
     search,
     setupIntent,
@@ -653,6 +725,7 @@ export const buildEvalRunStepHref = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const params = new URLSearchParams();
   params.set("source", "onboarding");
@@ -660,6 +733,7 @@ export const buildEvalRunStepHref = ({
   if (sourceType) params.set("source_type", sourceType);
   if (sourceId) params.set("source_id", sourceId);
   appendEvalFixRerunParams(params, { previousRunId, rerunFrom });
+  appendTraceContextParams(params, { traceId });
   appendSetupIntentParams(params, {
     search,
     setupIntent,
@@ -729,17 +803,54 @@ export const getEvalUsageReviewOutcome = (log = {}) => {
   const status = String(log?.status || "").toLowerCase();
   const score =
     typeof log?.score === "number" ? log.score : Number.parseFloat(log?.score);
+  const failedValues = new Set([
+    "failed",
+    "fail",
+    "failure",
+    "error",
+    "errored",
+  ]);
+  const pendingValues = new Set([
+    "pending",
+    "queued",
+    "running",
+    "in_progress",
+    "processing",
+    "started",
+  ]);
+  const passedValues = new Set([
+    "passed",
+    "pass",
+    "success",
+    "succeeded",
+    "completed",
+    "complete",
+  ]);
 
-  if (["failed", "fail"].includes(result) || status === "error") {
+  if (
+    failedValues.has(result) ||
+    failedValues.has(status) ||
+    ["cancelled", "canceled"].includes(status)
+  ) {
     return "failure_reviewed";
   }
   if (Number.isFinite(score) && score < 0.7) {
     return "weak_result_reviewed";
   }
+  if (
+    pendingValues.has(result) ||
+    pendingValues.has(status) ||
+    (!Number.isFinite(score) &&
+      !passedValues.has(result) &&
+      !passedValues.has(status))
+  ) {
+    return "pending_result";
+  }
   return "result_summary_reviewed";
 };
 
 export const getEvalReviewActionKind = ({
+  canComplete = false,
   log,
   scorerEditHref,
   sourceFixHref,
@@ -751,6 +862,12 @@ export const getEvalReviewActionKind = ({
 
   if (shouldFixSource && sourceFixHref) {
     return EVAL_REVIEW_ACTIONS.SOURCE_FIX;
+  }
+  if (reviewOutcome === "result_summary_reviewed" && canComplete) {
+    return EVAL_REVIEW_ACTIONS.COMPLETE;
+  }
+  if (reviewOutcome === "pending_result") {
+    return null;
   }
   if (scorerEditHref) {
     return EVAL_REVIEW_ACTIONS.SCORER_EDIT;
@@ -779,6 +896,7 @@ export const getEvalReviewOnboardingParams = (search = "") => {
     sourceType: params.get("source_type"),
     step,
     tab,
+    traceId: params.get("trace_id"),
     tourAnchor: params.get("tour_anchor"),
   };
 };
@@ -799,12 +917,23 @@ export const getEvalFailureActionOnboardingParams = (search = "") => {
     sourceId: params.get("source_id"),
     sourceType: params.get("source_type"),
     step,
+    traceId: params.get("trace_id"),
     tourAnchor: params.get("tour_anchor"),
   };
 };
 
-export const getEvalReviewOnboardingCopy = ({ rerunFrom } = {}) =>
-  rerunFrom ? EVAL_REPAIR_REVIEW_COPY : EVAL_REVIEW_COPY;
+export const getEvalReviewOnboardingCopy = ({
+  rerunFrom,
+  setupLanguage,
+  setupProvider,
+  sourceType,
+} = {}) => {
+  if (rerunFrom) return EVAL_REPAIR_REVIEW_COPY;
+  if (sourceType === "trace_project") {
+    return traceProjectReviewCopy({ setupLanguage, setupProvider });
+  }
+  return EVAL_REVIEW_COPY;
+};
 
 export const getEvalSourceFixOnboardingParams = (search = "") => {
   const params = toSearchParams(search);
@@ -821,6 +950,7 @@ export const getEvalSourceFixOnboardingParams = (search = "") => {
     sourceId: params.get("source_id"),
     sourceType: params.get("source_type"),
     step,
+    traceId: params.get("trace_id"),
     tourAnchor: params.get("tour_anchor"),
   };
 };
@@ -844,6 +974,7 @@ export const buildEvalReviewStepHref = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const basePath = evalId
     ? `/dashboard/evaluations/${evalId}`
@@ -856,6 +987,7 @@ export const buildEvalReviewStepHref = ({
   if (sourceType) params.set("source_type", sourceType);
   if (sourceId) params.set("source_id", sourceId);
   appendEvalFixRerunParams(params, { previousRunId, rerunFrom });
+  appendTraceContextParams(params, { traceId });
   appendSetupIntentParams(params, {
     search,
     setupIntent,
@@ -885,6 +1017,7 @@ export const buildEvalReviewDetailHref = (evalId, search = "") => {
     setupProvider: reviewParams.setupProvider,
     sourceId: reviewParams.sourceId,
     sourceType: reviewParams.sourceType,
+    traceId: reviewParams.traceId,
   });
 };
 
@@ -898,6 +1031,7 @@ export const buildEvalSourceFixHref = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   if (!sourceId || !sourceType) return null;
 
@@ -916,6 +1050,7 @@ export const buildEvalSourceFixHref = ({
   params.set("source_id", sourceId);
   if (evalId) params.set("eval_id", evalId);
   if (runId) params.set("run_id", runId);
+  appendTraceContextParams(params, { traceId });
   appendSetupIntentParams(params, {
     search,
     setupIntent,
@@ -940,6 +1075,7 @@ export const buildEvalPostRepairHomeHref = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const params = new URLSearchParams();
   params.set("source", "onboarding");
@@ -949,6 +1085,7 @@ export const buildEvalPostRepairHomeHref = ({
   if (sourceType) params.set("source_type", sourceType);
   if (sourceId) params.set("source_id", sourceId);
   appendEvalFixRerunParams(params, { previousRunId, rerunFrom });
+  appendTraceContextParams(params, { traceId });
   appendSetupIntentParams(params, {
     search,
     setupIntent,
@@ -977,6 +1114,7 @@ export const buildEvalRouteFocusPayload = ({
   sourceId,
   sourceType,
   step,
+  traceId,
 } = {}) => {
   const normalizedStep = validSteps.has(step)
     ? step
@@ -1002,6 +1140,7 @@ export const buildEvalRouteFocusPayload = ({
       source_id: sourceId,
       source_type: sourceType,
       step: normalizedStep,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_route_focus_viewed",
@@ -1024,6 +1163,7 @@ export const buildEvalSourceSelectedPayload = ({
   sourceType,
   step,
   surface,
+  traceId,
 } = {}) => {
   const normalizedStep = validSteps.has(step)
     ? step
@@ -1045,6 +1185,7 @@ export const buildEvalSourceSelectedPayload = ({
       source_type: sourceType,
       step: normalizedStep,
       surface,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_source_selected",
@@ -1094,6 +1235,7 @@ export const buildEvalScorerCreatedPayload = ({
   sourceId,
   sourceType,
   step,
+  traceId,
 } = {}) => {
   const artifactId = safeKeyPart(evalId || sourceId, "eval-scorer");
 
@@ -1112,6 +1254,7 @@ export const buildEvalScorerCreatedPayload = ({
       source_id: sourceId,
       source_type: sourceType,
       step,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "eval_scorer_created",
@@ -1136,6 +1279,7 @@ export const buildEvalRunClickedPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const artifactId = safeKeyPart(evalId || sourceId, "eval-run");
   const normalizedRerunFrom = normalizeFixRerunOrigin(rerunFrom);
@@ -1158,6 +1302,7 @@ export const buildEvalRunClickedPayload = ({
       source_id: sourceId,
       source_type: sourceType,
       step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_run_clicked",
@@ -1182,6 +1327,7 @@ export const buildEvalRunCompletedPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const resultRunId = getEvalRunResultId(result);
   const artifactId = safeKeyPart(runId || resultRunId || evalId, "eval-run");
@@ -1208,6 +1354,7 @@ export const buildEvalRunCompletedPayload = ({
       source_type: sourceType,
       status: result?.status || "completed",
       step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "eval_run_completed",
@@ -1235,6 +1382,7 @@ export const buildEvalFixRerunCompletedPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const normalizedRerunFrom = normalizeFixRerunOrigin(rerunFrom);
   const resultRunId = getEvalRunResultId(result);
@@ -1264,6 +1412,7 @@ export const buildEvalFixRerunCompletedPayload = ({
       source_type: sourceType,
       status: result?.status || "completed",
       step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_fix_rerun_completed",
@@ -1286,6 +1435,9 @@ export const buildEvalReviewRouteFocusPayload = ({
   setupIntent,
   setupLanguage,
   setupProvider,
+  sourceId,
+  sourceType,
+  traceId,
 } = {}) => {
   const artifactId = safeKeyPart(runId || evalId, EVAL_REVIEW_ARTIFACT_ID);
 
@@ -1303,8 +1455,11 @@ export const buildEvalReviewRouteFocusPayload = ({
       route,
       run_id: runId,
       ...setupIntentMetadata({ setupIntent, setupLanguage, setupProvider }),
+      source_id: sourceId,
+      source_type: sourceType,
       step: EVAL_REVIEW_STEP,
       tab: "usage",
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_route_focus_viewed",
@@ -1326,6 +1481,7 @@ export const buildEvalSourceFixRouteFocusPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const artifactId = safeKeyPart(
     sourceId || runId,
@@ -1347,6 +1503,7 @@ export const buildEvalSourceFixRouteFocusPayload = ({
       source_id: sourceId,
       source_type: sourceType,
       step: EVAL_FIX_STEP,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_source_fix_route_viewed",
@@ -1369,6 +1526,7 @@ export const buildEvalSourceFixRerunClickedPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const artifactId = safeKeyPart(
     sourceId || evalId || runId,
@@ -1391,6 +1549,7 @@ export const buildEvalSourceFixRerunClickedPayload = ({
       source_id: sourceId,
       source_type: sourceType,
       step: EVAL_FIX_STEP,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_source_fix_rerun_clicked",
@@ -1415,6 +1574,7 @@ export const buildEvalFailuresReviewedPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const artifactId = safeKeyPart(
     runId || evalLogId || evalId,
@@ -1440,6 +1600,7 @@ export const buildEvalFailuresReviewedPayload = ({
       source_type: sourceType,
       step: EVAL_REVIEW_STEP,
       tab: "usage",
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "eval_failures_reviewed",
@@ -1466,6 +1627,7 @@ export const buildEvalFixRerunReviewedPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const normalizedRerunFrom = normalizeFixRerunOrigin(rerunFrom);
   const artifactId = safeKeyPart(
@@ -1494,6 +1656,7 @@ export const buildEvalFixRerunReviewedPayload = ({
       source_type: sourceType,
       step: EVAL_REVIEW_STEP,
       tab: "usage",
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_fix_rerun_reviewed",
@@ -1521,6 +1684,7 @@ export const buildEvalFailureActionCreatedPayload = ({
   sourceId,
   sourceType,
   step,
+  traceId,
 } = {}) => {
   const artifactId = safeKeyPart(
     feedbackId || evalLogId || runId || evalId,
@@ -1546,6 +1710,7 @@ export const buildEvalFailureActionCreatedPayload = ({
       source_id: sourceId,
       source_type: sourceType,
       step: step || EVAL_FIX_STEP,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "eval_failure_action_created",
@@ -1569,6 +1734,7 @@ export const buildEvalSourceFixCtaClickedPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const artifactId = safeKeyPart(
     sourceId || evalLogId || runId || evalId,
@@ -1592,6 +1758,7 @@ export const buildEvalSourceFixCtaClickedPayload = ({
       source_id: sourceId,
       source_type: sourceType,
       step: EVAL_FIX_STEP,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_source_fix_cta_clicked",
@@ -1615,6 +1782,7 @@ export const buildEvalScorerEditCtaClickedPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const artifactId = safeKeyPart(
     evalId || evalLogId || runId,
@@ -1638,6 +1806,7 @@ export const buildEvalScorerEditCtaClickedPayload = ({
       source_id: sourceId,
       source_type: sourceType,
       step: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "onboarding_eval_scorer_edit_cta_clicked",
@@ -1662,6 +1831,7 @@ export const buildEvalFirstQualityLoopCompletedPayload = ({
   setupProvider,
   sourceId,
   sourceType,
+  traceId,
 } = {}) => {
   const normalizedRerunFrom = normalizeFixRerunOrigin(rerunFrom);
   const artifactId = safeKeyPart(runId || evalLogId || evalId, "eval-run");
@@ -1685,6 +1855,7 @@ export const buildEvalFirstQualityLoopCompletedPayload = ({
       source_type: sourceType,
       step: EVAL_REVIEW_STEP,
       tab: "usage",
+      ...traceContextMetadata({ traceId }),
     }),
     idempotencyKey: [
       "eval_onboarding",

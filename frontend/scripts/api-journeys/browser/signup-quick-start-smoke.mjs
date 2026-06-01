@@ -942,13 +942,13 @@ async function main() {
     await expectVisibleTestId(page, "eval-onboarding-focus", {
       timeout: 45000,
     });
-    await expectVisibleText(page, "Review", { timeout: 45000 });
-    await expectVisibleText(page, "Review the eval result", {
+    await expectVisibleText(page, "Review result", { timeout: 45000 });
+    await expectVisibleText(page, "Review trace evaluator result", {
       timeout: 45000,
     });
     await expectVisibleText(
       page,
-      "Inspect failures or summary before deciding what to fix next.",
+      "Review the first trace evaluator result. A healthy result completes setup; a weak or failed result points back to the trace source.",
       { timeout: 45000 },
     );
     await waitForCondition(
@@ -1018,8 +1018,8 @@ async function main() {
       .split("/")
       .filter(Boolean)
       .pop();
-    await expectVisibleText(page, "Open source fix", { timeout: 45000 });
-    await clickVisibleButtonText(page, "Open source fix", 45000);
+    await expectVisibleText(page, "Fix trace source", { timeout: 45000 });
+    await clickVisibleButtonText(page, "Fix trace source", 45000);
     await page.waitForFunction(
       ({ evalId: expectedEvalId, projectId, runId }) => {
         const params = new URLSearchParams(window.location.search);
@@ -1199,10 +1199,10 @@ async function main() {
       60000,
     );
     const evalRepairReviewUrl = page.url();
-    await expectVisibleText(page, "Continue to quality home", {
+    await expectVisibleText(page, "Continue to Home", {
       timeout: 45000,
     });
-    await clickVisibleButtonText(page, "Continue to quality home", 45000);
+    await clickVisibleButtonText(page, "Continue to Home", 45000);
     await page.waitForFunction(
       () => {
         const params = new URLSearchParams(window.location.search);

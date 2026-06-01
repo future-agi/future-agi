@@ -6,6 +6,7 @@ import ProjectWrapperView from "./ProjectWrapperView";
 
 const mocks = vi.hoisted(() => ({
   activationState: null,
+  axiosGet: vi.fn(),
   openSampleProject: vi.fn(),
   recordActivationEvent: vi.fn(),
   recordActivationState: null,
@@ -101,11 +102,12 @@ vi.mock("./NewProject/NewProjectDrawer", () => ({
 vi.mock("src/utils/axios", () => ({
   default: {
     delete: vi.fn(),
-    get: vi.fn(),
+    get: (...args) => mocks.axiosGet(...args),
   },
   endpoints: {
     project: {
       deleteObservePrototype: "/project/delete",
+      getTracesForObserveProject: () => "/project/traces",
       projectExperimentList: "/project/experiments",
       projectObserveList: "/project/observe",
     },
@@ -137,6 +139,13 @@ describe("ProjectWrapperView observe setup onboarding", () => {
         },
       },
       isLoading: false,
+    });
+    mocks.axiosGet.mockResolvedValue({
+      data: {
+        result: {
+          table: [],
+        },
+      },
     });
   });
 
@@ -215,6 +224,43 @@ describe("ProjectWrapperView observe setup onboarding", () => {
       expect(params.get("onboarding")).toBe("send-first-trace");
       expect(params.get("selectedTab")).toBe("trace");
     });
+  });
+
+  it("keeps setup open but routes to trace review when the first trace arrives", async () => {
+    mocks.axiosGet.mockResolvedValue({
+      data: {
+        result: {
+          table: [{ trace_id: "trace-1" }],
+        },
+      },
+    });
+
+    renderWithRouter(<ProjectWrapperView />, {
+      route:
+        "/dashboard/observe?setup=true&source=onboarding&provider=anthropic&language=python&quick_start_goal=monitor_production_ai_app&quick_start_id=observe&quick_start_primary_path=observe",
+    });
+
+    expect(screen.getByText("Observe setup drawer")).toBeVisible();
+
+    await waitFor(() => {
+      expect(mocks.axiosGet).toHaveBeenCalledWith("/project/traces", {
+        params: {
+          filters: "[]",
+          page_number: 0,
+          page_size: 1,
+          project_id: "project-1",
+        },
+      });
+      expect(window.location.pathname).toBe(
+        "/dashboard/observe/project-1/trace/trace-1",
+      );
+    });
+    const params = new URLSearchParams(window.location.search);
+    expect(params.get("source")).toBe("onboarding");
+    expect(params.get("onboarding")).toBe("review-first-trace");
+    expect(params.get("provider")).toBe("anthropic");
+    expect(params.get("language")).toBe("python");
+    expect(params.get("quick_start_id")).toBe("observe");
   });
 
   it("moves returned credential users directly to trace wait", async () => {

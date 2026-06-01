@@ -232,6 +232,10 @@ const EvalCreatePage = () => {
     }
     return null;
   }, [onboardingParams]);
+  const onboardingTraceId =
+    onboardingParams.isOnboarding && onboardingParams.traceId
+      ? onboardingParams.traceId
+      : null;
   const onboardingTraceRowType = onboardingTraceProjectId ? "Trace" : null;
 
   // Mode: single or composite
@@ -354,6 +358,7 @@ const EvalCreatePage = () => {
             setupProvider: onboardingParams.setupProvider,
             sourceId: onboardingParams.sourceId,
             sourceType: onboardingParams.sourceType,
+            traceId: onboardingParams.traceId,
           }),
         );
         if (onboardingParams.rerunFrom) {
@@ -372,6 +377,7 @@ const EvalCreatePage = () => {
               setupProvider: onboardingParams.setupProvider,
               sourceId: onboardingParams.sourceId,
               sourceType: onboardingParams.sourceType,
+              traceId: onboardingParams.traceId,
             }),
           );
         }
@@ -386,6 +392,7 @@ const EvalCreatePage = () => {
             setupProvider: onboardingParams.setupProvider,
             sourceId: onboardingParams.sourceId,
             sourceType: onboardingParams.sourceType,
+            traceId: onboardingParams.traceId,
           }),
         );
       }
@@ -515,6 +522,7 @@ const EvalCreatePage = () => {
         sourceId: onboardingParams.sourceId,
         sourceType: onboardingParams.sourceType,
         step: onboardingParams.step,
+        traceId: onboardingParams.traceId,
       }),
     );
   }, [
@@ -551,6 +559,7 @@ const EvalCreatePage = () => {
           sourceType,
           step: onboardingParams.step,
           surface,
+          traceId: onboardingParams.traceId,
         }),
       );
     },
@@ -587,6 +596,7 @@ const EvalCreatePage = () => {
         setupProvider: onboardingParams.setupProvider,
         sourceId: onboardingParams.sourceId,
         sourceType: onboardingParams.sourceType,
+        traceId: onboardingParams.traceId,
       }),
     );
   }, [
@@ -820,6 +830,7 @@ const EvalCreatePage = () => {
             sourceId: onboardingParams.sourceId,
             sourceType: onboardingParams.sourceType,
             step: onboardingParams.step,
+            traceId: onboardingParams.traceId,
           }),
         );
       }
@@ -834,6 +845,7 @@ const EvalCreatePage = () => {
               setupProvider: onboardingParams.setupProvider,
               sourceId: onboardingParams.sourceId,
               sourceType: onboardingParams.sourceType,
+              traceId: onboardingParams.traceId,
             })
           : `/dashboard/evaluations/${draftId}`,
       );
@@ -974,6 +986,7 @@ const EvalCreatePage = () => {
             sourceId: onboardingParams.sourceId,
             sourceType: onboardingParams.sourceType,
             step: onboardingParams.step,
+            traceId: onboardingParams.traceId,
           }),
         );
       }
@@ -1045,6 +1058,7 @@ const EvalCreatePage = () => {
             setupProvider: onboardingParams.setupProvider,
             sourceId: onboardingParams.sourceId,
             sourceType: onboardingParams.sourceType,
+            traceId: onboardingParams.traceId,
           }),
         );
       }
@@ -1857,6 +1871,7 @@ const EvalCreatePage = () => {
                   templateFormat={templateFormat}
                   initialTraceProjectId={onboardingTraceProjectId}
                   initialTraceRowType={onboardingTraceRowType}
+                  initialTraceId={onboardingTraceId}
                   onReadyChange={handlePlaygroundReadyChange}
                 />
               </Box>

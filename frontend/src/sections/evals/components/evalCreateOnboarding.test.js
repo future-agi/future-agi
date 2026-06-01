@@ -29,6 +29,7 @@ import {
   EVAL_CREATE_ONBOARDING_STEPS,
   EVAL_CREATE_SOURCE_TABS,
   EVAL_FIX_RERUN_ORIGINS,
+  EVAL_REVIEW_ACTIONS,
   evalSetupQuickStartAttributionFromSearch,
   evalCreateOnboardingStage,
   evalUsageLogMatchesRun,
@@ -70,6 +71,7 @@ describe("evalCreateOnboarding", () => {
       sourceId: "data-1",
       sourceType: "dataset",
       step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+      traceId: null,
       tourAnchor: null,
     });
   });
@@ -234,6 +236,93 @@ describe("evalCreateOnboarding", () => {
     );
   });
 
+  it("preserves trace context across trace-project evaluator routes and payloads", () => {
+    const traceContext = {
+      sourceId: "project-1",
+      sourceType: "trace_project",
+      traceId: "trace-1",
+    };
+    const searchParamsFor = (href) =>
+      new URL(href, "http://localhost").searchParams;
+
+    expect(
+      getEvalCreateOnboardingParams(
+        "?source=onboarding&step=scorer&source_type=trace_project&source_id=project-1&trace_id=trace-1",
+      ),
+    ).toMatchObject({ traceId: "trace-1" });
+    expect(
+      getEvalReviewOnboardingParams(
+        "?tab=usage&source=onboarding&step=review&run_id=run-1&source_type=trace_project&source_id=project-1&trace_id=trace-1",
+      ),
+    ).toMatchObject({ traceId: "trace-1" });
+    expect(
+      getEvalFailureActionOnboardingParams(
+        "?source=onboarding&step=review&run_id=run-1&source_type=trace_project&source_id=project-1&trace_id=trace-1",
+      ),
+    ).toMatchObject({ traceId: "trace-1" });
+    expect(
+      getEvalSourceFixOnboardingParams(
+        "?source=onboarding&step=fix-eval-failure&source_type=trace_project&source_id=project-1&trace_id=trace-1",
+      ),
+    ).toMatchObject({ traceId: "trace-1" });
+
+    [
+      buildEvalScorerSourceHref({ evalId: "eval-1", ...traceContext }),
+      buildEvalRunStepHref({ evalId: "eval-1", ...traceContext }),
+      buildEvalReviewStepHref({
+        evalId: "eval-1",
+        runId: "run-1",
+        ...traceContext,
+      }),
+      buildEvalSourceFixHref({
+        evalId: "eval-1",
+        runId: "run-1",
+        ...traceContext,
+      }),
+      buildEvalPostRepairHomeHref({ runId: "run-1", ...traceContext }),
+      buildEvalReviewDetailHref(
+        "eval-1",
+        "?tab=usage&source=onboarding&step=review&run_id=run-1&source_type=trace_project&source_id=project-1&trace_id=trace-1",
+      ),
+    ].forEach((href) => {
+      expect(searchParamsFor(href).get("trace_id")).toBe("trace-1");
+    });
+
+    expect(
+      buildEvalRouteFocusPayload({
+        step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+        ...traceContext,
+      }).metadata,
+    ).toMatchObject({ trace_id: "trace-1" });
+    expect(
+      buildEvalSourceSelectedPayload({
+        step: EVAL_CREATE_ONBOARDING_STEPS.DATA,
+        ...traceContext,
+      }).metadata,
+    ).toMatchObject({ trace_id: "trace-1" });
+    expect(
+      buildEvalScorerCreatedPayload({
+        evalId: "eval-1",
+        step: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+        ...traceContext,
+      }).metadata,
+    ).toMatchObject({ trace_id: "trace-1" });
+    expect(
+      buildEvalRunCompletedPayload({
+        evalId: "eval-1",
+        result: { log_id: "run-1" },
+        ...traceContext,
+      }).metadata,
+    ).toMatchObject({ trace_id: "trace-1" });
+    expect(
+      buildEvalFirstQualityLoopCompletedPayload({
+        evalId: "eval-1",
+        runId: "run-1",
+        ...traceContext,
+      }).metadata,
+    ).toMatchObject({ trace_id: "trace-1" });
+  });
+
   it("returns copy and stage for supported steps", () => {
     expect(
       getEvalCreateOnboardingCopy({
@@ -248,17 +337,34 @@ describe("evalCreateOnboarding", () => {
     );
     expect(
       getEvalCreateOnboardingCopy({
+        setupLanguage: "python",
+        setupProvider: "anthropic",
         sourceType: "trace_project",
         step: EVAL_CREATE_ONBOARDING_STEPS.SCORER,
       }),
     ).toMatchObject({
       currentStep: "First evaluator",
-      title: "Create the first trace evaluator",
+      description:
+        "A starter evaluator is loaded for Anthropic Python traces. Create it, then run it once.",
+      title: "Create Anthropic Python evaluator",
       steps: [
         { label: "Trace source", complete: true },
         { label: "Evaluator", complete: false },
         { label: "Run", complete: false },
       ],
+    });
+    expect(
+      getEvalCreateOnboardingCopy({
+        setupLanguage: "typescript",
+        setupProvider: "openai",
+        sourceType: "trace_project",
+        step: EVAL_CREATE_ONBOARDING_STEPS.RUN,
+      }),
+    ).toMatchObject({
+      currentStep: "Run evaluator",
+      description:
+        "Run the saved evaluator on OpenAI TypeScript traces so the first result is reviewable.",
+      title: "Run OpenAI TypeScript evaluator",
     });
   });
 
@@ -475,7 +581,7 @@ describe("evalCreateOnboarding", () => {
 
     expect(starter).toMatchObject({
       codeLanguage: "python",
-      description: "Starter scorer for trace project onboarding.",
+      description: "Starter scorer for trace project.",
       evalType: "code",
       name: "output-quality-project-1",
       outputType: "percentage",
@@ -770,6 +876,7 @@ describe("evalCreateOnboarding", () => {
       sourceType: "dataset",
       step: "review",
       tab: "usage",
+      traceId: null,
       tourAnchor: null,
     });
 
@@ -832,6 +939,26 @@ describe("evalCreateOnboarding", () => {
         label: "Repair rerun complete",
       },
       title: "Review the repair attempt",
+    });
+
+    expect(
+      getEvalReviewOnboardingCopy({
+        setupLanguage: "python",
+        setupProvider: "anthropic",
+        sourceType: "trace_project",
+      }),
+    ).toMatchObject({
+      currentStep: "Review result",
+      sourceSummary: {
+        label: "Anthropic Python trace evaluator run",
+      },
+      title: "Review trace evaluator result",
+      steps: [
+        { label: "Trace source", complete: true },
+        { label: "Evaluator", complete: true },
+        { label: "Run", complete: true },
+        { label: "Review", complete: false },
+      ],
     });
   });
 
@@ -1002,6 +1129,7 @@ describe("evalCreateOnboarding", () => {
       sourceId: "data-1",
       sourceType: "dataset",
       step: "fix-eval-failure",
+      traceId: null,
       tourAnchor: null,
     });
 
@@ -1014,6 +1142,7 @@ describe("evalCreateOnboarding", () => {
       sourceId: null,
       sourceType: null,
       step: null,
+      traceId: null,
       tourAnchor: null,
     });
 
@@ -1087,9 +1216,19 @@ describe("evalCreateOnboarding", () => {
     expect(getEvalUsageReviewOutcome({ result: "Failed" })).toBe(
       "failure_reviewed",
     );
+    expect(getEvalUsageReviewOutcome({ status: "cancelled" })).toBe(
+      "failure_reviewed",
+    );
+    expect(getEvalUsageReviewOutcome({ result: "Errored" })).toBe(
+      "failure_reviewed",
+    );
     expect(getEvalUsageReviewOutcome({ score: 0.4 })).toBe(
       "weak_result_reviewed",
     );
+    expect(getEvalUsageReviewOutcome({ status: "running" })).toBe(
+      "pending_result",
+    );
+    expect(getEvalUsageReviewOutcome({})).toBe("pending_result");
     expect(getEvalUsageReviewOutcome({ result: "Passed", score: 0.95 })).toBe(
       "result_summary_reviewed",
     );
@@ -1105,27 +1244,43 @@ describe("evalCreateOnboarding", () => {
         scorerEditHref,
         sourceFixHref,
       }),
-    ).toBe("source_fix");
+    ).toBe(EVAL_REVIEW_ACTIONS.SOURCE_FIX);
     expect(
       getEvalReviewActionKind({
         log: { score: 0.4 },
         scorerEditHref,
         sourceFixHref,
       }),
-    ).toBe("source_fix");
+    ).toBe(EVAL_REVIEW_ACTIONS.SOURCE_FIX);
+    expect(
+      getEvalReviewActionKind({
+        canComplete: true,
+        log: { status: "running" },
+        scorerEditHref,
+        sourceFixHref,
+      }),
+    ).toBeNull();
+    expect(
+      getEvalReviewActionKind({
+        canComplete: true,
+        log: { result: "Passed", score: 0.95 },
+        scorerEditHref,
+        sourceFixHref,
+      }),
+    ).toBe(EVAL_REVIEW_ACTIONS.COMPLETE);
     expect(
       getEvalReviewActionKind({
         log: { result: "Passed", score: 0.95 },
         scorerEditHref,
         sourceFixHref,
       }),
-    ).toBe("scorer_edit");
+    ).toBe(EVAL_REVIEW_ACTIONS.SCORER_EDIT);
     expect(
       getEvalReviewActionKind({
         log: { result: "Failed" },
         scorerEditHref,
       }),
-    ).toBe("scorer_edit");
+    ).toBe(EVAL_REVIEW_ACTIONS.SCORER_EDIT);
   });
 
   it("builds a review route focus payload", () => {
@@ -1136,6 +1291,10 @@ describe("evalCreateOnboarding", () => {
         rerunFrom: EVAL_FIX_RERUN_ORIGINS.SOURCE_FIX,
         route: "eval_detail",
         runId: "run-1",
+        setupLanguage: "python",
+        setupProvider: "anthropic",
+        sourceId: "project-1",
+        sourceType: "trace_project",
       }),
     ).toMatchObject({
       eventName: "onboarding_eval_route_focus_viewed",
@@ -1150,6 +1309,10 @@ describe("evalCreateOnboarding", () => {
         rerun_from: "source_fix",
         route: "eval_detail",
         run_id: "run-1",
+        setup_language: "python",
+        setup_provider: "anthropic",
+        source_id: "project-1",
+        source_type: "trace_project",
         step: "review",
         tab: "usage",
       },
@@ -1248,6 +1411,7 @@ describe("evalCreateOnboarding", () => {
       sourceId: "data-1",
       sourceType: "dataset",
       step: "fix-eval-failure",
+      traceId: null,
       tourAnchor: null,
     });
 
@@ -1261,6 +1425,7 @@ describe("evalCreateOnboarding", () => {
       sourceId: null,
       sourceType: null,
       step: null,
+      traceId: null,
       tourAnchor: null,
     });
   });

@@ -43,6 +43,8 @@ import ObserveOnboardingFocusPanel from "src/sections/projects/ObserveOnboarding
 import {
   buildObserveProjectOnboardingHref,
   buildObserveRouteFocusPayload,
+  buildObserveTraceReviewHref,
+  getFirstTraceIdFromTraceListResult,
   getObserveOnboardingCopy,
   getObserveSetupPackageLabel,
   getObserveSetupOnboardingParams,
@@ -74,6 +76,7 @@ const ProjectWrapperView = () => {
   const recordedObserveSetupFocusRef = useRef(false);
   const autoOpenedObserveSetupDrawerRef = useRef(false);
   const autoEnteredTraceWaitRef = useRef(null);
+  const autoOpenedTraceReviewRef = useRef(null);
   const sawEmptyObserveSetupRef = useRef(false);
   const currentTab = location.pathname.split("/").pop();
   const { enqueueSnackbar } = useSnackbar();
@@ -234,6 +237,7 @@ const ProjectWrapperView = () => {
       buildObserveProjectOnboardingHref({
         observeId: firstObserveProjectId,
         mode: OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
+        search: location.search,
         setupLanguage: observeSetupOnboardingParams.setupLanguage,
         setupProvider: observeSetupOnboardingParams.setupProvider,
       }),
@@ -244,6 +248,7 @@ const ProjectWrapperView = () => {
     isLoading,
     isProjectCount,
     navigate,
+    location.search,
     observeSetupOnboardingParams.setupLanguage,
     observeSetupOnboardingParams.setupProvider,
     showObserveSetupFocus,
@@ -273,6 +278,7 @@ const ProjectWrapperView = () => {
       buildObserveProjectOnboardingHref({
         observeId: firstObserveProjectId,
         mode: OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
+        search: location.search,
         setupLanguage: observeSetupOnboardingParams.setupLanguage,
         setupProvider: observeSetupOnboardingParams.setupProvider,
       }),
@@ -283,8 +289,76 @@ const ProjectWrapperView = () => {
     isLoading,
     isProjectCount,
     navigate,
+    location.search,
     observeSetupOnboardingParams.credentialStep,
     observeSetupOnboardingParams.credentialsCopied,
+    observeSetupOnboardingParams.setupLanguage,
+    observeSetupOnboardingParams.setupProvider,
+    showObserveSetupFocus,
+  ]);
+
+  const fetchOnboardingFirstTraceId = useCallback(async () => {
+    if (!firstObserveProjectId) return null;
+
+    const response = await axios.get(
+      endpoints.project.getTracesForObserveProject(),
+      {
+        params: {
+          page_number: 0,
+          page_size: 1,
+          filters: "[]",
+          project_id: firstObserveProjectId,
+        },
+      },
+    );
+    return getFirstTraceIdFromTraceListResult(response?.data?.result);
+  }, [firstObserveProjectId]);
+
+  useEffect(() => {
+    if (
+      !showObserveSetupFocus ||
+      isLoading ||
+      !isProjectCount ||
+      !firstObserveProjectId
+    ) {
+      return undefined;
+    }
+
+    let mounted = true;
+    const verifyFirstTrace = () => {
+      void fetchOnboardingFirstTraceId()
+        .then((traceId) => {
+          if (!mounted || !traceId) return;
+          const reviewKey = `${firstObserveProjectId}:${traceId}`;
+          if (autoOpenedTraceReviewRef.current === reviewKey) return;
+          autoOpenedTraceReviewRef.current = reviewKey;
+          navigate(
+            buildObserveTraceReviewHref({
+              observeId: firstObserveProjectId,
+              search: location.search,
+              setupLanguage: observeSetupOnboardingParams.setupLanguage,
+              setupProvider: observeSetupOnboardingParams.setupProvider,
+              traceId,
+            }),
+            { replace: true },
+          );
+        })
+        .catch(() => undefined);
+    };
+
+    verifyFirstTrace();
+    const intervalId = window.setInterval(verifyFirstTrace, 5000);
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    fetchOnboardingFirstTraceId,
+    firstObserveProjectId,
+    isLoading,
+    isProjectCount,
+    location.search,
+    navigate,
     observeSetupOnboardingParams.setupLanguage,
     observeSetupOnboardingParams.setupProvider,
     showObserveSetupFocus,
@@ -296,6 +370,7 @@ const ProjectWrapperView = () => {
         buildObserveProjectOnboardingHref({
           observeId: firstObserveProjectId,
           mode: OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
+          search: location.search,
           setupLanguage: observeSetupOnboardingParams.setupLanguage,
           setupProvider: observeSetupOnboardingParams.setupProvider,
         }),
@@ -313,6 +388,7 @@ const ProjectWrapperView = () => {
   }, [
     firstObserveProjectId,
     isProjectCount,
+    location.search,
     navigate,
     observeSetupOnboardingParams.setupLanguage,
     observeSetupOnboardingParams.setupProvider,
@@ -413,8 +489,8 @@ const ProjectWrapperView = () => {
     return {
       description: hasObserveProject
         ? observeSetupPackageLabel
-          ? `Run one ${observeSetupPackageLabel} request after pasting the setup. The project page waits for the trace and opens review when it arrives.`
-          : "Run one request after pasting the setup. The project page waits for the trace and opens review when it arrives."
+          ? `Run one ${observeSetupPackageLabel} request after pasting the setup. Keep this setup open; we will open review when the trace arrives.`
+          : "Run one request after pasting the setup. Keep this setup open; we will open review when the trace arrives."
         : "Keep this page open after running your app. We check every few seconds and move you forward when data arrives.",
       primaryAction: hasObserveProject
         ? {

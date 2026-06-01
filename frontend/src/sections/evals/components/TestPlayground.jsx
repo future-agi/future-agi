@@ -642,6 +642,7 @@ const TestPlayground = React.forwardRef(
       initialSourceTab = "Custom",
       initialTraceProjectId = null,
       initialTraceRowType = null,
+      initialTraceId = null,
       onReadyChange,
     },
     ref,
@@ -1426,6 +1427,7 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleTracingReady}
                   initialProjectId={initialTraceProjectId}
                   initialRowType={initialTraceRowType}
+                  initialTraceId={initialTraceId}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
                   hostsFilter
@@ -1914,6 +1916,7 @@ TestPlayground.propTypes = {
   initialSourceTab: PropTypes.string,
   initialTraceProjectId: PropTypes.string,
   initialTraceRowType: PropTypes.string,
+  initialTraceId: PropTypes.string,
   onReadyChange: PropTypes.func,
   isSystemEval: PropTypes.bool,
 };

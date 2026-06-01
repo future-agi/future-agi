@@ -306,11 +306,17 @@ describe("observeOnboardingRoute", () => {
     expect(
       buildObserveEvaluatorCreateHref({
         observeId: "project-1",
+        quickStartAttribution: {
+          quick_start_goal: "monitor_production_ai_app",
+          quick_start_id: "observe",
+          quick_start_primary_path: "observe",
+        },
         setupLanguage: "python",
         setupProvider: "anthropic",
+        traceId: "trace-1",
       }),
     ).toBe(
-      "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=project-1&provider=anthropic&language=python",
+      "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=project-1&trace_id=trace-1&provider=anthropic&language=python&quick_start_goal=monitor_production_ai_app&quick_start_id=observe&quick_start_primary_path=observe",
     );
   });
 
@@ -498,6 +504,22 @@ describe("observeOnboardingRoute", () => {
 
     window.sessionStorage.setItem(OBSERVE_SETUP_INTENT_STORAGE_KEY, "{");
     expect(readPersistedObserveSetupIntent()).toEqual({});
+    expect(
+      window.sessionStorage.getItem(OBSERVE_SETUP_INTENT_STORAGE_KEY),
+    ).toBeNull();
+  });
+
+  it("does not keep language-only package intent", () => {
+    expect(
+      getObserveSetupPackageLabel({
+        setupLanguage: "python",
+      }),
+    ).toBe("");
+    expect(
+      persistObserveSetupIntent({
+        setupLanguage: "python",
+      }),
+    ).toEqual({});
     expect(
       window.sessionStorage.getItem(OBSERVE_SETUP_INTENT_STORAGE_KEY),
     ).toBeNull();

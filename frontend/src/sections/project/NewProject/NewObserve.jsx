@@ -1080,7 +1080,10 @@ const NewObserve = ({ setupVerification, showFirstTraceGuide = false }) => {
     INSTRUMENT_INSTALL_COMMANDS[selectedInstrumentLanguage]?.[
       selectedInstrument?.id
     ] || getCodeBySection("installationGuide");
-  const instrumentRuntimeKeyCode = runtimeKeySetupCode(selectedInstrument?.id);
+  const instrumentRuntimeKeyCode = runtimeKeySetupCode(
+    selectedInstrument?.id,
+    selectedInstrumentLanguage,
+  );
   const instrumentSampleRequestCode = cleanCode(
     selectedInstrument?.[selectedInstrumentLanguageKey]?.sample_request_code ||
       defaultSampleRequestCode({

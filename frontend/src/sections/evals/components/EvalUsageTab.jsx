@@ -48,6 +48,7 @@ import {
   buildEvalSourceFixCtaClickedPayload,
   buildEvalSourceFixHref,
   EVAL_FIX_RERUN_ORIGINS,
+  EVAL_REVIEW_ACTIONS,
   evalSetupQuickStartAttributionFromSearch,
   evalUsageLogMatchesRun,
   getEvalReviewActionKind,
@@ -413,7 +414,7 @@ const EvalUsageTab = ({
   outputType = "pass_fail",
   evalType = "llm",
   onReviewActionPreferenceChange,
-  onPostRepairContinue,
+  onReviewComplete,
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
@@ -453,15 +454,21 @@ const EvalUsageTab = ({
       evalId: templateId,
       quickStartAttribution: onboardingQuickStartAttribution,
       runId: failureActionOnboardingParams.runId,
+      setupLanguage: failureActionOnboardingParams.setupLanguage,
+      setupProvider: failureActionOnboardingParams.setupProvider,
       sourceId: failureActionOnboardingParams.sourceId,
       sourceType: failureActionOnboardingParams.sourceType,
+      traceId: failureActionOnboardingParams.traceId,
     });
   }, [
     failureActionOnboardingParams.isOnboarding,
     failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.setupLanguage,
+    failureActionOnboardingParams.setupProvider,
     failureActionOnboardingParams.sourceId,
     failureActionOnboardingParams.sourceType,
     failureActionOnboardingParams.step,
+    failureActionOnboardingParams.traceId,
     onboardingQuickStartAttribution,
     templateId,
   ]);
@@ -479,15 +486,21 @@ const EvalUsageTab = ({
       previousRunId: failureActionOnboardingParams.runId,
       quickStartAttribution: onboardingQuickStartAttribution,
       rerunFrom: EVAL_FIX_RERUN_ORIGINS.SCORER_EDIT,
+      setupLanguage: failureActionOnboardingParams.setupLanguage,
+      setupProvider: failureActionOnboardingParams.setupProvider,
       sourceId: failureActionOnboardingParams.sourceId,
       sourceType: failureActionOnboardingParams.sourceType,
+      traceId: failureActionOnboardingParams.traceId,
     });
   }, [
     failureActionOnboardingParams.isOnboarding,
     failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.setupLanguage,
+    failureActionOnboardingParams.setupProvider,
     failureActionOnboardingParams.sourceId,
     failureActionOnboardingParams.sourceType,
     failureActionOnboardingParams.step,
+    failureActionOnboardingParams.traceId,
     onboardingQuickStartAttribution,
     templateId,
   ]);
@@ -554,6 +567,14 @@ const EvalUsageTab = ({
   );
 
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
+  const detailRowMatchesReviewRun = useMemo(() => {
+    if (!failureActionOnboardingParams.runId) return true;
+    if (!detailRow) return false;
+    return evalUsageLogMatchesRun(
+      detailRow,
+      failureActionOnboardingParams.runId,
+    );
+  }, [detailRow, failureActionOnboardingParams.runId]);
   const hasOnboardingReviewRun = useMemo(() => {
     const runId = failureActionOnboardingParams.runId;
     if (!runId) return false;
@@ -610,7 +631,8 @@ const EvalUsageTab = ({
     if (
       !failureActionOnboardingParams.isOnboarding ||
       failureActionOnboardingParams.step !== "review" ||
-      !detailRow
+      !detailRow ||
+      !detailRowMatchesReviewRun
     ) {
       onReviewActionPreferenceChange(null);
       return undefined;
@@ -619,6 +641,7 @@ const EvalUsageTab = ({
     const reviewOutcome = getEvalUsageReviewOutcome(detailRow);
     onReviewActionPreferenceChange({
       actionKind: getEvalReviewActionKind({
+        canComplete: Boolean(onReviewComplete),
         log: detailRow,
         scorerEditHref,
         sourceFixHref,
@@ -631,10 +654,12 @@ const EvalUsageTab = ({
     return undefined;
   }, [
     detailRow,
+    detailRowMatchesReviewRun,
     failureActionOnboardingParams.isOnboarding,
     failureActionOnboardingParams.runId,
     failureActionOnboardingParams.step,
     onReviewActionPreferenceChange,
+    onReviewComplete,
     scorerEditHref,
     sourceFixHref,
   ]);
@@ -676,7 +701,8 @@ const EvalUsageTab = ({
     if (
       !failureActionOnboardingParams.isOnboarding ||
       failureActionOnboardingParams.step !== "review" ||
-      !detailRow
+      !detailRow ||
+      !detailRowMatchesReviewRun
     ) {
       return;
     }
@@ -698,8 +724,11 @@ const EvalUsageTab = ({
         reviewOutcome,
         rowSource: detailRow.source,
         runId: failureActionOnboardingParams.runId,
+        setupLanguage: failureActionOnboardingParams.setupLanguage,
+        setupProvider: failureActionOnboardingParams.setupProvider,
         sourceId: failureActionOnboardingParams.sourceId,
         sourceType: failureActionOnboardingParams.sourceType,
+        traceId: failureActionOnboardingParams.traceId,
       }),
     );
     if (failureActionOnboardingParams.rerunFrom) {
@@ -713,21 +742,28 @@ const EvalUsageTab = ({
           reviewOutcome,
           rowSource: detailRow.source,
           runId: failureActionOnboardingParams.runId,
+          setupLanguage: failureActionOnboardingParams.setupLanguage,
+          setupProvider: failureActionOnboardingParams.setupProvider,
           sourceId: failureActionOnboardingParams.sourceId,
           sourceType: failureActionOnboardingParams.sourceType,
+          traceId: failureActionOnboardingParams.traceId,
         }),
       );
     }
   }, [
     detailIndex,
     detailRow,
+    detailRowMatchesReviewRun,
     failureActionOnboardingParams.isOnboarding,
     failureActionOnboardingParams.previousRunId,
     failureActionOnboardingParams.rerunFrom,
     failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.setupLanguage,
+    failureActionOnboardingParams.setupProvider,
     failureActionOnboardingParams.sourceId,
     failureActionOnboardingParams.sourceType,
     failureActionOnboardingParams.step,
+    failureActionOnboardingParams.traceId,
     onboardingQuickStartAttribution,
     recordActivationEvent,
     templateId,
@@ -741,6 +777,12 @@ const EvalUsageTab = ({
   const handleFailureActionSubmitted = useCallback(
     ({ actionType, feedbackId, logId, row } = {}) => {
       if (!failureActionOnboardingParams.isOnboarding) return;
+      if (
+        failureActionOnboardingParams.runId &&
+        !evalUsageLogMatchesRun(row, failureActionOnboardingParams.runId)
+      ) {
+        return;
+      }
 
       recordActivationEvent?.(
         buildEvalFailureActionCreatedPayload({
@@ -752,9 +794,12 @@ const EvalUsageTab = ({
           quickStartAttribution: onboardingQuickStartAttribution,
           rowSource: row?.source,
           runId: failureActionOnboardingParams.runId,
+          setupLanguage: failureActionOnboardingParams.setupLanguage,
+          setupProvider: failureActionOnboardingParams.setupProvider,
           sourceId: failureActionOnboardingParams.sourceId,
           sourceType: failureActionOnboardingParams.sourceType,
           step: failureActionOnboardingParams.step,
+          traceId: failureActionOnboardingParams.traceId,
         }),
       );
     },
@@ -769,6 +814,12 @@ const EvalUsageTab = ({
   const handleSourceFixClicked = useCallback(
     ({ row } = {}) => {
       if (!sourceFixHref) return;
+      if (
+        failureActionOnboardingParams.runId &&
+        !evalUsageLogMatchesRun(row, failureActionOnboardingParams.runId)
+      ) {
+        return;
+      }
 
       const navigateToFix = () => navigate(sourceFixHref);
       if (recordActivationEvent) {
@@ -780,8 +831,11 @@ const EvalUsageTab = ({
             quickStartAttribution: onboardingQuickStartAttribution,
             rowSource: row?.source,
             runId: failureActionOnboardingParams.runId,
+            setupLanguage: failureActionOnboardingParams.setupLanguage,
+            setupProvider: failureActionOnboardingParams.setupProvider,
             sourceId: failureActionOnboardingParams.sourceId,
             sourceType: failureActionOnboardingParams.sourceType,
+            traceId: failureActionOnboardingParams.traceId,
           }),
           { onSettled: navigateToFix },
         );
@@ -791,8 +845,11 @@ const EvalUsageTab = ({
     },
     [
       failureActionOnboardingParams.runId,
+      failureActionOnboardingParams.setupLanguage,
+      failureActionOnboardingParams.setupProvider,
       failureActionOnboardingParams.sourceId,
       failureActionOnboardingParams.sourceType,
+      failureActionOnboardingParams.traceId,
       navigate,
       onboardingQuickStartAttribution,
       recordActivationEvent,
@@ -803,6 +860,12 @@ const EvalUsageTab = ({
   const handleScorerEditClicked = useCallback(
     ({ row } = {}) => {
       if (!scorerEditHref) return;
+      if (
+        failureActionOnboardingParams.runId &&
+        !evalUsageLogMatchesRun(row, failureActionOnboardingParams.runId)
+      ) {
+        return;
+      }
 
       const navigateToScorer = () => navigate(scorerEditHref);
       if (recordActivationEvent) {
@@ -814,8 +877,11 @@ const EvalUsageTab = ({
             quickStartAttribution: onboardingQuickStartAttribution,
             rowSource: row?.source,
             runId: failureActionOnboardingParams.runId,
+            setupLanguage: failureActionOnboardingParams.setupLanguage,
+            setupProvider: failureActionOnboardingParams.setupProvider,
             sourceId: failureActionOnboardingParams.sourceId,
             sourceType: failureActionOnboardingParams.sourceType,
+            traceId: failureActionOnboardingParams.traceId,
           }),
           { onSettled: navigateToScorer },
         );
@@ -825,8 +891,11 @@ const EvalUsageTab = ({
     },
     [
       failureActionOnboardingParams.runId,
+      failureActionOnboardingParams.setupLanguage,
+      failureActionOnboardingParams.setupProvider,
       failureActionOnboardingParams.sourceId,
       failureActionOnboardingParams.sourceType,
+      failureActionOnboardingParams.traceId,
       navigate,
       onboardingQuickStartAttribution,
       recordActivationEvent,
@@ -1224,11 +1293,12 @@ const EvalUsageTab = ({
               templateId={templateId}
               evalType={evalType}
               isRepairReview={isRepairReviewOnboarding}
+              isReviewRowMatched={detailRowMatchesReviewRun}
               onFeedbackSubmitted={handleFeedbackSubmitted}
               onFailureActionSubmitted={handleFailureActionSubmitted}
-              onPostRepairContinueClick={
-                onPostRepairContinue
-                  ? () => onPostRepairContinue({ row: detailRow })
+              onReviewCompleteClick={
+                onReviewComplete && detailRowMatchesReviewRun
+                  ? () => onReviewComplete({ row: detailRow })
                   : undefined
               }
               onSourceFixClick={() =>
@@ -1239,6 +1309,7 @@ const EvalUsageTab = ({
               }
               scorerEditHref={scorerEditHref}
               sourceFixHref={sourceFixHref}
+              sourceType={failureActionOnboardingParams.sourceType}
             />
           )}
         </Box>
@@ -1254,13 +1325,15 @@ const DetailPanelContent = ({
   templateId,
   evalType = "llm",
   isRepairReview = false,
+  isReviewRowMatched = true,
   onFailureActionSubmitted,
   onFeedbackSubmitted,
-  onPostRepairContinueClick,
+  onReviewCompleteClick,
   onScorerEditClick,
   onSourceFixClick,
   scorerEditHref,
   sourceFixHref,
+  sourceType,
 }) => {
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
@@ -1269,32 +1342,40 @@ const DetailPanelContent = ({
   const warnings = row.warnings || detail.warnings || [];
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
   const reviewOutcome = getEvalUsageReviewOutcome(row);
-  const nextActionKind = getEvalReviewActionKind({
-    log: row,
-    scorerEditHref,
-    sourceFixHref,
-  });
-  const shouldContinueToQualityHome =
-    isRepairReview &&
-    reviewOutcome === "result_summary_reviewed" &&
-    Boolean(onPostRepairContinueClick);
-  const nextAction = shouldContinueToQualityHome
+  const nextActionKind = isReviewRowMatched
+    ? getEvalReviewActionKind({
+        canComplete: Boolean(onReviewCompleteClick),
+        log: row,
+        scorerEditHref,
+        sourceFixHref,
+      })
+    : null;
+  const shouldContinueToHome =
+    nextActionKind === EVAL_REVIEW_ACTIONS.COMPLETE &&
+    Boolean(onReviewCompleteClick);
+  const nextAction = shouldContinueToHome
     ? {
-        buttonLabel: "Continue to quality home",
-        description:
-          "Open the onboarding home and keep reviewing product signals.",
+        buttonLabel: "Continue to Home",
+        description: isRepairReview
+          ? "The rerun is ready. Continue to Home and keep reviewing product signals."
+          : "The first evaluator run is ready. Continue to Home and keep the setup checklist moving.",
         icon: "mingcute:chart-line-line",
-        onClick: onPostRepairContinueClick,
+        onClick: onReviewCompleteClick,
       }
-    : nextActionKind === "source_fix"
+    : nextActionKind === EVAL_REVIEW_ACTIONS.SOURCE_FIX
       ? {
-          buttonLabel: "Open source fix",
+          buttonLabel:
+            sourceType === "trace_project"
+              ? "Fix trace source"
+              : "Open source fix",
           description:
-            "Fix the source tied to this result, then rerun the eval.",
+            sourceType === "trace_project"
+              ? "Review the trace source that produced this result, then rerun the evaluator."
+              : "Fix the source tied to this result, then rerun the eval.",
           icon: "mingcute:external-link-line",
           onClick: onSourceFixClick,
         }
-      : nextActionKind === "scorer_edit"
+      : nextActionKind === EVAL_REVIEW_ACTIONS.SCORER_EDIT
         ? {
             buttonLabel:
               reviewOutcome === "result_summary_reviewed"
@@ -1978,7 +2059,7 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
 EvalUsageTab.propTypes = {
   evalType: PropTypes.string,
   onReviewActionPreferenceChange: PropTypes.func,
-  onPostRepairContinue: PropTypes.func,
+  onReviewComplete: PropTypes.func,
   outputType: PropTypes.string,
   templateId: PropTypes.string.isRequired,
 };

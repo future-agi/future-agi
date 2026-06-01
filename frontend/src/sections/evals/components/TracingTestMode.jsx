@@ -239,6 +239,15 @@ export const getTracingRowIdentifiers = (row, rowType) => {
   };
 };
 
+export const findTracingRowIndexByTraceId = (rows = [], traceId) => {
+  if (!traceId) return -1;
+  const targetTraceId = String(traceId);
+  return rows.findIndex((row) => {
+    const { traceId: rowTraceId } = getTracingRowIdentifiers(row, "Trace");
+    return String(rowTraceId || "") === targetTraceId;
+  });
+};
+
 export const buildTracingPreviewListParams = ({
   selectedProjectId,
   effectiveFilters,
@@ -268,6 +277,7 @@ const TracingTestMode = React.forwardRef(
       // drawer so the user sees the exact same data their task will run on.
       initialProjectId = null,
       initialRowType = null,
+      initialTraceId = null,
       // Optional: seed the variable→field mapping (used when editing an
       // already-configured eval so the user's previous mapping is preserved).
       initialMapping = null,
@@ -564,6 +574,33 @@ const TracingTestMode = React.forwardRef(
 
     // ── Current row ──
     const currentRow = rows[currentRowIndex] || null;
+    const normalizedInitialTraceId = initialTraceId
+      ? String(initialTraceId)
+      : "";
+    const isInitialTraceTargetLocked = Boolean(
+      normalizedInitialTraceId && rowType === "Trace",
+    );
+    const currentRowMatchesInitialTrace = useMemo(() => {
+      if (!isInitialTraceTargetLocked) return true;
+      const { traceId } = getTracingRowIdentifiers(currentRow, "Trace");
+      return String(traceId || "") === normalizedInitialTraceId;
+    }, [currentRow, isInitialTraceTargetLocked, normalizedInitialTraceId]);
+
+    useEffect(() => {
+      if (!isInitialTraceTargetLocked || !rows.length) return;
+      const targetIndex = findTracingRowIndexByTraceId(
+        rows,
+        normalizedInitialTraceId,
+      );
+      if (targetIndex >= 0 && targetIndex !== currentRowIndex) {
+        setCurrentRowIndex(targetIndex);
+      }
+    }, [
+      currentRowIndex,
+      isInitialTraceTargetLocked,
+      normalizedInitialTraceId,
+      rows,
+    ]);
 
     // ── Session drill-down queries (rowType=Session only) ──
     // The mapping dropdown is sourced from `pickerSourceColumns` (the
@@ -958,15 +995,25 @@ const TracingTestMode = React.forwardRef(
       const allMapped =
         variables.length === 0 ||
         variables.every((v) => mapping[v] && String(mapping[v]).length > 0);
-      const hasRow = !!currentRow;
+      const hasRow = !!currentRow && currentRowMatchesInitialTrace;
       onReadyChange(allMapped && hasRow, mapping);
-    }, [variables, mapping, currentRow, onReadyChange]);
+    }, [
+      variables,
+      mapping,
+      currentRow,
+      currentRowMatchesInitialTrace,
+      onReadyChange,
+    ]);
 
     // ── Run test ──
     const handleRunTest = useCallback(async () => {
       const tid = templateIdRef.current;
       if (!tid) {
         onTestResult?.(false, "No template ID — save the eval first");
+        return;
+      }
+      if (!currentRowMatchesInitialTrace) {
+        onTestResult?.(false, "Trace is still loading. Try again shortly.");
         return;
       }
       setIsRunning(true);
@@ -1183,6 +1230,7 @@ const TracingTestMode = React.forwardRef(
       spanDetail,
       rowFields,
       currentRow,
+      currentRowMatchesInitialTrace,
       rowType,
       onTestResult,
       errorLocalizerEnabled,
@@ -1968,6 +2016,7 @@ TracingTestMode.propTypes = {
   onReadyChange: PropTypes.func,
   initialProjectId: PropTypes.string,
   initialRowType: PropTypes.string,
+  initialTraceId: PropTypes.string,
   initialMapping: PropTypes.object,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,

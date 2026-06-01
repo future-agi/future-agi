@@ -100,9 +100,6 @@ const TAB_TO_ROUTE = {
   users: { route: "users", params: {} },
 };
 
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 const ObservePage = React.memo(() => {
   const { headerConfig, setActiveViewConfig } = useObserveHeader();
   const theme = useTheme();
@@ -210,8 +207,11 @@ const ObservePage = React.memo(() => {
       previousRunId: sourceFixOnboardingParams.runId,
       quickStartAttribution: onboardingQuickStartAttribution,
       rerunFrom: EVAL_FIX_RERUN_ORIGINS.SOURCE_FIX,
+      setupLanguage: sourceFixOnboardingParams.setupLanguage,
+      setupProvider: sourceFixOnboardingParams.setupProvider,
       sourceId: sourceFixOnboardingParams.sourceId,
       sourceType: sourceFixOnboardingParams.sourceType,
+      traceId: sourceFixOnboardingParams.traceId,
     });
   }, [
     onboardingQuickStartAttribution,
@@ -537,10 +537,8 @@ const ObservePage = React.memo(() => {
       page_number: 0,
       page_size: 1,
       filters: "[]",
+      project_id: observeId,
     };
-    if (UUID_RE.test(String(observeId))) {
-      params.project_id = observeId;
-    }
     const response = await axios.get(
       endpoints.project.getTracesForObserveProject(),
       {
@@ -624,6 +622,7 @@ const ObservePage = React.memo(() => {
     navigate(
       buildObserveTraceReviewHref({
         ...firstTraceReviewTarget,
+        search: location.search,
         setupLanguage: observeOnboardingParams.setupLanguage,
         setupProvider: observeOnboardingParams.setupProvider,
       }),
@@ -634,6 +633,7 @@ const ObservePage = React.memo(() => {
   }, [
     firstTraceReviewTarget,
     isWaitingForFirstTraceOnboarding,
+    location.search,
     navigate,
     observeOnboardingParams.setupLanguage,
     observeOnboardingParams.setupProvider,
@@ -649,8 +649,11 @@ const ObservePage = React.memo(() => {
         quickStartAttribution: onboardingQuickStartAttribution,
         route: "observe_project",
         runId: sourceFixOnboardingParams.runId,
+        setupLanguage: sourceFixOnboardingParams.setupLanguage,
+        setupProvider: sourceFixOnboardingParams.setupProvider,
         sourceId: sourceFixOnboardingParams.sourceId,
         sourceType: sourceFixOnboardingParams.sourceType,
+        traceId: sourceFixOnboardingParams.traceId,
       }),
     ).catch(() => undefined);
   }, [
@@ -670,8 +673,11 @@ const ObservePage = React.memo(() => {
         rerunRoute: sourceFixRerunHref,
         route: "observe_project",
         runId: sourceFixOnboardingParams.runId,
+        setupLanguage: sourceFixOnboardingParams.setupLanguage,
+        setupProvider: sourceFixOnboardingParams.setupProvider,
         sourceId: sourceFixOnboardingParams.sourceId,
         sourceType: sourceFixOnboardingParams.sourceType,
+        traceId: sourceFixOnboardingParams.traceId,
       }),
     ).finally(navigateToRerun);
   }, [
@@ -686,6 +692,7 @@ const ObservePage = React.memo(() => {
       navigate(
         buildObserveTraceReviewHref({
           ...firstTraceReviewTarget,
+          search: location.search,
           setupLanguage: observeOnboardingParams.setupLanguage,
           setupProvider: observeOnboardingParams.setupProvider,
         }),
@@ -699,8 +706,10 @@ const ObservePage = React.memo(() => {
       navigate(
         buildObserveEvaluatorCreateHref({
           observeId,
+          search: location.search,
           setupLanguage: observeOnboardingParams.setupLanguage,
           setupProvider: observeOnboardingParams.setupProvider,
+          traceId: loadedTraceId,
         }),
       );
       return;
@@ -716,6 +725,8 @@ const ObservePage = React.memo(() => {
     refreshObserveData?.();
   }, [
     firstTraceReviewTarget,
+    location.search,
+    loadedTraceId,
     navigate,
     observeId,
     observeOnboardingParams.mode,
@@ -743,6 +754,7 @@ const ObservePage = React.memo(() => {
     ) {
       navigate(
         buildObserveSetupHref({
+          search: location.search,
           setupLanguage: observeOnboardingParams.setupLanguage,
           setupProvider: observeOnboardingParams.setupProvider,
         }),
@@ -750,6 +762,7 @@ const ObservePage = React.memo(() => {
     }
   }, [
     firstTraceReviewTarget,
+    location.search,
     navigate,
     observeOnboardingParams.setupLanguage,
     observeOnboardingParams.setupProvider,

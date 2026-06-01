@@ -188,7 +188,7 @@ describe("NewObserve onboarding setup", () => {
     ).toBeVisible();
     expect(
       within(guide).getByLabelText("Copy OpenAI runtime keys"),
-    ).toHaveTextContent('export OPENAI_API_KEY="..."');
+    ).toHaveTextContent('os.environ.setdefault("OPENAI_API_KEY", "...")');
     expect(
       within(guide).getByLabelText("Copy complete package setup"),
     ).toHaveTextContent('os.environ.setdefault("OPENAI_API_KEY", "...")');
@@ -390,7 +390,7 @@ describe("NewObserve onboarding setup", () => {
     ).toBeVisible();
     expect(
       within(guide).getByLabelText("Copy Anthropic runtime keys"),
-    ).toHaveTextContent('export ANTHROPIC_API_KEY="..."');
+    ).toHaveTextContent('os.environ.setdefault("ANTHROPIC_API_KEY", "...")');
     expect(
       within(guide).getByLabelText("Copy complete package setup"),
     ).toHaveTextContent('os.environ.setdefault("ANTHROPIC_API_KEY", "...")');
@@ -415,6 +415,9 @@ describe("NewObserve onboarding setup", () => {
       ),
     ).toBeVisible();
     expect(within(guide).getByText("anthropic ts smoke")).toBeVisible();
+    expect(
+      within(guide).getByLabelText("Copy Anthropic runtime keys"),
+    ).toHaveTextContent('process.env.ANTHROPIC_API_KEY = "..."');
     expect(
       returnToFromApiKeyHref(
         within(guide)

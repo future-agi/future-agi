@@ -1,3 +1,5 @@
+import { appendSetupQuickStartAttributionToHref } from "src/sections/auth/jwt/setup-org-quick-starts";
+
 const DEFAULT_ARTIFACT_ID = "observe-onboarding";
 
 export const OBSERVE_FIRST_TRACE_LOADED_EVENT = "observe-first-trace-loaded";
@@ -113,12 +115,25 @@ const appendSetupIntentParams = (
   if (safeLanguage) params.set("language", safeLanguage);
 };
 
+const appendQuickStartAttribution = (href, { quickStartAttribution, search }) =>
+  appendSetupQuickStartAttributionToHref(
+    href,
+    quickStartAttribution ||
+      Object.fromEntries(toSearchParams(search).entries()),
+  );
+
+const toSearchParams = (search = "") =>
+  search instanceof URLSearchParams
+    ? new URLSearchParams(search)
+    : new URLSearchParams(search);
+
 export const getObserveSetupPackageLabel = ({
   setupLanguage,
   setupProvider,
 } = {}) => {
   const providerLabel =
     observeSetupProviderLabels[safeSetupProvider(setupProvider)];
+  if (!providerLabel) return "";
   const languageLabel =
     observeSetupLanguageLabels[safeSetupLanguage(setupLanguage)];
   return [providerLabel, languageLabel].filter(Boolean).join(" ");
@@ -131,13 +146,22 @@ export const normalizeObserveSetupIntent = ({
   setupLanguage,
   setupProvider,
 } = {}) => ({
-  setupLanguage: safeSetupLanguage(setupLanguage),
   setupProvider: safeSetupProvider(setupProvider),
+  setupLanguage: safeSetupProvider(setupProvider)
+    ? safeSetupLanguage(setupLanguage)
+    : null,
 });
 
 export const persistObserveSetupIntent = (input = {}) => {
   const intent = normalizeObserveSetupIntent(input);
-  if (!intent.setupLanguage && !intent.setupProvider) return {};
+  if (!intent.setupLanguage && !intent.setupProvider) {
+    try {
+      window.sessionStorage?.removeItem(OBSERVE_SETUP_INTENT_STORAGE_KEY);
+    } catch {
+      // Setup should continue even if browser storage is unavailable.
+    }
+    return {};
+  }
 
   try {
     window.sessionStorage?.setItem(
@@ -403,6 +427,8 @@ export const getObserveOnboardingCopy = (
 
 export const buildObserveSetupHref = ({
   credentialStep,
+  quickStartAttribution,
+  search,
   setupLanguage,
   setupProvider,
   source = OBSERVE_ONBOARDING_SOURCES.ONBOARDING,
@@ -412,12 +438,20 @@ export const buildObserveSetupHref = ({
   params.set("source", source);
   if (credentialStep) params.set("credential_step", credentialStep);
   appendSetupIntentParams(params, { setupLanguage, setupProvider });
-  return `/dashboard/observe?${params.toString()}`;
+  return appendQuickStartAttribution(
+    `/dashboard/observe?${params.toString()}`,
+    {
+      quickStartAttribution,
+      search,
+    },
+  );
 };
 
 export const buildObserveProjectOnboardingHref = ({
   observeId,
   mode,
+  quickStartAttribution,
+  search,
   setupLanguage,
   setupProvider,
 } = {}) => {
@@ -429,11 +463,16 @@ export const buildObserveProjectOnboardingHref = ({
     params.set("selectedTab", "trace");
   }
   appendSetupIntentParams(params, { setupLanguage, setupProvider });
-  return `/dashboard/observe/${observeId}/llm-tracing?${params.toString()}`;
+  return appendQuickStartAttribution(
+    `/dashboard/observe/${observeId}/llm-tracing?${params.toString()}`,
+    { quickStartAttribution, search },
+  );
 };
 
 export const buildObserveTraceReviewHref = ({
   observeId,
+  quickStartAttribution,
+  search,
   setupLanguage,
   setupProvider,
   traceId,
@@ -443,21 +482,31 @@ export const buildObserveTraceReviewHref = ({
   params.set("source", "onboarding");
   params.set("onboarding", OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE);
   appendSetupIntentParams(params, { setupLanguage, setupProvider });
-  return `/dashboard/observe/${observeId}/trace/${traceId}?${params.toString()}`;
+  return appendQuickStartAttribution(
+    `/dashboard/observe/${observeId}/trace/${traceId}?${params.toString()}`,
+    { quickStartAttribution, search },
+  );
 };
 
 export const buildObserveEvaluatorCreateHref = ({
   observeId,
+  quickStartAttribution,
+  search,
   setupLanguage,
   setupProvider,
+  traceId,
 } = {}) => {
   const params = new URLSearchParams();
   params.set("source", "onboarding");
   params.set("step", "data");
   params.set("source_type", "trace_project");
   if (observeId) params.set("source_id", observeId);
+  if (traceId) params.set("trace_id", traceId);
   appendSetupIntentParams(params, { setupLanguage, setupProvider });
-  return `/dashboard/evaluations/create?${params.toString()}`;
+  return appendQuickStartAttribution(
+    `/dashboard/evaluations/create?${params.toString()}`,
+    { quickStartAttribution, search },
+  );
 };
 
 export const getObserveFirstTraceReviewTarget = ({

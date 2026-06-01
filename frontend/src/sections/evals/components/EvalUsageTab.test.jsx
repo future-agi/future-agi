@@ -1,6 +1,11 @@
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderWithRouter, screen, waitFor } from "src/utils/test-utils";
+import {
+  fireEvent,
+  renderWithRouter,
+  screen,
+  waitFor,
+} from "src/utils/test-utils";
 import EvalUsageTab from "./EvalUsageTab";
 import {
   EVAL_REVIEW_RUN_POLL_INTERVAL_MS,
@@ -107,7 +112,7 @@ vi.mock("src/sections/onboarding-home/hooks/useRecordActivationEvent", () => ({
 }));
 
 const reviewRoute =
-  "/dashboard/evaluations/eval-1?tab=usage&source=onboarding&step=review&run_id=run-1&source_type=trace_project&source_id=project-1";
+  "/dashboard/evaluations/eval-1?tab=usage&source=onboarding&step=review&run_id=run-1&source_type=trace_project&source_id=project-1&trace_id=trace-1&provider=anthropic&language=python";
 
 const matchingUsageLog = {
   id: "usage-log-1",
@@ -124,9 +129,39 @@ const matchingUsageLog = {
   },
 };
 
-const renderUsageTab = () =>
+const passedUsageLog = {
+  ...matchingUsageLog,
+  id: "usage-log-pass-1",
+  reason: "Output exists and is ready for review.",
+  result: "Passed",
+  score: 0.95,
+};
+
+const pendingUsageLog = {
+  ...matchingUsageLog,
+  id: "usage-log-pending-1",
+  result: "",
+  score: null,
+  status: "running",
+};
+
+const mismatchedUsageLog = {
+  ...passedUsageLog,
+  id: "usage-log-pass-2",
+  run_id: "run-2",
+  detail: {
+    run_id: "run-2",
+  },
+};
+
+const renderUsageTab = ({ onReviewComplete } = {}) =>
   renderWithRouter(
-    <EvalUsageTab templateId="eval-1" evalType="code" outputType="pass_fail" />,
+    <EvalUsageTab
+      templateId="eval-1"
+      evalType="code"
+      outputType="pass_fail"
+      onReviewComplete={onReviewComplete}
+    />,
     { route: reviewRoute },
   );
 
@@ -253,11 +288,94 @@ describe("EvalUsageTab onboarding review run recovery", () => {
             eval_log_id: "usage-log-1",
             review_outcome: "failure_reviewed",
             run_id: "run-1",
+            setup_language: "python",
+            setup_provider: "anthropic",
             source_id: "project-1",
             source_type: "trace_project",
+            trace_id: "trace-1",
           }),
         }),
       ),
     );
+    expect(await screen.findByText("Next action")).toBeInTheDocument();
+    expect(screen.getByText("Fix trace source")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Review the trace source that produced this result, then rerun the evaluator.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("continues to Home after a healthy first trace evaluator result", async () => {
+    const onReviewComplete = vi.fn();
+    mocks.logsData = { items: [passedUsageLog], total: 1 };
+
+    renderUsageTab({ onReviewComplete });
+
+    expect(
+      await screen.findByText("Output exists and is ready for review."),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Next action")).toBeInTheDocument();
+    const continueButton = screen.getByRole("button", {
+      name: "Continue to Home",
+    });
+    expect(continueButton).toBeInTheDocument();
+    expect(screen.queryByText("Tune scorer")).not.toBeInTheDocument();
+
+    fireEvent.click(continueButton);
+
+    expect(onReviewComplete).toHaveBeenCalledWith({
+      row: expect.objectContaining({ id: "usage-log-pass-1" }),
+    });
+    await waitFor(() =>
+      expect(mocks.recordActivationEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: "eval_failures_reviewed",
+          metadata: expect.objectContaining({
+            review_outcome: "result_summary_reviewed",
+            setup_language: "python",
+            setup_provider: "anthropic",
+            trace_id: "trace-1",
+          }),
+        }),
+      ),
+    );
+  });
+
+  it("does not show onboarding review actions for a mismatched usage row", async () => {
+    const onReviewComplete = vi.fn();
+    mocks.logsData = { items: [mismatchedUsageLog], total: 1 };
+
+    renderUsageTab({ onReviewComplete });
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "usage-log-pass-2" }),
+    );
+
+    expect(
+      await screen.findByText("Output exists and is ready for review."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Next action")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Continue to Home" }),
+    ).not.toBeInTheDocument();
+    expect(onReviewComplete).not.toHaveBeenCalled();
+    expect(mocks.recordActivationEvent).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "eval_failures_reviewed",
+      }),
+    );
+  });
+
+  it("does not offer completion while the target run is still pending", async () => {
+    mocks.logsData = { items: [pendingUsageLog], total: 1 };
+
+    renderUsageTab({ onReviewComplete: vi.fn() });
+
+    expect(await screen.findByText("Status")).toBeInTheDocument();
+    expect(screen.queryByText("Next action")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Continue to Home" }),
+    ).not.toBeInTheDocument();
   });
 });

@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   invalidateQueries: vi.fn(),
   recordActivationEvent: vi.fn(),
   testResult: null,
+  testPlaygroundProps: null,
   runTest: vi.fn(),
   updateDraftMutate: vi.fn(),
   updateDraftMutateAsync: vi.fn(),
@@ -79,7 +80,8 @@ vi.mock("src/components/resizablePanels/ResizablePanels", () => ({
 vi.mock("./TestPlayground", async () => {
   const React = await vi.importActual("react");
   const TestPlaygroundMock = React.forwardRef((props, ref) => {
-    const { onReadyChange, onTestResult } = props;
+    const { initialTraceId, onReadyChange, onTestResult } = props;
+    mocks.testPlaygroundProps = props;
     React.useImperativeHandle(ref, () => ({
       runTest: (templateId) => {
         mocks.runTest(templateId);
@@ -92,10 +94,16 @@ vi.mock("./TestPlayground", async () => {
       onReadyChange?.(true);
       return () => onReadyChange?.(false);
     }, [onReadyChange]);
-    return <div data-testid="test-playground" />;
+    return (
+      <div
+        data-testid="test-playground"
+        data-initial-trace-id={initialTraceId || ""}
+      />
+    );
   });
   TestPlaygroundMock.displayName = "TestPlaygroundMock";
   TestPlaygroundMock.propTypes = {
+    initialTraceId: () => null,
     onReadyChange: () => null,
     onTestResult: () => null,
   };
@@ -129,6 +137,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.testResult = null;
+    mocks.testPlaygroundProps = null;
     mocks.axiosPost.mockResolvedValue({
       data: { result: { id: "eval-draft-1" } },
     });
@@ -141,7 +150,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
   it("auto-advances known trace-project sources to the scorer step", async () => {
     renderWithRouter(<EvalCreatePage />, {
       route:
-        "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=project-1&provider=anthropic&language=typescript",
+        "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=project-1&trace_id=trace-1&provider=anthropic&language=typescript",
     });
 
     expect(
@@ -162,6 +171,9 @@ describe("EvalCreatePage onboarding source handoff", () => {
     expect(new URLSearchParams(window.location.search).get("source_id")).toBe(
       "project-1",
     );
+    expect(new URLSearchParams(window.location.search).get("trace_id")).toBe(
+      "trace-1",
+    );
     expect(new URLSearchParams(window.location.search).get("provider")).toBe(
       "anthropic",
     );
@@ -180,6 +192,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
           setup_provider: "anthropic",
           step: "data",
           surface: "tracing",
+          trace_id: "trace-1",
         }),
       }),
     );
@@ -187,7 +200,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
 
   it("auto-saves the untouched trace starter scorer and opens the run step", async () => {
     renderWithRouter(<EvalCreatePage />, {
-      route: `/dashboard/evaluations/create/eval-draft-1?source=onboarding&step=scorer&source_type=trace_project&source_id=project-1&provider=anthropic&language=typescript&${EVAL_QUICK_START_QUERY}`,
+      route: `/dashboard/evaluations/create/eval-draft-1?source=onboarding&step=scorer&source_type=trace_project&source_id=project-1&trace_id=trace-1&provider=anthropic&language=typescript&${EVAL_QUICK_START_QUERY}`,
     });
 
     await waitFor(() =>
@@ -195,7 +208,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
         expect.objectContaining({
           code: expect.stringContaining("def evaluate("),
           code_language: "python",
-          description: "Starter scorer for trace project onboarding.",
+          description: "Starter scorer for trace project.",
           eval_type: "code",
           name: "output-quality-project-1",
           output_type: "percentage",
@@ -215,6 +228,9 @@ describe("EvalCreatePage onboarding source handoff", () => {
     );
     expect(new URLSearchParams(window.location.search).get("source_id")).toBe(
       "project-1",
+    );
+    expect(new URLSearchParams(window.location.search).get("trace_id")).toBe(
+      "trace-1",
     );
     expect(
       new URLSearchParams(window.location.search).get("quick_start_id"),
@@ -241,6 +257,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
           setup_language: "typescript",
           setup_provider: "anthropic",
           step: "scorer",
+          trace_id: "trace-1",
         }),
       }),
     );
@@ -249,15 +266,24 @@ describe("EvalCreatePage onboarding source handoff", () => {
   it("records when an onboarding user starts the first eval run", async () => {
     renderWithRouter(<EvalCreatePage />, {
       route:
-        "/dashboard/evaluations/create/eval-draft-1?source=onboarding&step=run&source_type=trace_project&source_id=project-1&provider=anthropic&language=typescript",
+        "/dashboard/evaluations/create/eval-draft-1?source=onboarding&step=run&source_type=trace_project&source_id=project-1&trace_id=trace-1&provider=anthropic&language=typescript",
     });
 
     expect(
-      await screen.findByText("Run evaluator on trace project"),
+      await screen.findByText("Run Anthropic TypeScript evaluator"),
     ).toBeVisible();
     expect(
       screen.queryByRole("tab", { name: "Composite" }),
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId("test-playground")).toHaveAttribute(
+      "data-initial-trace-id",
+      "trace-1",
+    );
+    expect(mocks.testPlaygroundProps).toMatchObject({
+      initialTraceId: "trace-1",
+      initialTraceProjectId: "project-1",
+      initialTraceRowType: "Trace",
+    });
 
     const runButton = await screen.findByRole("button", {
       name: "Run evaluator",
@@ -281,6 +307,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
             setup_language: "typescript",
             setup_provider: "anthropic",
             step: "run",
+            trace_id: "trace-1",
           }),
         }),
       ),
@@ -300,7 +327,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
 
     renderWithRouter(<EvalCreatePage />, {
       route:
-        "/dashboard/evaluations/create/eval-draft-1?source=onboarding&step=run&source_type=trace_project&source_id=project-1&provider=anthropic&language=typescript",
+        "/dashboard/evaluations/create/eval-draft-1?source=onboarding&step=run&source_type=trace_project&source_id=project-1&trace_id=trace-1&provider=anthropic&language=typescript",
     });
 
     const runButton = await screen.findByRole("button", {
@@ -321,6 +348,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
       expect(params.get("run_id")).toBe("log-1");
       expect(params.get("source_type")).toBe("trace_project");
       expect(params.get("source_id")).toBe("project-1");
+      expect(params.get("trace_id")).toBe("trace-1");
       expect(params.get("provider")).toBe("anthropic");
       expect(params.get("language")).toBe("typescript");
     });
@@ -337,6 +365,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
           setup_language: "typescript",
           setup_provider: "anthropic",
           step: "run",
+          trace_id: "trace-1",
         }),
       }),
     );
