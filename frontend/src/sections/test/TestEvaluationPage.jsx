@@ -204,6 +204,25 @@ const TestEvaluationPage = ({
     onAddEvaluation?.();
   };
 
+  const evalRoutePrimaryAction = hasEvals
+    ? {
+        label: "Run Evaluation",
+        onClick: () => setOpenConfirmRunEvaluations(true),
+        disabled: !canEditEvals || !hasSelectedRuns,
+      }
+    : {
+        label: "Add Evaluation",
+        onClick: handleAddEvaluationClick,
+        disabled: !canEditEvals,
+      };
+  const evalRouteSecondaryAction = hasEvals
+    ? {
+        label: "Add another evaluation",
+        onClick: handleAddEvaluationClick,
+        disabled: !canEditEvals,
+      }
+    : null;
+
   const onToggleToolCallCheck = (e) => {
     const value = e.target.checked;
     if (agentType === AGENT_TYPES.VOICE) {
@@ -252,7 +271,15 @@ const TestEvaluationPage = ({
         <Typography fontSize={16} fontWeight={600}>
           All Evaluations
         </Typography>
-        <IconButton onClick={onClose} sx={{ p: 0.5, color: "text.primary" }}>
+        <IconButton
+          hidden={isEvalRouteMode}
+          onClick={onClose}
+          sx={{
+            display: isEvalRouteMode ? "none" : "inline-flex",
+            p: 0.5,
+            color: "text.primary",
+          }}
+        >
           <Iconify icon="mingcute:close-line" width={20} />
         </IconButton>
       </Box>
@@ -272,20 +299,9 @@ const TestEvaluationPage = ({
         description={evalRouteCopy.description}
         hidden={!isEvalRouteMode}
         blocker={hasEvals && !hasSelectedRuns ? "Select a run first" : null}
-        primaryAction={{
-          label: hasEvals ? "Add another evaluation" : "Add Evaluation",
-          onClick: handleAddEvaluationClick,
-          disabled: !canEditEvals,
-        }}
-        secondaryAction={
-          hasEvals
-            ? {
-                label: "Run Evaluation",
-                onClick: () => setOpenConfirmRunEvaluations(true),
-                disabled: !canEditEvals || !hasSelectedRuns,
-              }
-            : null
-        }
+        primaryAction={evalRoutePrimaryAction}
+        secondaryAction={evalRouteSecondaryAction}
+        singleActionFocus={isEvalRouteMode}
         steps={[
           { label: "Test", complete: Boolean(testId) },
           { label: "Evaluation", complete: hasEvals },
@@ -333,6 +349,7 @@ const TestEvaluationPage = ({
               startIcon={<Iconify icon="mdi:plus" width={16} />}
               onClick={handleAddEvaluationClick}
               disabled={!canEditEvals}
+              hidden={isEvalRouteMode}
               sx={{
                 textTransform: "none",
                 fontSize: "12px",
@@ -359,12 +376,13 @@ const TestEvaluationPage = ({
 
       {/* ── Footer: Tool-call toggle + Cancel / Run ── */}
       <Box
+        hidden={isEvalRouteMode}
         sx={{
           mt: 2,
           pt: 2,
           borderTop: "1px solid",
           borderColor: "divider",
-          display: "flex",
+          display: isEvalRouteMode ? "none" : "flex",
           flexDirection: "column",
           gap: 1.5,
           flexShrink: 0,

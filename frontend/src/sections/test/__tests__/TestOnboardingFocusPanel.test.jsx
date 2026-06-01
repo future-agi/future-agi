@@ -70,6 +70,26 @@ describe("TestOnboardingFocusPanel", () => {
     expect(screen.getByText("Select a run first")).toBeVisible();
   });
 
+  it("hides secondary actions in single-action focus mode", () => {
+    render(
+      <TestOnboardingFocusPanel
+        singleActionFocus
+        currentStep="Evaluation"
+        description="Add one evaluation before running it."
+        primaryAction={{ label: "Add Evaluation", onClick: vi.fn() }}
+        secondaryAction={{ label: "Run Evaluation", onClick: vi.fn() }}
+        title="Create eval coverage"
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /add evaluation/i }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /run evaluation/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("uses the first incomplete step when current step copy is omitted", () => {
     render(
       <TestOnboardingFocusPanel
