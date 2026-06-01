@@ -128,15 +128,23 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
       : scoreColor(ev.score);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";
   const explanation = ev.explanation || ev.eval_explanation;
+  // Pass/Fail evals
+  const isPassFail =
+    ev.output_type === "pass_fail" || ev.output_type === "Pass/Fail";
+  const passFailLabel =
+    isPassFail && typeof ev.result === "boolean"
+      ? ev.result
+        ? "Pass"
+        : "Fail"
+      : null;
+
   const scoreLabel = isSkipped
     ? "Skipped"
     : hasError
       ? "Error"
-      : ev.score_label != null
-        ? ev.score_label
-        : ev.score != null
-          ? `${ev.score}%`
-          : "—";
+      : (ev.score_label ??
+        passFailLabel ??
+        (ev.score != null ? `${ev.score}%` : "—"));
 
   // Error localization visibility — surfaced for every eval that has
   // enough identifiers to drive either the cell-based or trace-based
