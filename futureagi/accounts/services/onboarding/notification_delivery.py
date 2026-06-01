@@ -120,6 +120,18 @@ def _slack_payload(payload):
             text += f". Open: {route}"
         return {"text": text}
 
+    if payload["type"] == "usage_budget_threshold":
+        summary = payload["summary"]
+        text = (
+            f"Usage budget {summary['stage_percent']}%: "
+            f"{summary['budget_name']} is at {summary['current_usage']} "
+            f"of {summary['threshold_value']}. Action: {summary['action_label']}"
+        )
+        route = payload.get("route_url")
+        if route:
+            text += f". Review: {route}"
+        return {"text": text}
+
     count = payload["summary"]["action_count"]
     overdue = payload["summary"]["overdue_count"]
     route = payload["route_url"]
@@ -138,7 +150,7 @@ def _slack_payload(payload):
     return {"text": text}
 
 
-def _post_channel_payload(channel, payload):
+def post_notification_channel_payload(channel, payload):
     config = notification_channel_delivery_config(channel)
     if channel.type == NotificationChannel.TYPE_SLACK_WEBHOOK:
         url = config.get("webhook_url")
@@ -159,6 +171,10 @@ def _post_channel_payload(channel, payload):
         timeout=EXTERNAL_DELIVERY_TIMEOUT_SECONDS,
     )
     response.raise_for_status()
+
+
+def _post_channel_payload(channel, payload):
+    post_notification_channel_payload(channel, payload)
 
 
 def _external_delivery_error(exc):
