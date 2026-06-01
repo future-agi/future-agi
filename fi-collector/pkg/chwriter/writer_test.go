@@ -144,6 +144,93 @@ func TestInsertEmptyBatchNoop(t *testing.T) {
 	}
 }
 
+func TestInsertBestEffort_TargetsNamedTable(t *testing.T) {
+	// InsertBestEffort must POST to a per-call table (the curated end_users /
+	// trace_sessions RMTs) — not the pinned spans table. Verify the query names
+	// the requested table and the Curated* stats move (not the span stats).
+	var gotQueries []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQueries = append(gotQueries, r.URL.Query().Get("query"))
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	w, err := New(mkConfig(t, srv.URL)) // pinned Table = spans
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Close()
+
+	rows := []map[string]any{{"end_user_id": "eu-1", "project_id": "p"}}
+	if err := w.InsertBestEffort(context.Background(), "end_users", rows); err != nil {
+		t.Fatalf("InsertBestEffort end_users: %v", err)
+	}
+	if err := w.InsertBestEffort(context.Background(), "trace_sessions", rows); err != nil {
+		t.Fatalf("InsertBestEffort trace_sessions: %v", err)
+	}
+	// Pinned Insert still goes to spans.
+	if err := w.Insert(context.Background(), rows); err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if len(gotQueries) != 3 {
+		t.Fatalf("expected 3 inserts, got %d", len(gotQueries))
+	}
+	if !strings.Contains(gotQueries[0], "INSERT INTO end_users FORMAT JSONEachRow") {
+		t.Errorf("query[0] should target end_users: %q", gotQueries[0])
+	}
+	if !strings.Contains(gotQueries[1], "INSERT INTO trace_sessions FORMAT JSONEachRow") {
+		t.Errorf("query[1] should target trace_sessions: %q", gotQueries[1])
+	}
+	if !strings.Contains(gotQueries[2], "INSERT INTO spans FORMAT JSONEachRow") {
+		t.Errorf("query[2] should target the pinned spans table: %q", gotQueries[2])
+	}
+	// Curated counters move; span counters reflect ONLY the one span insert.
+	s := w.Snapshot()
+	if s.CuratedBatchesInserted != 2 {
+		t.Errorf("CuratedBatchesInserted=%d want 2", s.CuratedBatchesInserted)
+	}
+	if s.BatchesInserted != 1 {
+		t.Errorf("span BatchesInserted=%d want 1 (curated must not bump span stats)", s.BatchesInserted)
+	}
+}
+
+// TestInsertBestEffort_FailureNoRetryNoDeadLetter proves the best-effort
+// contract: a 5xx is NOT retried, does NOT write the span dead-letter file, and
+// bumps only CuratedBatchesFailed (never the span BatchesFailed / RowsDeadLettered).
+func TestInsertBestEffort_FailureNoRetryNoDeadLetter(t *testing.T) {
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	w, _ := New(mkConfig(t, srv.URL))
+	defer w.Close()
+
+	err := w.InsertBestEffort(context.Background(), "end_users",
+		[]map[string]any{{"end_user_id": "eu-1"}})
+	if err == nil {
+		t.Fatal("expected error from 5xx")
+	}
+	if c := atomic.LoadInt32(&calls); c != 1 {
+		t.Errorf("best-effort must NOT retry; calls=%d want 1", c)
+	}
+	// Span dead-letter file must NOT exist (curated failures don't dead-letter).
+	if _, statErr := os.Stat(w.cfg.DeadLetterFile); statErr == nil {
+		t.Error("best-effort curated failure must not create the span dead-letter file")
+	}
+	s := w.Snapshot()
+	if s.CuratedBatchesFailed != 1 {
+		t.Errorf("CuratedBatchesFailed=%d want 1", s.CuratedBatchesFailed)
+	}
+	if s.BatchesFailed != 0 || s.RowsDeadLettered != 0 {
+		t.Errorf("span failure stats must stay 0; got BatchesFailed=%d RowsDeadLettered=%d",
+			s.BatchesFailed, s.RowsDeadLettered)
+	}
+}
+
 func TestEncodeBatchEscapesUnescapedHTML(t *testing.T) {
 	// CH treats &, <, > literally; we must NOT use the json package's default
 	// HTML-escape which would turn "a&b" into "a&b" and bloat payloads.
@@ -162,7 +249,7 @@ func TestContextCancellationStopsRetries(t *testing.T) {
 	}))
 	defer srv.Close()
 	cfg := mkConfig(t, srv.URL)
-	cfg.MaxRetries = 100        // would take ~10s without cancellation
+	cfg.MaxRetries = 100 // would take ~10s without cancellation
 	cfg.InitialBackoff = 50 * time.Millisecond
 	w, _ := New(cfg)
 	defer w.Close()

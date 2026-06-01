@@ -361,3 +361,219 @@ func TestStampEndUser_NumericUserID_StringCoerced(t *testing.T) {
 		t.Errorf("numeric user.id must str()-coerce to \"12345\": got %#v want %s", rows[0]["end_user_id"], want)
 	}
 }
+
+// ─── CH-derived dimensions (P3b step2 HALF 2): curated identity collection ──
+//
+// These tests pin ConvertWithIdentities: the per-batch DISTINCT end_users /
+// trace_sessions the curated dual-write mirrors. The load-bearing invariant is
+// ID-CONSISTENCY: the curated row's end_user_id / trace_session_id are
+// BYTE-IDENTICAL to the ids the SAME converter stamped onto the span columns
+// (one derivation, reused) — so the row keys line up with the span and the live
+// dict read resolves. We also pin the curated-field extraction (user_id /
+// normalized user_id_type / hash / metadata / external_session_id) and the
+// within-batch dedup (N spans across M identities → exactly M rows).
+
+func TestConvertWithIdentities_EndUserMatchesSpanColumn(t *testing.T) {
+	// An observe span carrying user.id + curated hash/metadata + session.id.
+	traces := buildObserveSpanWith("u@example.com", true, "email", true, "sess-9", true)
+	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
+	a.PutStr("user.id.hash", "hash-abc")
+	a.PutStr("user.metadata", `{"tier":"gold"}`)
+
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows=%d want 1", len(rows))
+	}
+	if len(ids.EndUsers()) != 1 {
+		t.Fatalf("end_users=%d want 1", len(ids.EndUsers()))
+	}
+	if len(ids.Sessions()) != 1 {
+		t.Fatalf("sessions=%d want 1", len(ids.Sessions()))
+	}
+
+	eu := ids.EndUsers()[0]
+	// ID-CONSISTENCY: curated row id == span column id (no second derivation).
+	if eu.EndUserID != rows[0]["end_user_id"] {
+		t.Errorf("curated end_user_id %q != span column %q", eu.EndUserID, rows[0]["end_user_id"])
+	}
+	// And it equals the detid formula keyed on the SAME normalized type.
+	wantEU := detid.EndUserID(stampProject, stampOrg, "u@example.com", "email").String()
+	if eu.EndUserID != wantEU {
+		t.Errorf("end_user_id: got %q want %q", eu.EndUserID, wantEU)
+	}
+	// Curated fields.
+	if eu.ProjectID != stampProject || eu.OrganizationID != stampOrg {
+		t.Errorf("project/org: got %q/%q", eu.ProjectID, eu.OrganizationID)
+	}
+	if eu.UserID != "u@example.com" {
+		t.Errorf("user_id: got %q", eu.UserID)
+	}
+	if eu.UserIDType != "email" {
+		t.Errorf("user_id_type: got %q want email (the SAME normalized value seeding the id)", eu.UserIDType)
+	}
+	if eu.UserIDHash != "hash-abc" {
+		t.Errorf("user_id_hash: got %q want hash-abc", eu.UserIDHash)
+	}
+	if eu.Metadata != `{"tier":"gold"}` {
+		t.Errorf("metadata: got %q", eu.Metadata)
+	}
+
+	s := ids.Sessions()[0]
+	if s.TraceSessionID != rows[0]["trace_session_id"] {
+		t.Errorf("curated trace_session_id %q != span column %q", s.TraceSessionID, rows[0]["trace_session_id"])
+	}
+	wantSess := detid.TraceSessionID(stampProject, "sess-9").String()
+	if s.TraceSessionID != wantSess || s.ExternalSessionID != "sess-9" || s.ProjectID != stampProject {
+		t.Errorf("session row mismatch: %+v", s)
+	}
+}
+
+func TestConvertWithIdentities_UntypedUser_EmptySentinelType(t *testing.T) {
+	// Absent user.id.type → the "" sentinel on the curated row (consolidates
+	// with NULL-typed history), and absent hash/metadata coerce to ""/"{}".
+	traces := buildObserveSpanWith("u1", true, "", false, "", false)
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids.EndUsers()) != 1 {
+		t.Fatalf("end_users=%d want 1", len(ids.EndUsers()))
+	}
+	eu := ids.EndUsers()[0]
+	if eu.UserIDType != "" {
+		t.Errorf("absent type must be the \"\" sentinel, got %q", eu.UserIDType)
+	}
+	if eu.UserIDHash != "" {
+		t.Errorf("absent user.id.hash must coerce to empty, got %q", eu.UserIDHash)
+	}
+	if eu.Metadata != "{}" {
+		t.Errorf("absent user.metadata must coerce to \"{}\", got %q", eu.Metadata)
+	}
+	// Consistency with the span column once more.
+	if eu.EndUserID != rows[0]["end_user_id"] {
+		t.Errorf("id-consistency: %q != %q", eu.EndUserID, rows[0]["end_user_id"])
+	}
+}
+
+func TestConvertWithIdentities_NonObserve_NoEndUser_ButSession(t *testing.T) {
+	// Non-observe project: no end_user collected (observe-gated), but the
+	// session IS collected (not observe-gated) — mirroring the span columns.
+	traces := buildOTLPSpan() // no project_type
+	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
+	a.PutStr("user.id", "u1")
+	a.PutStr("session.id", "s1")
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids.EndUsers()) != 0 {
+		t.Errorf("non-observe must collect 0 end_users, got %d", len(ids.EndUsers()))
+	}
+	if rows[0]["end_user_id"] != nil {
+		t.Errorf("span end_user_id must be nil for non-observe")
+	}
+	if len(ids.Sessions()) != 1 {
+		t.Fatalf("session must be collected regardless of project_type, got %d", len(ids.Sessions()))
+	}
+	if ids.Sessions()[0].TraceSessionID != rows[0]["trace_session_id"] {
+		t.Errorf("session id-consistency: %q != %q", ids.Sessions()[0].TraceSessionID, rows[0]["trace_session_id"])
+	}
+}
+
+func TestConvertWithIdentities_DedupAcrossSpans(t *testing.T) {
+	// Build ONE payload with 4 spans across 2 distinct end_users and 2 distinct
+	// sessions (user A in session X twice, user B in session Y twice). The
+	// per-batch collector must dedup to exactly M=2 end_users and M'=2 sessions,
+	// each keyed by the deterministic id that the corresponding span carries.
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("service.name", "svc")
+	rs.Resource().Attributes().PutStr("fi.project_id", stampProject)
+	rs.Resource().Attributes().PutStr("fi.org_id", stampOrg)
+	rs.Resource().Attributes().PutStr("project_type", "observe")
+	ss := rs.ScopeSpans().AppendEmpty()
+
+	addSpan := func(idx byte, user, sess string) {
+		sp := ss.Spans().AppendEmpty()
+		var tid [16]byte
+		var sid [8]byte
+		tid[0], sid[0] = idx, idx
+		sp.SetTraceID(tid)
+		sp.SetSpanID(sid)
+		sp.SetName("llm.chat")
+		sp.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 0)))
+		sp.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000001, 0)))
+		a := sp.Attributes()
+		a.PutStr("user.id", user)
+		a.PutStr("session.id", sess)
+	}
+	addSpan(1, "userA", "sessX")
+	addSpan(2, "userA", "sessX") // dup identity
+	addSpan(3, "userB", "sessY")
+	addSpan(4, "userB", "sessY") // dup identity
+
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("rows=%d want 4 (every span still emitted)", len(rows))
+	}
+	if len(ids.EndUsers()) != 2 {
+		t.Fatalf("end_users dedup: got %d want 2", len(ids.EndUsers()))
+	}
+	if len(ids.Sessions()) != 2 {
+		t.Fatalf("sessions dedup: got %d want 2", len(ids.Sessions()))
+	}
+	// Each collected id must be one of the deterministic ids stamped on a span.
+	spanEU := map[any]bool{rows[0]["end_user_id"]: true, rows[2]["end_user_id"]: true}
+	for _, eu := range ids.EndUsers() {
+		if !spanEU[eu.EndUserID] {
+			t.Errorf("collected end_user_id %q not present on any span column", eu.EndUserID)
+		}
+	}
+	wantA := detid.EndUserID(stampProject, stampOrg, "userA", "").String()
+	wantB := detid.EndUserID(stampProject, stampOrg, "userB", "").String()
+	gotIDs := map[string]bool{ids.EndUsers()[0].EndUserID: true, ids.EndUsers()[1].EndUserID: true}
+	if !gotIDs[wantA] || !gotIDs[wantB] {
+		t.Errorf("expected end_users {%s,%s}, got %v", wantA, wantB, gotIDs)
+	}
+}
+
+func TestConvertWithIdentities_NonStringMetadata_JSONEncoded(t *testing.T) {
+	// A map-valued user.metadata span attribute must render as JSON text (the CH
+	// metadata String column holds JSON), not a Go-map string form.
+	traces := buildObserveSpanWith("u1", true, "", false, "", false)
+	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
+	md := a.PutEmptyMap("user.metadata")
+	md.PutStr("k", "v")
+	_, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ids.EndUsers()[0].Metadata
+	if got != `{"k":"v"}` {
+		t.Errorf("map metadata must JSON-encode to {\"k\":\"v\"}, got %q", got)
+	}
+}
+
+func TestConvertWithIdentities_MetadataHTMLNotEscaped(t *testing.T) {
+	// A map metadata value containing <, >, & must stay LITERAL (byte-parity
+	// with Python json.dumps(ensure_ascii=False) in curated_writer), NOT become
+	// < / & from Go's default HTML-escaping.
+	traces := buildObserveSpanWith("u1", true, "", false, "", false)
+	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
+	md := a.PutEmptyMap("user.metadata")
+	md.PutStr("html", "<a>&</a>")
+	_, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := ids.EndUsers()[0].Metadata
+	if got != `{"html":"<a>&</a>"}` {
+		t.Errorf("metadata must keep <,>,& literal (no HTML escaping); got %q", got)
+	}
+}

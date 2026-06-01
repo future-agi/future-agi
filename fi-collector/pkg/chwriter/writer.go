@@ -48,11 +48,11 @@ type Config struct {
 	Database string `yaml:"database"`
 	Table    string `yaml:"table"`
 	// Retry / timeout policy.
-	MaxRetries        int           `yaml:"max_retries"`
-	InitialBackoff    time.Duration `yaml:"initial_backoff"`
-	MaxBackoff        time.Duration `yaml:"max_backoff"`
-	RequestTimeout    time.Duration `yaml:"request_timeout"`
-	DeadLetterFile    string        `yaml:"dead_letter_file"`
+	MaxRetries     int           `yaml:"max_retries"`
+	InitialBackoff time.Duration `yaml:"initial_backoff"`
+	MaxBackoff     time.Duration `yaml:"max_backoff"`
+	RequestTimeout time.Duration `yaml:"request_timeout"`
+	DeadLetterFile string        `yaml:"dead_letter_file"`
 	// CH async_insert flag exposed for ops experimentation. We default off
 	// because our own batching is the primary backpressure mechanism — see
 	// PLAN_V2_NO_CDC.md §3.4. Operators can flip on for emergency relief.
@@ -61,12 +61,22 @@ type Config struct {
 
 // Stats tracks lifetime numbers a sidecar metrics exporter can scrape. We
 // keep this on the Writer so the collector main can hook /debug/metrics.
+//
+// The Batches*/Rows* counters cover the PINNED span path (Insert). The
+// Curated* counters cover the SEPARATE best-effort curated-dimension path
+// (InsertBestEffort) — kept distinct so span health (/healthz) is NOT a
+// function of curated-RMT outcomes and a curated outage can't trip the span
+// dead-letter alarm.
 type Stats struct {
-	BatchesInserted uint64
-	RowsInserted    uint64
-	BatchesRetried  uint64
+	BatchesInserted  uint64
+	RowsInserted     uint64
+	BatchesRetried   uint64
 	RowsDeadLettered uint64
-	BatchesFailed   uint64
+	BatchesFailed    uint64
+
+	// Best-effort curated-dimension path (end_users / trace_sessions).
+	CuratedBatchesInserted uint64
+	CuratedBatchesFailed   uint64
 }
 
 // Writer is safe to use from multiple goroutines. The HTTP client is
@@ -74,12 +84,12 @@ type Stats struct {
 type Writer struct {
 	cfg    Config
 	client *http.Client
-	url    string         // pre-built insert URL incl. query string
-	dlMu   sync.Mutex     // serialise dead-letter writes
-	dlFile *os.File       // lazily opened
+	url    string     // pre-built insert URL incl. query string
+	dlMu   sync.Mutex // serialise dead-letter writes
+	dlFile *os.File   // lazily opened
 	stats  Stats
 	rng    *rand.Rand
-	rngMu  sync.Mutex     // rng isn't safe for concurrent use
+	rngMu  sync.Mutex // rng isn't safe for concurrent use
 }
 
 // New constructs a Writer and validates the config. The file path of the
@@ -132,13 +142,64 @@ func New(cfg Config) (*Writer, error) {
 }
 
 // Insert serialises `rows` to a single JSONEachRow request body and POSTs
-// with retry/backoff. Returns nil on success (HTTP 200) OR on dead-letter
-// (rows persisted to disk, error returned for the caller's awareness).
+// with retry/backoff into the writer's PINNED table (cfg.Table — `spans`).
+// Returns nil on success (HTTP 200) OR on dead-letter (rows persisted to disk,
+// error returned for the caller's awareness).
 //
 // Caller owns `rows`. We do NOT mutate the slice; row maps are also not
 // mutated. Returning quickly on transient CH outages with successful
 // dead-letter is preferable to blocking the receiver loop indefinitely.
 func (w *Writer) Insert(ctx context.Context, rows []map[string]any) error {
+	// Hot path: use the pre-built URL (no per-batch string-concat).
+	return w.insert(ctx, w.url, rows)
+}
+
+// InsertBestEffort inserts `rows` into a NON-pinned table (the CURATED
+// dimension RMTs `end_users` / `trace_sessions`, P3b step2 HALF 2) with
+// BEST-EFFORT semantics that mirror Django's curated_writer.py: a SINGLE POST,
+// NO retry/backoff, NO dead-letter. It returns the error for the caller to log
+// and SWALLOW — the periodic Django backfill (ch25_backfill_curated_dimensions)
+// reconciles any gap; the RMT version-merge collapses a later successful write.
+//
+// WHY NOT the full Insert path. Insert's retry+backoff would run SYNCHRONOUSLY
+// inside the span flush loop and, on a CH outage, block span draining for
+// seconds — letting the pending span buffer grow unbounded (the exact OOM this
+// collector exists to prevent; best-effort must "never break OR slow"
+// ingestion). And its dead-letter writes to the SPANS file, whose documented
+// replay is `INSERT INTO spans` — curated rows there would corrupt the spans
+// table. So this path is deliberately fire-once: bounded latency (one request
+// timeout), curated rows never pollute the span dead-letter, and curated
+// outcomes bump only the Curated* counters so /healthz stays span-only.
+//
+// It shares the writer's HTTP client (keep-alive pooling) and the per-call URL
+// builder; these tables are written far less often than spans so the extra
+// concat is negligible.
+func (w *Writer) InsertBestEffort(ctx context.Context, table string, rows []map[string]any) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	body, err := encodeBatch(rows)
+	if err != nil {
+		atomic.AddUint64(&w.stats.CuratedBatchesFailed, 1)
+		return fmt.Errorf("chwriter: curated encode: %w", err)
+	}
+	status, err := w.doRequest(ctx, w.insertURL(table), body)
+	if err == nil && status == http.StatusOK {
+		atomic.AddUint64(&w.stats.CuratedBatchesInserted, 1)
+		return nil
+	}
+	atomic.AddUint64(&w.stats.CuratedBatchesFailed, 1)
+	if err == nil {
+		err = fmt.Errorf("chwriter: curated insert into %s: HTTP %d", table, status)
+	}
+	return err
+}
+
+// insert is the body behind Insert (the pinned span hot path): encode → POST
+// with retry/backoff → dead-letter on exhaustion. `url` selects the target
+// table. The curated path uses InsertBestEffort instead — single POST, no
+// retry, no dead-letter — so it deliberately does NOT share this.
+func (w *Writer) insert(ctx context.Context, url string, rows []map[string]any) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -157,7 +218,7 @@ func (w *Writer) Insert(ctx context.Context, rows []map[string]any) error {
 				break
 			}
 		}
-		status, err := w.doRequest(ctx, body)
+		status, err := w.doRequest(ctx, url, body)
 		if err == nil && status == http.StatusOK {
 			atomic.AddUint64(&w.stats.BatchesInserted, 1)
 			atomic.AddUint64(&w.stats.RowsInserted, uint64(len(rows)))
@@ -182,11 +243,23 @@ func (w *Writer) Insert(ctx context.Context, rows []map[string]any) error {
 	return fmt.Errorf("chwriter: batch dead-lettered after %d attempts: %w", w.cfg.MaxRetries+1, lastErr)
 }
 
-// doRequest issues a single POST and returns the HTTP status + any
+// insertURL builds an INSERT URL for an arbitrary table, mirroring the
+// pre-built hot-path URL in New (same database, JSONEachRow, async flag).
+func (w *Writer) insertURL(table string) string {
+	q := fmt.Sprintf("?database=%s&query=%s",
+		urlEscape(w.cfg.Database),
+		urlEscape(fmt.Sprintf("INSERT INTO %s FORMAT JSONEachRow", table)))
+	if w.cfg.AsyncInsert {
+		q += "&async_insert=1&wait_for_async_insert=0"
+	}
+	return w.cfg.URL + q
+}
+
+// doRequest issues a single POST to `url` and returns the HTTP status + any
 // transport-level error. 5xx and 429 are reported as both (status set,
 // err non-nil) so the retry loop can decide.
-func (w *Writer) doRequest(ctx context.Context, body []byte) (int, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.url, bytes.NewReader(body))
+func (w *Writer) doRequest(ctx context.Context, url string, body []byte) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return 0, err
 	}
@@ -281,11 +354,13 @@ func (w *Writer) Close() error {
 // Snapshot returns a copy of the lifetime stats. Cheap; safe to call often.
 func (w *Writer) Snapshot() Stats {
 	return Stats{
-		BatchesInserted:  atomic.LoadUint64(&w.stats.BatchesInserted),
-		RowsInserted:     atomic.LoadUint64(&w.stats.RowsInserted),
-		BatchesRetried:   atomic.LoadUint64(&w.stats.BatchesRetried),
-		RowsDeadLettered: atomic.LoadUint64(&w.stats.RowsDeadLettered),
-		BatchesFailed:    atomic.LoadUint64(&w.stats.BatchesFailed),
+		BatchesInserted:        atomic.LoadUint64(&w.stats.BatchesInserted),
+		RowsInserted:           atomic.LoadUint64(&w.stats.RowsInserted),
+		BatchesRetried:         atomic.LoadUint64(&w.stats.BatchesRetried),
+		RowsDeadLettered:       atomic.LoadUint64(&w.stats.RowsDeadLettered),
+		BatchesFailed:          atomic.LoadUint64(&w.stats.BatchesFailed),
+		CuratedBatchesInserted: atomic.LoadUint64(&w.stats.CuratedBatchesInserted),
+		CuratedBatchesFailed:   atomic.LoadUint64(&w.stats.CuratedBatchesFailed),
 	}
 }
 

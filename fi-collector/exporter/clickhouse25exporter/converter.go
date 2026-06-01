@@ -10,6 +10,7 @@
 package clickhouse25exporter
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/adapter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/detid"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -36,6 +38,8 @@ import (
 const (
 	attrUserID       = "user.id"
 	attrUserIDType   = "user.id.type"
+	attrUserIDHash   = "user.id.hash"  // SpanAttributes.USER_ID_HASH (otel.py L305)
+	attrUserMetadata = "user.metadata" // SpanAttributes.USER_METADATA (otel.py L306)
 	attrSessionID    = "session.id"
 	resAttrProjectTy = "project_type"
 
@@ -53,8 +57,35 @@ const (
 //
 // Returns rows or an error. We DO NOT silently drop malformed spans; the
 // caller decides retry/dead-letter policy.
+//
+// This is the span-only entry point (the OTLP receiver's hot path historically
+// called it). It delegates to ConvertWithIdentities and discards the curated
+// identities — keeping a stable signature for callers that only need the span
+// rows.
 func Convert(traces ptrace.Traces) ([]map[string]any, error) {
+	rows, _, err := ConvertWithIdentities(traces)
+	return rows, err
+}
+
+// ConvertWithIdentities is Convert plus the per-batch CURATED dimension
+// identities (P3b step2 HALF 2). Walking the payload ONCE, it produces both the
+// span rows AND the DISTINCT end_user / trace_session identities that
+// curatedwriter mirrors into the CH `end_users` / `trace_sessions` RMTs.
+//
+// COHESION WITH THE SPAN-ID STAMP: the identity is computed by the SAME
+// per-span function that stamps the span's end_user_id / trace_session_id
+// columns (spanIdentity), so the curated row's end_user_id is BYTE-IDENTICAL to
+// the span's end_user_id and its user_id_type is the SAME normalized value the
+// span-id gate fed into detid.EndUserID — there is no second, drifting
+// derivation. The id is computed once and reused for the column AND the row.
+//
+// The curatedwriter.Batch collapses duplicates WITHIN the batch (one row per
+// distinct end_user_id / trace_session_id); cross-batch duplicates collapse on
+// the CH side via ReplacingMergeTree(version), so only within-batch dedup is
+// done here.
+func ConvertWithIdentities(traces ptrace.Traces) ([]map[string]any, *curatedwriter.Batch, error) {
 	rows := make([]map[string]any, 0, traces.SpanCount())
+	ids := curatedwriter.NewBatch()
 
 	rss := traces.ResourceSpans()
 	for i := 0; i < rss.Len(); i++ {
@@ -80,25 +111,31 @@ func Convert(traces ptrace.Traces) ([]map[string]any, error) {
 			ss := scope.Spans()
 			for k := 0; k < ss.Len(); k++ {
 				span := ss.At(k)
-				row, err := spanToRow(span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs)
+				row, identity, err := spanToRow(span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs)
 				if err != nil {
-					return nil, fmt.Errorf("span %s: %w", span.SpanID().String(), err)
+					return nil, nil, fmt.Errorf("span %s: %w", span.SpanID().String(), err)
 				}
 				rows = append(rows, row)
+				identity.addTo(ids)
 			}
 		}
 	}
-	return rows, nil
+	return rows, ids, nil
 }
 
 // spanToRow does the per-span conversion. Keeping this in one function
 // makes it grep-friendly when a column is added: search for the column name
 // and you find the one place it's populated.
+//
+// It also returns the span's CURATED dimension identity (spanIdentity) so the
+// caller can collect the distinct end_users / trace_sessions for this batch.
+// The identity's end_user_id / trace_session_id are the SAME values stamped
+// onto the span row below — computed once, reused for both.
 func spanToRow(
 	span ptrace.Span,
 	projectID, orgID, serviceName, semconv, projectType string,
 	resourceAttrs map[string]any,
-) (map[string]any, error) {
+) (map[string]any, spanIdentity, error) {
 	// Pre-allocate destination maps. Sizing is a heuristic — typical LLM
 	// spans have 20-50 attrs, but customer-instrumented spans run smaller.
 	attrsStr := make(map[string]string, 16)
@@ -174,8 +211,15 @@ func spanToRow(
 	// services/clickhouse/v2/deterministic_id.py). Both columns are
 	// Nullable(UUID) (schema 002_spans_v2.sql) — nil when the gating signal is
 	// absent, so JSONEachRow lands a SQL NULL.
-	endUserID := deriveEndUserID(span.Attributes(), projectID, orgID, projectType)
-	traceSessionID := deriveTraceSessionID(span.Attributes(), projectID)
+	//
+	// P3b step2 HALF 2: spanIdentity computes the ids ONCE and also carries the
+	// CURATED fields (user_id / normalized user_id_type / hash / metadata /
+	// external_session_id) so curatedwriter can mirror the end_users /
+	// trace_sessions RMTs keyed by the SAME id. The span columns below read the
+	// ids straight off this identity — no second derivation.
+	identity := newSpanIdentity(span.Attributes(), projectID, orgID, projectType)
+	endUserID := identity.endUserColumn()
+	traceSessionID := identity.sessionColumn()
 
 	row := map[string]any{
 		"project_id":        coalesceUUID(projectID),
@@ -218,88 +262,210 @@ func spanToRow(
 		"_version":   uint64(startNanos.UnixNano()),
 		"is_deleted": uint8(0),
 	}
-	return row, nil
+	return row, identity, nil
 }
 
-// deriveEndUserID computes the deterministic end_user_id for a span, or
-// returns nil (→ SQL NULL) when the identity isn't stampable. It is a
-// byte-exact mirror of the Django stamp in create_otel_span.py:
+// spanIdentity is the per-span CURATED dimension identity (P3b step2 HALF 2):
+// the deterministic end_user_id / trace_session_id AND the curated fields that
+// back the CH `end_users` / `trace_sessions` RMT rows. It is computed ONCE per
+// span by newSpanIdentity and reused for BOTH the span columns (endUserColumn /
+// sessionColumn) and the curated row mapping (curatedwriter) — so the id on the
+// row is byte-identical to the id on the span and the user_id_type on the row
+// is the SAME normalized value that seeded the id's key.
+//
+// Each half is independently optional (gated separately, mirroring Django): a
+// span may stamp an end_user but no session, or vice versa. hasEndUser /
+// hasSession say which halves are populated; the *ID fields are the canonical
+// lowercase-dashed deterministic ids when present.
+type spanIdentity struct {
+	hasEndUser bool
+	endUserID  string // deterministic end_user_id (canonical UUID string)
+	// Curated end_users fields — captured from the SAME gate that produced
+	// endUserID, so they describe exactly that id.
+	projectID  string // canonical lowercase-dashed (the id's key project)
+	orgID      string // canonical lowercase-dashed (the id's key org)
+	userID     string // raw user.id, AsString()-coerced (Python f-string str())
+	userIDType string // NORMALIZED type or "" sentinel — SAME value seeding endUserID
+	userIDHash string // user.id.hash pass-through (empty when absent)
+	metadata   string // user.metadata as JSON text ('{}' when absent)
+
+	hasSession        bool
+	sessionID         string // deterministic trace_session_id (canonical UUID string)
+	externalSessionID string // session.id value the id was computed from
+	sessionProjectID  string // canonical project of the session id
+}
+
+// newSpanIdentity computes a span's CURATED identity: the deterministic ids +
+// curated fields, gated EXACTLY like the Django stamp
+// (futureagi/tracer/utils/create_otel_span.py + .../otel.py end_user block).
+//
+// END_USER gate (byte-exact mirror of create_otel_span.py L78-99 composed with
+// otel.py L846-854):
 //
 //	if attributes.get(USER_ID):                              # truthy user.id
-//	    end_user = {"user_id": ..., "user_id_type": get_user_id_type(...)}
+//	    end_user = {"user_id": ..., "user_id_type": get_user_id_type(...),
+//	                "user_id_hash": ..., "metadata": ...}
 //	if end_user["user_id"] is not None and project.trace_type == "observe":
-//	    eu_id = deterministic_end_user_id(project.id, org_id,
-//	                                      user_id, user_id_type)
+//	    eu_id = deterministic_end_user_id(project.id, org_id, user_id, user_id_type)
 //
-// Gating, in order:
-//   - project_type must be "observe" (mirrors `project.trace_type ==
-//     "observe"`). The collector has no PG, so it uses the SDK-set resource
-//     `project_type` hint. fi_instrumentation always sets it; when a non-FI
-//     producer omits it we conservatively DO NOT stamp (NULL) — never stamp an
-//     end_user onto a non-observe / unknown project, matching Django's intent.
-//   - project_id and org_id must be real (the converter's coalesceUUID random
-//     fallback must NOT seed an id; we check the raw projectID/orgID here).
-//   - user.id must be present AND truthy (mirrors Python's `if
-//     attributes.get(USER_ID):` — empty-string / numeric-zero are falsy and
-//     produce no end_user).
+//	  - project_type must be "observe" (mirrors `project.trace_type ==
+//	    "observe"`). The collector has no PG, so it uses the SDK-set resource
+//	    `project_type` hint. fi_instrumentation always sets it; a non-FI
+//	    producer that omits it conservatively does NOT stamp.
+//	  - project_id and org_id must parse (the converter's coalesceUUID random
+//	    fallback must NOT seed an id; we check the raw projectID/orgID here).
+//	  - user.id must be present AND truthy (Python's `if attributes.get(USER_ID):`
+//	    — empty-string / numeric-zero are falsy and produce no end_user).
 //
-// The user.id value is coerced with AsString() so a string and a numeric
-// user.id both match Python's f-string str()-coercion (and a numeric id never
-// loses precision via the float64 attrs_number tier). user.id.type is
-// normalized + sentinel-mapped exactly like Python — see normalizeUserIDType.
-func deriveEndUserID(attrs pcommon.Map, projectID, orgID, projectType string) any {
-	if projectType != projectTypeObserve {
-		return nil
-	}
+// SESSION gate (mirror of create_otel_span.py L170 / otel.py L820):
+//
+//	session_name = attributes.get(SESSION_ID)
+//	if session_name is not None:
+//	    ts_id = deterministic_trace_session_id(project.id, session_name)
+//
+//	  - PRESENT session.id (even empty-string "") stamps; ABSENT does not — so
+//	    presence (comma-ok), NOT truthiness. No project_type gate (Django stamps
+//	    the session for any project type; only end_user is observe-gated).
+//
+// The user.id / session.id values are coerced with AsString() so a numeric id
+// matches Python's f-string str() (and never loses precision via the float64
+// attrs_number tier). user.id.type is normalized + sentinel-mapped exactly like
+// Python — see normalizeUserIDType, the SINGLE normalization shared between the
+// id key and the curated row.
+func newSpanIdentity(attrs pcommon.Map, projectID, orgID, projectType string) spanIdentity {
+	var id spanIdentity
+
+	// ── end_user half ──────────────────────────────────────────────────────
 	// Canonicalize project_id / org_id to the lowercase-dashed form Python's
 	// str(uuid.UUID) / PG's UUID text produced when the FROZEN ids were
 	// derived. fi.project_id / fi.org_id are already that shape in practice
 	// (the gateway sets them from the PG UUID), so this is a no-op there — but
 	// it makes the key byte-match the contract even if a producer sent an
 	// uppercase / braced form, and refuses to stamp a malformed-key id.
-	pid, ok := canonicalUUID(projectID)
-	if !ok {
-		return nil
+	if projectType == projectTypeObserve {
+		if pid, ok := canonicalUUID(projectID); ok {
+			if oid, ok := canonicalUUID(orgID); ok {
+				if v, ok := attrs.Get(attrUserID); ok && isTruthyAttr(v) {
+					userID := v.AsString()
+					userIDType := normalizeUserIDType(attrs)
+					id.hasEndUser = true
+					id.endUserID = detid.EndUserID(pid, oid, userID, userIDType).String()
+					id.projectID = pid
+					id.orgID = oid
+					id.userID = userID
+					id.userIDType = userIDType
+					id.userIDHash = userIDHashAttr(attrs)
+					id.metadata = userMetadataText(attrs)
+				}
+			}
+		}
 	}
-	oid, ok := canonicalUUID(orgID)
-	if !ok {
-		return nil
+
+	// ── session half (independent gate; no project_type requirement) ────────
+	if pid, ok := canonicalUUID(projectID); ok {
+		if v, ok := attrs.Get(attrSessionID); ok {
+			name := v.AsString()
+			id.hasSession = true
+			id.sessionID = detid.TraceSessionID(pid, name).String()
+			id.externalSessionID = name
+			id.sessionProjectID = pid
+		}
 	}
-	v, ok := attrs.Get(attrUserID)
-	if !ok || !isTruthyAttr(v) {
-		return nil
-	}
-	userID := v.AsString()
-	userIDType := normalizeUserIDType(attrs)
-	return detid.EndUserID(pid, oid, userID, userIDType).String()
+
+	return id
 }
 
-// deriveTraceSessionID computes the deterministic trace_session_id for a span,
-// or nil (→ SQL NULL) when no session is present. Mirrors the Django stamp:
-//
-//	session_name = attributes.get(SESSION_ID)
-//	if session_name is not None:
-//	    ts_id = deterministic_trace_session_id(project.id, session_name)
-//
-// Gating mirrors Python's `session_name is not None` on a bare `.get`: a
-// PRESENT session.id (even empty-string "") stamps; an ABSENT one does not.
-// So we use presence (comma-ok), NOT truthiness — distinct from the end_user
-// gate above. project_id must be real (no coalesceUUID random fallback).
-//
-// Note: there is NO project_type gate here — Django stamps the session for
-// any project type (only the end_user stamp is observe-gated). The session
-// name is coerced with AsString() to match Python's f-string str().
-func deriveTraceSessionID(attrs pcommon.Map, projectID string) any {
-	pid, ok := canonicalUUID(projectID)
-	if !ok {
+// endUserColumn returns the value for the span's Nullable(UUID) `end_user_id`
+// column: the deterministic id string when an end_user was stamped, else nil
+// (→ SQL NULL via JSONEachRow). Reads the id computed in newSpanIdentity — the
+// column and the curated row share one derivation.
+func (id spanIdentity) endUserColumn() any {
+	if !id.hasEndUser {
 		return nil
 	}
-	v, ok := attrs.Get(attrSessionID)
-	if !ok {
+	return id.endUserID
+}
+
+// sessionColumn returns the value for the span's Nullable(UUID)
+// `trace_session_id` column: the deterministic id string when a session was
+// stamped, else nil (→ SQL NULL).
+func (id spanIdentity) sessionColumn() any {
+	if !id.hasSession {
 		return nil
 	}
-	name := v.AsString()
-	return detid.TraceSessionID(pid, name).String()
+	return id.sessionID
+}
+
+// addTo pushes this span's stamped curated identities into the per-batch
+// collector. Each half is added only when it was stamped (same gate as the
+// span columns), so a row contributes an end_user iff its span got a non-NULL
+// end_user_id, and a session iff its span got a non-NULL trace_session_id — the
+// EXACT gate the task requires. The Batch dedups within the batch by id.
+//
+// The curatedwriter.EndUser / Session are filled straight from the identity's
+// already-computed fields: EndUserID is the SAME id stamped on the span column,
+// and UserIDType is the SAME normalized value (the converter's
+// normalizeUserIDType) that seeded that id — there is no re-derivation here.
+func (id spanIdentity) addTo(b *curatedwriter.Batch) {
+	if id.hasEndUser {
+		b.AddEndUser(curatedwriter.EndUser{
+			ProjectID:      id.projectID,
+			EndUserID:      id.endUserID,
+			OrganizationID: id.orgID,
+			UserID:         id.userID,
+			UserIDType:     id.userIDType,
+			UserIDHash:     id.userIDHash,
+			Metadata:       id.metadata,
+		})
+	}
+	if id.hasSession {
+		b.AddSession(curatedwriter.Session{
+			ProjectID:         id.sessionProjectID,
+			TraceSessionID:    id.sessionID,
+			ExternalSessionID: id.externalSessionID,
+		})
+	}
+}
+
+// userIDHashAttr reads `user.id.hash` (SpanAttributes.USER_ID_HASH) as a
+// pass-through String, coercing absent to the empty string (the CH
+// `end_users.user_id_hash` column is a non-null String DEFAULT empty). Mirrors
+// Django otel.py L852 `attributes.get(USER_ID_HASH)` composed with
+// curated_writer's `or ""`.
+func userIDHashAttr(attrs pcommon.Map) string {
+	v, ok := attrs.Get(attrUserIDHash)
+	if !ok {
+		return ""
+	}
+	return v.AsString()
+}
+
+// userMetadataText reads `user.metadata` (SpanAttributes.USER_METADATA) and
+// renders it as the JSON text the CH `end_users.metadata` String column holds.
+// Mirrors Django otel.py L853 `attributes.get(USER_METADATA, {})` composed with
+// curated_writer._metadata_to_text: absent → "{}", a string is trusted as-is
+// (the SDK serializes the dict before putting it on the span attribute), any
+// other value is JSON-encoded.
+func userMetadataText(attrs pcommon.Map) string {
+	v, ok := attrs.Get(attrUserMetadata)
+	if !ok {
+		return "{}"
+	}
+	if v.Type() == pcommon.ValueTypeStr {
+		return v.Str()
+	}
+	// Non-string (map/slice/number/bool) → JSON. AsRaw yields a Go-native
+	// value; encode with HTML-escaping OFF so `<`/`>`/`&` stay literal —
+	// byte-parity with Python's json.dumps(ensure_ascii=False) in
+	// curated_writer._metadata_to_text and with chwriter's own encoder.
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v.AsRaw()); err != nil {
+		return "{}"
+	}
+	// json.Encoder appends a trailing newline; trim it for a clean JSON scalar.
+	return strings.TrimRight(buf.String(), "\n")
 }
 
 // canonicalUUID parses s and re-emits the canonical lowercase-dashed UUID

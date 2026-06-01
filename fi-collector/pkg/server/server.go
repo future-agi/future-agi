@@ -25,6 +25,7 @@ import (
 
 	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
 	"google.golang.org/grpc"
 )
@@ -44,18 +45,27 @@ type Config struct {
 // the only difference: gRPC uses the generated stub; HTTP accepts
 // `application/x-protobuf` and `application/json` per the OTLP/HTTP spec.
 type Server struct {
-	cfg    Config
-	writer *chwriter.Writer
-	grpc   *grpc.Server
-	httpd  *http.Server
+	cfg     Config
+	writer  *chwriter.Writer
+	curated *curatedwriter.Writer // CH-derived dimensions dual-write (P3b step2 HALF 2)
+	grpc    *grpc.Server
+	httpd   *http.Server
 
 	// Batching: the receiver handler pushes converted rows onto `pending` and
 	// signals via `pendCh`. A single flusher goroutine drains it on either
 	// the row-count or age trigger. One channel/one goroutine keeps lock
 	// contention minimal at 100K spans/sec.
-	pendMu sync.Mutex
-	pend   []map[string]any
-	pendCh chan struct{}
+	//
+	// `pendCurated` accumulates the CURATED dimension identities for ALL
+	// payloads received since the last flush into ONE drain-scoped batch (it
+	// dedups across merges). So each drain emits at most one end_users + one
+	// trace_sessions best-effort insert — bounding the curated latency and
+	// avoiding many tiny RMT parts. It rides the same lock + flush cycle as
+	// `pend` so the curated dual-write flushes with the span batch.
+	pendMu      sync.Mutex
+	pend        []map[string]any
+	pendCurated *curatedwriter.Batch
+	pendCh      chan struct{}
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -88,8 +98,14 @@ func New(cfg Config, writer *chwriter.Writer) *Server {
 	s := &Server{
 		cfg:    cfg,
 		writer: writer,
-		pendCh: make(chan struct{}, 1),
-		stopCh: make(chan struct{}),
+		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
+		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
+		// single POST, no retry, no dead-letter) so it can't stall the span flush
+		// loop or pollute the span dead-letter. Targets end_users /
+		// trace_sessions, never the pinned span table.
+		curated: curatedwriter.New(writer),
+		pendCh:  make(chan struct{}, 1),
+		stopCh:  make(chan struct{}),
 	}
 	return s
 }
@@ -182,13 +198,13 @@ type otlpHandler struct {
 }
 
 func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) (ptraceotlp.ExportResponse, error) {
-	rows, err := chexp.Convert(req.Traces())
+	rows, ids, err := chexp.ConvertWithIdentities(req.Traces())
 	if err != nil {
 		// Conversion failure = malformed payload from producer; surface
 		// to the SDK so it retries to a different gateway if it has one.
 		return ptraceotlp.NewExportResponse(), err
 	}
-	h.s.enqueue(rows)
+	h.s.enqueue(rows, ids)
 	// Per OTLP spec, ExportResponse is empty on full success.
 	return ptraceotlp.NewExportResponse(), nil
 }
@@ -254,13 +270,13 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := chexp.Convert(req.Traces())
+	rows, ids, err := chexp.ConvertWithIdentities(req.Traces())
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.enqueue(rows)
+	s.enqueue(rows, ids)
 
 	// Empty ExportTraceServiceResponse — same wire shape, encoded to match
 	// the request's content-type. The spec requires the response media type
@@ -307,12 +323,22 @@ func trimSpace(s string) string {
 // enqueue parks rows on the pending buffer and signals the flusher.
 // We choose non-blocking signalling: if the channel already holds a tick
 // the flusher will already wake up and see this batch.
-func (s *Server) enqueue(rows []map[string]any) {
+//
+// `ids` are the CURATED dimension identities collected for this same payload;
+// they ride alongside `rows` so the curated dual-write flushes with the span
+// batch. A nil / empty Batch is skipped (the common no-user/no-session case).
+func (s *Server) enqueue(rows []map[string]any, ids *curatedwriter.Batch) {
 	if len(rows) == 0 {
 		return
 	}
 	s.pendMu.Lock()
 	s.pend = append(s.pend, rows...)
+	if ids != nil && !ids.Empty() {
+		if s.pendCurated == nil {
+			s.pendCurated = curatedwriter.NewBatch()
+		}
+		s.pendCurated.Merge(ids)
+	}
 	shouldKick := len(s.pend) >= s.cfg.BatchMaxRows
 	s.pendMu.Unlock()
 	if shouldKick {
@@ -346,7 +372,9 @@ func (s *Server) flushLoop() {
 func (s *Server) drainNow(ctx context.Context) {
 	s.pendMu.Lock()
 	batch := s.pend
+	curated := s.pendCurated
 	s.pend = nil
+	s.pendCurated = nil
 	s.pendMu.Unlock()
 	if len(batch) == 0 {
 		return
@@ -356,4 +384,16 @@ func (s *Server) drainNow(ctx context.Context) {
 	// the rows + bumped stats. We swallow here because the flusher's job
 	// is to make progress, not propagate per-batch failures. /healthz
 	// surfaces the writer's failure counter.
+
+	// CH-derived dimensions (P3b step2 HALF 2): BEST-EFFORT mirror the
+	// drain-scoped curated end_users / trace_sessions identities AFTER the span
+	// insert. curated.Write uses chwriter.InsertBestEffort (single POST, no
+	// retry, no dead-letter — see its doc), so even on a CH outage this adds at
+	// most two bounded requests and can NEVER stall span draining or pollute the
+	// span dead-letter. The result is swallowed — the span insert above already
+	// completed and Django's backfill reconciles any curated gap. One `now`
+	// stamps version/first_seen for every curated row in this drain.
+	if curated != nil && !curated.Empty() {
+		_ = s.curated.Write(ctx, curated, time.Now().UTC())
+	}
 }

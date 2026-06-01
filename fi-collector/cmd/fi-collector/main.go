@@ -8,10 +8,10 @@
 //     Out of scope for the first cut.
 //
 // Config priority (later overrides earlier):
-//   1. Defaults coded into chwriter.New / server.New
-//   2. YAML file path from --config (or /etc/fi-collector/config.yaml)
-//   3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
-//      FI_DEAD_LETTER_FILE)
+//  1. Defaults coded into chwriter.New / server.New
+//  2. YAML file path from --config (or /etc/fi-collector/config.yaml)
+//  3. Environment overrides (FI_CH_URL, FI_GRPC_ADDR, FI_HTTP_ADDR,
+//     FI_DEAD_LETTER_FILE)
 //
 // Health surfaces:
 //   - /healthz (HTTP 200 unless writer dead-letter rate > threshold)
@@ -170,6 +170,10 @@ func runAdmin(addr string, w *chwriter.Writer, log *slog.Logger) {
 		fmt.Fprintf(rw, "# TYPE ficollector_batches_retried_total counter\nficollector_batches_retried_total %d\n", s.BatchesRetried)
 		fmt.Fprintf(rw, "# TYPE ficollector_rows_dead_lettered_total counter\nficollector_rows_dead_lettered_total %d\n", s.RowsDeadLettered)
 		fmt.Fprintf(rw, "# TYPE ficollector_batches_failed_total counter\nficollector_batches_failed_total %d\n", s.BatchesFailed)
+		// Curated-dimension (end_users / trace_sessions) best-effort path —
+		// tracked separately so it never affects /healthz (which is span-only).
+		fmt.Fprintf(rw, "# TYPE ficollector_curated_batches_inserted_total counter\nficollector_curated_batches_inserted_total %d\n", s.CuratedBatchesInserted)
+		fmt.Fprintf(rw, "# TYPE ficollector_curated_batches_failed_total counter\nficollector_curated_batches_failed_total %d\n", s.CuratedBatchesFailed)
 	})
 	srv := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

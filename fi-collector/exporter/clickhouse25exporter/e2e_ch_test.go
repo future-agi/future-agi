@@ -33,6 +33,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/ptrace"
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/curatedwriter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/detid"
 )
 
@@ -393,6 +394,146 @@ func TestE2E_DeterministicDimensions(t *testing.T) {
 
 	wantSess := detid.TraceSessionID(testProjectID, "e2e-session-001").String()
 	assertField(t, row, "trace_session_id", wantSess)
+}
+
+// curatedDDL is the schema 017/018 DDL (table half only — the dicts aren't
+// needed for the write test), kept idempotent (CREATE ... IF NOT EXISTS) so the
+// integration test is self-contained when run-e2e.sh hasn't applied them. The
+// columns/types mirror futureagi schema 017_end_users.sql / 018_trace_sessions.sql.
+const curatedDDL = `
+CREATE TABLE IF NOT EXISTS end_users
+(
+    project_id       UUID,
+    end_user_id      UUID,
+    organization_id  UUID,
+    user_id          String,
+    user_id_type     LowCardinality(Nullable(String)),
+    user_id_hash     String                  DEFAULT '',
+    metadata         String                  DEFAULT '{}' CODEC(ZSTD(1)),
+    first_seen       DateTime64(6, 'UTC'),
+    version          DateTime64(6, 'UTC')    DEFAULT now64(6, 'UTC'),
+    is_deleted       UInt8                   DEFAULT 0
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (project_id, end_user_id);
+CREATE TABLE IF NOT EXISTS trace_sessions
+(
+    project_id          UUID,
+    trace_session_id    UUID,
+    external_session_id String                  DEFAULT '',
+    first_seen          DateTime64(6, 'UTC'),
+    version             DateTime64(6, 'UTC')    DEFAULT now64(6, 'UTC'),
+    is_deleted          UInt8                   DEFAULT 0
+)
+ENGINE = ReplacingMergeTree(version)
+ORDER BY (project_id, trace_session_id);`
+
+// TestE2E_CuratedDimensions_RMTWrite verifies P3b step2 HALF 2 end-to-end: an
+// observe span carrying user.id + curated hash/metadata + session.id, ingested
+// through ConvertWithIdentities + curatedwriter, lands ONE row in `end_users`
+// and ONE in `trace_sessions` — keyed by the SAME deterministic id stamped on
+// the span — with the curated fields and a DateTime64 version. Proves the
+// collector closes the dict-NULL gap for collector-originated entities.
+func TestE2E_CuratedDimensions_RMTWrite(t *testing.T) {
+	host := skipIfNoCH(t)
+	// Self-contained: ensure the curated RMTs exist (idempotent).
+	for _, stmt := range strings.Split(curatedDDL, ";") {
+		if strings.TrimSpace(stmt) == "" {
+			continue
+		}
+		chExec(t, host, stmt)
+	}
+
+	w := newWriter(t, host)
+	defer w.Close()
+	cw := curatedwriter.New(w)
+
+	traceID, spanID := uniqueIDs(t, 0x21)
+	// Build an observe span with full curated fields + a session.
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("service.name", "e2e-curated")
+	rs.Resource().Attributes().PutStr("fi.project_id", testProjectID)
+	rs.Resource().Attributes().PutStr("fi.org_id", testOrgID)
+	rs.Resource().Attributes().PutStr("project_type", "observe")
+	sp := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	sp.SetTraceID(traceID)
+	sp.SetSpanID(spanID)
+	sp.SetName("llm.chat.completion")
+	sp.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Now().Add(-200 * time.Millisecond)))
+	sp.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+	sp.Status().SetCode(ptrace.StatusCodeOk)
+	a := sp.Attributes()
+	a.PutStr("openinference.span.kind", "LLM")
+	a.PutStr("user.id", "curated-e2e@example.com")
+	a.PutStr("user.id.type", "email")
+	a.PutStr("user.id.hash", "e2e-hash")
+	a.PutStr("user.metadata", `{"src":"collector"}`)
+	a.PutStr("session.id", "curated-e2e-session")
+
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatalf("ConvertWithIdentities: %v", err)
+	}
+	if err := w.Insert(context.Background(), rows); err != nil {
+		t.Fatalf("span Insert: %v", err)
+	}
+	if err := cw.Write(context.Background(), ids, time.Now().UTC()); err != nil {
+		t.Fatalf("curated Write: %v", err)
+	}
+
+	wantEU := detid.EndUserID(testProjectID, testOrgID, "curated-e2e@example.com", "email").String()
+	wantSess := detid.TraceSessionID(testProjectID, "curated-e2e-session").String()
+
+	// end_users row landed, keyed by the deterministic id == the span's id.
+	euRows := waitForCurated(t, host,
+		fmt.Sprintf("SELECT * FROM end_users FINAL WHERE end_user_id = '%s' FORMAT JSONEachRow", wantEU),
+		5*time.Second)
+	eu := euRows[0]
+	assertField(t, eu, "end_user_id", wantEU)
+	assertField(t, eu, "project_id", testProjectID)
+	assertField(t, eu, "organization_id", testOrgID)
+	assertField(t, eu, "user_id", "curated-e2e@example.com")
+	assertField(t, eu, "user_id_type", "email")
+	assertField(t, eu, "user_id_hash", "e2e-hash")
+	assertField(t, eu, "metadata", `{"src":"collector"}`)
+	if _, err := time.Parse("2006-01-02 15:04:05.000000", asString(eu["version"])); err != nil {
+		t.Errorf("end_users.version %q not DateTime64(6): %v", eu["version"], err)
+	}
+	// Consistency: the curated id equals the id on the span row in CH.
+	spanIDHex := strings.ToLower(fmt.Sprintf("%016x", spanID))
+	spanRow := waitForRow(t, host, spanIDHex, 5*time.Second)
+	assertField(t, spanRow, "end_user_id", wantEU)
+
+	// trace_sessions row landed, keyed by the deterministic id == the span's id.
+	sRows := waitForCurated(t, host,
+		fmt.Sprintf("SELECT * FROM trace_sessions FINAL WHERE trace_session_id = '%s' FORMAT JSONEachRow", wantSess),
+		5*time.Second)
+	s := sRows[0]
+	assertField(t, s, "trace_session_id", wantSess)
+	assertField(t, s, "project_id", testProjectID)
+	assertField(t, s, "external_session_id", "curated-e2e-session")
+	assertField(t, spanRow, "trace_session_id", wantSess)
+}
+
+// waitForCurated polls CH until the query returns at least one row or timeout.
+func waitForCurated(t *testing.T, host, query string, timeout time.Duration) []map[string]any {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		rows := chQuery(t, host, query)
+		if len(rows) > 0 {
+			return rows
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("no rows for query after %v: %s", timeout, query)
+	return nil
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
 }
 
 func TestE2E_JSONColumns_Parse(t *testing.T) {

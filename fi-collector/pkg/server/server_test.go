@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	chexp "github.com/future-agi/future-agi/fi-collector/exporter/clickhouse25exporter"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/ptrace"
@@ -366,4 +368,128 @@ func waitPort(addr string, d time.Duration) bool {
 
 func grpcDial(addr string) (*grpc.ClientConn, error) {
 	return grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+}
+
+// makeObserveTraces builds a one-span observe-project Traces carrying a user.id
+// and session.id so the converter stamps the curated identities the drain
+// aggregates. Distinct trace/span ids per call (via idByte) avoid collisions.
+func makeObserveTraces(projectID, orgID, userID, sessionID string, idByte byte) ptrace.Traces {
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	rs.Resource().Attributes().PutStr("fi.project_id", projectID)
+	rs.Resource().Attributes().PutStr("fi.org_id", orgID)
+	rs.Resource().Attributes().PutStr("project_type", "observe")
+	sp := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	sp.SetName("llm.chat")
+	var tid [16]byte
+	var sid [8]byte
+	tid[0], sid[0] = idByte, idByte
+	sp.SetTraceID(tid)
+	sp.SetSpanID(sid)
+	sp.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Now()))
+	sp.SetEndTimestamp(pcommon.NewTimestampFromTime(time.Now().Add(10 * time.Millisecond)))
+	a := sp.Attributes()
+	a.PutStr("user.id", userID)
+	a.PutStr("session.id", sessionID)
+	return traces
+}
+
+// TestDrainAggregatesCuratedAcrossPayloads is the white-box gate for the
+// best-effort fix: curated identities from MULTIPLE enqueued payloads are
+// MERGED into one drain-scoped batch, so a single drain emits at most ONE
+// end_users + ONE trace_sessions insert (not one per payload), deduped across
+// payloads. This bounds the best-effort latency and avoids tiny RMT parts.
+func TestDrainAggregatesCuratedAcrossPayloads(t *testing.T) {
+	const proj = "11111111-1111-4111-8111-111111111111"
+	const org = "22222222-2222-4222-8222-222222222222"
+
+	// Record each insert's target table + decoded row count.
+	type ins struct {
+		table string
+		rows  int
+	}
+	var mu sync.Mutex
+	var inserts []ins
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query().Get("query")
+		table := ""
+		if i := strings.Index(q, "INSERT INTO "); i >= 0 {
+			rest := q[i+len("INSERT INTO "):]
+			if j := strings.IndexByte(rest, ' '); j >= 0 {
+				table = rest[:j]
+			}
+		}
+		body := make([]byte, 1<<16)
+		n, _ := r.Body.Read(body)
+		rows := strings.Count(strings.TrimSpace(string(body[:n])), "\n") + 1
+		if n == 0 {
+			rows = 0
+		}
+		mu.Lock()
+		inserts = append(inserts, ins{table: table, rows: rows})
+		mu.Unlock()
+		w.WriteHeader(200)
+	}))
+	defer chSrv.Close()
+
+	w, err := chwriter.New(chwriter.Config{
+		URL: chSrv.URL, Database: "default", Table: "spans",
+		MaxRetries: 1, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond,
+		RequestTimeout: 2 * time.Second, DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Big batch threshold + no flusher goroutine: we drive enqueue/drainNow
+	// directly so the test is deterministic (no timing).
+	s := New(Config{GRPCAddr: "", HTTPAddr: "", BatchMaxRows: 1_000_000, BatchMaxAge: time.Hour}, w)
+
+	// Payload 1: userA / sessX.  Payload 2: userA again (dup) + userB / sessY.
+	r1, ids1, err := chexp.ConvertWithIdentities(makeObserveTraces(proj, org, "userA", "sessX", 0x01))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2a, ids2a, _ := chexp.ConvertWithIdentities(makeObserveTraces(proj, org, "userA", "sessX", 0x02)) // dup identity
+	r2b, ids2b, _ := chexp.ConvertWithIdentities(makeObserveTraces(proj, org, "userB", "sessY", 0x03))
+
+	s.enqueue(r1, ids1)
+	s.enqueue(r2a, ids2a)
+	s.enqueue(r2b, ids2b)
+
+	// One drain → one span insert + one end_users + one trace_sessions.
+	s.drainNow(context.Background())
+
+	mu.Lock()
+	defer mu.Unlock()
+	var euCount, sessCount, spanCount int
+	var euRows, sessRows int
+	for _, in := range inserts {
+		switch in.table {
+		case "end_users":
+			euCount++
+			euRows = in.rows
+		case "trace_sessions":
+			sessCount++
+			sessRows = in.rows
+		case "spans":
+			spanCount++
+		}
+	}
+	if spanCount != 1 {
+		t.Errorf("expected 1 span insert, got %d", spanCount)
+	}
+	if euCount != 1 {
+		t.Fatalf("expected exactly 1 end_users insert (drain-scoped), got %d", euCount)
+	}
+	if sessCount != 1 {
+		t.Fatalf("expected exactly 1 trace_sessions insert (drain-scoped), got %d", sessCount)
+	}
+	// Dedup across payloads: 3 spans, 2 distinct users (A,B), 2 distinct
+	// sessions (X,Y) → exactly 2 end_users rows + 2 trace_sessions rows.
+	if euRows != 2 {
+		t.Errorf("end_users rows: got %d want 2 (userA deduped across payloads)", euRows)
+	}
+	if sessRows != 2 {
+		t.Errorf("trace_sessions rows: got %d want 2", sessRows)
+	}
 }
