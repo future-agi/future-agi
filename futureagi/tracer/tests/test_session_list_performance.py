@@ -14,9 +14,6 @@ Run with: bin/test -k "test_session_list_performance" --no-services unit
 import json
 import time
 import uuid
-from datetime import datetime, timedelta
-from typing import Any, Dict, List
-from unittest import mock
 
 import pytest
 
@@ -81,9 +78,9 @@ class TestSessionListQueryPerformance:
             builder._build_simple_count_query()
         elapsed = time.monotonic() - start
 
-        assert (
-            elapsed < 0.5
-        ), f"Simple count query too slow: {elapsed:.2f}s for 100 iter"
+        assert elapsed < 0.5, (
+            f"Simple count query too slow: {elapsed:.2f}s for 100 iter"
+        )
 
     def test_count_query_generation_speed_aggregated_path(self):
         """Aggregated count query (with HAVING) should be fast to generate."""
@@ -125,7 +122,12 @@ class TestSessionListQueryPerformance:
         builder.build()
         query, _ = builder.build_count_query()
 
-        assert "GROUP BY" not in query
+        # The id-remap survivor map (id_remap_sql) embeds internal
+        # `GROUP BY new_id` + `GROUP BY any_id` in its join subquery; the simple
+        # count path must have no OTHER (session-level) GROUP BY — strip the
+        # remap's first.
+        stripped = query.replace("GROUP BY new_id", "").replace("GROUP BY any_id", "")
+        assert "GROUP BY" not in stripped
         assert "HAVING" not in query
         assert "count(DISTINCT trace_session_id)" in query
 
@@ -206,7 +208,7 @@ class TestSpanAttributesProcessingStress:
                     }
                 )
 
-        aggregated_attrs: Dict[str, Dict] = {}
+        aggregated_attrs: dict[str, dict] = {}
         start = time.monotonic()
 
         for attr_row in attr_rows:
@@ -246,7 +248,7 @@ class TestSpanAttributesProcessingStress:
             num_sessions=30, attrs_per_session=17, keys_per_attr=10
         )
         assert elapsed < 0.5, f"Took {elapsed:.3f}s (limit: 0.5s)"
-        for sid, keys in attrs.items():
+        for _sid, keys in attrs.items():
             assert len(keys) <= 50
 
     def test_attribute_processing_key_cap_effective(self):
@@ -254,7 +256,7 @@ class TestSpanAttributesProcessingStress:
         elapsed, attrs = self._simulate_attribute_processing(
             num_sessions=30, attrs_per_session=100, keys_per_attr=100
         )
-        for sid, keys in attrs.items():
+        for _sid, keys in attrs.items():
             assert len(keys) <= 50
         assert elapsed < 2.0, f"Took {elapsed:.3f}s (limit: 2.0s)"
 
@@ -284,7 +286,7 @@ class TestSpanAttributesProcessingStress:
             )
 
         start = time.monotonic()
-        aggregated_attrs: Dict[str, Dict] = {}
+        aggregated_attrs: dict[str, dict] = {}
 
         for attr_row in attr_data:
             sid = str(attr_row["session_id"])
