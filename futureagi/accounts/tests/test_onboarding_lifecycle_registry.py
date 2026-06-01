@@ -132,6 +132,21 @@ def test_eval_and_voice_campaigns_are_configured_as_real_only():
     assert len({campaign["email_subject"] for campaign in campaigns}) == len(campaigns)
 
 
+def test_activation_success_campaigns_apply_after_any_first_product_loop():
+    campaigns = [
+        campaign
+        for campaign in lifecycle_campaigns()
+        if campaign["campaign_group"] == "activation_success"
+    ]
+
+    assert {campaign["campaign_key"] for campaign in campaigns} >= {
+        "first_loop_complete_next",
+        "daily_quality_open_actions",
+    }
+    assert {campaign["primary_path"] for campaign in campaigns} == {"any"}
+    assert {campaign["route_strategy"] for campaign in campaigns} == {"daily_quality"}
+
+
 def test_lifecycle_registry_rejects_target_action_success_event_mismatch():
     config = _valid_lifecycle_config()
     campaign = _campaign(config, "prompt_create_first")

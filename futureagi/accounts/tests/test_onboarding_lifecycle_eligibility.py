@@ -14,6 +14,7 @@ from accounts.services.onboarding.activation_events import record_event
 from accounts.services.onboarding.activation_state import resolve_activation_state
 from accounts.services.onboarding.context import OnboardingContext
 from accounts.services.onboarding.lifecycle_eligibility import (
+    choose_lifecycle_campaign,
     evaluate_lifecycle_decision,
 )
 from accounts.services.onboarding.sample_project import hide_sample_project
@@ -105,6 +106,40 @@ def _activation_state(
             workspace=workspace,
         ),
     )
+
+
+def test_choose_lifecycle_campaign_matches_daily_quality_on_non_observe_paths():
+    now = timezone.now()
+
+    campaign = choose_lifecycle_campaign(
+        {
+            "stage": "daily_review",
+            "primary_path": "evals",
+            "daily_quality": {"mode": "open_action"},
+        },
+        started_at=now - timedelta(hours=2),
+        now=now,
+    )
+
+    assert campaign["campaign_key"] == "daily_quality_open_actions"
+    assert campaign["primary_path"] == "any"
+
+
+def test_choose_lifecycle_campaign_matches_first_loop_complete_on_non_observe_paths():
+    now = timezone.now()
+
+    campaign = choose_lifecycle_campaign(
+        {
+            "stage": "activated",
+            "primary_path": "voice",
+            "daily_quality": {"mode": "new_signal"},
+        },
+        started_at=now - timedelta(hours=2),
+        now=now,
+    )
+
+    assert campaign["campaign_key"] == "first_loop_complete_next"
+    assert campaign["primary_path"] == "any"
 
 
 @pytest.mark.django_db
@@ -511,6 +546,110 @@ def test_daily_quality_open_action_digest_is_repeatable_after_prior_completion(
         "daily_quality_action_completed"
     )
     assert "campaign_key=daily_quality_open_actions" in decision.target_url
+
+
+@pytest.mark.django_db
+def test_daily_quality_open_action_digest_applies_to_non_observe_paths(
+    organization,
+    workspace,
+    user,
+):
+    now = timezone.now()
+    flags = _flags()
+    activation_state = {
+        "stage": "daily_review",
+        "primary_path": "evals",
+        "is_activated": True,
+        "recommended_action": {
+            "id": "review_daily_quality",
+            "href": "/dashboard/home?mode=daily-quality",
+        },
+        "fallback_action": {"id": "open_get_started"},
+        "permissions": {
+            "can_write": True,
+            "permission_limited": False,
+        },
+        "sample_project": {},
+        "signals": {},
+        "daily_quality": {"mode": "open_action"},
+        "route_availability": {
+            "daily_quality_home": {
+                "href": "/dashboard/home?mode=daily-quality",
+                "is_available": True,
+                "reason": None,
+            }
+        },
+        "last_meaningful_event": {
+            "occurred_at": now - timedelta(hours=2),
+            "is_sample": False,
+        },
+    }
+
+    decision = evaluate_lifecycle_decision(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        activation_state=activation_state,
+        flags=flags,
+        now=now,
+    )
+
+    assert decision.status == OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE
+    assert decision.campaign["campaign_key"] == "daily_quality_open_actions"
+    assert decision.campaign["primary_path"] == "any"
+    assert "campaign_key=daily_quality_open_actions" in decision.target_url
+
+
+@pytest.mark.django_db
+def test_first_loop_complete_digest_applies_to_non_observe_paths(
+    organization,
+    workspace,
+    user,
+):
+    now = timezone.now()
+    flags = _flags()
+    activation_state = {
+        "stage": "activated",
+        "primary_path": "voice",
+        "is_activated": True,
+        "recommended_action": {
+            "id": "review_daily_quality",
+            "href": "/dashboard/home?mode=daily-quality",
+        },
+        "fallback_action": {"id": "open_get_started"},
+        "permissions": {
+            "can_write": True,
+            "permission_limited": False,
+        },
+        "sample_project": {},
+        "signals": {},
+        "daily_quality": {"mode": "new_signal"},
+        "route_availability": {
+            "daily_quality_home": {
+                "href": "/dashboard/home?mode=daily-quality",
+                "is_available": True,
+                "reason": None,
+            }
+        },
+        "last_meaningful_event": {
+            "occurred_at": now - timedelta(hours=2),
+            "is_sample": False,
+        },
+    }
+
+    decision = evaluate_lifecycle_decision(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+        activation_state=activation_state,
+        flags=flags,
+        now=now,
+    )
+
+    assert decision.status == OnboardingLifecycleEvaluationLog.STATUS_ELIGIBLE
+    assert decision.campaign["campaign_key"] == "first_loop_complete_next"
+    assert decision.campaign["primary_path"] == "any"
+    assert "campaign_key=first_loop_complete_next" in decision.target_url
 
 
 @pytest.mark.django_db

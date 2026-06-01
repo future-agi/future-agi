@@ -765,7 +765,7 @@ campaigns:
     campaign_group: activation_success
     email_subject: Your first AI quality review is live
     email_preheader: Open daily quality to review the next signal after your first review.
-    primary_path: observe
+    primary_path: any
     entry_stages:
       - activated
       - daily_review
@@ -787,7 +787,7 @@ campaigns:
     campaign_group: activation_success
     email_subject: A quality action is waiting for review
     email_preheader: Review, assign, or dismiss the open item from the daily quality view.
-    primary_path: observe
+    primary_path: any
     entry_stages:
       - activated
       - daily_review
