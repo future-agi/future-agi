@@ -3188,3 +3188,52 @@ def evaluate_trace_session_observe(
             f"Exception during evaluation in evaluate_trace_session_observe: {e}"
         )
         return False
+
+
+def rerun_single(
+    target_type,
+    observation_span_id=None,
+    trace_id=None,
+    trace_session_id=None,
+    custom_eval_config_id=None,
+    eval_task_id=None,
+    feedback_id=None,
+):
+    """Soft-delete the prior EvalLogger for this row and re-dispatch.
+
+    Shared by submit_feedback_action_type (single-row recalc) and the
+    batch RecalculateEvalTaskWorkflow that ships in a follow-up PR.
+
+    TODO(BE-3): drop the "follow-up PR" wording once the workflow is wired.
+    """
+    if target_type == EvalTargetType.SPAN:
+        EvalLogger.objects.filter(
+            observation_span_id=observation_span_id,
+            custom_eval_config_id=custom_eval_config_id,
+            target_type=EvalTargetType.SPAN,
+            deleted=False,
+        ).update(deleted=True, deleted_at=timezone.now())
+        return evaluate_observation_span_observe(
+            observation_span_id, custom_eval_config_id, eval_task_id, feedback_id
+        )
+    if target_type == EvalTargetType.TRACE:
+        EvalLogger.objects.filter(
+            trace_id=trace_id,
+            custom_eval_config_id=custom_eval_config_id,
+            target_type=EvalTargetType.TRACE,
+            deleted=False,
+        ).update(deleted=True, deleted_at=timezone.now())
+        return evaluate_trace_observe(
+            trace_id, custom_eval_config_id, eval_task_id, feedback_id
+        )
+    if target_type == EvalTargetType.SESSION:
+        EvalLogger.objects.filter(
+            trace_session_id=trace_session_id,
+            custom_eval_config_id=custom_eval_config_id,
+            target_type=EvalTargetType.SESSION,
+            deleted=False,
+        ).update(deleted=True, deleted_at=timezone.now())
+        return evaluate_trace_session_observe(
+            trace_session_id, custom_eval_config_id, eval_task_id, feedback_id
+        )
+    raise ValueError(f"unknown target_type: {target_type}")

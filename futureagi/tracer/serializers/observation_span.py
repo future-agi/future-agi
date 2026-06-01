@@ -257,14 +257,23 @@ def _validate_target_anchor_ids(attrs):
             raise serializers.ValidationError(
                 "target_type='session' requires trace_session_id."
             )
+    elif target_type == EvalTargetType.TRACE:
+        if session_id:
+            raise serializers.ValidationError(
+                "target_type='trace' must not set trace_session_id."
+            )
+        if not trace_id:
+            raise serializers.ValidationError(
+                "target_type='trace' requires trace_id."
+            )
     else:
         if session_id:
             raise serializers.ValidationError(
-                f"target_type='{target_type}' must not set trace_session_id."
+                "target_type='span' must not set trace_session_id."
             )
         if not span_id:
             raise serializers.ValidationError(
-                f"target_type='{target_type}' requires observation_span_id."
+                "target_type='span' requires observation_span_id."
             )
     return attrs
 

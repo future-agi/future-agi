@@ -797,30 +797,117 @@ class TestObservationSpanSubmitFeedbackAPI:
             custom_eval_config_id=custom_eval_config.id
         ).exists()
 
-    def test_submit_feedback_gates_trace_path(
-        self, auth_client, observation_span, custom_eval_config
+    def test_submit_feedback_trace_creates_feedback_row(
+        self, auth_client, mocker, observation_span, custom_eval_config
     ):
+        from tracer.models.observation_span import EvalLogger, EvalTargetType
+
+        # Trace-level EvalLogger is anchored on the root span by the
+        # eval_logger_target_type_fks CHECK constraint.
+        EvalLogger.objects.create(
+            trace=observation_span.trace,
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.TRACE,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+        )
+        mocker.patch("tracer.views.observation_span.EmbeddingManager")
+
         payload = self._valid_span_payload(observation_span, custom_eval_config)
+        payload.pop("observation_span_id")
         payload["target_type"] = "trace"
         payload["trace_id"] = str(observation_span.trace.id)
 
         response = auth_client.post(self.SUBMIT_FEEDBACK_URL, payload, format="json")
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json().get("code") == "not_supported"
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        feedback = Feedback.objects.get(id=result["feedback_id"])
+        assert feedback.source_id == str(observation_span.trace.id)
+        assert feedback.eval_template_id == custom_eval_config.eval_template_id
 
-    def test_submit_feedback_gates_session_path(
-        self, auth_client, observation_span, custom_eval_config
+    def test_submit_feedback_session_creates_feedback_row(
+        self, auth_client, mocker, project, custom_eval_config
     ):
-        payload = self._valid_span_payload(observation_span, custom_eval_config)
-        payload.pop("observation_span_id")
-        payload["target_type"] = "session"
-        payload["trace_session_id"] = str(uuid.uuid4())
+        from tracer.models.observation_span import EvalLogger, EvalTargetType
+        from tracer.models.trace_session import TraceSession
 
-        response = auth_client.post(self.SUBMIT_FEEDBACK_URL, payload, format="json")
+        trace_session = TraceSession.objects.create(
+            project=project, name="Test session for feedback"
+        )
+        EvalLogger.objects.create(
+            trace=None,
+            observation_span=None,
+            trace_session=trace_session,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.SESSION,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+        )
+        mocker.patch("tracer.views.observation_span.EmbeddingManager")
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json().get("code") == "not_supported"
+        response = auth_client.post(
+            self.SUBMIT_FEEDBACK_URL,
+            {
+                "target_type": "session",
+                "trace_session_id": str(trace_session.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+                "feedback_value": "passed",
+                "feedback_explanation": "session correction",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        feedback = Feedback.objects.get(id=result["feedback_id"])
+        assert feedback.source_id == str(trace_session.id)
+        assert feedback.source == FeedbackSourceChoices.OBSERVE.value
+
+    def test_submit_feedback_session_embeds_session_payload(
+        self, auth_client, mocker, project, custom_eval_config
+    ):
+        from tracer.models.observation_span import EvalLogger, EvalTargetType
+        from tracer.models.trace_session import TraceSession
+
+        trace_session = TraceSession.objects.create(
+            project=project, name="Embed test session"
+        )
+        EvalLogger.objects.create(
+            trace=None,
+            observation_span=None,
+            trace_session=trace_session,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.SESSION,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+        )
+        embedding_cls = mocker.patch(
+            "tracer.views.observation_span.EmbeddingManager"
+        )
+
+        response = auth_client.post(
+            self.SUBMIT_FEEDBACK_URL,
+            {
+                "target_type": "session",
+                "trace_session_id": str(trace_session.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+                "feedback_value": "passed",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        embedding_cls.return_value.data_formatter.assert_called_once()
+        call_kwargs = embedding_cls.return_value.data_formatter.call_args.kwargs
+        # Session embedding payload uses TraceSessionFeedbackSerializer shape.
+        assert call_kwargs["row_dict"]["id"] == str(trace_session.id)
+        assert "traces" in call_kwargs["row_dict"]
+        assert call_kwargs["inputs_formater"] == [trace_session.id]
 
     def test_submit_feedback_validator_rejects_inconsistent_ids(
         self, auth_client, observation_span, custom_eval_config
@@ -986,9 +1073,7 @@ class TestObservationSpanSubmitFeedbackActionTypeAPI:
         feedback, _ = self._seed_feedback_and_logger(
             user, organization, workspace, observation_span, custom_eval_config
         )
-        observe_mock = mocker.patch(
-            "tracer.views.observation_span.evaluate_observation_span_observe"
-        )
+        rerun_mock = mocker.patch("tracer.views.observation_span.rerun_single")
 
         response = auth_client.post(
             self.ACTION_TYPE_URL,
@@ -1005,9 +1090,9 @@ class TestObservationSpanSubmitFeedbackActionTypeAPI:
         assert result["recalculated_count"] == 0
         feedback.refresh_from_db()
         assert feedback.action_type == "retune"
-        observe_mock.assert_not_called()
+        rerun_mock.assert_not_called()
 
-    def test_action_type_recalculate_dispatches_observe_rerun(
+    def test_action_type_recalculate_span_dispatches_rerun(
         self,
         auth_client,
         user,
@@ -1021,9 +1106,8 @@ class TestObservationSpanSubmitFeedbackActionTypeAPI:
             user, organization, workspace, observation_span, custom_eval_config
         )
         # observation_span fixture has no project_version, so view picks the observe rerun.
-        observe_mock = mocker.patch(
-            "tracer.views.observation_span.evaluate_observation_span_observe",
-            return_value=True,
+        rerun_mock = mocker.patch(
+            "tracer.views.observation_span.rerun_single", return_value=True
         )
 
         response = auth_client.post(
@@ -1038,14 +1122,127 @@ class TestObservationSpanSubmitFeedbackActionTypeAPI:
         result = get_result(response)
         assert result["recalculated_count"] == 1
 
-        observe_mock.assert_called_once()
-        args = observe_mock.call_args.args
-        assert args[0] == str(observation_span.id)
-        assert args[1] == str(custom_eval_config.id)
-        assert args[2] == eval_logger.eval_task_id
+        rerun_mock.assert_called_once()
+        call_kwargs = rerun_mock.call_args.kwargs
+        assert call_kwargs["target_type"] == "span"
+        assert call_kwargs["observation_span_id"] == str(observation_span.id)
+        assert call_kwargs["custom_eval_config_id"] == str(custom_eval_config.id)
+        assert call_kwargs["eval_task_id"] == eval_logger.eval_task_id
 
-        eval_logger.refresh_from_db()
-        assert eval_logger.deleted is True
+    def test_action_type_recalculate_trace_dispatches_rerun(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+        mocker,
+    ):
+        from tracer.models.observation_span import EvalLogger, EvalTargetType
+
+        trace = observation_span.trace
+        EvalLogger.objects.create(
+            trace=trace,
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.TRACE,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+            eval_task_id=str(uuid.uuid4()),
+        )
+        feedback = Feedback.objects.create(
+            source=FeedbackSourceChoices.OBSERVE.value,
+            source_id=str(trace.id),
+            value="passed",
+            eval_template=custom_eval_config.eval_template,
+            custom_eval_config_id=custom_eval_config.id,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        rerun_mock = mocker.patch(
+            "tracer.views.observation_span.rerun_single", return_value=True
+        )
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            {
+                "target_type": "trace",
+                "trace_id": str(trace.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+                "feedback_id": str(feedback.id),
+                "action_type": "recalculate",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rerun_mock.assert_called_once()
+        call_kwargs = rerun_mock.call_args.kwargs
+        assert call_kwargs["target_type"] == "trace"
+        assert call_kwargs["trace_id"] == trace.id
+        assert call_kwargs["observation_span_id"] is None
+
+    def test_action_type_recalculate_session_dispatches_rerun(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        project,
+        custom_eval_config,
+        mocker,
+    ):
+        from tracer.models.observation_span import EvalLogger, EvalTargetType
+        from tracer.models.trace_session import TraceSession
+
+        trace_session = TraceSession.objects.create(
+            project=project, name="Action-type session"
+        )
+        EvalLogger.objects.create(
+            trace=None,
+            observation_span=None,
+            trace_session=trace_session,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.SESSION,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+            eval_task_id=str(uuid.uuid4()),
+        )
+        feedback = Feedback.objects.create(
+            source=FeedbackSourceChoices.OBSERVE.value,
+            source_id=str(trace_session.id),
+            value="passed",
+            eval_template=custom_eval_config.eval_template,
+            custom_eval_config_id=custom_eval_config.id,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        rerun_mock = mocker.patch(
+            "tracer.views.observation_span.rerun_single", return_value=True
+        )
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            {
+                "target_type": "session",
+                "trace_session_id": str(trace_session.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+                "feedback_id": str(feedback.id),
+                "action_type": "recalculate",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rerun_mock.assert_called_once()
+        call_kwargs = rerun_mock.call_args.kwargs
+        assert call_kwargs["target_type"] == "session"
+        assert call_kwargs["trace_session_id"] == trace_session.id
 
     def test_action_type_recalculate_rejects_errored_eval(
         self,
@@ -1063,9 +1260,7 @@ class TestObservationSpanSubmitFeedbackActionTypeAPI:
         eval_logger.error = True
         eval_logger.error_message = "judge crashed"
         eval_logger.save(update_fields=["error", "error_message"])
-        observe_mock = mocker.patch(
-            "tracer.views.observation_span.evaluate_observation_span_observe"
-        )
+        rerun_mock = mocker.patch("tracer.views.observation_span.rerun_single")
 
         response = auth_client.post(
             self.ACTION_TYPE_URL,
@@ -1077,37 +1272,129 @@ class TestObservationSpanSubmitFeedbackActionTypeAPI:
 
         assert response.status_code == status.HTTP_409_CONFLICT
         assert response.json().get("code") == "errored_eval"
-        observe_mock.assert_not_called()
+        rerun_mock.assert_not_called()
         eval_logger.refresh_from_db()
         assert eval_logger.deleted is False
 
-    def test_action_type_gates_trace_target(
-        self,
-        auth_client,
-        user,
-        organization,
-        workspace,
-        observation_span,
-        custom_eval_config,
+
+@pytest.mark.integration
+class TestRerunSingleHelper:
+    """Unit tests for tracer.utils.eval.rerun_single."""
+
+    def test_rerun_single_span_soft_deletes_and_dispatches(
+        self, db, mocker, observation_span, custom_eval_config
     ):
-        feedback, _ = self._seed_feedback_and_logger(
-            user, organization, workspace, observation_span, custom_eval_config
+        from tracer.models.observation_span import EvalLogger, EvalTargetType
+        from tracer.utils.eval import rerun_single
+
+        EvalLogger.objects.create(
+            trace=observation_span.trace,
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.SPAN,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+        )
+        observe_mock = mocker.patch(
+            "tracer.utils.eval.evaluate_observation_span_observe", return_value=True
         )
 
-        response = auth_client.post(
-            self.ACTION_TYPE_URL,
-            {
-                "target_type": "trace",
-                "observation_span_id": str(observation_span.id),
-                "trace_id": str(observation_span.trace.id),
-                "custom_eval_config_id": str(custom_eval_config.id),
-                "feedback_id": str(feedback.id),
-                "action_type": "recalculate",
-            },
-            format="json",
+        result = rerun_single(
+            target_type=EvalTargetType.SPAN,
+            observation_span_id=str(observation_span.id),
+            custom_eval_config_id=str(custom_eval_config.id),
+            eval_task_id="task-1",
+            feedback_id=None,
         )
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
-        assert response.json().get("code") == "not_supported"
+
+        assert result is True
+        observe_mock.assert_called_once_with(
+            str(observation_span.id), str(custom_eval_config.id), "task-1", None
+        )
+        # Prior live row soft-deleted; dispatcher's own write is not under test
+        # here (mocked).
+        assert not EvalLogger.objects.filter(
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.SPAN,
+            deleted=False,
+        ).exists()
+
+    def test_rerun_single_trace_dispatches_evaluate_trace_observe(
+        self, db, mocker, observation_span, custom_eval_config
+    ):
+        from tracer.models.observation_span import EvalLogger, EvalTargetType
+        from tracer.utils.eval import rerun_single
+
+        EvalLogger.objects.create(
+            trace=observation_span.trace,
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.TRACE,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+        )
+        trace_mock = mocker.patch(
+            "tracer.utils.eval.evaluate_trace_observe", return_value=True
+        )
+
+        result = rerun_single(
+            target_type=EvalTargetType.TRACE,
+            trace_id=observation_span.trace.id,
+            custom_eval_config_id=str(custom_eval_config.id),
+            eval_task_id="task-2",
+            feedback_id=None,
+        )
+
+        assert result is True
+        trace_mock.assert_called_once_with(
+            observation_span.trace.id, str(custom_eval_config.id), "task-2", None
+        )
+
+    def test_rerun_single_session_dispatches_evaluate_trace_session_observe(
+        self, db, mocker, project, custom_eval_config
+    ):
+        from tracer.models.observation_span import EvalLogger, EvalTargetType
+        from tracer.models.trace_session import TraceSession
+        from tracer.utils.eval import rerun_single
+
+        trace_session = TraceSession.objects.create(
+            project=project, name="rerun_single session"
+        )
+        EvalLogger.objects.create(
+            trace=None,
+            observation_span=None,
+            trace_session=trace_session,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.SESSION,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+        )
+        session_mock = mocker.patch(
+            "tracer.utils.eval.evaluate_trace_session_observe", return_value=True
+        )
+
+        result = rerun_single(
+            target_type=EvalTargetType.SESSION,
+            trace_session_id=trace_session.id,
+            custom_eval_config_id=str(custom_eval_config.id),
+            eval_task_id="task-3",
+            feedback_id=None,
+        )
+
+        assert result is True
+        session_mock.assert_called_once_with(
+            trace_session.id, str(custom_eval_config.id), "task-3", None
+        )
+
+    def test_rerun_single_unknown_target_type_raises(self, db):
+        from tracer.utils.eval import rerun_single
+
+        with pytest.raises(ValueError):
+            rerun_single(target_type="bogus", custom_eval_config_id="x")
 
 
 @pytest.mark.integration

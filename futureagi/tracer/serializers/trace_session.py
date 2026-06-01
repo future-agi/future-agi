@@ -54,6 +54,23 @@ class TraceSessionSerializer(serializers.ModelSerializer):
         )
 
 
+class TraceSessionFeedbackSerializer(serializers.ModelSerializer):
+    """Embedding payload for session-level feedback writes."""
+
+    traces = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TraceSession
+        fields = ["id", "name", "traces"]
+
+    def get_traces(self, instance):
+        # Local import sidesteps the TraceSerializer → Trace.session → TraceSession cycle.
+        from tracer.serializers.trace import TraceSerializer
+
+        qs = instance.traces.order_by("created_at")
+        return TraceSerializer(qs, many=True, context=self.context).data
+
+
 class TraceSessionFilterValuesQuerySerializer(serializers.Serializer):
     project_id = serializers.UUIDField(required=True)
     column = serializers.ChoiceField(
