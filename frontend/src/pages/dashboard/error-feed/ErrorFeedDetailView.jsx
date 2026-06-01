@@ -419,36 +419,66 @@ export default function ErrorFeedDetailView() {
           </Tabs>
         </Box>
 
-        {/* ── Scrollable tab content ── */}
-        <Box sx={{ flex: 1, overflowY: "auto" }}>
-          <Box sx={{ p: 2 }}>
-            {/* Cluster analysis card — shown only on the Overview tab.
-                The Traces / Trends tabs stay focused on their own content,
-                and the Analyze tab is the full live run itself. */}
-            {activeTab === "overview" && (
-              <Box sx={{ mb: 2 }}>
-                <ClusterHeadlineCard
-                  error={currentError}
-                  onOpenAnalyze={() => {
-                    // "View reasoning" — run already happened; just switch
-                    // to the Analyze tab to read the existing thread.
-                    setActiveTab("analyze");
-                  }}
-                  onStartAnalysis={() => {
-                    // "Debug this cluster" — the card already set the
-                    // pending-start flag (which kicks the run); jump to the
-                    // Analyze tab so the user watches the live status.
-                    setAnalyzePendingStart(currentError.clusterId, true);
-                    setActiveTab("analyze");
-                  }}
-                />
+        {/* ── Tab content ──
+            Two layout modes share this column:
+              - Overview / Traces / Trends → page-style scrolling (long content)
+              - Analyze → fixed-height flex column so the compose area can
+                dock at the bottom of the viewport, chat-style.
+            Each tab wraps itself in the right kind of container instead of
+            trying to share one — that keeps Analyze's bottom-anchored
+            compose area honest without breaking the others' overflow. */}
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {safeTabIndex === 3 ? (
+            // Analyze: fixed-height flex column. AnalyzeTab fills the box
+            // and handles its own internal scroll.
+            <Box
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                p: 2,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <AnalyzeTab error={currentError} />
+            </Box>
+          ) : (
+            // Overview / Traces / Trends: classic page scroll. The cluster
+            // analysis accordion only renders on Overview.
+            <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+              <Box sx={{ p: 2 }}>
+                {activeTab === "overview" && (
+                  <Box sx={{ mb: 2 }}>
+                    <ClusterHeadlineCard
+                      error={currentError}
+                      onOpenAnalyze={() => {
+                        // "View reasoning" — run already happened; just
+                        // switch to the Analyze tab to read the thread.
+                        setActiveTab("analyze");
+                      }}
+                      onStartAnalysis={() => {
+                        // "Debug this cluster" — kick the run and jump to
+                        // Analyze so the user watches the live status.
+                        setAnalyzePendingStart(currentError.clusterId, true);
+                        setActiveTab("analyze");
+                      }}
+                    />
+                  </Box>
+                )}
+                {safeTabIndex === 0 && <OverviewTab _error={currentError} />}
+                {safeTabIndex === 1 && <TracesTab error={currentError} />}
+                {safeTabIndex === 2 && <TrendsTab error={currentError} />}
               </Box>
-            )}
-            {safeTabIndex === 0 && <OverviewTab _error={currentError} />}
-            {safeTabIndex === 1 && <TracesTab error={currentError} />}
-            {safeTabIndex === 2 && <TrendsTab error={currentError} />}
-            {safeTabIndex === 3 && <AnalyzeTab error={currentError} />}
-          </Box>
+            </Box>
+          )}
         </Box>
       </Box>
 

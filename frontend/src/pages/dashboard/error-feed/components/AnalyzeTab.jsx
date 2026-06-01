@@ -664,40 +664,50 @@ SubagentCard.propTypes = { msg: PropTypes.object.isRequired };
 // finishes (so the user can't fork a sub-agent mid-cluster-analysis) and
 // while a sub-agent is streaming (to avoid stacking parallel runs).
 //
-// The stroke is a purple gradient (Falcon brand) painted via the standard
-// `background-clip` trick — `border: transparent` + two stacked
-// backgrounds where the inner one is clipped to the padding-box and the
-// outer gradient fills the border-box.
+// Visual design — inspired by Claude's chat composer:
+//   - Clean 1px neutral border (theme-aware) in the default state
+//   - Subtle elevation via box-shadow
+//   - Focus state: border lifts to the Falcon-purple accent at 1.5px
+//   - No gradient stroke — the gradient looked great in light but read as
+//     a glowing video-game ring in dark mode. A solid border with a focus
+//     accent is calmer and works in both themes.
 function FollowUpInput({ disabled, placeholder, onSubmit }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const [text, setText] = useState("");
+  const [focused, setFocused] = useState(false);
   const submit = () => {
     const t = text.trim();
     if (!t || disabled) return;
     onSubmit?.(t);
     setText("");
   };
-  // Inner bg has to be opaque for the background-clip trick to work; pick a
-  // tone close to the surrounding container so the box still feels lifted.
-  const innerBg = isDark ? "#1a1a1d" : "#ffffff";
-  const gradientStroke = disabled
-    ? `linear-gradient(110deg, ${alpha("#7857FC", 0.35)}, ${alpha("#C084FC", 0.35)})`
-    : "linear-gradient(110deg, #7857FC 0%, #A78BFA 50%, #C084FC 100%)";
+  const showAccent = focused && !disabled;
   return (
     <Box
       sx={{
         flexShrink: 0,
-        border: "1.5px solid transparent",
-        borderRadius: "10px",
-        background: `linear-gradient(${innerBg}, ${innerBg}) padding-box, ${gradientStroke} border-box`,
-        px: 1.25,
-        py: 0.5,
+        border: "1.5px solid",
+        borderColor: showAccent
+          ? ACCENT
+          : isDark
+            ? alpha("#fff", 0.14)
+            : alpha("#000", 0.14),
+        borderRadius: "14px",
+        bgcolor: isDark ? "#1c1c1f" : "#ffffff",
+        boxShadow: showAccent
+          ? `0 0 0 3px ${alpha(ACCENT, isDark ? 0.18 : 0.12)}, 0 1px 2px ${alpha("#000", isDark ? 0.35 : 0.06)}`
+          : isDark
+            ? `0 1px 2px ${alpha("#000", 0.4)}`
+            : `0 1px 3px ${alpha("#000", 0.06)}`,
+        px: 1.5,
+        py: 0.85,
         display: "flex",
         alignItems: "center",
-        gap: 0.75,
-        opacity: disabled ? 0.75 : 1,
-        transition: "opacity 0.15s ease",
+        gap: 0.85,
+        opacity: disabled ? 0.7 : 1,
+        transition:
+          "border-color 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease",
       }}
     >
       <Iconify
@@ -708,11 +718,13 @@ function FollowUpInput({ disabled, placeholder, onSubmit }) {
       <TextField
         fullWidth
         multiline
-        maxRows={4}
+        maxRows={6}
         size="small"
         variant="standard"
         value={text}
         onChange={(e) => setText(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
@@ -916,9 +928,13 @@ export default function AnalyzeTab({ error }) {
     <Stack
       gap={1.5}
       sx={{
+        // Parent (ErrorFeedDetailView) gives us a fixed-height flex column,
+        // so we just fill it. The internal scroller handles overflow and
+        // the ComposeArea docks at the foot of this Stack — which is the
+        // bottom of the viewport.
         width: "100%",
-        height: "calc(100vh - 320px)",
-        minHeight: 480,
+        flex: 1,
+        minHeight: 0,
         py: 0.5,
       }}
     >
