@@ -361,16 +361,39 @@ const ProjectWrapperView = () => {
   ]);
 
   const observeSetupVerification = useMemo(() => {
-    if (!observeSetupCopy || !showObserveSetupFocus || isProjectCount) {
+    if (!observeSetupCopy || !showObserveSetupFocus) {
       return null;
     }
+    const hasObserveProject = Boolean(firstObserveProjectId);
+    const waitLabel = observeSetupPackageLabel
+      ? `Wait for ${observeSetupPackageLabel} trace`
+      : "Wait for first trace";
     return {
-      description:
-        "Keep this page open after running your app. We check every few seconds and move you forward when data arrives.",
+      description: hasObserveProject
+        ? observeSetupPackageLabel
+          ? `Run one ${observeSetupPackageLabel} request after pasting the setup. The project page waits for the trace and opens review when it arrives.`
+          : "Run one request after pasting the setup. The project page waits for the trace and opens review when it arrives."
+        : "Keep this page open after running your app. We check every few seconds and move you forward when data arrives.",
+      primaryAction: hasObserveProject
+        ? {
+            label: waitLabel,
+            onClick: handleObserveSetupPrimaryAction,
+          }
+        : undefined,
       status: "waiting",
-      title: "Checking for your first trace",
+      title: hasObserveProject
+        ? observeSetupPackageLabel
+          ? `Waiting for ${observeSetupPackageLabel} trace`
+          : "Waiting for first trace"
+        : "Checking for your first trace",
     };
-  }, [isProjectCount, observeSetupCopy, showObserveSetupFocus]);
+  }, [
+    firstObserveProjectId,
+    handleObserveSetupPrimaryAction,
+    observeSetupCopy,
+    observeSetupPackageLabel,
+    showObserveSetupFocus,
+  ]);
 
   const handleSearchChange = (e) => {
     setSearchQuery(e.target.value);
@@ -690,6 +713,7 @@ const ProjectWrapperView = () => {
           <NewProjectDrawer
             open={setupDrawerOpen}
             onClose={() => setSetupDrawerOpen(false)}
+            observeSetupVerification={observeSetupVerification}
           />
         </Box>
       </ProjectObserveContextProvider>

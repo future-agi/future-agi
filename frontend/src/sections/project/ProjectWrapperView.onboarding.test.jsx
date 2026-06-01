@@ -87,7 +87,15 @@ vi.mock("./RightSection/ProjectRightSection", () => ({
 }));
 
 vi.mock("./NewProject/NewProjectDrawer", () => ({
-  default: (props) => (props.open ? <div>Observe setup drawer</div> : null),
+  default: (props) =>
+    props.open ? (
+      <div>
+        <div>Observe setup drawer</div>
+        {props.observeSetupVerification ? (
+          <div>{props.observeSetupVerification.title}</div>
+        ) : null}
+      </div>
+    ) : null,
 }));
 
 vi.mock("src/utils/axios", () => ({
@@ -177,6 +185,7 @@ describe("ProjectWrapperView observe setup onboarding", () => {
     expect(screen.getByText("Connect Observe to your app")).toBeVisible();
     expect(screen.getByText("Observe list")).toBeVisible();
     expect(screen.getByText("Observe setup drawer")).toBeVisible();
+    expect(screen.getByText("Waiting for first trace")).toBeVisible();
 
     await waitFor(() => {
       expect(mocks.recordActivationEvent).toHaveBeenCalledWith(
@@ -217,6 +226,9 @@ describe("ProjectWrapperView observe setup onboarding", () => {
     });
 
     expect(screen.getByText("Credentials copied")).toBeVisible();
+    expect(
+      screen.getByText("Waiting for Anthropic TypeScript trace"),
+    ).toBeVisible();
     expect(
       screen.getByText(
         "Paste both copied values into the Anthropic TypeScript setup snippet, then run one request.",
