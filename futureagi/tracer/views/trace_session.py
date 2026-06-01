@@ -1509,7 +1509,14 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
     @staticmethod
     def _fetch_end_user_info(session_ids, end_user_filter, organization):
-        """Fetch end user info for a small set of session IDs using DISTINCT ON."""
+        """Fetch end user info for a small set of session IDs using DISTINCT ON.
+
+        A session may have spans linked to more than one end-user (session.id
+        and user.id are independent span attributes). We return the *first*
+        linked end-user — the one on the earliest span by ``start_time`` —
+        matching the ClickHouse ``argMinIf(end_user_id, start_time, ...)`` path
+        so both backends agree.
+        """
         if not session_ids:
             return {}
 
@@ -1519,7 +1526,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 end_user__isnull=False,
                 **end_user_filter,
             )
-            .order_by("trace__session_id", "-start_time")
+            .order_by("trace__session_id", "start_time")
             .distinct("trace__session_id")
             .values(
                 "trace__session_id",
@@ -1688,13 +1695,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     entry["session_name"] = None
 
         # Resolve end_user_id -> EndUser system fields (user_id, type, hash).
-        # build() carries one end_user_id per session via
-        # anyIf(end_user_id, ...) — verified to be present on the root spans
-        # the query aggregates whenever a session has a linked user, and never
-        # ambiguous (at most one distinct end_user per session). Resolution is
-        # one batched query (no extra CH round-trip, no N+1). Mirrors the
-        # Postgres _fetch_end_user_info path so both backends return the same
-        # shape.
+        # A session can have spans linked to multiple end-users (session.id and
+        # user.id are independent span attributes); build() picks the FIRST
+        # linked one via argMinIf(end_user_id, start_time, ...) — the end-user
+        # on the earliest span. Resolution is one batched query (no extra CH
+        # round-trip, no N+1) and mirrors the Postgres _fetch_end_user_info
+        # ordering so both backends return the same first-linked user.
         eu_ids = {
             str(e["end_user_id"])
             for e in formatted

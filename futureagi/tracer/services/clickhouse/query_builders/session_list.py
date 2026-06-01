@@ -134,8 +134,9 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             sum(cost) AS total_cost,
             sum(total_tokens) AS total_tokens,
             uniq(trace_id) AS traces_count,
-            anyIf(
+            argMinIf(
                 end_user_id,
+                start_time,
                 end_user_id IS NOT NULL AND end_user_id != toUUID('{NIL_UUID}')
             ) AS end_user_id
         FROM {self.TABLE}

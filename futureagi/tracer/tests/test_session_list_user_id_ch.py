@@ -19,7 +19,8 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
-from tracer.models.observation_span import EndUser
+from tracer.models.observation_span import EndUser, ObservationSpan
+from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
@@ -157,3 +158,101 @@ class TestSessionListUserIdClickHouse:
             assert "user_id_type" in r
             assert "user_id_hash" in r
             assert "end_user_id" not in r
+
+
+class TestSessionListFirstLinkedUser:
+    """When a session has spans linked to multiple end-users, the list must
+    return the FIRST linked one (earliest span by start_time). Exercised via
+    the Postgres path (CH disabled) against real spans."""
+
+    def test_first_linked_user_returned_via_pg(
+        self, auth_client, organization, workspace, observe_project
+    ):
+        first_user = EndUser.objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            user_id="first@example.com",
+            user_id_type="email",
+            user_id_hash="first-hash",
+        )
+        second_user = EndUser.objects.create(
+            organization=organization,
+            workspace=workspace,
+            project=observe_project,
+            user_id="second@example.com",
+            user_id_type="email",
+            user_id_hash="second-hash",
+        )
+        session = TraceSession.objects.create(
+            project=observe_project, name="multi-user-session"
+        )
+        trace = Trace.objects.create(
+            project=observe_project, session=session, name="multi-user-trace"
+        )
+        base = timezone.now() - timedelta(hours=1)
+
+        # Earlier span -> first_user; later span -> second_user.
+        ObservationSpan.objects.create(
+            id=f"first_span_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=trace,
+            end_user=first_user,
+            name="early span",
+            observation_type="llm",
+            start_time=base,
+            end_time=base + timedelta(seconds=2),
+            total_tokens=5,
+            cost=0.01,
+            status="OK",
+        )
+        ObservationSpan.objects.create(
+            id=f"second_span_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=trace,
+            end_user=second_user,
+            name="late span",
+            observation_type="llm",
+            start_time=base + timedelta(minutes=5),
+            end_time=base + timedelta(minutes=5, seconds=2),
+            total_tokens=7,
+            cost=0.02,
+            status="OK",
+        )
+
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_type": "datetime",
+                    "filter_op": "between",
+                    "filter_value": [
+                        (base - timedelta(hours=1)).isoformat(),
+                        (base + timedelta(hours=1)).isoformat(),
+                    ],
+                },
+            }
+        ]
+
+        # Force the Postgres path so we exercise _fetch_end_user_info ordering.
+        with patch.object(
+            AnalyticsQueryService, "should_use_clickhouse", return_value=False
+        ):
+            response = auth_client.get(
+                LIST_SESSIONS_URL,
+                {
+                    "project_id": str(observe_project.id),
+                    "page_number": 0,
+                    "page_size": 30,
+                    "sort_params": json.dumps([]),
+                    "filters": json.dumps(filters),
+                },
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        table = _result(response)["table"]
+        row = next(r for r in table if r["session_id"] == str(session.id))
+        # First linked (earliest span) wins, not the later one.
+        assert row["user_id"] == "first@example.com"
+        assert row["user_id_type"] == "email"
+        assert row["user_id_hash"] == "first-hash"

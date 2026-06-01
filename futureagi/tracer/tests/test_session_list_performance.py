@@ -392,10 +392,15 @@ class TestSessionListUserId:
             page_size=30,
         )
 
-    def test_build_selects_end_user_id(self):
-        """build() must surface one end_user_id per session via anyIf()."""
+    def test_build_selects_first_linked_end_user_id(self):
+        """build() must surface the FIRST linked end_user_id per session.
+
+        A session can have multiple linked users; we return the end-user on the
+        earliest span via argMinIf(end_user_id, start_time, <non-null>).
+        """
         query, _ = self._builder().build()
-        assert "anyIf(" in query
+        assert "argMinIf(" in query
+        assert "start_time" in query
         assert "AS end_user_id" in query
         # Aggregate column — must not change the grouping granularity.
         assert "GROUP BY trace_session_id" in query
