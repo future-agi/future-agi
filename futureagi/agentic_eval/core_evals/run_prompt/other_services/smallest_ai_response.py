@@ -29,42 +29,55 @@ logger = structlog.get_logger(__name__)
 
 _BASE_URL = "https://api.smallest.ai/waves/v1"
 
-# Best voices from lightning_v3.1 (217 total) and lightning_v3.1_pro (36 total)
-# Source: https://docs.smallest.ai — GET /waves/v1/lightning-v3.1/get_voices
+# Voice IDs as returned by GET /waves/v1/lightning-v3.1/get_voices (all lowercase).
+# Both lightning_v3.1 and lightning_v3.1_pro share the same endpoint; pro is a
+# curated subset of the full catalog.
 LIGHTNING_V3_1_VOICES = [
-    # English (US) — Best 8
-    "Quinn", "Mia", "Magnus", "Olivia", "Daniel", "Rachel", "Nicole", "Elizabeth",
-    # English (Other Accents)
-    "William", "Erica", "Chloe",
-    # Hindi/English — Best 9
-    "Neel", "Maithili", "Devansh", "Sameera", "Mihir", "Aarush", "Sakshi", "Vivaan", "Srishti",
-    # Spanish — Best 7
-    "Daniella", "Camilla", "Alba", "Marcos", "David", "Nerea", "Miguel",
-    # Indian regional
-    "Jeevan", "Rajeshwari", "Vaisakh", "Shibi", "Srihari", "Padmaja",
-    "Rupali", "Nilesh", "Niharika", "Dhruvit", "Deepashri", "Pranav",
+    # English (US)
+    "avery", "mia", "magnus", "olivia", "daniel", "rachel", "nicole", "elizabeth",
+    "quinn", "sophia", "robert", "sandra", "brian", "ella", "alex", "lucas",
+    "natasha", "harper", "alice", "jessica", "jordan", "kyle", "tara",
+    # English (British)
+    "liam", "noah", "edward", "isla", "julia", "alistair",
+    # English (Australian)
+    "chloe", "cooper", "sienna", "flynn", "nyah",
+    # English (Canadian)
+    "william", "erica", "alec",
+    # Hindi / English (Indian accent)
+    "neel", "maithili", "devansh", "sameera", "mihir", "aarush", "sakshi", "vivaan",
+    "srishti", "maya", "anika", "sanjay", "arjun", "advika", "aisha", "gaurav",
+    "ishani", "yuvika", "sana", "kunal", "meher", "saira", "kareena", "chinmayi",
+    "sunidhi", "aarini", "inaaya", "rhea", "zariya", "mishka", "aviraj", "vyom",
+    "zoravar", "reyansh", "ahan",
+    # Spanish
+    "jose", "mariana", "luis", "daniella", "lucia", "miguel", "javier",
+    "camilla", "carlos", "emilio", "rodrigo", "marcos", "david", "isabella",
+    "nerea", "alba",
+    # South Indian languages
+    "anitha", "raju", "shrihari", "padmaja", "deepashri", "jeevan", "rajeshwari",
+    "shibi", "vaisakh", "pranav",
+    # British (pro-catalog voices, same endpoint)
+    "benedict", "cormac", "everett", "finley", "rupert", "winston", "caspian",
+    "cressida", "elowen", "ottilie", "seraphina", "tabitha", "arabella",
+    # American (pro-catalog voices)
+    "maverick", "brooks", "asher", "wesley", "hunter", "colton",
+    "willow", "autumn", "skylar", "savannah", "kennedy", "reagan", "sierra",
 ]
 
 LIGHTNING_V3_1_PRO_VOICES = [
-    # Indian
-    "Rhea", "Zariya", "Kareena", "Mishka", "Inaaya", "Saira", "Meher", "Aarini",
-    "Aviraj", "Vyom", "Zoravar", "Reyansh", "Ahan",
-    # British
-    "Cressida", "Elowen", "Ottilie", "Seraphina", "Tabitha", "Arabella",
-    "Benedict", "Cormac", "Everett", "Finley", "Rupert", "Winston", "Caspian",
-    # American
-    "Willow", "Autumn", "Skylar", "Savannah", "Kennedy", "Reagan", "Sierra",
-    "Maverick", "Brooks", "Hunter", "Colton", "Wesley", "Asher",
+    # Indian (curated)
+    "rhea", "zariya", "kareena", "mishka", "inaaya", "saira", "meher", "aarini",
+    "aviraj", "vyom", "zoravar", "reyansh", "ahan",
+    # British (curated)
+    "cressida", "elowen", "ottilie", "seraphina", "tabitha", "arabella",
+    "benedict", "cormac", "everett", "finley", "rupert", "winston", "caspian",
+    # American (curated)
+    "willow", "autumn", "skylar", "savannah", "kennedy", "reagan", "sierra",
+    "maverick", "brooks", "hunter", "colton", "wesley", "asher",
 ]
 
-
-def _model_to_url_slug(model_id: str) -> str:
-    """Convert model name to URL path segment.
-
-    lightning_v3.1      -> lightning-v3.1
-    lightning_v3.1_pro  -> lightning-v3.1-pro
-    """
-    return model_id.replace("_", "-")
+# Both models use the same REST endpoint; lightning_v3.1_pro just curates a voice subset.
+_TTS_ENDPOINT_SLUG = "lightning-v3.1"
 
 
 def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
@@ -79,14 +92,14 @@ def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
     )
 
     cfg = run_prompt_instance.run_prompt_config or {}
-    voice_id = cfg.get("voice_id") or cfg.get("voice") or "Emily"
+    voice_id = cfg.get("voice_id") or cfg.get("voice") or "avery"
     sample_rate = int(cfg.get("sample_rate", 24000))
     language = cfg.get("language", "en")
     speed = cfg.get("speed", 1.0)
     add_wav_header = cfg.get("add_wav_header", True)
 
-    model_slug = _model_to_url_slug(model_id)
-    endpoint = f"{_BASE_URL}/{model_slug}/get_speech"
+    # Both lightning_v3.1 and lightning_v3.1_pro share the same REST endpoint.
+    endpoint = f"{_BASE_URL}/{_TTS_ENDPOINT_SLUG}/get_speech"
 
     headers = {
         "Authorization": f"Bearer {api_key}",
