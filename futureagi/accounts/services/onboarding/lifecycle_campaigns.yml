@@ -27,7 +27,7 @@ campaigns:
     template_version: "2026-05-27.1"
     campaign_group: welcome
     email_subject: Continue with your first observe project
-    email_preheader: Create the project that will receive your first trace and unlock the quality loop.
+    email_preheader: Create the project that will receive your first trace and show the first quality signal.
     primary_path: observe
     entry_stages:
       - connect_observability
@@ -189,6 +189,27 @@ campaigns:
     sample_policy: real_only
     owner: product
     qa_fixture: agent_no_agent_after_wait
+
+  - campaign_key: agent_add_starter_prompt
+    template_key: agent_add_starter_prompt_v1
+    template_version: "2026-06-01.1"
+    campaign_group: agent
+    email_subject: Add the starter prompt to your agent
+    email_preheader: Add one runnable prompt step so the first scenario can produce output to review.
+    primary_path: agent
+    entry_stages:
+      - add_agent_node
+    wait_window_minutes: 120
+    priority: 82
+    target_action_id: add_agent_node
+    target_success_event: agent_node_added
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_agent_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: agent_created_no_step_after_wait
 
   - campaign_key: agent_run_first_scenario
     template_key: agent_run_first_scenario_v1
@@ -679,7 +700,7 @@ campaigns:
     template_version: "2026-05-27.1"
     campaign_group: sample
     email_subject: Review a sample trace before connecting data
-    email_preheader: Open sample data to see the review loop without treating it as live traffic.
+    email_preheader: Open sample data to see the review workflow without treating it as live traffic.
     primary_path: observe
     entry_stages:
       - waiting_for_first_trace
@@ -742,8 +763,8 @@ campaigns:
     template_key: first_loop_complete_next_v1
     template_version: "2026-05-27.1"
     campaign_group: activation_success
-    email_subject: Your first AI quality loop is live
-    email_preheader: Open daily quality to review the next signal after your first loop.
+    email_subject: Your first AI quality review is live
+    email_preheader: Open daily quality to review the next signal after your first review.
     primary_path: observe
     entry_stages:
       - activated

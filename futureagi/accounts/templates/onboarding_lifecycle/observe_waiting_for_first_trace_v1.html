@@ -4,9 +4,9 @@
 {% block body %}
   {% if observe_credentials_ready %}
     <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has credentials ready for the first observe trace.</p>
-    <p style="margin:0;">Paste the copied values into your SDK and send one trace so FutureAGI can move from setup instructions to a concrete quality review.</p>
+    <p style="margin:0;">Paste the copied values into your SDK and send one trace so there is a concrete quality signal to review.</p>
   {% else %}
     <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has an observe project but no real trace yet.</p>
-    <p style="margin:0;">Send one trace so FutureAGI can move from setup instructions to a concrete quality review.</p>
+    <p style="margin:0;">Send one trace so there is a concrete quality signal to review.</p>
   {% endif %}
 {% endblock %}

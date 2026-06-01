@@ -1,8 +1,11 @@
 from collections import Counter
 from copy import deepcopy
+from html import unescape
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
+from django.template.loader import render_to_string
+from django.utils.html import strip_tags
 
 from accounts.services.onboarding.constants import ONBOARDING_ACTIVATION_EVENTS
 from accounts.services.onboarding.flow_config import get_activation_flow_config
@@ -15,7 +18,11 @@ from accounts.services.onboarding.lifecycle_template_contract import (
     EMAIL_PREHEADER_MAX_LENGTH,
     EMAIL_SUBJECT_MAX_LENGTH,
     SUPPORTED_LIFECYCLE_TEMPLATE_KEYS,
+    USER_FACING_INTERNAL_COPY_TERMS,
+    lifecycle_email_copy_for_campaign,
+    required_context_keys_for_template,
     template_file_path,
+    template_path_for_key,
 )
 
 
@@ -46,6 +53,7 @@ def test_lifecycle_campaign_registry_is_editable_and_valid():
         "prompt_create_first",
         "prompt_add_failure_example",
         "agent_create_first",
+        "agent_add_starter_prompt",
         "agent_create_eval",
         "eval_create_source",
         "eval_fix_source",
@@ -277,6 +285,53 @@ def test_lifecycle_registry_rejects_unsafe_campaign_email_copy():
 
     with pytest.raises(ImproperlyConfigured):
         _validate_config(config)
+
+    config = _valid_lifecycle_config()
+    campaign = _campaign(config, "prompt_create_first")
+    campaign["email_preheader"] = "Move users through the onboarding loop"
+
+    with pytest.raises(ImproperlyConfigured):
+        _validate_config(config)
+
+
+def test_lifecycle_user_facing_copy_avoids_internal_terms():
+    def _context_for_campaign(campaign):
+        context = {
+            "primary_action_label": "Continue setup",
+            "primary_action_url": "/accounts/onboarding/lifecycle/click/?token=token",
+            "email_subject": lifecycle_email_copy_for_campaign(campaign)["subject"],
+            "preheader_text": lifecycle_email_copy_for_campaign(campaign)["preheader"],
+            "snooze_url": "/accounts/onboarding/lifecycle/snooze/?token=token",
+            "unsubscribe_url": (
+                "/accounts/onboarding/lifecycle/unsubscribe/?token=token"
+            ),
+            "user_name": "Nikhil",
+            "workspace_name": "Demo workspace",
+            "digest_preview": {
+                "actions": [
+                    {
+                        "label": "Review trace regression",
+                    }
+                ],
+            },
+            "observe_credentials_ready": True,
+            "observe_credentials_ready_at": "2026-06-01T00:00:00Z",
+        }
+        for key in required_context_keys_for_template(campaign["template_key"]):
+            context.setdefault(key, "")
+        return context
+
+    for campaign in lifecycle_campaigns():
+        copy = lifecycle_email_copy_for_campaign(campaign)
+        html = render_to_string(
+            template_path_for_key(campaign["template_key"]),
+            _context_for_campaign(campaign),
+        )
+        visible_text = " ".join(unescape(strip_tags(html)).split()).lower()
+        copy_text = f"{copy['subject']} {copy['preheader']}".lower()
+        for term in USER_FACING_INTERNAL_COPY_TERMS:
+            assert term not in copy_text
+            assert term not in visible_text
 
 
 def test_lifecycle_registry_rejects_digest_template_without_preview_requirement():

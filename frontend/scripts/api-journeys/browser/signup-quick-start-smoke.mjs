@@ -330,7 +330,7 @@ async function main() {
     });
     await expectVisibleText(
       page,
-      "Pick one setup path. Home will show one current action, then the next steps.",
+      "Pick the closest product job. We will save it and open a checklist with the first action highlighted.",
       { timeout: 90000 },
     );
     if (SAMPLE_GATE_ONLY) {
@@ -339,7 +339,7 @@ async function main() {
       });
       await expectVisibleText(
         page,
-        "Sample screens are preloaded for preview after the workspace setup begins.",
+        "Sample screens are available after setup starts.",
         { timeout: 90000 },
       );
     }

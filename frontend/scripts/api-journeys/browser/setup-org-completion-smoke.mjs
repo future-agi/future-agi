@@ -198,7 +198,7 @@ async function main() {
     await expectVisibleText(page, "What do you want to set up first?");
     await expectVisibleText(
       page,
-      "Pick one setup path. Home will show one current action, then the next steps.",
+      "Pick the closest product job. We will save it and open a checklist with the first action highlighted.",
     );
     if (SAMPLE_PREVIEW_GUARD) {
       const samplePreviewVisible = await isVisibleButtonText(
@@ -211,7 +211,7 @@ async function main() {
       );
       await expectVisibleText(
         page,
-        "Sample screens are preloaded for preview after the workspace setup begins.",
+        "Sample screens are available after setup starts.",
       );
     }
     const quickStartInitiallyVisible = await isVisibleButtonText(

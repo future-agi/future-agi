@@ -141,11 +141,11 @@ def test_lifecycle_email_template_renders_for_campaign(
     assert required_context_keys_for_template(campaign["template_key"]) <= set(
         preview["context"]
     )
-    assert "FutureAGI onboarding" in preview["html"]
+    assert "FutureAGI setup" in preview["html"]
     assert email_copy["preheader"] in preview["html"]
     assert preview["context"]["primary_action_url"] in preview["html"]
-    assert "snooze onboarding emails for 7 days" in preview["html"]
-    assert "turn off onboarding lifecycle emails" in preview["html"]
+    assert "snooze setup emails for 7 days" in preview["html"]
+    assert "turn off setup emails" in preview["html"]
     assert "token=" in preview["html"]
     assert "{{" not in preview["html"]
     assert "{%" not in preview["html"]
@@ -209,9 +209,9 @@ def test_lifecycle_preview_command_writes_no_send_snapshot(tmp_path):
     index = (tmp_path / "index.md").read_text()
     manifest = json.loads((tmp_path / "manifest.json").read_text())
 
-    assert "FutureAGI onboarding" in html
+    assert "FutureAGI setup" in html
     assert "Connect the first observe project" in html
-    assert "snooze onboarding emails for 7 days" in html
+    assert "snooze setup emails for 7 days" in html
     assert "Connect the first observe project" in text
     assert "welcome_resume_goal" in index
     assert (
@@ -257,7 +257,7 @@ def test_lifecycle_preview_command_writes_no_send_snapshot(tmp_path):
     assert entry["subject"] == "Continue with your first observe project"
     assert entry["preheader"] == (
         "Create the project that will receive your first trace "
-        "and unlock the quality loop."
+        "and show the first quality signal."
     )
     assert entry["html_sha256"] == sha256(html.encode("utf-8")).hexdigest()
     assert entry["text_sha256"] == sha256(text.encode("utf-8")).hexdigest()
@@ -326,7 +326,7 @@ def test_lifecycle_preview_approval_command_writes_review_record(tmp_path):
         ],
         "note": "Reviewed welcome copy and route target.",
     }
-    assert "FutureAGI onboarding" not in record_text
+    assert "FutureAGI setup" not in record_text
     assert "Connect the first observe project" not in record_text
     assert "reviewer@example.com" in record_text
 

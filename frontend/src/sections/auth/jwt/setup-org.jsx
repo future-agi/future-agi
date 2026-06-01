@@ -54,17 +54,17 @@ const QUICK_START_ROLE = "AI Builder";
 
 const SETUP_SIDE_PANEL_STEPS = [
   {
-    label: "Choose one setup task",
-    description: "Pick the job this workspace should finish first.",
+    label: "Choose the first product job",
+    description: "Pick the closest path for this workspace to complete.",
   },
   {
-    label: "Do the first action",
-    description: "The workspace opens on the right screen with one clear step.",
+    label: "Finish one highlighted action",
+    description: "The next screen opens with one action selected first.",
   },
   {
-    label: "Use samples after setup starts",
+    label: "Keep samples separate",
     description:
-      "Sample screens stay available, but they do not replace setup.",
+      "Sample screens stay available later, but they do not replace setup.",
   },
 ];
 
@@ -266,7 +266,7 @@ const SetupOrgSidePanel = () => (
         <Typography variant="h4">One choice, then one action</Typography>
         <Typography variant="body1" color="text.secondary">
           Choose the product job you want to finish first. We will save it and
-          open the exact screen where setup begins.
+          open a checklist with the first action highlighted.
         </Typography>
       </Stack>
 
@@ -594,7 +594,7 @@ const SetupOrganization = ({ getStarted = false }) => {
         fullWidth
         sx={{
           borderRadius: 0.5,
-          minHeight: { xs: 120, sm: 104 },
+          minHeight: { xs: 176, sm: 164 },
           height: "auto",
           alignItems: "flex-start",
           justifyContent: "flex-start",
@@ -629,79 +629,144 @@ const SetupOrganization = ({ getStarted = false }) => {
       >
         <Stack
           component="span"
-          spacing={0.65}
+          spacing={0.75}
           sx={{ display: "flex", minWidth: 0, width: "100%" }}
         >
           <Stack
             component="span"
-            direction={{ xs: "column", sm: "row" }}
             spacing={0.75}
-            justifyContent="space-between"
-            alignItems={{ xs: "flex-start", sm: "center" }}
-            sx={{ width: "100%" }}
+            sx={{ display: "flex", minWidth: 0, width: "100%" }}
           >
             <Stack
               component="span"
-              spacing={0.25}
-              sx={{ display: "flex", minWidth: 0 }}
+              direction={{ xs: "column", sm: "row" }}
+              spacing={0.75}
+              justifyContent="space-between"
+              alignItems={{ xs: "flex-start", sm: "center" }}
+              sx={{ width: "100%" }}
             >
-              <Typography
+              <Stack
                 component="span"
-                variant="subtitle2"
-                sx={{ lineHeight: 1.2 }}
+                spacing={0.35}
+                sx={{ display: "flex", minWidth: 0 }}
               >
-                {option.buttonLabel}
-              </Typography>
-              <Typography
-                component="span"
-                variant="caption"
-                sx={{
-                  color: option.featured
-                    ? "primary.contrastText"
-                    : "text.secondary",
-                  lineHeight: 1.25,
-                  mt: 0.25,
-                }}
-              >
-                {option.shortDescription}
-              </Typography>
+                <Box
+                  component="span"
+                  sx={{
+                    alignSelf: "flex-start",
+                    border: "1px solid",
+                    borderColor: option.featured
+                      ? "primary.contrastText"
+                      : "divider",
+                    borderRadius: 0.75,
+                    color: option.featured
+                      ? "primary.contrastText"
+                      : "text.secondary",
+                    fontSize: 11,
+                    fontWeight: "fontWeightMedium",
+                    lineHeight: 1.4,
+                    px: 0.75,
+                    py: 0.15,
+                  }}
+                >
+                  {option.surfaceLabel}
+                </Box>
+                <Typography
+                  component="span"
+                  variant="subtitle2"
+                  sx={{ lineHeight: 1.2 }}
+                >
+                  {option.buttonLabel}
+                </Typography>
+                <Typography
+                  component="span"
+                  variant="caption"
+                  sx={{
+                    color: option.featured
+                      ? "primary.contrastText"
+                      : "text.secondary",
+                    lineHeight: 1.25,
+                    mt: 0.25,
+                  }}
+                >
+                  {option.shortDescription}
+                </Typography>
+              </Stack>
+              {option.featured ? (
+                <Typography
+                  component="span"
+                  sx={{
+                    color: "primary.contrastText",
+                    fontSize: 12,
+                    fontWeight: "fontWeightMedium",
+                    lineHeight: 1.4,
+                    opacity: 0.82,
+                  }}
+                >
+                  Recommended
+                </Typography>
+              ) : null}
             </Stack>
-            {option.featured ? (
-              <Typography
+            <Typography
+              component="span"
+              variant="body2"
+              sx={{
+                color: option.featured
+                  ? "primary.contrastText"
+                  : "text.primary",
+                fontWeight: "fontWeightMedium",
+              }}
+            >
+              First action: {option.firstActionLabel}
+            </Typography>
+            {option.sequencePreview?.length ? (
+              <Stack
                 component="span"
-                sx={{
-                  color: "primary.contrastText",
-                  fontSize: 12,
-                  fontWeight: "fontWeightMedium",
-                  lineHeight: 1.4,
-                  opacity: 0.82,
-                }}
+                direction="row"
+                spacing={0.5}
+                useFlexGap
+                flexWrap="wrap"
+                sx={{ display: "flex", minWidth: 0 }}
               >
-                Recommended
-              </Typography>
+                {option.sequencePreview.slice(0, 4).map((step, index) => (
+                  <Box
+                    component="span"
+                    key={step}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: option.featured
+                        ? "primary.contrastText"
+                        : "divider",
+                      borderRadius: 0.75,
+                      color: option.featured
+                        ? "primary.contrastText"
+                        : "text.secondary",
+                      fontSize: 11,
+                      lineHeight: 1.4,
+                      px: 0.65,
+                      py: 0.15,
+                      opacity: option.featured ? 0.92 : 1,
+                    }}
+                  >
+                    {index + 1}. {step}
+                  </Box>
+                ))}
+              </Stack>
             ) : null}
+            <Typography
+              component="span"
+              variant="button"
+              sx={{
+                alignSelf: "flex-start",
+                color: option.featured
+                  ? "primary.contrastText"
+                  : "primary.main",
+                mt: 0.25,
+              }}
+            >
+              Start with {option.firstActionLabel}
+            </Typography>
           </Stack>
-          <Typography
-            component="span"
-            variant="body2"
-            sx={{
-              color: option.featured ? "primary.contrastText" : "text.primary",
-              fontWeight: "fontWeightMedium",
-            }}
-          >
-            First action: {option.firstActionLabel}
-          </Typography>
-          <Typography
-            component="span"
-            variant="button"
-            sx={{
-              alignSelf: "flex-start",
-              color: option.featured ? "primary.contrastText" : "primary.main",
-              mt: 0.25,
-            }}
-          >
-            Start this setup
-          </Typography>
         </Stack>
       </ButtonComponent>
     );
@@ -738,8 +803,8 @@ const SetupOrganization = ({ getStarted = false }) => {
           <Stack direction="row" spacing={1} alignItems="flex-start">
             <Iconify icon="mdi:database-eye-outline" width={20} />
             <Typography variant="body2" color="text.secondary">
-              Sample screens are preloaded for preview after the workspace setup
-              begins. First choose the real product task you want to complete.
+              Sample screens are available after setup starts. They are only for
+              preview and do not count as this workspace setup.
             </Typography>
           </Stack>
         </Box>
@@ -1109,8 +1174,8 @@ const SetupOrganization = ({ getStarted = false }) => {
                   maxWidth: 520,
                 }}
               >
-                Pick one setup path. Home will show one current action, then the
-                next steps.
+                Pick the closest product job. We will save it and open a
+                checklist with the first action highlighted.
               </Typography>
             </Box>
 

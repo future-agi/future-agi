@@ -4,6 +4,16 @@ TEMPLATE_PREFIX = "onboarding_lifecycle"
 TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "templates" / TEMPLATE_PREFIX
 EMAIL_SUBJECT_MAX_LENGTH = 78
 EMAIL_PREHEADER_MAX_LENGTH = 120
+USER_FACING_INTERNAL_COPY_TERMS = (
+    "aha",
+    "fast-track",
+    "fast track",
+    "sticky",
+    "onboarding loop",
+    "onboarding lifecycle",
+    "real activation",
+    "dry run",
+)
 
 DEFAULT_LIFECYCLE_EMAIL_COPY = {
     "subject": "Continue your FutureAGI setup",
@@ -28,6 +38,7 @@ SUPPORTED_LIFECYCLE_CAMPAIGN_GROUPS = frozenset(
 
 SUPPORTED_LIFECYCLE_TEMPLATE_KEYS = frozenset(
     {
+        "agent_add_starter_prompt_v1",
         "agent_create_eval_v1",
         "agent_create_first_v1",
         "agent_review_failed_scenario_v1",
@@ -131,6 +142,10 @@ def _copy_text_errors(value, field_name, max_length):
         errors.append(f"{field_name} must be a single line.")
     if "{{" in value or "{%" in value:
         errors.append(f"{field_name} must not contain template syntax.")
+    normalized = value.lower()
+    for term in USER_FACING_INTERNAL_COPY_TERMS:
+        if term in normalized:
+            errors.append(f"{field_name} must not contain internal term: {term}.")
     return errors
 
 
