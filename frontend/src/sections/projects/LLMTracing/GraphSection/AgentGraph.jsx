@@ -94,6 +94,29 @@ const AgentNode = ({ data }) => {
   // Dim nodes that don't match the active filter
   const isDimmed = data._hasMatch === false;
 
+  // ── Optional diff overlay (used by the error-feed Split-with-working view).
+  // The Observe Tracing view never sets `_diffStatus` so this is inert there.
+  //   "fail-only"          → extra step in failing trace (red ring + "+")
+  //   "pass-only"          → step missing from failing (green ring + "+")
+  //   "matched-regressed"  → same step in both but failing has errors / much
+  //                          slower (amber ring + "Δ")
+  //   "matched" / unset    → no overlay
+  const diffStatus = data._diffStatus;
+  const diffRingColor =
+    diffStatus === "fail-only"
+      ? "#DB2F2D"
+      : diffStatus === "pass-only"
+        ? "#5ACE6D"
+        : diffStatus === "matched-regressed"
+          ? "#F5A623"
+          : null;
+  const diffBadge =
+    diffStatus === "fail-only" || diffStatus === "pass-only"
+      ? "+"
+      : diffStatus === "matched-regressed"
+        ? "Δ"
+        : null;
+
   // Tooltip: name, duration/tokens side-by-side, cost, eval bars, annotations
   const evals = data.evals || [];
   const annotations = data.annotations || [];
@@ -370,6 +393,7 @@ const AgentNode = ({ data }) => {
       >
         <Box
           sx={{
+            position: "relative",
             display: "flex",
             alignItems: "center",
             gap: 0.75,
@@ -377,12 +401,18 @@ const AgentNode = ({ data }) => {
             py: isSentinel ? 0.25 : 0.5,
             borderRadius: isSentinel ? "20px" : "8px",
             border: isSentinel ? "1.5px solid" : "2px solid",
-            borderColor: color.border,
+            borderColor: diffRingColor ?? color.border,
             bgcolor: isSentinel ? "transparent" : "background.paper",
-            boxShadow: isSentinel
-              ? "none"
-              : (theme) =>
-                  `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`,
+            boxShadow: (theme) => {
+              const base = isSentinel
+                ? "none"
+                : `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`;
+              if (!diffRingColor) return base;
+              // Outer halo so the diff status reads at a glance even when
+              // the graph is zoomed out. Combined with the base shadow.
+              const halo = `0 0 0 3px ${alpha(diffRingColor, 0.22)}`;
+              return base === "none" ? halo : `${halo}, ${base}`;
+            },
             minWidth: isSentinel ? 44 : 80,
             justifyContent: isSentinel ? "center" : "flex-start",
             cursor: isSentinel ? "default" : "pointer",
@@ -392,11 +422,41 @@ const AgentNode = ({ data }) => {
               ? {}
               : {
                   boxShadow: (theme) =>
-                    `0 0 0 2px ${color.border}, 0 2px 8px ${alpha(theme.palette.common.black, 0.1)}`,
+                    `0 0 0 2px ${diffRingColor ?? color.border}, 0 2px 8px ${alpha(theme.palette.common.black, 0.1)}`,
                   transform: "scale(1.03)",
                 },
           }}
         >
+          {/* Diff badge (top-right) — only rendered when this node was tagged
+              by the error-feed diff helper. Pure decoration; doesn't affect
+              the node's layout dimensions. */}
+          {diffBadge && (
+            <Box
+              sx={{
+                position: "absolute",
+                top: -7,
+                right: -7,
+                minWidth: 16,
+                height: 16,
+                px: 0.5,
+                borderRadius: "8px",
+                bgcolor: diffRingColor,
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 10,
+                fontWeight: 700,
+                lineHeight: 1,
+                fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                boxShadow: (theme) =>
+                  `0 1px 4px ${alpha(theme.palette.common.black, 0.25)}`,
+                pointerEvents: "none",
+              }}
+            >
+              {diffBadge}
+            </Box>
+          )}
           <Iconify
             icon={color.icon}
             width={isSentinel ? 12 : 14}

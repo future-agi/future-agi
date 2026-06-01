@@ -22,6 +22,7 @@ import { useGetTraceDetail } from "src/api/project/trace-detail";
 import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
 import EvalIOPanel from "./EvalIOPanel";
 import VoiceEvalPanel from "./VoiceEvalPanel";
+import { buildGraphDiff } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
 import { isVoiceDemoCluster, voiceDemoOverview } from "../voiceDemoCluster";
 
@@ -902,6 +903,280 @@ TraceGraphView.propTypes = {
   mode: PropTypes.oneOf(["graph", "path"]),
 };
 
+// ── Split-with-working graph compare ─────────────────────────────────────────
+// Fetches the failing AND the working trace, computes a node-level diff, and
+// renders the two AgentGraphs (or AgentPaths) side by side. A diff summary
+// strip above the pair surfaces the high-level "what changed" view.
+//
+// Per-node diff cues only land on the graph variant — the Sankey-style
+// AgentPath compresses each node so the colored rings would clutter it. For
+// path mode we render a bare side-by-side (same data, no annotations) and
+// rely on the summary strip alone to communicate the diff.
+function CompareLegend({ summary }) {
+  const items = [
+    summary.added > 0 && {
+      color: "#DB2F2D",
+      label: `+${summary.added} extra in failing`,
+    },
+    summary.missing > 0 && {
+      color: "#5ACE6D",
+      label: `−${summary.missing} missing from failing`,
+    },
+    summary.regressed > 0 && {
+      color: "#F5A623",
+      label: `${summary.regressed} regressed`,
+    },
+    summary.shared > 0 && {
+      color: "#9AA3AF",
+      label: `${summary.shared} shared`,
+    },
+  ].filter(Boolean);
+
+  if (!items.length) {
+    return (
+      <Typography fontSize="11px" color="text.disabled">
+        No structural differences between the failing and working traces.
+      </Typography>
+    );
+  }
+
+  return (
+    <Stack direction="row" alignItems="center" gap={1.25} flexWrap="wrap">
+      {items.map((item) => (
+        <Stack
+          key={item.label}
+          direction="row"
+          alignItems="center"
+          gap={0.5}
+          sx={{ flexShrink: 0 }}
+        >
+          <Box
+            sx={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              bgcolor: item.color,
+            }}
+          />
+          <Typography
+            fontSize="11px"
+            fontWeight={600}
+            color="text.secondary"
+            sx={{ whiteSpace: "nowrap" }}
+          >
+            {item.label}
+          </Typography>
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+CompareLegend.propTypes = { summary: PropTypes.object.isRequired };
+
+function CompareColumn({ title, accentColor, traceShortId, children }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: alpha(accentColor, isDark ? 0.35 : 0.4),
+        borderRadius: "8px",
+        overflow: "hidden",
+        bgcolor: isDark ? alpha("#fff", 0.015) : alpha("#000", 0.012),
+        display: "flex",
+        flexDirection: "column",
+        minWidth: 0,
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        gap={0.75}
+        sx={{
+          px: 1.25,
+          py: 0.75,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: alpha(accentColor, isDark ? 0.1 : 0.06),
+        }}
+      >
+        <Box
+          sx={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            bgcolor: accentColor,
+          }}
+        />
+        <Typography
+          fontSize="10.5px"
+          fontWeight={700}
+          sx={{
+            color: accentColor,
+            textTransform: "uppercase",
+            letterSpacing: "0.07em",
+          }}
+        >
+          {title}
+        </Typography>
+        {traceShortId && (
+          <Typography
+            fontSize="10px"
+            color="text.disabled"
+            sx={{
+              ml: 0.25,
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            }}
+          >
+            {traceShortId}
+          </Typography>
+        )}
+      </Stack>
+      <Box sx={{ flex: 1, minHeight: 0 }}>{children}</Box>
+    </Box>
+  );
+}
+CompareColumn.propTypes = {
+  title: PropTypes.string.isRequired,
+  accentColor: PropTypes.string.isRequired,
+  traceShortId: PropTypes.string,
+  children: PropTypes.node,
+};
+
+function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
+  const failQ = useGetTraceDetail(failingTraceId);
+  const passQ = useGetTraceDetail(workingTraceId);
+
+  const failGraph = useMemo(() => {
+    const tree =
+      failQ.data?.observation_spans || failQ.data?.observationSpans;
+    if (!tree?.length) return null;
+    return buildTraceGraph(tree);
+  }, [failQ.data]);
+
+  const passGraph = useMemo(() => {
+    const tree =
+      passQ.data?.observation_spans || passQ.data?.observationSpans;
+    if (!tree?.length) return null;
+    return buildTraceGraph(tree);
+  }, [passQ.data]);
+
+  const { failAnnotated, passAnnotated, summary } = useMemo(() => {
+    if (!failGraph || !passGraph) {
+      return {
+        failAnnotated: failGraph,
+        passAnnotated: passGraph,
+        summary: { added: 0, missing: 0, regressed: 0, shared: 0 },
+      };
+    }
+    return buildGraphDiff(failGraph, passGraph);
+  }, [failGraph, passGraph]);
+
+  // Loading & empty states. We render the legend strip even while loading so
+  // the layout doesn't reflow when data arrives.
+  const failLoading = !!failingTraceId && failQ.isLoading && !failQ.data;
+  const passLoading = !!workingTraceId && passQ.isLoading && !passQ.data;
+
+  const NoWorkingNotice = !workingTraceId && (
+    <Box
+      sx={{
+        border: "1px dashed",
+        borderColor: "divider",
+        borderRadius: "8px",
+        py: 3,
+        px: 2,
+        textAlign: "center",
+      }}
+    >
+      <Typography fontSize="12px" color="text.disabled">
+        No matching working trace yet for this cluster — backend KNN matching
+        will populate it shortly.
+      </Typography>
+    </Box>
+  );
+
+  const renderSide = (graph, loading, label) => {
+    if (loading) {
+      return (
+        <Box sx={{ height: 360 }}>
+          <GraphSkeleton />
+        </Box>
+      );
+    }
+    if (!graph) {
+      return (
+        <Stack
+          alignItems="center"
+          justifyContent="center"
+          sx={{ height: 360, p: 2 }}
+        >
+          <Typography fontSize="12px" color="text.disabled" textAlign="center">
+            No span data for {label}.
+          </Typography>
+        </Stack>
+      );
+    }
+    return (
+      <Box sx={{ height: 360 }}>
+        {mode === "path" ? (
+          <AgentPath data={graph} isLoading={false} />
+        ) : (
+          <AgentGraph data={graph} isLoading={false} direction="TB" />
+        )}
+      </Box>
+    );
+  };
+
+  if (NoWorkingNotice) return NoWorkingNotice;
+
+  return (
+    <Stack gap={1.25}>
+      {/* Diff summary strip — explains the colour cues on the graph nodes. */}
+      <Box
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+          px: 1.25,
+          py: 0.85,
+        }}
+      >
+        <CompareLegend summary={summary} />
+      </Box>
+
+      {/* Side-by-side graphs */}
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+          gap: 1.25,
+          alignItems: "stretch",
+        }}
+      >
+        <CompareColumn
+          title="Failing trace"
+          accentColor="#DB2F2D"
+          traceShortId={failingTraceId ? failingTraceId.slice(0, 8) : null}
+        >
+          {renderSide(failAnnotated, failLoading, "failing trace")}
+        </CompareColumn>
+        <CompareColumn
+          title="Working trace"
+          accentColor="#5ACE6D"
+          traceShortId={workingTraceId ? workingTraceId.slice(0, 8) : null}
+        >
+          {renderSide(passAnnotated, passLoading, "working trace")}
+        </CompareColumn>
+      </Box>
+    </Stack>
+  );
+}
+TraceGraphCompare.propTypes = {
+  failingTraceId: PropTypes.string,
+  workingTraceId: PropTypes.string,
+  mode: PropTypes.oneOf(["graph", "path"]),
+};
 
 // ── Trace evidence reel (fail / pass tabs) ───────────────────────────────────
 
@@ -1602,12 +1877,22 @@ ReelTabs.propTypes = {
   onChange: PropTypes.func.isRequired,
 };
 
-function TraceEvidence({ evidence, trace, traceId }) {
+function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const [viewMode, setViewMode] = useState("breadcrumb");
   const [activeReel, setActiveReel] = useState("fail");
   const [splitView, setSplitView] = useState(false);
+
+  // Split is available for every view mode now; the BE may still be catching
+  // up on KNN matching, so we let the compare component itself handle the
+  // "no working trace yet" empty state. The button stays clickable so the
+  // affordance is consistent.
+  const supportsSplit =
+    viewMode === "breadcrumb" ||
+    viewMode === "agentgraph" ||
+    viewMode === "agentpath";
+  const isGraphMode = viewMode === "agentgraph" || viewMode === "agentpath";
 
   // Use the real reels when they carry rich per-step fields (role/span/
   // status/note); otherwise fall back to the mock-matching stub so the
@@ -1689,12 +1974,15 @@ function TraceEvidence({ evidence, trace, traceId }) {
 
         <Box sx={{ flex: 1 }} />
 
-        {/* Failing/Working tabs sit right next to the Split button. */}
+        {/* Failing/Working tabs sit right next to the Split button. Only
+            meaningful in breadcrumb mode — the graph modes always render the
+            current trace and use the Split button to bring the working
+            counterpart in. */}
         {isBreadcrumb && !splitView && (
           <ReelTabs value={activeReel} onChange={setActiveReel} />
         )}
 
-        {isBreadcrumb && (
+        {supportsSplit && (
           <Button
             size="small"
             variant="outlined"
@@ -1790,22 +2078,27 @@ function TraceEvidence({ evidence, trace, traceId }) {
 
       {/* ── Body ── */}
       <Box sx={{ p: 1.75 }}>
-        {/* Agent Graph — the real Observe node-graph for this trace. */}
-        {viewMode === "agentgraph" &&
+        {/* Agent Graph / Agent Path — single trace, OR split with working. */}
+        {isGraphMode &&
           (traceId ? (
-            <TraceGraphView traceId={traceId} mode="graph" />
+            splitView ? (
+              <TraceGraphCompare
+                failingTraceId={traceId}
+                workingTraceId={workingTraceId}
+                mode={viewMode === "agentpath" ? "path" : "graph"}
+              />
+            ) : (
+              <TraceGraphView
+                traceId={traceId}
+                mode={viewMode === "agentpath" ? "path" : "graph"}
+              />
+            )
           ) : (
-            <Typography fontSize="12px" color="text.disabled" sx={{ py: 2, textAlign: "center" }}>
-              No trace selected.
-            </Typography>
-          ))}
-
-        {/* Agent Path — the real Observe Sankey-style path for this trace. */}
-        {viewMode === "agentpath" &&
-          (traceId ? (
-            <TraceGraphView traceId={traceId} mode="path" />
-          ) : (
-            <Typography fontSize="12px" color="text.disabled" sx={{ py: 2, textAlign: "center" }}>
+            <Typography
+              fontSize="12px"
+              color="text.disabled"
+              sx={{ py: 2, textAlign: "center" }}
+            >
               No trace selected.
             </Typography>
           ))}
@@ -1849,6 +2142,7 @@ TraceEvidence.propTypes = {
   evidence: PropTypes.object.isRequired,
   trace: PropTypes.object,
   traceId: PropTypes.string,
+  workingTraceId: PropTypes.string,
 };
 
 // ── Co-occurring issues ───────────────────────────────────────────────────────
@@ -2624,6 +2918,7 @@ export default function OverviewTab({ _error: currentError }) {
                 evidence={trace.evidence ?? {}}
                 trace={trace}
                 traceId={trace.id}
+                workingTraceId={currentError?.successTrace?.traceId}
               />
             )}
 
