@@ -739,13 +739,13 @@ function FollowUpInput({ disabled, placeholder, onSubmit }) {
             fontSize: "13.5px",
             lineHeight: 1.5,
             py: 0.5,
-            // MUI's default placeholder is `text.disabled` at low opacity,
-            // which reads as ghostly. Bump to `text.secondary` at full
-            // opacity so the prompt-text is clearly legible.
+            // Lighter than `text.secondary` at full opacity but still more
+            // legible than MUI's ghostly `text.disabled` default. Regular
+            // weight so the prompt feels restrained, not assertive.
             "& input::placeholder, & textarea::placeholder": {
               color: "text.secondary",
-              opacity: 1,
-              fontWeight: 500,
+              opacity: 0.7,
+              fontWeight: 400,
             },
           },
         }}
