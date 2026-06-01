@@ -161,7 +161,14 @@ describe("TraceFullPage", () => {
     mocks.locationSearch =
       "?source=onboarding&onboarding=review-first-trace&provider=anthropic&language=typescript";
 
-    const { getByRole } = render(<TraceFullPage />);
+    const { getByRole, getByText } = render(<TraceFullPage />);
+
+    expect(getByText("Anthropic TypeScript trace received")).toBeVisible();
+    expect(
+      getByText(
+        "Review this Anthropic TypeScript trace for spans, latency, cost, inputs, outputs, and errors. Next, create an evaluator from it.",
+      ),
+    ).toBeVisible();
 
     await waitFor(() =>
       expect(mocks.mutate).toHaveBeenCalledWith(

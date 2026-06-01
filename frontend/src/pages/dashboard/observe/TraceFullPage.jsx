@@ -9,6 +9,7 @@ import {
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import {
   buildObserveEvaluatorCreateHref,
+  getObserveSetupPackageLabel,
   getObserveTraceReviewOnboardingParams,
   OBSERVE_ONBOARDING_MODES,
 } from "src/sections/projects/observeOnboardingRoute";
@@ -46,6 +47,17 @@ export default function TraceFullPage() {
     !isSampleTrace &&
     traceReviewOnboardingParams.mode ===
       OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE;
+  const traceReviewPackageLabel = useMemo(
+    () =>
+      getObserveSetupPackageLabel({
+        setupLanguage: traceReviewOnboardingParams.setupLanguage,
+        setupProvider: traceReviewOnboardingParams.setupProvider,
+      }),
+    [
+      traceReviewOnboardingParams.setupLanguage,
+      traceReviewOnboardingParams.setupProvider,
+    ],
+  );
   const realSetupHref = useMemo(
     () =>
       appendSetupQuickStartAttributionToHref(
@@ -158,9 +170,12 @@ export default function TraceFullPage() {
 
     if (isTraceReviewOnboarding) {
       return {
-        title: "First trace received",
-        description:
-          "Review spans, latency, cost, inputs, outputs, and errors here. Next, create an evaluator from this trace.",
+        title: traceReviewPackageLabel
+          ? `${traceReviewPackageLabel} trace received`
+          : "First trace received",
+        description: traceReviewPackageLabel
+          ? `Review this ${traceReviewPackageLabel} trace for spans, latency, cost, inputs, outputs, and errors. Next, create an evaluator from it.`
+          : "Review spans, latency, cost, inputs, outputs, and errors here. Next, create an evaluator from this trace.",
         primaryAction: {
           label: "Create evaluator",
           onClick: handleCreateEvaluator,
@@ -175,6 +190,7 @@ export default function TraceFullPage() {
     handleCreateEvaluator,
     isSampleTrace,
     isTraceReviewOnboarding,
+    traceReviewPackageLabel,
   ]);
 
   return (
