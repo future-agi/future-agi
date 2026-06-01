@@ -291,3 +291,70 @@ def test_bulk_update_traces_stamps_session_id_without_error(observe_project):
 
     trace.refresh_from_db()
     assert str(trace.session_id) == str(ts_id), (trace.session_id, ts_id)
+
+
+# ── Gate G (LANGFUSE path) — the third ingest path flips too ────────────────
+@pytest.mark.django_db
+def test_gate_g_langfuse_stamps_deterministic_ids(
+    observe_project,
+    organization,
+    workspace,
+    fake_ch,
+    django_capture_on_commit_callbacks,
+):
+    """The Langfuse ingest path (`upsert_langfuse_trace`) stamps the SAME
+    deterministic ids as the OTel/bulk paths and mirrors the curated rows to CH.
+
+    Langfuse hardcodes ``user_id_type="custom"`` (DESIGN §11.1) — that exact
+    value MUST feed ``deterministic_end_user_id`` so a Langfuse user collides with
+    the historical remap. Asserts: the span carries the deterministic
+    ``end_user_id``; the trace carries the deterministic ``session_id``; and the
+    curated ``end_users``/``trace_sessions`` mirror fired (faked CH succeeded).
+    """
+    from integrations.transformers.langfuse_transformer import LangfuseTransformer
+    from tracer.utils.langfuse_upsert import upsert_langfuse_trace
+
+    project = observe_project
+    org = organization
+    user_id = "lf-user@futureagi.com"
+    session_id = f"lf-sess-{uuid.uuid4().hex[:8]}"
+    obs_id = uuid.uuid4().hex
+    assembled = {
+        "id": uuid.uuid4().hex,
+        "name": "lf-trace",
+        "userId": user_id,
+        "sessionId": session_id,
+        "observations": [
+            {
+                "id": obs_id,
+                "type": "GENERATION",
+                "name": "gen",
+                "startTime": "2026-05-01T00:00:00.000Z",
+                "endTime": "2026-05-01T00:00:01.000Z",
+                "input": "hi",
+                "output": "yo",
+            }
+        ],
+        "scores": [],
+    }
+
+    with django_capture_on_commit_callbacks(execute=True):
+        upsert_langfuse_trace(
+            assembled_trace=assembled,
+            transformer=LangfuseTransformer(),
+            project_id=str(project.id),
+            org=org,
+            workspace=workspace,
+            org_id=str(org.id),
+        )
+
+    eu_id = deterministic_end_user_id(str(project.id), str(org.id), user_id, "custom")
+    ts_id = deterministic_trace_session_id(str(project.id), session_id)
+
+    span = ObservationSpan.no_workspace_objects.get(id=obs_id)
+    assert str(span.end_user_id) == str(eu_id), (span.end_user_id, eu_id)
+    trace = Trace.no_workspace_objects.get(id=span.trace_id)
+    assert str(trace.session_id) == str(ts_id), (trace.session_id, ts_id)
+
+    tables = {t for (t, _r, _c) in fake_ch.inserts}
+    assert "end_users" in tables and "trace_sessions" in tables, tables
