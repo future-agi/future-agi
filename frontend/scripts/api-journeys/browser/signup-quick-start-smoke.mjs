@@ -325,12 +325,12 @@ async function main() {
     );
     await clickVisibleButtonText(page, "Create account and continue");
 
-    await expectVisibleText(page, "What are you setting up today?", {
+    await expectVisibleText(page, "Choose your first workflow", {
       timeout: 90000,
     });
     await expectVisibleText(
       page,
-      "Pick one workflow. We will save this choice, open the right screen, and highlight the first action. Sample screens stay preview-only.",
+      "Pick the workflow closest to your current work. We will open the first action and keep the rest of the steps visible.",
       { timeout: 90000 },
     );
     if (SAMPLE_GATE_ONLY) {
@@ -339,7 +339,7 @@ async function main() {
       });
       await expectVisibleText(
         page,
-        "Sample screens are still available after setup starts.",
+        "Sample data remains available after you start.",
         { timeout: 90000 },
       );
     }
@@ -383,10 +383,10 @@ async function main() {
       });
       await expectVisibleText(
         page,
-        "Do first: Create Observe project. Next: Send first trace.",
+        "Start with: Create Observe project. Then: Send first trace.",
         { timeout: 45000 },
       );
-      await expectVisibleText(page, "What happens next", {
+      await expectVisibleText(page, "Next steps", {
         exact: true,
         timeout: 45000,
       });

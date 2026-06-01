@@ -75,6 +75,9 @@ async function main() {
   });
   page.on("requestfailed", (request) => {
     if (request.url().includes("us-assets.i.posthog.com")) return;
+    if (request.url().includes("csp.withgoogle.com/csp/frame-ancestors")) {
+      return;
+    }
     requestFailures.push(
       `${request.method()} ${request.url()} ${request.failure()?.errorText}`,
     );
@@ -87,11 +90,14 @@ async function main() {
       { waitUntil: "domcontentloaded" },
     );
     await waitForVisibleText(page, "Set up gateway", { exact: true });
-    await waitForVisibleText(page, "Do first: Send request. Next: Review log.");
-    await waitForVisibleText(page, "Start here", { exact: true });
+    await waitForVisibleText(
+      page,
+      "Start with: Send request. Then: Review log.",
+    );
+    await waitForVisibleText(page, "First action", { exact: true });
     await waitForVisibleText(page, "Step 3 of 6", { exact: true });
     await waitForVisibleText(page, "Send request", { exact: true });
-    await waitForVisibleText(page, "What happens next", { exact: true });
+    await waitForVisibleText(page, "Next steps", { exact: true });
     evidence.home_route = await currentRelativeUrl(page);
     assertGatewayQuickStartParams(evidence.home_route, "Home route");
     evidence.home_cta_href = await visibleLinkHref(page, "Send request", {

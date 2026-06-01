@@ -687,10 +687,13 @@ describe("OnboardingHomeView", () => {
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
       "Run one focused example before saving.",
     );
-    expect(within(panel).getByText("What happens next")).toBeVisible();
+    expect(within(panel).getByText("Next steps")).toBeVisible();
     expect(within(panel).getAllByText("Step 2 of 6").length).toBeGreaterThan(0);
     expect(
       screen.queryByTestId("path-focus-step-run_prompt_test"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("path-focus-step-save_prompt_version"),
     ).toBeVisible();
     expect(
       within(panel).queryByRole("link", { name: /open workbench/i }),
@@ -1105,7 +1108,7 @@ describe("OnboardingHomeView", () => {
         }),
       ).toBeVisible();
       expect(
-        screen.getByText(new RegExp(`Do first: ${primaryLabel}`)),
+        screen.getByText(new RegExp(`Start with: ${primaryLabel}`)),
       ).toBeVisible();
       expect(
         screen.getByText(quickStartOption.shortDescription, {
@@ -1119,7 +1122,7 @@ describe("OnboardingHomeView", () => {
       expect(within(panel).getAllByText(/^Step 1 of /).length).toBeGreaterThan(
         0,
       );
-      expect(within(panel).getByText("What happens next")).toBeVisible();
+      expect(within(panel).getByText("Next steps")).toBeVisible();
       expect(within(panel).queryByText("Show full path")).toBeNull();
       const primaryLink = within(panel).getByRole("link", {
         name: new RegExp(primaryLabel, "i"),
@@ -1146,13 +1149,16 @@ describe("OnboardingHomeView", () => {
           within(panel).getByTestId("current-step-guide"),
         ).toHaveTextContent("Create Observe project");
         expect(
-          screen.getByTestId("observe-journey-step-connect_observability"),
+          screen.queryByTestId("observe-journey-step-connect_observability"),
+        ).toBeNull();
+        expect(
+          screen.getByTestId("observe-journey-step-send_first_trace"),
         ).toBeVisible();
       } else {
         expect(
           within(panel).getByTestId("current-step-guide"),
         ).toHaveTextContent(primaryLabel);
-        expect(screen.getByTestId(`path-focus-step-${stage}`)).toBeVisible();
+        expect(screen.queryByTestId(`path-focus-step-${stage}`)).toBeNull();
       }
       expect(
         within(panel).queryByRole("link", {
@@ -1204,7 +1210,7 @@ describe("OnboardingHomeView", () => {
       within(panel).getAllByText("Create Observe project").length,
     ).toBeGreaterThan(0);
     expect(within(panel).getAllByText("Step 1 of 4").length).toBeGreaterThan(0);
-    expect(within(panel).getByText("What happens next")).toBeVisible();
+    expect(within(panel).getByText("Next steps")).toBeVisible();
     expect(within(panel).queryByText("Show full path")).toBeNull();
     expect(within(panel).getByText("Send first trace")).toBeVisible();
     expect(within(panel).getByText("Review first signal")).toBeVisible();
@@ -1259,9 +1265,10 @@ describe("OnboardingHomeView", () => {
       }),
     ).toBeVisible();
     const panel = screen.getByTestId("path-focus-panel-prompt");
-    expect(screen.getByTestId("path-focus-step-start_prompt")).toBeVisible();
+    expect(screen.queryByTestId("path-focus-step-start_prompt")).toBeNull();
+    expect(screen.getByTestId("path-focus-step-run_prompt_test")).toBeVisible();
     expect(within(panel).getAllByText("Step 1 of 6").length).toBeGreaterThan(0);
-    expect(within(panel).getByText("What happens next")).toBeVisible();
+    expect(within(panel).getByText("Next steps")).toBeVisible();
     expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
       "Create prompt",
     );
@@ -2136,7 +2143,7 @@ describe("OnboardingHomeView", () => {
         name: "Set up gateway",
       }),
     ).toBeVisible();
-    expect(within(panel).getByText("What happens next")).toBeVisible();
+    expect(within(panel).getByText("Next steps")).toBeVisible();
     expect(within(panel).getAllByText("Send request").length).toBeGreaterThan(
       0,
     );
@@ -2151,8 +2158,8 @@ describe("OnboardingHomeView", () => {
     );
     expect(
       within(
-        screen.getByTestId("path-focus-step-run_gateway_request"),
-      ).getByText("Start here"),
+        screen.getByTestId("path-focus-step-review_gateway_log"),
+      ).getByText("Next"),
     ).toBeVisible();
     expect(screen.queryByText("gateway")).toBeNull();
   });

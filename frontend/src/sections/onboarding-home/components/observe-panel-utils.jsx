@@ -184,6 +184,13 @@ const focusedStepLabel = ({ activeIndex, index, status }) => {
   return `Step ${index + 1}`;
 };
 
+const upcomingStep = (step, displayIndex, offset) => ({
+  ...step,
+  displayIndex,
+  status: "queued",
+  statusLabel: offset === 0 ? "Next" : `Step ${displayIndex}`,
+});
+
 const derivedStepStatus = ({ activeIndex, index, step }) => {
   if (step.status) return step.status;
   if (activeIndex === null) return "queued";
@@ -209,7 +216,10 @@ export function JourneyStepList({
       <Stack spacing={0.75}>
         {steps.map((step, index) => {
           const status = derivedStepStatus({ activeIndex, index, step });
-          const statusLabel = focusedStepLabel({ activeIndex, index, status });
+          const displayIndex = step.displayIndex || index + 1;
+          const statusLabel =
+            step.statusLabel ||
+            focusedStepLabel({ activeIndex, index, status });
           const isCurrent = status === "current";
 
           return (
@@ -265,7 +275,7 @@ export function JourneyStepList({
                     {status === "complete" ? (
                       <Iconify icon="mdi:check" width={16} />
                     ) : (
-                      index + 1
+                      displayIndex
                     )}
                   </Box>
                   <Box sx={{ minWidth: 0 }}>
@@ -380,7 +390,15 @@ export function ObserveJourneyProgress({
 
   const currentStep = journeyCurrentStep(journeyPlan, stage);
   const currentIndex = Math.max(steps.indexOf(currentStep), 0);
-  const visibleSteps = steps;
+  const showOnlyUpcomingSteps =
+    singleActionFocus && currentIndex < steps.length - 1;
+  const visibleSteps = showOnlyUpcomingSteps
+    ? steps
+        .slice(currentIndex + 1)
+        .map((step, index) =>
+          upcomingStep(step, currentIndex + index + 2, index),
+        )
+    : steps;
   const focusedGuide = singleActionFocus || Boolean(actionSlot);
 
   if (singleActionFocus && !showCurrentStepGuide && visibleSteps.length === 0) {
@@ -406,8 +424,10 @@ export function ObserveJourneyProgress({
         alignItems={{ xs: "flex-start", sm: "center" }}
         justifyContent="space-between"
       >
-        <Typography variant="subtitle2">What happens next</Typography>
-        {focusedGuide ? (
+        <Typography variant="subtitle2">
+          {showOnlyUpcomingSteps ? "Next steps" : "What happens next"}
+        </Typography>
+        {focusedGuide && !showOnlyUpcomingSteps ? (
           <Chip
             size="small"
             variant="outlined"
@@ -417,7 +437,7 @@ export function ObserveJourneyProgress({
       </Stack>
       {visibleSteps.length ? (
         <JourneyStepList
-          currentIndex={currentIndex}
+          currentIndex={showOnlyUpcomingSteps ? null : currentIndex}
           singleActionFocus={focusedGuide}
           steps={visibleSteps}
           testIdPrefix="observe-journey-step"

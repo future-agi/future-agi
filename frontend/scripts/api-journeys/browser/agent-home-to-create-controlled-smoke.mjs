@@ -99,12 +99,12 @@ async function main() {
     await waitForVisibleText(page, "Prototype agent", { exact: true });
     await waitForVisibleText(
       page,
-      "Do first: Create agent. Next: Add starter prompt.",
+      "Start with: Create agent. Then: Add starter prompt.",
     );
-    await waitForVisibleText(page, "Start here", { exact: true });
+    await waitForVisibleText(page, "First action", { exact: true });
     await waitForVisibleText(page, "Step 1 of 6", { exact: true });
     await waitForVisibleText(page, "Create agent", { exact: true });
-    await waitForVisibleText(page, "What happens next", { exact: true });
+    await waitForVisibleText(page, "Next steps", { exact: true });
     evidence.home_route = await currentRelativeUrl(page);
     assertAgentQuickStartParams(evidence.home_route, "Home route");
     evidence.home_cta_href = await visibleLinkHref(page, "Create agent", {

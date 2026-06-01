@@ -54,17 +54,17 @@ const QUICK_START_ROLE = "AI Builder";
 
 const SETUP_SIDE_PANEL_STEPS = [
   {
-    label: "Pick a workflow",
-    description: "Choose the setup that matches what you want to do today.",
+    label: "Choose a workflow",
+    description: "Pick the product job closest to your current work.",
   },
   {
-    label: "Do one highlighted action",
-    description: "We open the right screen and point at the first button.",
+    label: "Do the first action",
+    description: "We open the right screen and show the exact action to take.",
   },
   {
-    label: "Continue the checklist",
+    label: "Continue from there",
     description:
-      "Each completed action moves the checklist to the next setup step.",
+      "The next steps stay visible so the workflow is easy to follow.",
   },
 ];
 
@@ -263,10 +263,10 @@ const SetupOrgSidePanel = () => (
         <Typography variant="overline" color="text.secondary">
           First setup
         </Typography>
-        <Typography variant="h4">Start with one workflow</Typography>
+        <Typography variant="h4">Choose one product workflow</Typography>
         <Typography variant="body1" color="text.secondary">
-          Choose what you want to set up first. The next screen gives one
-          highlighted action, then keeps the rest of the checklist visible.
+          Start with the product job closest to your current work. The next
+          screen shows the first action and the steps that follow.
         </Typography>
       </Stack>
 
@@ -595,7 +595,7 @@ const SetupOrganization = ({ getStarted = false }) => {
         data-testid={`setup-org-quick-start-${option.id}`}
         sx={{
           borderRadius: 0.5,
-          minHeight: { xs: 156, sm: 142 },
+          minHeight: { xs: 128, sm: 118 },
           height: "auto",
           alignItems: "flex-start",
           justifyContent: "flex-start",
@@ -605,7 +605,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           whiteSpace: "normal",
           textTransform: "none",
           color: "text.primary",
-          bgcolor: option.featured ? "action.hover" : "background.paper",
+          bgcolor: "background.paper",
           borderColor: option.featured ? "primary.main" : "divider",
           "&:hover": {
             bgcolor: "action.selected",
@@ -715,39 +715,8 @@ const SetupOrganization = ({ getStarted = false }) => {
                 fontWeight: "fontWeightMedium",
               }}
             >
-              Starts with: {option.firstActionLabel}
+              First action: {option.firstActionLabel}
             </Typography>
-            {option.sequencePreview?.length ? (
-              <Stack
-                component="span"
-                direction="row"
-                spacing={0.5}
-                useFlexGap
-                flexWrap="wrap"
-                sx={{ display: "flex", minWidth: 0 }}
-              >
-                {option.sequencePreview.slice(0, 4).map((step, index) => (
-                  <Box
-                    component="span"
-                    key={step}
-                    sx={{
-                      border: "1px solid",
-                      borderColor: option.featured ? "primary.main" : "divider",
-                      borderRadius: 0.75,
-                      color: option.featured
-                        ? "text.primary"
-                        : "text.secondary",
-                      fontSize: 11,
-                      lineHeight: 1.4,
-                      px: 0.65,
-                      py: 0.15,
-                    }}
-                  >
-                    {index + 1}. {step}
-                  </Box>
-                ))}
-              </Stack>
-            ) : null}
             <Typography
               component="span"
               variant="button"
@@ -757,7 +726,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                 mt: 0.25,
               }}
             >
-              Start {option.surfaceLabel} setup
+              Start workflow
             </Typography>
           </Stack>
         </Stack>
@@ -796,8 +765,8 @@ const SetupOrganization = ({ getStarted = false }) => {
           <Stack direction="row" spacing={1} alignItems="flex-start">
             <Iconify icon="mdi:database-eye-outline" width={20} />
             <Typography variant="body2" color="text.secondary">
-              Sample screens are still available after setup starts. They are
-              preview-only, so they do not finish workspace setup.
+              Sample data remains available after you start. It is preview-only,
+              so it does not finish workspace setup.
             </Typography>
           </Stack>
         </Box>
@@ -1157,7 +1126,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                What are you setting up today?
+                Choose your first workflow
               </Typography>
               <Typography
                 variant="body1"
@@ -1167,9 +1136,8 @@ const SetupOrganization = ({ getStarted = false }) => {
                   maxWidth: 520,
                 }}
               >
-                Pick one workflow. We will save this choice, open the right
-                screen, and highlight the first action. Sample screens stay
-                preview-only.
+                Pick the workflow closest to your current work. We will open the
+                first action and keep the rest of the steps visible.
               </Typography>
             </Box>
 

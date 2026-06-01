@@ -200,10 +200,10 @@ async function main() {
     await page.goto(`${APP_BASE}/auth/jwt/setup-org?step=0`, {
       waitUntil: "domcontentloaded",
     });
-    await expectVisibleText(page, "What are you setting up today?");
+    await expectVisibleText(page, "Choose your first workflow");
     await expectVisibleText(
       page,
-      "Pick one workflow. We will save this choice, open the right screen, and highlight the first action. Sample screens stay preview-only.",
+      "Pick the workflow closest to your current work. We will open the first action and keep the rest of the steps visible.",
     );
     if (SAMPLE_PREVIEW_GUARD) {
       const samplePreviewVisible = await isVisibleButtonText(
@@ -216,7 +216,7 @@ async function main() {
       );
       await expectVisibleText(
         page,
-        "Sample screens are still available after setup starts.",
+        "Sample data remains available after you start.",
       );
     }
     const quickStartInitiallyVisible = await isVisibleButtonText(
@@ -269,10 +269,10 @@ async function main() {
       });
       await expectVisibleText(
         page,
-        `Do first: ${QUICK_START.expectedActionText}`,
+        `Start with: ${QUICK_START.expectedActionText}`,
       );
-      await expectVisibleText(page, "Start here", { exact: true });
-      await expectVisibleText(page, "What happens next", { exact: true });
+      await expectVisibleText(page, "First action", { exact: true });
+      await expectVisibleText(page, "Next steps", { exact: true });
       await expectVisibleText(page, "Step 1 of");
       await expectVisibleText(page, QUICK_START.expectedActionText, {
         exact: true,
