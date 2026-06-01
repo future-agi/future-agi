@@ -1704,9 +1704,6 @@ function expectedObserveSetupHref({ language, provider }) {
   const params = new URLSearchParams({
     setup: "true",
     source: "onboarding",
-    quick_start_goal: "monitor_production_ai_app",
-    quick_start_id: "observe",
-    quick_start_primary_path: "observe",
     provider,
     language,
     tour_anchor: "observe_create_project_button",

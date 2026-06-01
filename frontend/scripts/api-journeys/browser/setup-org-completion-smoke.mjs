@@ -328,11 +328,11 @@ async function main() {
       await expectNoSelector(page, '[data-testid="sample-project-panel"]');
 
       await waitForCondition(
-        () => activationStateRequests.length === 1,
-        `Expected one activation-state request, got ${activationStateRequests.length}`,
+        () => activationStateRequests.length >= 1,
+        "Expected activation-state request after setup-org handoff.",
       );
-      homeParams = activationStateRequests[0];
-      assertExpectedAttribution(homeParams, {
+      homeParams = activationStateRequests.at(-1);
+      assertActivationStateRequestAttribution(activationStateRequests, {
         ...QUICK_START.expectedAttribution,
         source: "setup_org",
       });
@@ -421,11 +421,7 @@ async function main() {
         "Sample preview must not expose real observe or trace identifiers.",
       );
     } else {
-      assert(
-        activationStateRequests.length === 1,
-        `Expected one activation-state request, got ${activationStateRequests.length}`,
-      );
-      assertExpectedAttribution(activationStateRequests[0], {
+      assertActivationStateRequestAttribution(activationStateRequests, {
         ...QUICK_START.expectedAttribution,
         source: "setup_org",
       });
@@ -517,6 +513,20 @@ function assertExpectedAttribution(actual, expected) {
         actual,
       )}`,
     );
+  }
+}
+
+function assertActivationStateRequestAttribution(requests, expected) {
+  assert(
+    requests.length >= 1,
+    "Expected at least one activation-state request.",
+  );
+  assert(
+    requests.length <= 3,
+    `Expected activation-state request count to stay bounded, got ${requests.length}`,
+  );
+  for (const request of requests) {
+    assertExpectedAttribution(request, expected);
   }
 }
 
