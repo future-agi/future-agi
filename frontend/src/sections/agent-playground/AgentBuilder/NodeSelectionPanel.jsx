@@ -16,6 +16,7 @@ import {
   agentSetupQuickStartAttributionFromSearch,
   buildAgentOnboardingStarterPromptConfig,
   buildAgentNodeAddedPayload,
+  buildAgentScenarioSavedAsEvalPayload,
 } from "../agentOnboardingEvents";
 import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
 
@@ -86,6 +87,16 @@ export default function NodeSelectionPanel({
 
   const isAddEvalMode = onboardingMode === "add-eval";
   const isRunScenarioMode = onboardingMode === "run-scenario";
+  const hasEvalNode = useMemo(
+    () =>
+      nodes.some(
+        (node) =>
+          node?.type === "eval" ||
+          node?.data?.type === "eval" ||
+          node?.node_type === "eval",
+      ),
+    [nodes],
+  );
   const llmPromptNode = useMemo(
     () => nodesList.find((node) => node.id === "llm_prompt"),
     [nodesList],
@@ -130,10 +141,39 @@ export default function NodeSelectionPanel({
     searchParams,
     setSearchParams,
   ]);
-  const handleAddEvalNode = useCallback(() => {
+  const handleAddEvalNode = useCallback(async () => {
     if (!evalNode) return;
-    handleNodeClick(evalNode);
-  }, [evalNode, handleNodeClick]);
+    const result = await handleNodeClick(evalNode, { waitForApi: true });
+    if (!result) return;
+    const eventPayload = buildAgentScenarioSavedAsEvalPayload({
+      agentId: currentAgent?.id,
+      nodeId: result.nodeId,
+      quickStartAttribution:
+        agentSetupQuickStartAttributionFromSearch(searchParams),
+      versionId: currentAgent?.version_id,
+    });
+    try {
+      await recordActivationEvent(eventPayload);
+    } catch {
+      // Activation tracking should not block adding coverage.
+    }
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("journey_step", "agent_create_eval");
+        next.set("tour_anchor", "agent_create_eval_button");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [
+    currentAgent?.id,
+    currentAgent?.version_id,
+    evalNode,
+    handleNodeClick,
+    searchParams,
+    setSearchParams,
+  ]);
 
   const handleDragStart = useCallback(
     (event, node) => {
@@ -205,7 +245,7 @@ export default function NodeSelectionPanel({
       <AgentOnboardingFocusPanel
         currentStep="Coverage"
         description="Add an eval node for the reviewed behavior, then save and rerun the workflow to prove the agent stays reliable."
-        hidden={!isAddEvalMode}
+        hidden={!isAddEvalMode || hasEvalNode}
         blocker={
           disabled ? "Builder busy" : !evalNode ? "Eval unavailable" : null
         }
@@ -246,6 +286,10 @@ export default function NodeSelectionPanel({
                   node.id === "llm_prompt"
                 ) {
                   handleAddPromptNode();
+                  return;
+                }
+                if (isAddEvalMode && node.id === "eval") {
+                  handleAddEvalNode();
                   return;
                 }
                 handleNodeClick(node);

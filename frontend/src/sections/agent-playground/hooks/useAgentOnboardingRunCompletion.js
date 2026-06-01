@@ -2,6 +2,8 @@ import { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import {
+  buildAgentEvalCreatedPayload,
+  buildAgentOnboardingReturnHref,
   buildAgentPrototypeRunCompletedPayload,
   buildAgentReviewRunHref,
 } from "../agentOnboardingEvents";
@@ -22,16 +24,26 @@ export default function useAgentOnboardingRunCompletion({
 
   useEffect(() => {
     const status = executionData?.status?.toLowerCase?.();
-    if (onboardingMode !== "run-scenario") return;
+    const isScenarioRun = onboardingMode === "run-scenario";
+    const isEvalCoverageRun = onboardingMode === "add-eval";
+    if (!isScenarioRun && !isEvalCoverageRun) return;
     if (!agentId || !executionId || !TERMINAL_RUN_STATUSES.has(status)) return;
 
-    const payload = buildAgentPrototypeRunCompletedPayload({
-      agentId,
-      executionId,
-      quickStartAttribution,
-      status,
-      versionId,
-    });
+    const payload = isEvalCoverageRun
+      ? buildAgentEvalCreatedPayload({
+          agentId,
+          executionId,
+          quickStartAttribution,
+          status,
+          versionId,
+        })
+      : buildAgentPrototypeRunCompletedPayload({
+          agentId,
+          executionId,
+          quickStartAttribution,
+          status,
+          versionId,
+        });
     if (recordedKeysRef.current.has(payload.idempotencyKey)) return;
 
     recordedKeysRef.current.add(payload.idempotencyKey);
@@ -42,11 +54,16 @@ export default function useAgentOnboardingRunCompletion({
     });
 
     navigate(
-      buildAgentReviewRunHref({
-        agentId,
-        quickStartAttribution,
-        versionId,
-      }),
+      isEvalCoverageRun
+        ? buildAgentOnboardingReturnHref({
+            ...payload,
+            quickStartAttribution,
+          })
+        : buildAgentReviewRunHref({
+            agentId,
+            quickStartAttribution,
+            versionId,
+          }),
       { replace: true },
     );
   }, [

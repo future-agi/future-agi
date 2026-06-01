@@ -185,8 +185,31 @@ describe("NodeSelectionPanel onboarding", () => {
         type: "eval",
         position: undefined,
         node_template_id: "tpl-2",
+        waitForApi: true,
       });
     });
+    expect(mockRecordActivationEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        artifactId: "node-1",
+        artifactType: "agent_eval_node",
+        eventName: "agent_scenario_saved_as_eval",
+        primaryPath: "agent",
+        stage: "save_agent_eval",
+        metadata: {
+          agent_id: "agent-1",
+          eval_node_id: "node-1",
+          version_id: "version-1",
+        },
+        quick_start_goal: "build_ai_agent",
+        quick_start_id: "agent",
+        quick_start_primary_path: "agent",
+      }),
+    );
+    const nextParams = mockSetSearchParams.mock.calls[0][0](
+      new URLSearchParams("journey_step=save_agent_eval"),
+    );
+    expect(nextParams.get("journey_step")).toBe("agent_create_eval");
+    expect(nextParams.get("tour_anchor")).toBe("agent_create_eval_button");
     expect(mockSetCenter).toHaveBeenCalledWith(400, 200, {
       duration: 800,
       zoom: 1,

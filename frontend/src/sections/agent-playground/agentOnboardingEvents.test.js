@@ -5,11 +5,13 @@ import {
   buildAgentBuilderHref,
   buildAgentCreatedPayload,
   buildAgentEvalBuilderHref,
+  buildAgentEvalCreatedPayload,
   buildAgentNodeAddedPayload,
   buildAgentOnboardingStarterPromptConfig,
   buildAgentOnboardingReturnHref,
   buildAgentPrototypeRunCompletedPayload,
   buildAgentReviewRunHref,
+  buildAgentScenarioSavedAsEvalPayload,
   buildAgentTraceReviewedPayload,
 } from "./agentOnboardingEvents";
 
@@ -134,6 +136,50 @@ describe("agentOnboardingEvents", () => {
       }),
     ).toMatchObject({
       eventName: "agent_trace_reviewed",
+      quick_start_goal: "build_ai_agent",
+      quick_start_id: "agent",
+      quick_start_primary_path: "agent",
+    });
+    expect(
+      buildAgentScenarioSavedAsEvalPayload({
+        agentId: "agent-1",
+        nodeId: "eval-node-1",
+        quickStartAttribution: attribution,
+        versionId: "version-1",
+      }),
+    ).toMatchObject({
+      eventName: "agent_scenario_saved_as_eval",
+      primaryPath: "agent",
+      stage: "save_agent_eval",
+      metadata: {
+        agent_id: "agent-1",
+        eval_node_id: "eval-node-1",
+        version_id: "version-1",
+      },
+      idempotencyKey: "agent_scenario_saved_as_eval:agent-1:eval-node-1",
+      quick_start_goal: "build_ai_agent",
+      quick_start_id: "agent",
+      quick_start_primary_path: "agent",
+    });
+    expect(
+      buildAgentEvalCreatedPayload({
+        agentId: "agent-1",
+        executionId: "execution-2",
+        quickStartAttribution: attribution,
+        status: "success",
+        versionId: "version-1",
+      }),
+    ).toMatchObject({
+      eventName: "agent_eval_created",
+      primaryPath: "agent",
+      stage: "agent_create_eval",
+      metadata: {
+        agent_id: "agent-1",
+        graph_execution_id: "execution-2",
+        status: "success",
+        version_id: "version-1",
+      },
+      idempotencyKey: "agent_eval_created:execution-2",
       quick_start_goal: "build_ai_agent",
       quick_start_id: "agent",
       quick_start_primary_path: "agent",

@@ -92,6 +92,48 @@ describe("useAgentOnboardingRunCompletion", () => {
     expect(mockNavigate).not.toHaveBeenCalled();
   });
 
+  it("records terminal eval coverage runs and returns home", () => {
+    renderHook(() =>
+      useAgentOnboardingRunCompletion({
+        agentId: "agent-1",
+        executionData: { status: "success" },
+        executionId: "execution-2",
+        onboardingMode: "add-eval",
+        quickStartAttribution,
+        versionId: "version-1",
+      }),
+    );
+
+    expect(mockRecordActivationEvent).toHaveBeenCalledWith(
+      {
+        eventName: "agent_eval_created",
+        primaryPath: "agent",
+        stage: "agent_create_eval",
+        source: "agent_playground",
+        artifactType: "agent_eval",
+        artifactId: "execution-2",
+        metadata: {
+          agent_id: "agent-1",
+          graph_execution_id: "execution-2",
+          status: "success",
+          version_id: "version-1",
+        },
+        idempotencyKey: "agent_eval_created:execution-2",
+        isSample: false,
+        quick_start_goal: "build_ai_agent",
+        quick_start_id: "agent",
+        quick_start_primary_path: "agent",
+      },
+      expect.objectContaining({
+        onError: expect.any(Function),
+      }),
+    );
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "/dashboard/home?mode=daily-quality&source=onboarding&target_event=agent_eval_created&quick_start_goal=build_ai_agent&quick_start_id=agent&quick_start_primary_path=agent",
+      { replace: true },
+    );
+  });
+
   it("records each terminal execution once", () => {
     const { rerender } = renderHook(
       ({ executionData }) =>

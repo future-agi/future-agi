@@ -80,14 +80,17 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     goal: "build_ai_agent",
     surfaceLabel: "Agents",
     buttonLabel: "Prototype agent",
-    shortDescription: "Create an agent and run one scenario.",
+    shortDescription:
+      "Create an agent, run one scenario, review it, and add eval coverage.",
     firstActionLabel: "Create agent",
-    pathPreview: "Add starter prompt, run scenario, review run, save coverage.",
+    pathPreview:
+      "Create agent, add starter prompt, run scenario, review run, add eval coverage.",
     sequencePreview: [
       "Create agent",
       "Add starter prompt",
       "Run scenario",
       "Review run",
+      "Add eval coverage",
     ],
     icon: "mdi:graph-outline",
   }),

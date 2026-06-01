@@ -117,6 +117,8 @@ export default function BuilderActions({
   };
 
   const showRunScenarioFocus = onboardingMode === "run-scenario" && hasNodes;
+  const showEvalCoverageFocus = onboardingMode === "add-eval" && hasNodes;
+  const showOnboardingFocus = showRunScenarioFocus || showEvalCoverageFocus;
   const onboardingBlocker = (() => {
     if (!hasNodes) {
       return "Add one node first";
@@ -128,7 +130,9 @@ export default function BuilderActions({
       return "Workflow running";
     }
     if (isDraft) {
-      return "Save this version first";
+      return showEvalCoverageFocus
+        ? "Save this eval coverage first"
+        : "Save this version first";
     }
     return null;
   })();
@@ -145,6 +149,14 @@ export default function BuilderActions({
     showRunScenarioFocus && isDraft
       ? "Save agent and run scenario"
       : runWorkflowLabel;
+  const evalCoverageLabel = isDraft
+    ? "Save and run eval coverage"
+    : hasRun
+      ? "Rerun eval coverage"
+      : "Run eval coverage";
+  const onboardingActionLabel = showEvalCoverageFocus
+    ? evalCoverageLabel
+    : runScenarioLabel;
 
   return (
     <>
@@ -159,12 +171,16 @@ export default function BuilderActions({
         }}
       >
         <AgentOnboardingFocusPanel
-          currentStep="Run"
-          description="The prompt is ready. Save this version, then run one scenario to review the first output."
-          hidden={!showRunScenarioFocus}
+          currentStep={showEvalCoverageFocus ? "Eval" : "Run"}
+          description={
+            showEvalCoverageFocus
+              ? "The eval node is ready. Save this coverage and run it once so the agent setup ends with a measurable check."
+              : "The prompt is ready. Save this version, then run one scenario to review the first output."
+          }
+          hidden={!showOnboardingFocus}
           blocker={onboardingBlocker}
           primaryAction={{
-            label: runScenarioLabel,
+            label: onboardingActionLabel,
             onClick: handleRunWorkflow,
             disabled: !hasNodes || isLoadingTemplate || isRunning,
           }}
@@ -177,15 +193,29 @@ export default function BuilderActions({
                 }
               : null
           }
-          singleActionFocus={showRunScenarioFocus}
-          steps={[
-            { label: "Create", complete: true },
-            { label: "Prompt", complete: true },
-            { label: "Run", complete: hasRun },
-            { label: "Review output", complete: false },
-          ]}
+          singleActionFocus={showOnboardingFocus}
+          steps={
+            showEvalCoverageFocus
+              ? [
+                  { label: "Agent", complete: true },
+                  { label: "Scenario", complete: true },
+                  { label: "Review", complete: true },
+                  { label: "Coverage", complete: true },
+                  { label: "Eval", complete: hasRun },
+                ]
+              : [
+                  { label: "Create", complete: true },
+                  { label: "Prompt", complete: true },
+                  { label: "Run", complete: hasRun },
+                  { label: "Review output", complete: false },
+                ]
+          }
           sx={{ mb: 0 }}
-          title="Run one test scenario"
+          title={
+            showEvalCoverageFocus
+              ? "Run the agent eval coverage"
+              : "Run one test scenario"
+          }
           tourAnchor={tourAnchor}
         />
       </Box>
@@ -248,7 +278,7 @@ export default function BuilderActions({
         {hasNodes &&
           !isLoadingTemplate &&
           !isRunning &&
-          !showRunScenarioFocus && (
+          !showOnboardingFocus && (
             <LoadingButton
               variant="contained"
               color="primary"

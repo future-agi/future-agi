@@ -94,6 +94,26 @@ describe("setup org product-loop quick starts", () => {
     });
   });
 
+  it("shows the full agent prototype loop through eval coverage", () => {
+    const agentQuickStart = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.find(
+      (option) => option.id === "agent",
+    );
+
+    expect(agentQuickStart).toMatchObject({
+      buttonLabel: "Prototype agent",
+      firstActionLabel: "Create agent",
+      pathPreview:
+        "Create agent, add starter prompt, run scenario, review run, add eval coverage.",
+      sequencePreview: [
+        "Create agent",
+        "Add starter prompt",
+        "Run scenario",
+        "Review run",
+        "Add eval coverage",
+      ],
+    });
+  });
+
   it("gives every first setup path a visible sequence preview", () => {
     const firstSetupQuickStarts = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
       isSetupOrgFirstSetupQuickStart,

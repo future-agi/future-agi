@@ -257,3 +257,56 @@ export const buildAgentTraceReviewedPayload = ({
   isSample: false,
   ...setupQuickStartAttributionParams(quickStartAttribution),
 });
+
+export const buildAgentScenarioSavedAsEvalPayload = ({
+  agentId,
+  nodeId,
+  quickStartAttribution,
+  versionId,
+} = {}) => ({
+  eventName: "agent_scenario_saved_as_eval",
+  primaryPath: "agent",
+  stage: "save_agent_eval",
+  source: "agent_playground",
+  artifactType: "agent_eval_node",
+  artifactId: String(nodeId || "agent-eval-node"),
+  metadata: compactObject({
+    agent_id: agentId,
+    eval_node_id: nodeId,
+    version_id: versionId,
+  }),
+  idempotencyKey: [
+    "agent_scenario_saved_as_eval",
+    agentId || "agent",
+    nodeId || "agent-eval-node",
+  ].join(":"),
+  isSample: false,
+  ...setupQuickStartAttributionParams(quickStartAttribution),
+});
+
+export const buildAgentEvalCreatedPayload = ({
+  agentId,
+  executionId,
+  quickStartAttribution,
+  status,
+  versionId,
+} = {}) => ({
+  eventName: "agent_eval_created",
+  primaryPath: "agent",
+  stage: "agent_create_eval",
+  source: "agent_playground",
+  artifactType: "agent_eval",
+  artifactId: String(executionId || versionId || agentId || "agent-eval"),
+  metadata: compactObject({
+    agent_id: agentId,
+    graph_execution_id: executionId,
+    status,
+    version_id: versionId,
+  }),
+  idempotencyKey: [
+    "agent_eval_created",
+    executionId || versionId || agentId || "agent-eval",
+  ].join(":"),
+  isSample: false,
+  ...setupQuickStartAttributionParams(quickStartAttribution),
+});

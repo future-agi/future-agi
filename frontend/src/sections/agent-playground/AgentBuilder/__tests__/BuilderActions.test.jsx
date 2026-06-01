@@ -188,6 +188,33 @@ describe("BuilderActions", () => {
       expect(screen.queryByTestId("agent-onboarding-focus")).toBeNull();
       expect(screen.queryByText("Add one node first")).not.toBeInTheDocument();
     });
+
+    it("renders eval coverage run guidance after the eval node is added", () => {
+      useAgentPlaygroundStore.setState({
+        currentAgent: { is_draft: true, version_id: "v1" },
+      });
+
+      render(
+        <BuilderActions
+          width="300px"
+          hasNodes={true}
+          onboardingMode="add-eval"
+        />,
+      );
+
+      expect(screen.getByTestId("agent-onboarding-focus")).toBeInTheDocument();
+      expect(screen.getByText("Run the agent eval coverage")).toBeVisible();
+      expect(screen.getByText("Save this eval coverage first")).toBeVisible();
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /save and run eval coverage/i,
+        }),
+      );
+
+      expect(useAgentPlaygroundStore.getState().openSaveAgentDialog).toBe(true);
+      expect(useAgentPlaygroundStore.getState().pendingRunAfterSave).toBe(true);
+    });
   });
 
   describe("Exit Workflow button", () => {
