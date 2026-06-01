@@ -97,8 +97,9 @@ const FIRST_TRACE_STEPS = [
   },
   {
     id: "run",
-    label: "Run request",
-    description: "Trigger one real or test request and keep this page open.",
+    label: "Run package request",
+    description:
+      "Use your app request or the package-specific smoke test below.",
   },
   {
     id: "review",
@@ -119,24 +120,41 @@ const SETUP_INSTRUMENT_PRIORITY = [
 
 const INSTRUMENT_INSTALL_COMMANDS = {
   python: {
-    anthropic: "pip install traceAI-anthropic",
+    anthropic: "pip install traceAI-anthropic anthropic",
     bedrock: "pip install traceAI-bedrock",
     langchain: "pip install traceAI-langchain",
     mcp: "pip install traceAI-mcp",
-    openai: "pip install traceAI-openai",
+    openai: "pip install traceAI-openai openai",
     openai_agents: "pip install traceAI-openai-agents",
   },
   typescript: {
     anthropic:
-      "npm install @traceai/fi-core @traceai/anthropic @opentelemetry/instrumentation",
+      "npm install @traceai/fi-core @traceai/anthropic @opentelemetry/instrumentation @anthropic-ai/sdk",
     langchain:
       "npm install @traceai/fi-core @traceai/langchain @opentelemetry/instrumentation",
     mcp: "npm install @traceai/fi-core @traceai/mcp @opentelemetry/instrumentation",
     openai:
-      "npm install @traceai/fi-core @traceai/openai @opentelemetry/instrumentation",
+      "npm install @traceai/fi-core @traceai/openai @opentelemetry/instrumentation openai",
     openai_agents:
       "npm install @traceai/fi-core @traceai/openai-agents @opentelemetry/instrumentation",
   },
+};
+
+const defaultSampleRequestCode = ({ instrumentName, language }) => {
+  const packageName = instrumentName || "your package";
+  if (language === "typescript") {
+    return `// Run one request in the code path that uses ${packageName}.
+// Keep Future AGI open; the trace appears after the request completes.
+await runYourExisting${packageName.replace(/[^A-Za-z0-9]/g, "") || "AI"}Request();`;
+  }
+  return `# Run one request in the code path that uses ${packageName}.
+# Keep Future AGI open; the trace appears after the request completes.
+run_your_existing_${
+    packageName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "ai"
+  }_request()`;
 };
 
 const languageDataKey = (language) =>
@@ -210,6 +228,7 @@ const FirstTraceSetupGuide = ({
   getCodeBySection,
   instrumentCode,
   instrumentInstallCode,
+  instrumentSampleRequestCode,
   instrumentOptions,
   apiKeysHref,
   languageTab,
@@ -259,8 +278,8 @@ const FirstTraceSetupGuide = ({
             <Typography variant="body2" color="text.secondary" maxWidth={720}>
               These snippets match {selectedInstrumentLabel} in{" "}
               {selectedLanguageLabel}. Run one request and keep this page open;
-              we check every few seconds, open the trace when it arrives, and
-              then guide you to create an eval.
+              we move you to trace review when it arrives, then guide you to
+              create the first evaluator.
             </Typography>
           </Stack>
 
@@ -345,7 +364,7 @@ const FirstTraceSetupGuide = ({
             gridTemplateColumns: {
               xs: "1fr",
               md: "repeat(2, minmax(0, 1fr))",
-              lg: "repeat(4, minmax(0, 1fr))",
+              xl: "repeat(4, minmax(0, 1fr))",
             },
             gap: 1,
           }}
@@ -378,7 +397,7 @@ const FirstTraceSetupGuide = ({
         <Box
           sx={{
             display: "grid",
-            gridTemplateColumns: { xs: "1fr", lg: "repeat(3, 1fr)" },
+            gridTemplateColumns: { xs: "1fr", lg: "repeat(2, 1fr)" },
             gap: 1.5,
             minWidth: 0,
           }}
@@ -440,7 +459,7 @@ const FirstTraceSetupGuide = ({
           </Stack>
           <Stack spacing={1} sx={{ minWidth: 0 }}>
             <Typography variant="subtitle2">
-              3. Add {selectedInstrumentLabel} instrumentation
+              3. Instrument {selectedInstrumentLabel}
             </Typography>
             <Typography variant="caption" color="text.secondary">
               Add this before importing or creating the client, then run one
@@ -449,6 +468,21 @@ const FirstTraceSetupGuide = ({
             <InstructionCodeCopy
               ariaLabel="Copy package instrumentation"
               text={instrumentCode}
+              language={selectedInstrumentLanguage}
+            />
+          </Stack>
+          <Stack spacing={1} sx={{ minWidth: 0 }}>
+            <Typography variant="subtitle2">
+              4. Run one {selectedInstrumentLabel} request
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Use this smoke test if you do not have a local request ready. The
+              next screen waits for the trace, opens it, then points you to eval
+              setup.
+            </Typography>
+            <InstructionCodeCopy
+              ariaLabel="Copy package smoke test"
+              text={instrumentSampleRequestCode}
               language={selectedInstrumentLanguage}
             />
           </Stack>
@@ -465,6 +499,7 @@ FirstTraceSetupGuide.propTypes = {
   getCodeBySection: PropTypes.func.isRequired,
   instrumentCode: PropTypes.string.isRequired,
   instrumentInstallCode: PropTypes.string.isRequired,
+  instrumentSampleRequestCode: PropTypes.string.isRequired,
   instrumentOptions: PropTypes.arrayOf(
     PropTypes.shape({
       id: PropTypes.string.isRequired,
@@ -593,6 +628,13 @@ const NewObserve = ({ setupVerification, showFirstTraceGuide = false }) => {
     INSTRUMENT_INSTALL_COMMANDS[selectedInstrumentLanguage]?.[
       selectedInstrument?.id
     ] || getCodeBySection("installationGuide");
+  const instrumentSampleRequestCode = cleanCode(
+    selectedInstrument?.[selectedInstrumentLanguageKey]?.sample_request_code ||
+      defaultSampleRequestCode({
+        instrumentName: selectedInstrument?.name,
+        language: selectedInstrumentLanguage,
+      }),
+  );
   const apiKeysHref = apiKeysOnboardingHref({
     instrumentId: selectedInstrument?.id,
     language: selectedInstrumentLanguage,
@@ -709,6 +751,7 @@ const NewObserve = ({ setupVerification, showFirstTraceGuide = false }) => {
               getCodeBySection={getCodeBySection}
               instrumentCode={instrumentCode}
               instrumentInstallCode={instrumentInstallCode}
+              instrumentSampleRequestCode={instrumentSampleRequestCode}
               instrumentOptions={instrumentOptions}
               apiKeysHref={apiKeysHref}
               languageTab={languageTab}

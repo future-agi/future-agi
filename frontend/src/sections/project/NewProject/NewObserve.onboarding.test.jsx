@@ -75,18 +75,22 @@ const codeBlockWithInstrumentsFixture = {
       name: "Anthropic",
       Python: {
         code: "from traceai_anthropic import AnthropicInstrumentor",
+        sample_request_code: "anthropic python smoke",
       },
       TypeScript: {
         code: 'import { AnthropicInstrumentation } from "@traceai/anthropic";',
+        sample_request_code: "anthropic ts smoke",
       },
     },
     openai: {
       name: "OpenAI",
       Python: {
         code: "from traceai_openai import OpenAIInstrumentor",
+        sample_request_code: "openai python smoke",
       },
       TypeScript: {
         code: 'import { OpenAIInstrumentation } from "@traceai/openai";',
+        sample_request_code: "openai ts smoke",
       },
     },
   },
@@ -125,7 +129,7 @@ describe("NewObserve onboarding setup", () => {
     ).toBeVisible();
     expect(within(guide).getByText("Pick package")).toBeVisible();
     expect(within(guide).getByText("Paste setup")).toBeVisible();
-    expect(within(guide).getByText("Run request")).toBeVisible();
+    expect(within(guide).getByText("Run package request")).toBeVisible();
     expect(within(guide).getByText("Review and add eval")).toBeVisible();
     expect(within(guide).getByText("pip install futureagi")).toBeVisible();
     expect(
@@ -152,6 +156,9 @@ describe("NewObserve onboarding setup", () => {
     expect(
       within(guide).getByLabelText("Copy package instrumentation"),
     ).toBeVisible();
+    expect(
+      within(guide).getByLabelText("Copy package smoke test"),
+    ).toHaveTextContent("run_your_existing_your_package_request()");
     expect(
       within(guide).getByTestId("observe-setup-verification"),
     ).toHaveTextContent("Checking for your first trace");
@@ -239,13 +246,17 @@ describe("NewObserve onboarding setup", () => {
     ).toBeVisible();
     expect(within(guide).getByText("1. Install Anthropic")).toBeVisible();
     expect(
-      within(guide).getByText("pip install traceAI-anthropic"),
+      within(guide).getByText("pip install traceAI-anthropic anthropic"),
     ).toBeVisible();
     expect(
       within(guide).getByText(
         "from traceai_anthropic import AnthropicInstrumentor",
       ),
     ).toBeVisible();
+    expect(
+      within(guide).getByText("4. Run one Anthropic request"),
+    ).toBeVisible();
+    expect(within(guide).getByText("anthropic python smoke")).toBeVisible();
 
     await userEvent.click(
       within(guide).getByRole("tab", { name: /typescript/i }),
@@ -253,7 +264,7 @@ describe("NewObserve onboarding setup", () => {
 
     expect(
       within(guide).getByText(
-        "npm install @traceai/fi-core @traceai/anthropic @opentelemetry/instrumentation",
+        "npm install @traceai/fi-core @traceai/anthropic @opentelemetry/instrumentation @anthropic-ai/sdk",
       ),
     ).toBeVisible();
     expect(
@@ -261,6 +272,7 @@ describe("NewObserve onboarding setup", () => {
         'import { AnthropicInstrumentation } from "@traceai/anthropic";',
       ),
     ).toBeVisible();
+    expect(within(guide).getByText("anthropic ts smoke")).toBeVisible();
     expect(
       returnToFromApiKeyHref(
         within(guide)
@@ -283,9 +295,10 @@ describe("NewObserve onboarding setup", () => {
     });
     expect(
       within(guide).getByText(
-        "npm install @traceai/fi-core @traceai/openai @opentelemetry/instrumentation",
+        "npm install @traceai/fi-core @traceai/openai @opentelemetry/instrumentation openai",
       ),
     ).toBeVisible();
+    expect(within(guide).getByText("openai ts smoke")).toBeVisible();
     expect(
       returnToFromApiKeyHref(
         within(guide)
@@ -314,7 +327,7 @@ describe("NewObserve onboarding setup", () => {
     expect(within(guide).getByText("1. Install Anthropic")).toBeVisible();
     expect(
       within(guide).getByText(
-        "npm install @traceai/fi-core @traceai/anthropic @opentelemetry/instrumentation",
+        "npm install @traceai/fi-core @traceai/anthropic @opentelemetry/instrumentation @anthropic-ai/sdk",
       ),
     ).toBeVisible();
     expect(

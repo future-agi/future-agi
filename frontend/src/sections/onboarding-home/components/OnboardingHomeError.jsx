@@ -7,13 +7,13 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import Iconify from "src/components/iconify";
 import { RouterLink } from "src/routes/components";
-import { paths } from "src/routes/paths";
 
 const defaultFallbackAction = {
-  description: "The existing setup checklist is still available.",
-  href: paths.dashboard.getstarted,
-  label: "Get Started",
-  title: "Open Get Started instead",
+  description:
+    "Home could not load, but you can still create an Observe project, send one trace, and review it.",
+  href: "/dashboard/observe?setup=true&source=onboarding&tour_anchor=observe_create_project_button&journey_step=connect_observability",
+  label: "Create Observe project",
+  title: "Continue with Observe setup",
 };
 
 export default function OnboardingHomeError({

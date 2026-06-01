@@ -2,6 +2,8 @@ from tracer.utils.filter_operators import (
     LIST_FILTER_OPS,
     NO_VALUE_FILTER_OPS,
     RANGE_FILTER_OPS,
+)
+from tracer.utils.filter_operators import (
     SPAN_ATTR_ALLOWED_OPS as CONTRACT_SPAN_ATTR_ALLOWED_OPS,
 )
 
@@ -93,6 +95,17 @@ LangChainInstrumentor().instrument(tracer_provider=trace_provider)
 
 OpenAIInstrumentor().instrument(tracer_provider=trace_provider)
 """,
+            "sample_request_code": """from openai import OpenAI
+
+client = OpenAI()
+
+response = client.responses.create(
+    model="gpt-4.1-mini",
+    input="Say hello in one sentence.",
+)
+
+print(response.output_text)
+""",
         },
         "TypeScript": {
             "github": "https://github.com/future-agi/traceAI/tree/main/typescript/packages/traceai_openai",
@@ -106,6 +119,19 @@ const openaiInstrumentation = new OpenAIInstrumentation({});
     tracerProvider: tracerProvider,
   });
 """,
+            "sample_request_code": """import OpenAI from "openai";
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+const response = await openai.responses.create({
+  model: "gpt-4.1-mini",
+  input: "Say hello in one sentence.",
+});
+
+console.log(response.output_text);
+""",
         },
     },
     "anthropic": {
@@ -116,6 +142,23 @@ const openaiInstrumentation = new OpenAIInstrumentation({});
             "code": """from traceai_anthropic import AnthropicInstrumentor
 
 AnthropicInstrumentor().instrument(tracer_provider=trace_provider)
+""",
+            "sample_request_code": """import os
+import anthropic
+
+client = anthropic.Anthropic(
+    api_key=os.environ["ANTHROPIC_API_KEY"],
+)
+
+message = client.messages.create(
+    model="claude-sonnet-4-20250514",
+    max_tokens=256,
+    messages=[
+        {"role": "user", "content": "Say hello in one sentence."}
+    ],
+)
+
+print(message.content)
 """,
         },
         "TypeScript": {
@@ -130,6 +173,20 @@ import { registerInstrumentations } from "@opentelemetry/instrumentation";
     instrumentations: [anthropicInstrumentation],
     tracerProvider: tracerProvider,
   });
+""",
+            "sample_request_code": """import Anthropic from "@anthropic-ai/sdk";
+
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+});
+
+const message = await anthropic.messages.create({
+  model: "claude-sonnet-4-20250514",
+  max_tokens: 256,
+  messages: [{ role: "user", content: "Say hello in one sentence." }],
+});
+
+console.log(message.content);
 """,
         },
     },

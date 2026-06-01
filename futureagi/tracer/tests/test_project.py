@@ -746,6 +746,19 @@ class TestProjectSDKCodeAPI:
         data = get_result(response)
         assert "installation_guide" in data
         assert "project_add_code" in data
+        assert (
+            data["instruments"]["anthropic"]["Python"]["sample_request_code"]
+            .strip()
+            .startswith("import os")
+        )
+        assert (
+            "client.messages.create"
+            in data["instruments"]["anthropic"]["Python"]["sample_request_code"]
+        )
+        assert (
+            "responses.create"
+            in data["instruments"]["openai"]["TypeScript"]["sample_request_code"]
+        )
 
     def test_get_sdk_code_invalid_type(self, auth_client):
         """Get SDK code with invalid type fails."""

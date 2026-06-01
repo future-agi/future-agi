@@ -2411,10 +2411,14 @@ describe("OnboardingHomeView", () => {
 
     expect(screen.getByTestId("onboarding-home-error")).toBeInTheDocument();
     expect(screen.getByText("Activation state failed")).toBeVisible();
-    expect(screen.getByRole("link", { name: /get started/i })).toHaveAttribute(
+    expect(screen.getByText("Continue with Observe setup")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: /create observe project/i }),
+    ).toHaveAttribute(
       "href",
-      "/dashboard/get-started",
+      "/dashboard/observe?setup=true&source=onboarding&tour_anchor=observe_create_project_button&journey_step=connect_observability",
     );
+    expect(screen.queryByRole("link", { name: /get started/i })).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: /retry/i }));
 
