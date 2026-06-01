@@ -3524,6 +3524,9 @@ class TestTraceListQueryBuilderComprehensive:
     def test_build_uses_date_range_from_filters(self):
         """When datetime filters exist, they should set start/end dates."""
         from tracer.services.clickhouse.query_builders import TraceListQueryBuilder
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TIME_FILTER_COLUMN,
+        )
 
         builder = TraceListQueryBuilder(
             project_id="proj-1",
@@ -3544,8 +3547,8 @@ class TestTraceListQueryBuilderComprehensive:
         query, params = builder.build()
         assert params["start_date"] is not None
         assert params["end_date"] is not None
-        assert "start_time >=" in query
-        assert "start_time <" in query
+        assert f"{TIME_FILTER_COLUMN} >=" in query
+        assert f"{TIME_FILTER_COLUMN} <" in query
 
     def test_build_default_date_range(self):
         """When no datetime filter, should use default 30-day range."""
