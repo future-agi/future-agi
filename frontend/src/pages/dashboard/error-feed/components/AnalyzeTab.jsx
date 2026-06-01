@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   Box,
   Button,
@@ -86,7 +92,17 @@ StreamCursor.propTypes = { color: PropTypes.string };
 // text in when `instant` is false. When `instant` is true (e.g., the user
 // is opening a long-completed reasoning block) the text appears in full —
 // nobody wants a 1980s typewriter for content they're just reviewing.
-function StreamingPlainText({ text, instant, cursorColor, ...typoProps }) {
+//
+// `onComplete` fires exactly once when the stream finishes (or immediately
+// on mount in instant mode). Used by the SequentialReveal coordinator to
+// advance to the next block / list item.
+function StreamingPlainText({
+  text,
+  instant,
+  cursorColor,
+  onComplete,
+  ...typoProps
+}) {
   const fullText = typeof text === "string" ? text : "";
   const [revealedLen, setRevealedLen] = useState(
     instant ? fullText.length : 0,
@@ -106,6 +122,27 @@ function StreamingPlainText({ text, instant, cursorColor, ...typoProps }) {
     return () => clearInterval(id);
   }, [fullText, revealedLen]);
 
+  // Fire onComplete exactly once when the stream reaches the end. Held in
+  // a ref so changing the callback identity per render doesn't re-fire.
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  });
+  const firedRef = useRef(false);
+  useEffect(() => {
+    firedRef.current = false;
+  }, [fullText]);
+  useEffect(() => {
+    if (
+      revealedLen >= fullText.length &&
+      fullText.length > 0 &&
+      !firedRef.current
+    ) {
+      firedRef.current = true;
+      onCompleteRef.current?.();
+    }
+  }, [revealedLen, fullText.length]);
+
   const isStreaming = revealedLen < fullText.length;
   return (
     <Typography {...typoProps}>
@@ -118,7 +155,25 @@ StreamingPlainText.propTypes = {
   text: PropTypes.string,
   instant: PropTypes.bool,
   cursorColor: PropTypes.string,
+  onComplete: PropTypes.func,
 };
+
+// Coordinates a sequence of N "phases". In review mode (live=false) all
+// phases are revealed at once. In live mode phase 0 is active first;
+// advancing the phase reveals the next one. Children opt in by checking
+// `phase === i` for "I'm streaming now" and calling `advance()` when done.
+function useSequentialReveal(total, live) {
+  const [phase, setPhase] = useState(live ? 0 : total);
+  const advance = useCallback(() => {
+    setPhase((n) => Math.min(n + 1, total));
+  }, [total]);
+  // If `total` shrinks (rare, but possible if the data updates) clamp the
+  // phase so we don't get stuck past the end.
+  useEffect(() => {
+    setPhase((n) => Math.min(n, total));
+  }, [total]);
+  return { phase, advance };
+}
 
 // Fade-in + slight slide-up wrapper for any newly-mounted message card so
 // each one settles in instead of popping. ~200ms ease-out, subtle 6px lift.
@@ -139,21 +194,101 @@ function FadeIn({ children }) {
 }
 FadeIn.propTypes = { children: PropTypes.node };
 
+// Internal — list items reveal one at a time in live mode. In review
+// mode every item shows in full from the start.
+function SequentialListItems({ items, live, onComplete }) {
+  const { phase, advance } = useSequentialReveal(items.length, live);
+
+  // When all items have streamed (or instantly on mount in review mode),
+  // bubble completion up so the parent advances to the next block.
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  });
+  const firedRef = useRef(false);
+  useEffect(() => {
+    if (phase >= items.length && !firedRef.current) {
+      firedRef.current = true;
+      onCompleteRef.current?.();
+    }
+  }, [phase, items.length]);
+
+  return (
+    <Stack gap={0.4}>
+      {items.map((it, i) => {
+        const visible = !live || i <= phase;
+        const active = live && i === phase;
+        if (!visible) return null;
+        return (
+          <Stack key={i} direction="row" gap={0.75} alignItems="flex-start">
+            <Box
+              sx={{
+                width: 4,
+                height: 4,
+                borderRadius: "50%",
+                bgcolor: "text.disabled",
+                mt: "7px",
+                flexShrink: 0,
+              }}
+            />
+            <StreamingPlainText
+              text={it}
+              instant={!active}
+              onComplete={active ? advance : undefined}
+              fontSize="11.5px"
+              color="text.secondary"
+              sx={{ lineHeight: 1.55 }}
+            />
+          </Stack>
+        );
+      })}
+    </Stack>
+  );
+}
+SequentialListItems.propTypes = {
+  items: PropTypes.array.isRequired,
+  live: PropTypes.bool,
+  onComplete: PropTypes.func,
+};
+
 // One block of a step's expanded reasoning — Claude-Code-style. When
 // `live` is true (the parent step is currently running) text content
 // streams in word-by-word with a blinking cursor; when false (the step
 // has already completed and the user is just reviewing it) text renders
 // in full so we don't make people watch a typewriter for content that's
 // already done.
-function StepDetailBlock({ block, live }) {
+//
+// `onComplete` is the signal the parent SequentialReveal coordinator
+// listens for to advance to the next block. Each kind wires it up where
+// the *last* streaming element finishes:
+//   reasoning → its single text stream
+//   tool      → the `→ output` stream (or immediately if no output)
+//   list      → the last item's stream (via SequentialListItems)
+//   code      → its single text stream
+function StepDetailBlock({ block, live, onComplete }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+
+  // Used by branches with no streamed content (e.g., tool block with no
+  // output). Fire onComplete once on mount when in live mode so the
+  // sequencer doesn't stall waiting on a stream that never starts.
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  });
+  const fireOnceRef = useRef(false);
+  const fireOnce = useCallback(() => {
+    if (fireOnceRef.current) return;
+    fireOnceRef.current = true;
+    onCompleteRef.current?.();
+  }, []);
 
   if (block.kind === "reasoning") {
     return (
       <StreamingPlainText
         text={block.text}
         instant={!live}
+        onComplete={onComplete}
         fontSize="11.5px"
         color="text.secondary"
         sx={{ lineHeight: 1.65 }}
@@ -203,10 +338,11 @@ function StepDetailBlock({ block, live }) {
             {block.input}
           </Typography>
         )}
-        {block.output != null && (
+        {block.output != null ? (
           <StreamingPlainText
             text={`→ ${block.output}`}
             instant={!live}
+            onComplete={onComplete}
             fontSize="10.5px"
             sx={{
               fontFamily: "ui-monospace, SFMono-Regular, monospace",
@@ -215,6 +351,8 @@ function StepDetailBlock({ block, live }) {
               wordBreak: "break-word",
             }}
           />
+        ) : (
+          <SignalOnMount fire={fireOnce} />
         )}
       </Box>
     );
@@ -233,29 +371,11 @@ function StepDetailBlock({ block, live }) {
             {block.title}
           </Typography>
         )}
-        <Stack gap={0.4}>
-          {block.items.map((it, i) => (
-            <Stack key={i} direction="row" gap={0.75} alignItems="flex-start">
-              <Box
-                sx={{
-                  width: 4,
-                  height: 4,
-                  borderRadius: "50%",
-                  bgcolor: "text.disabled",
-                  mt: "7px",
-                  flexShrink: 0,
-                }}
-              />
-              <StreamingPlainText
-                text={it}
-                instant={!live}
-                fontSize="11.5px"
-                color="text.secondary"
-                sx={{ lineHeight: 1.55 }}
-              />
-            </Stack>
-          ))}
-        </Stack>
+        <SequentialListItems
+          items={block.items}
+          live={live}
+          onComplete={onComplete}
+        />
       </Box>
     );
   }
@@ -265,6 +385,7 @@ function StepDetailBlock({ block, live }) {
       <StreamingPlainText
         text={block.text}
         instant={!live}
+        onComplete={onComplete}
         component="pre"
         sx={{
           m: 0,
@@ -286,6 +407,57 @@ function StepDetailBlock({ block, live }) {
 }
 StepDetailBlock.propTypes = {
   block: PropTypes.object.isRequired,
+  live: PropTypes.bool,
+  onComplete: PropTypes.func,
+};
+
+// Tiny helper — fire a callback exactly once after mount. Used by tool
+// blocks that have no streamed content; the sequencer would otherwise
+// wait forever on a stream that never starts.
+function SignalOnMount({ fire }) {
+  useEffect(() => {
+    fire();
+  }, [fire]);
+  return null;
+}
+SignalOnMount.propTypes = { fire: PropTypes.func };
+
+// Renders a step's details list with sequential reveal: in live mode
+// each block streams in turn (one finishes before the next appears); in
+// review mode every block shows at once.
+function StepDetailsPanel({ blocks, live }) {
+  const { phase, advance } = useSequentialReveal(blocks.length, live);
+
+  if (!live) {
+    return (
+      <Stack gap={1} sx={{ pt: 1 }}>
+        {blocks.map((block, i) => (
+          <StepDetailBlock key={i} block={block} live={false} />
+        ))}
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack gap={1} sx={{ pt: 1 }}>
+      {blocks.map((block, i) => {
+        if (i > phase) return null;
+        const active = i === phase;
+        return (
+          <FadeIn key={i}>
+            <StepDetailBlock
+              block={block}
+              live={active}
+              onComplete={active ? advance : undefined}
+            />
+          </FadeIn>
+        );
+      })}
+    </Stack>
+  );
+}
+StepDetailsPanel.propTypes = {
+  blocks: PropTypes.array.isRequired,
   live: PropTypes.bool,
 };
 
@@ -425,11 +597,7 @@ function StepCard({ step }) {
               borderColor: "divider",
             }}
           >
-            <Stack gap={1} sx={{ pt: 1 }}>
-              {step.details.map((block, i) => (
-                <StepDetailBlock key={i} block={block} live={isRunning} />
-              ))}
-            </Stack>
+            <StepDetailsPanel blocks={step.details} live={isRunning} />
           </Box>
         </Collapse>
       )}
