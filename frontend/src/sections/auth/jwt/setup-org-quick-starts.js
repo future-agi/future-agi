@@ -43,6 +43,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     shortDescription:
       "Choose your package, copy matching setup code, and turn one trace into an evaluator.",
     firstActionLabel: "Choose package",
+    outcomePreview: "A real trace reviewed and an evaluator ready to create.",
     pathPreview:
       "Choose package, copy setup code, send trace, review trace, create evaluator.",
     sequencePreview: [
@@ -62,6 +63,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     buttonLabel: "Test prompts or agent prompts",
     shortDescription: "Create a prompt, run a test, and compare versions.",
     firstActionLabel: "Create prompt",
+    outcomePreview: "A tested prompt version with a comparison baseline.",
     pathPreview: "Run test, save version, compare versions, improve.",
     sequencePreview: ["Create prompt", "Run test", "Save version", "Compare"],
     icon: "mdi:message-processing-outline",
@@ -73,6 +75,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     buttonLabel: "Prototype agent",
     shortDescription: "Create an agent and run one scenario.",
     firstActionLabel: "Create agent",
+    outcomePreview: "A scenario run you can inspect and turn into coverage.",
     pathPreview: "Add starter prompt, run scenario, review run, save coverage.",
     sequencePreview: [
       "Create agent",
@@ -89,6 +92,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     buttonLabel: "Set up gateway",
     shortDescription: "Add a provider, create a key, and send a request.",
     firstActionLabel: "Add model provider",
+    outcomePreview: "A gateway request log ready for routing or policy review.",
     pathPreview: "Create key, send request, review log, add policy.",
     sequencePreview: [
       "Add model provider",
@@ -106,6 +110,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     shortDescription:
       "Create an eval or simulation and review the first result.",
     firstActionLabel: "Create eval dataset",
+    outcomePreview: "An eval run with results and failures ready to review.",
     pathPreview: "Add scorer, run eval, review failure, improve.",
     sequencePreview: [
       "Create eval dataset",
@@ -122,6 +127,7 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     buttonLabel: "Connect a voice AI agent",
     shortDescription: "Run a test call and review the transcript.",
     firstActionLabel: "Create voice agent",
+    outcomePreview: "A test call transcript with success criteria to add.",
     pathPreview: "Run call, review call, add success criteria.",
     sequencePreview: [
       "Create voice agent",

@@ -68,6 +68,9 @@ const SETUP_SIDE_PANEL_STEPS = [
   },
 ];
 
+const quickStartMinutesLabel = (option) =>
+  option?.estimatedMinutes ? `${option.estimatedMinutes} min` : null;
+
 const normalizeGoalValue = (value) =>
   String(value || "")
     .trim()
@@ -473,7 +476,7 @@ const SetupOrganization = ({ getStarted = false }) => {
 
       userForm.reset(newDefaults);
     }
-  }, [userOnboardingData]);
+  }, [defaultValuesForUserForm, userForm, userOnboardingData]);
 
   const { mutate: saveUserData, isPending: isSavingUserData } = useMutation({
     mutationFn: async (data) => {
@@ -668,11 +671,25 @@ const SetupOrganization = ({ getStarted = false }) => {
             sx={{ display: "flex" }}
           >
             <Chip size="small" label={option.surfaceLabel} />
+            {quickStartMinutesLabel(option) ? (
+              <Chip size="small" label={quickStartMinutesLabel(option)} />
+            ) : null}
             <Chip size="small" color="primary" label="Recommended" />
           </Stack>
-          <Typography component="span" variant="h5" sx={{ lineHeight: 1.15 }}>
-            {option.buttonLabel}
-          </Typography>
+          <Stack
+            component="span"
+            direction="row"
+            spacing={0.75}
+            alignItems="center"
+            sx={{ display: "flex", minWidth: 0 }}
+          >
+            {option.icon ? (
+              <Iconify icon={option.icon} width={24} sx={{ flexShrink: 0 }} />
+            ) : null}
+            <Typography component="span" variant="h5" sx={{ lineHeight: 1.15 }}>
+              {option.buttonLabel}
+            </Typography>
+          </Stack>
           <Typography
             component="span"
             variant="body2"
@@ -690,6 +707,18 @@ const SetupOrganization = ({ getStarted = false }) => {
           >
             Step 1: {option.firstActionLabel}
           </Typography>
+          {option.outcomePreview ? (
+            <Typography
+              component="span"
+              variant="body2"
+              sx={{
+                color: "text.primary",
+                lineHeight: 1.35,
+              }}
+            >
+              Finish with: {option.outcomePreview}
+            </Typography>
+          ) : null}
           {renderQuickStartSequencePreview(option)}
           <Typography
             component="span"
@@ -752,13 +781,36 @@ const SetupOrganization = ({ getStarted = false }) => {
           spacing={0.35}
           sx={{ display: "flex", minWidth: 0, width: "100%" }}
         >
-          <Typography
+          <Stack
             component="span"
-            variant="subtitle2"
-            sx={{ lineHeight: 1.2 }}
+            direction="row"
+            spacing={0.75}
+            alignItems="center"
+            sx={{ display: "flex", minWidth: 0 }}
           >
-            {option.buttonLabel}
-          </Typography>
+            {option.icon ? (
+              <Iconify icon={option.icon} width={18} sx={{ flexShrink: 0 }} />
+            ) : null}
+            <Typography
+              component="span"
+              variant="subtitle2"
+              sx={{ lineHeight: 1.2 }}
+            >
+              {option.buttonLabel}
+            </Typography>
+          </Stack>
+          <Stack
+            component="span"
+            direction="row"
+            spacing={0.5}
+            flexWrap="wrap"
+            sx={{ display: "flex" }}
+          >
+            <Chip size="small" label={option.surfaceLabel} />
+            {quickStartMinutesLabel(option) ? (
+              <Chip size="small" label={quickStartMinutesLabel(option)} />
+            ) : null}
+          </Stack>
           <Typography
             component="span"
             variant="caption"
@@ -766,6 +818,15 @@ const SetupOrganization = ({ getStarted = false }) => {
           >
             Step 1: {option.firstActionLabel}
           </Typography>
+          {option.outcomePreview ? (
+            <Typography
+              component="span"
+              variant="caption"
+              sx={{ color: "text.primary", lineHeight: 1.3 }}
+            >
+              Finish with: {option.outcomePreview}
+            </Typography>
+          ) : null}
           {renderQuickStartSequencePreview(option)}
           <Typography
             component="span"
@@ -880,13 +941,13 @@ const SetupOrganization = ({ getStarted = false }) => {
     if (customRoleValue) {
       userForm.setValue("role", "");
     }
-  }, [customRoleValue]);
+  }, [customRoleValue, userForm]);
 
   useEffect(() => {
     if (roleValue) {
       userForm.setValue("customRole", "");
     }
-  }, [roleValue]);
+  }, [roleValue, userForm]);
 
   const addMember = useCallback(() => {
     append({

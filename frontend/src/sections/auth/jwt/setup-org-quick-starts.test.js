@@ -90,6 +90,25 @@ describe("setup org product-loop quick starts", () => {
     });
   });
 
+  it("gives every first setup path a concrete outcome preview", () => {
+    const firstSetupQuickStarts = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
+      isSetupOrgFirstSetupQuickStart,
+    );
+
+    firstSetupQuickStarts.forEach((option) => {
+      expect(option.outcomePreview).toEqual(expect.any(String));
+      expect(option.outcomePreview.length).toBeGreaterThan(20);
+    });
+    expect(
+      firstSetupQuickStarts.find((option) => option.id === "observe")
+        ?.outcomePreview,
+    ).toBe("A real trace reviewed and an evaluator ready to create.");
+    expect(
+      firstSetupQuickStarts.find((option) => option.id === "voice")
+        ?.outcomePreview,
+    ).toBe("A test call transcript with success criteria to add.");
+  });
+
   it("keeps the signup picker to the first setup paths", () => {
     expect(SETUP_ORG_FIRST_SETUP_QUICK_START_IDS).toEqual([
       "observe",
