@@ -545,19 +545,22 @@ const RequestDetailDrawer = ({
     ? gatewayPolicyHandoffCopy(log, onboardingMode)
     : null;
   const policyActions = policyHandoff ? [policyHandoff.primaryType] : [];
+  const isFailureRepair =
+    onboardingMode === "fix-failure" || isGatewayLogFailure(log);
 
   const handleOpenGatewayPolicy = useCallback(
     (policyType) => {
       navigate(
         buildGatewayPolicyConfigHref({
           policyType,
+          isFailureRepair,
           quickStartAttribution,
           requestId: policyRequestId,
           tourAnchor: "gateway_policy_button",
         }),
       );
     },
-    [navigate, policyRequestId, quickStartAttribution],
+    [isFailureRepair, navigate, policyRequestId, quickStartAttribution],
   );
 
   useEffect(() => {

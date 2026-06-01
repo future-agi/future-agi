@@ -114,6 +114,26 @@ describe("setup org product-loop quick starts", () => {
     });
   });
 
+  it("shows the full gateway request review and control loop", () => {
+    const gatewayQuickStart = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.find(
+      (option) => option.id === "gateway",
+    );
+
+    expect(gatewayQuickStart).toMatchObject({
+      buttonLabel: "Set up gateway",
+      firstActionLabel: "Add model provider",
+      pathPreview:
+        "Add provider, create key, send request, review log, add control.",
+      sequencePreview: [
+        "Add model provider",
+        "Create key",
+        "Send request",
+        "Review log",
+        "Add control",
+      ],
+    });
+  });
+
   it("gives every first setup path a visible sequence preview", () => {
     const firstSetupQuickStarts = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
       isSetupOrgFirstSetupQuickStart,

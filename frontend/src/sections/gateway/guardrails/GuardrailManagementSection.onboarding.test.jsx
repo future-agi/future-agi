@@ -136,6 +136,44 @@ describe("GuardrailManagementSection onboarding activation", () => {
     );
   });
 
+  it("records failed request repair before completing guardrail policy onboarding", async () => {
+    window.history.pushState(
+      {},
+      "Guardrails",
+      `/dashboard/gateway/guardrails/configuration?journey_step=add_gateway_policy&request_id=req-123&repair_request=1&${gatewayQuickStartQuery}`,
+    );
+
+    render(<GuardrailManagementSection />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /add guardrail/i }),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /save & activate/i }),
+    );
+
+    await waitFor(() =>
+      expect(mockCreateOrgConfigMutate).toHaveBeenCalledTimes(1),
+    );
+    await waitFor(() =>
+      expect(mockRecordActivationEvent).toHaveBeenCalledTimes(2),
+    );
+    expect(mockRecordActivationEvent.mock.calls[0][0]).toMatchObject({
+      eventName: "gateway_failure_resolved",
+      primaryPath: "gateway",
+      stage: "fix_gateway_failure",
+      source: "gateway_guardrail_onboarding",
+      metadata: expect.objectContaining({
+        request_id: "req-123",
+        repair_type: "guardrail",
+      }),
+    });
+    expect(mockRecordActivationEvent.mock.calls[1][0]).toMatchObject({
+      eventName: "gateway_policy_created",
+      stage: "add_gateway_policy",
+    });
+  });
+
   it("does not record policy completion for ordinary guardrail config saves", async () => {
     window.history.pushState(
       {},

@@ -86,13 +86,18 @@ export const gatewayPlaygroundResult = (payload = {}) =>
 export const getGatewayOnboardingRouteParams = (search = "") => {
   const params = toSearchParams(search);
   const rawMode = params.get("onboarding");
-  const journeyMode = GATEWAY_JOURNEY_STEP_MODES[params.get("journey_step")];
+  const rawJourneyStep = params.get("journey_step");
+  const journeyMode = GATEWAY_JOURNEY_STEP_MODES[rawJourneyStep];
   const mode = VALID_GATEWAY_ONBOARDING_MODES.has(rawMode)
     ? rawMode
     : journeyMode || null;
 
   return {
     isOnboarding: params.get("source") === "onboarding" || Boolean(mode),
+    isFailureRepair:
+      params.get("repair_request") === "1" ||
+      rawJourneyStep === "fix_gateway_failure" ||
+      mode === GATEWAY_ONBOARDING_MODES.FIX_FAILURE,
     mode,
     requestId: params.get("request_id"),
     tourAnchor: params.get("tour_anchor"),
@@ -132,6 +137,7 @@ export const buildGatewayRequestReviewHref = ({
 };
 
 export const buildGatewayPolicyConfigHref = ({
+  isFailureRepair = false,
   policyType = "fallback",
   quickStartAttribution,
   requestId,
@@ -150,6 +156,9 @@ export const buildGatewayPolicyConfigHref = ({
   params.set("journey_step", "add_gateway_policy");
   if (requestId) {
     params.set("request_id", requestId);
+  }
+  if (isFailureRepair) {
+    params.set("repair_request", "1");
   }
   if (tourAnchor) {
     params.set("tour_anchor", tourAnchor);
@@ -318,6 +327,36 @@ export const buildGatewayPolicyCreatedPayload = ({
     ...setupQuickStartAttributionParams(quickStartAttribution),
   };
 };
+
+export const buildGatewayFailureResolvedPayload = ({
+  gatewayId = DEFAULT_GATEWAY_ID,
+  quickStartAttribution,
+  repairType = "fallback",
+  requestId,
+  source,
+  metadata = {},
+} = {}) => ({
+  eventName: "gateway_failure_resolved",
+  primaryPath: "gateway",
+  stage: "fix_gateway_failure",
+  source: source || "gateway_failure_onboarding",
+  artifactType: "request_log",
+  artifactId: safeKeyPart(requestId || gatewayId, "gateway-request"),
+  metadata: compactMetadata({
+    gateway_id: gatewayId || DEFAULT_GATEWAY_ID,
+    request_id: requestId,
+    repair_type: repairType,
+    ...metadata,
+  }),
+  idempotencyKey: [
+    "gateway_failure_resolved",
+    safeKeyPart(repairType, "repair"),
+    safeKeyPart(requestId, "no-request"),
+    safeKeyPart(gatewayId, DEFAULT_GATEWAY_ID),
+  ].join(":"),
+  isSample: false,
+  ...setupQuickStartAttributionParams(quickStartAttribution),
+});
 
 export const buildGatewayFallbackPolicyCreatedPayload = ({
   gatewayId = DEFAULT_GATEWAY_ID,

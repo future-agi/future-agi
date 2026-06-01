@@ -144,13 +144,20 @@ const RequestExplorerSection = () => {
   const handleOpenFallbacks = useCallback(() => {
     navigate(
       buildGatewayPolicyConfigHref({
+        isFailureRepair:
+          onboardingMode === GATEWAY_LOG_ONBOARDING_MODES.FIX_FAILURE,
         policyType: "fallback",
         quickStartAttribution: gatewayQuickStartAttribution,
         requestId: onboardingRequestId,
         tourAnchor: "gateway_policy_button",
       }),
     );
-  }, [gatewayQuickStartAttribution, navigate, onboardingRequestId]);
+  }, [
+    gatewayQuickStartAttribution,
+    navigate,
+    onboardingMode,
+    onboardingRequestId,
+  ]);
 
   const handleShowAllLogs = useCallback(() => {
     clearFilters();

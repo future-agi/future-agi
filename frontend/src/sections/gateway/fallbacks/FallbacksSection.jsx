@@ -34,6 +34,7 @@ import { recordActivationEvent } from "src/sections/onboarding-home/api/onboardi
 import {
   appendGatewayOnboardingAttributionToHref,
   buildGatewayFallbackPolicyCreatedPayload,
+  buildGatewayFailureResolvedPayload,
   buildGatewayOnboardingCompletionHref,
   buildGatewayRequestReviewHref,
   GATEWAY_ONBOARDING_MODES,
@@ -438,6 +439,7 @@ const FallbacksSection = () => {
     [gatewayQuickStartAttribution],
   );
   const onboardingRequestId = onboardingParams.requestId;
+  const isFailureRepair = onboardingParams.isFailureRepair;
   const showOnboardingFocus =
     onboardingParams.isOnboarding &&
     (!onboardingParams.mode ||
@@ -519,6 +521,21 @@ const FallbacksSection = () => {
             requestId: onboardingRequestId,
             routing: draft,
           });
+          if (isFailureRepair) {
+            await recordActivationEvent(
+              buildGatewayFailureResolvedPayload({
+                gatewayId,
+                quickStartAttribution: gatewayQuickStartAttribution,
+                repairType: "fallback",
+                requestId: onboardingRequestId,
+                source: "gateway_fallbacks_onboarding",
+                metadata: {
+                  fallback_chain_count:
+                    eventPayload.metadata?.fallback_chain_count,
+                },
+              }),
+            );
+          }
           await recordActivationEvent(eventPayload);
           navigate(
             buildGatewayOnboardingCompletionHref({

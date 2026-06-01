@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildGatewayFailureResolvedPayload,
   buildGatewayPolicyConfigHref,
   buildGatewayRequestReviewHref,
   buildGatewayRequestSeenPayload,
@@ -20,19 +21,24 @@ const GATEWAY_QUICK_START_SEARCH =
 describe("gatewayOnboardingEvents", () => {
   it("parses gateway journey-step params from Home CTAs", () => {
     [
-      ["configure_gateway_provider", GATEWAY_ONBOARDING_MODES.ADD_PROVIDER],
-      ["create_gateway_key", GATEWAY_ONBOARDING_MODES.CREATE_KEY],
-      ["run_gateway_request", GATEWAY_ONBOARDING_MODES.TEST_REQUEST],
-      ["review_gateway_log", GATEWAY_ONBOARDING_MODES.REVIEW_REQUEST],
-      ["fix_gateway_failure", GATEWAY_ONBOARDING_MODES.FIX_FAILURE],
-      ["add_gateway_policy", GATEWAY_ONBOARDING_MODES.ADD_POLICY],
-    ].forEach(([journeyStep, mode]) => {
+      [
+        "configure_gateway_provider",
+        GATEWAY_ONBOARDING_MODES.ADD_PROVIDER,
+        false,
+      ],
+      ["create_gateway_key", GATEWAY_ONBOARDING_MODES.CREATE_KEY, false],
+      ["run_gateway_request", GATEWAY_ONBOARDING_MODES.TEST_REQUEST, false],
+      ["review_gateway_log", GATEWAY_ONBOARDING_MODES.REVIEW_REQUEST, false],
+      ["fix_gateway_failure", GATEWAY_ONBOARDING_MODES.FIX_FAILURE, true],
+      ["add_gateway_policy", GATEWAY_ONBOARDING_MODES.ADD_POLICY, false],
+    ].forEach(([journeyStep, mode, isFailureRepair]) => {
       expect(
         getGatewayOnboardingRouteParams(
           `?tour_anchor=gateway_focus&journey_step=${journeyStep}&request_id=req-123`,
         ),
       ).toEqual({
         isOnboarding: true,
+        isFailureRepair,
         mode,
         requestId: "req-123",
         tourAnchor: "gateway_focus",
@@ -180,14 +186,26 @@ describe("gatewayOnboardingEvents", () => {
   it("builds gateway policy configuration routes from reviewed logs", () => {
     expect(
       buildGatewayPolicyConfigHref({
+        isFailureRepair: true,
         policyType: "fallback",
         requestId: "req-123",
         search: GATEWAY_QUICK_START_SEARCH,
         tourAnchor: "gateway_policy_button",
       }),
     ).toBe(
-      "/dashboard/gateway/fallbacks?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-123&tour_anchor=gateway_policy_button&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
+      "/dashboard/gateway/fallbacks?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-123&repair_request=1&tour_anchor=gateway_policy_button&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
     );
+    expect(
+      getGatewayOnboardingRouteParams(
+        "?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-123&repair_request=1",
+      ),
+    ).toEqual({
+      isOnboarding: true,
+      isFailureRepair: true,
+      mode: GATEWAY_ONBOARDING_MODES.ADD_POLICY,
+      requestId: "req-123",
+      tourAnchor: null,
+    });
     expect(
       buildGatewayPolicyConfigHref({
         policyType: "guardrail",
@@ -288,6 +306,40 @@ describe("gatewayOnboardingEvents", () => {
         limit: 1000,
       },
       idempotencyKey: "gateway_policy_created:budget:req-123:gateway-1",
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
+    });
+  });
+
+  it("builds a failed gateway request repair payload", () => {
+    expect(
+      buildGatewayFailureResolvedPayload({
+        gatewayId: "gateway-1",
+        quickStartAttribution: gatewaySetupQuickStartAttributionFromSearch(
+          GATEWAY_QUICK_START_SEARCH,
+        ),
+        repairType: "fallback",
+        requestId: "req-123",
+        source: "gateway_fallbacks_onboarding",
+        metadata: {
+          fallback_chain_count: 1,
+        },
+      }),
+    ).toMatchObject({
+      eventName: "gateway_failure_resolved",
+      primaryPath: "gateway",
+      stage: "fix_gateway_failure",
+      source: "gateway_fallbacks_onboarding",
+      artifactType: "request_log",
+      artifactId: "req-123",
+      metadata: {
+        gateway_id: "gateway-1",
+        request_id: "req-123",
+        repair_type: "fallback",
+        fallback_chain_count: 1,
+      },
+      idempotencyKey: "gateway_failure_resolved:fallback:req-123:gateway-1",
       quick_start_goal: "control_model_traffic",
       quick_start_id: "gateway",
       quick_start_primary_path: "gateway",

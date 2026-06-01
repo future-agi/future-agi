@@ -113,6 +113,42 @@ describe("FallbacksSection onboarding activation", () => {
     ).toBe("gateway");
   });
 
+  it("records failed request repair before completing fallback policy onboarding", async () => {
+    window.history.pushState(
+      {},
+      "Fallbacks",
+      `/dashboard/gateway/fallbacks?journey_step=add_gateway_policy&request_id=req-123&repair_request=1&${gatewayQuickStartQuery}`,
+    );
+
+    render(<FallbacksSection />);
+
+    await userEvent.click(
+      screen.getAllByRole("button", { name: /add fallback chain/i })[0],
+    );
+    await userEvent.click(
+      screen.getAllByRole("button", { name: /save & apply/i })[0],
+    );
+
+    await waitFor(() => expect(mockSaveRouting).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mockRecordActivationEvent).toHaveBeenCalledTimes(2),
+    );
+    expect(mockRecordActivationEvent.mock.calls[0][0]).toMatchObject({
+      eventName: "gateway_failure_resolved",
+      primaryPath: "gateway",
+      stage: "fix_gateway_failure",
+      source: "gateway_fallbacks_onboarding",
+      metadata: expect.objectContaining({
+        request_id: "req-123",
+        repair_type: "fallback",
+      }),
+    });
+    expect(mockRecordActivationEvent.mock.calls[1][0]).toMatchObject({
+      eventName: "gateway_policy_created",
+      stage: "add_gateway_policy",
+    });
+  });
+
   it("does not record policy completion outside onboarding route context", async () => {
     window.history.pushState({}, "Fallbacks", "/dashboard/gateway/fallbacks");
 

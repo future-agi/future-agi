@@ -45,6 +45,7 @@ import GuardrailConfigTab from "../settings/GuardrailConfigTab";
 import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
 import {
   buildGatewayOnboardingCompletionHref,
+  buildGatewayFailureResolvedPayload,
   buildGatewayPolicyCreatedPayload,
   GATEWAY_ONBOARDING_MODES,
   gatewaySetupQuickStartAttributionFromSearch,
@@ -384,6 +385,7 @@ const ConfigTab = () => {
     (!onboardingParams.mode ||
       onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_POLICY);
   const onboardingRequestId = onboardingParams.requestId;
+  const isFailureRepair = onboardingParams.isFailureRepair;
 
   // Initialize local state from org config on first load
   const guardrailData = localGuardrails ?? orgConfig?.guardrails ?? {};
@@ -418,6 +420,20 @@ const ConfigTab = () => {
                   guardrail_rule_count: guardrailRuleCount(toSave),
                 },
               });
+              if (isFailureRepair) {
+                await recordActivationEvent(
+                  buildGatewayFailureResolvedPayload({
+                    gatewayId,
+                    quickStartAttribution: gatewayQuickStartAttribution,
+                    repairType: "guardrail",
+                    requestId: onboardingRequestId,
+                    source: "gateway_guardrail_onboarding",
+                    metadata: {
+                      guardrail_rule_count: guardrailRuleCount(toSave),
+                    },
+                  }),
+                );
+              }
               await recordActivationEvent(eventPayload);
               navigate(
                 buildGatewayOnboardingCompletionHref({

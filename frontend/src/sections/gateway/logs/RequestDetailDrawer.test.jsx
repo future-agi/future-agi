@@ -154,4 +154,28 @@ describe("RequestDetailDrawer", () => {
       "/dashboard/gateway/guardrails/configuration?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-detail-1234567890&tour_anchor=gateway_policy_button&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
     );
   });
+
+  it("preserves failed-request repair context when routing to policy controls", async () => {
+    render(
+      <RequestDetailDrawer
+        open
+        logId="log-detail-id"
+        onboardingMode="fix-failure"
+        onClose={vi.fn()}
+        quickStartAttribution={{
+          quick_start_goal: "control_model_traffic",
+          quick_start_id: "gateway",
+          quick_start_primary_path: "gateway",
+        }}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /tune guardrail/i }),
+    );
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "/dashboard/gateway/guardrails/configuration?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-detail-1234567890&repair_request=1&tour_anchor=gateway_policy_button&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
+    );
+  });
 });

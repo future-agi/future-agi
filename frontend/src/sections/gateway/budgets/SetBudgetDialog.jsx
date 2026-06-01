@@ -17,6 +17,7 @@ import { enqueueSnackbar } from "notistack";
 import { useSetBudget } from "../providers/hooks/useGatewayConfig";
 import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
 import {
+  buildGatewayFailureResolvedPayload,
   buildGatewayOnboardingCompletionHref,
   buildGatewayPolicyCreatedPayload,
   gatewaySetupQuickStartAttributionFromSearch,
@@ -75,6 +76,7 @@ const SetBudgetDialog = ({
   budget,
   onboardingRequestId,
   shouldRecordOnboardingCompletion = false,
+  shouldRecordOnboardingRepair = false,
 }) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -138,6 +140,23 @@ const SetBudgetDialog = ({
                   on_exceed: onExceed,
                 },
               });
+              if (shouldRecordOnboardingRepair) {
+                await recordActivationEvent(
+                  buildGatewayFailureResolvedPayload({
+                    gatewayId,
+                    quickStartAttribution: gatewayQuickStartAttribution,
+                    repairType: "budget",
+                    requestId: onboardingRequestId,
+                    source: "gateway_budget_onboarding",
+                    metadata: {
+                      budget_level: level,
+                      limit: Number(limit),
+                      alert_threshold: Number(alertThreshold),
+                      on_exceed: onExceed,
+                    },
+                  }),
+                );
+              }
               await recordActivationEvent(eventPayload);
               navigate(
                 buildGatewayOnboardingCompletionHref({
@@ -262,6 +281,7 @@ SetBudgetDialog.propTypes = {
   budget: PropTypes.object,
   onboardingRequestId: PropTypes.string,
   shouldRecordOnboardingCompletion: PropTypes.bool,
+  shouldRecordOnboardingRepair: PropTypes.bool,
 };
 
 export default SetBudgetDialog;

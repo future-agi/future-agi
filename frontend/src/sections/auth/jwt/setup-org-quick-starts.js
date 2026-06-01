@@ -99,14 +99,17 @@ export const SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS = [
     goal: "control_model_traffic",
     surfaceLabel: "Gateway",
     buttonLabel: "Set up gateway",
-    shortDescription: "Add a provider, create a key, and send a request.",
+    shortDescription:
+      "Add a provider, create a key, send a request, review the log, and add one control.",
     firstActionLabel: "Add model provider",
-    pathPreview: "Create key, send request, review log, add policy.",
+    pathPreview:
+      "Add provider, create key, send request, review log, add control.",
     sequencePreview: [
       "Add model provider",
       "Create key",
       "Send request",
-      "Add policy",
+      "Review log",
+      "Add control",
     ],
     icon: "mdi:transit-connection-variant",
   }),

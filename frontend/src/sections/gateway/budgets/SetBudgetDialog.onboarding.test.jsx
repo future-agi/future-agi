@@ -95,6 +95,50 @@ describe("SetBudgetDialog onboarding activation", () => {
     ).toBe("gateway");
   });
 
+  it("records failed request repair before completing budget policy onboarding", async () => {
+    window.history.pushState(
+      {},
+      "Budgets",
+      `/dashboard/gateway/budgets?source=onboarding&request_id=req-123&repair_request=1&${gatewayQuickStartQuery}`,
+    );
+
+    render(
+      <SetBudgetDialog
+        open
+        onClose={vi.fn()}
+        gatewayId="gateway-1"
+        onboardingRequestId="req-123"
+        shouldRecordOnboardingCompletion
+        shouldRecordOnboardingRepair
+      />,
+    );
+
+    await userEvent.click(screen.getByLabelText(/budget level/i));
+    await userEvent.click(screen.getByRole("option", { name: /per model/i }));
+    await userEvent.type(screen.getByLabelText(/monthly limit/i), "1000");
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => expect(mockSetBudgetMutate).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(mockRecordActivationEvent).toHaveBeenCalledTimes(2),
+    );
+    expect(mockRecordActivationEvent.mock.calls[0][0]).toMatchObject({
+      eventName: "gateway_failure_resolved",
+      primaryPath: "gateway",
+      stage: "fix_gateway_failure",
+      source: "gateway_budget_onboarding",
+      metadata: expect.objectContaining({
+        request_id: "req-123",
+        repair_type: "budget",
+        budget_level: "per_model",
+      }),
+    });
+    expect(mockRecordActivationEvent.mock.calls[1][0]).toMatchObject({
+      eventName: "gateway_policy_created",
+      stage: "add_gateway_policy",
+    });
+  });
+
   it("does not record policy completion for ordinary budget saves", async () => {
     render(<SetBudgetDialog open onClose={vi.fn()} gatewayId="gateway-1" />);
 

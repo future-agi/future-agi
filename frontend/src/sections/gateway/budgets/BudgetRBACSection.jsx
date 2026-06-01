@@ -700,6 +700,7 @@ const BudgetRBACSection = () => {
     (!onboardingParams.mode ||
       onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_POLICY);
   const onboardingRequestId = onboardingParams.requestId;
+  const isFailureRepair = onboardingParams.isFailureRepair;
 
   if (gwLoading || configLoading) {
     return (
@@ -765,6 +766,7 @@ const BudgetRBACSection = () => {
         gatewayId={gatewayId}
         onboardingRequestId={onboardingRequestId}
         shouldRecordOnboardingCompletion={isOnboardingRoute}
+        shouldRecordOnboardingRepair={isFailureRepair}
       />
     </Box>
   );

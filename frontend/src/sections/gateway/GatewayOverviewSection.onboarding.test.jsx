@@ -11,6 +11,17 @@ const mockAxiosPost = vi.hoisted(() => vi.fn());
 const mockRecordActivationEvent = vi.hoisted(() => vi.fn());
 const mockRefreshGateways = vi.hoisted(() => vi.fn());
 const mockEnqueueSnackbar = vi.hoisted(() => vi.fn());
+const mockGateway = vi.hoisted(() => ({
+  id: "gateway-1",
+  name: "Default gateway",
+  status: "healthy",
+  baseUrl: "https://gateway.futureagi.dev/v1",
+  providerCount: 1,
+  modelCount: 1,
+}));
+const mockProviderHealth = vi.hoisted(() => ({
+  providers: [{ name: "openai", status: "healthy" }],
+}));
 const gatewayQuickStartQuery =
   "quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway";
 
@@ -44,14 +55,7 @@ vi.mock("src/sections/onboarding-home/api/onboarding-home-api", () => ({
 
 vi.mock("./context/useGatewayContext", () => ({
   useGatewayContext: () => ({
-    gateway: {
-      id: "gateway-1",
-      name: "Default gateway",
-      status: "healthy",
-      baseUrl: "https://gateway.futureagi.dev/v1",
-      providerCount: 1,
-      modelCount: 1,
-    },
+    gateway: mockGateway,
     gatewayId: "gateway-1",
     isLoading: false,
     error: null,
@@ -61,9 +65,7 @@ vi.mock("./context/useGatewayContext", () => ({
 
 vi.mock("./providers/hooks/useGatewayConfig", () => ({
   useProviderHealth: () => ({
-    data: {
-      providers: [{ name: "openai", status: "healthy" }],
-    },
+    data: mockProviderHealth,
   }),
 }));
 
@@ -100,6 +102,17 @@ const renderWithQueryClient = (ui) => {
 describe("GatewayOverviewSection onboarding request", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    Object.assign(mockGateway, {
+      id: "gateway-1",
+      name: "Default gateway",
+      status: "healthy",
+      baseUrl: "https://gateway.futureagi.dev/v1",
+      providerCount: 1,
+      modelCount: 1,
+    });
+    Object.assign(mockProviderHealth, {
+      providers: [{ name: "openai", status: "healthy" }],
+    });
     window.history.pushState(
       {},
       "Gateway",
@@ -181,6 +194,20 @@ describe("GatewayOverviewSection onboarding request", () => {
     expect(
       screen.getByRole("button", { name: /send test request/i }),
     ).toHaveAttribute("data-tour-anchor", "gateway_request_button");
+  });
+
+  it("uses provider health as provider setup evidence when gateway counts lag", () => {
+    mockGateway.providerCount = 0;
+    mockProviderHealth.providers = [{ name: "openai", status: "healthy" }];
+
+    renderWithQueryClient(<GatewayOverviewSection />);
+
+    expect(
+      screen.getByRole("button", { name: /send test request/i }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /^add provider$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("continues to request review when onboarding state recording fails", async () => {

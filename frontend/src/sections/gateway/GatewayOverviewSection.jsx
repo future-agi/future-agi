@@ -126,14 +126,32 @@ const GatewayOverviewSection = () => {
     [gatewayQuickStartAttribution],
   );
 
+  const providerList = useMemo(() => {
+    const providers = providerHealth?.providers;
+    if (Array.isArray(providers)) {
+      return providers.map((p) => ({
+        ...p,
+        name: p.name || p.provider_name || p.id,
+      }));
+    }
+    if (providers && typeof providers === "object") {
+      return Object.entries(providers).map(([name, info]) => ({
+        name,
+        ...(typeof info === "object" ? info : {}),
+      }));
+    }
+    return [];
+  }, [providerHealth]);
+
   const completionState = useMemo(
     () => ({
       gatewayConnected: Boolean(gateway),
-      hasProviders: (gateway?.providerCount ?? 0) > 0,
+      hasProviders:
+        (gateway?.providerCount ?? 0) > 0 || providerList.length > 0,
       hasKeys: Array.isArray(apiKeys) && apiKeys.length > 0,
       hasRequests: Number(val(overview?.total_requests) ?? 0) > 0,
     }),
-    [gateway, apiKeys, overview],
+    [gateway, apiKeys, overview, providerList.length],
   );
 
   const healthCheckMutation = useMutation({
@@ -193,21 +211,6 @@ const GatewayOverviewSection = () => {
       );
     },
   });
-
-  // Provider summary
-  const providers = providerHealth?.providers;
-  let providerList = [];
-  if (Array.isArray(providers)) {
-    providerList = providers.map((p) => ({
-      ...p,
-      name: p.name || p.provider_name || p.id,
-    }));
-  } else if (providers && typeof providers === "object") {
-    providerList = Object.entries(providers).map(([name, info]) => ({
-      name,
-      ...(typeof info === "object" ? info : {}),
-    }));
-  }
 
   const handleCopyUrl = () => {
     if (gateway?.baseUrl) {
