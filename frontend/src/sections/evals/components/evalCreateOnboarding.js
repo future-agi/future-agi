@@ -280,7 +280,7 @@ const EVAL_SOURCE_FIX_COPY = {
   },
   trace_project: {
     description:
-      "Review the traces or project setup that produced this result, then rerun the quality check.",
+      "Review the traces or project setup that produced this quality-check result, then rerun the quality check.",
     title: "Fix trace source",
   },
 };

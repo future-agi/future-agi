@@ -1182,6 +1182,13 @@ describe("evalCreateOnboarding", () => {
       description:
         "Update the simulation scenario or expected behavior that produced this result, then rerun the quality check.",
     });
+    expect(
+      getEvalSourceFixOnboardingCopy({ sourceType: "trace_project" }),
+    ).toMatchObject({
+      title: "Fix trace source",
+      description:
+        "Review the traces or project setup that produced this quality-check result, then rerun the quality check.",
+    });
   });
 
   it("extracts the safest available run id from eval run results", () => {
