@@ -27,6 +27,80 @@ import { useFollowUpRunner } from "../useAnalyzeRunner";
 
 const ACCENT = "#7857FC";
 
+// Tunes the LLM-style streaming feel. Faster than real LLMs since we have
+// the whole answer locally — should feel snappy but still "alive".
+const STREAM_CHARS_PER_TICK = 3;
+const STREAM_TICK_MS = 16;
+
+// Reveal `text` one chunk per tick. Reset whenever the input text changes
+// (new message arrives). Returns the visible substring + whether more is
+// still incoming so the caller can render a cursor.
+function useStreamingText(text) {
+  const fullText = typeof text === "string" ? text : "";
+  const [revealedLen, setRevealedLen] = useState(0);
+
+  useEffect(() => {
+    setRevealedLen(0);
+  }, [fullText]);
+
+  useEffect(() => {
+    if (revealedLen >= fullText.length) return undefined;
+    const id = setInterval(() => {
+      setRevealedLen((n) => Math.min(n + STREAM_CHARS_PER_TICK, fullText.length));
+    }, STREAM_TICK_MS);
+    return () => clearInterval(id);
+  }, [fullText, revealedLen]);
+
+  return {
+    revealed: fullText.slice(0, revealedLen),
+    isStreaming: revealedLen < fullText.length,
+  };
+}
+
+// Inline blinking caret rendered at the end of streaming text — same
+// visual cue every chat LLM uses to say "still typing".
+function StreamCursor({ color = ACCENT }) {
+  return (
+    <Box
+      component="span"
+      sx={{
+        display: "inline-block",
+        width: 8,
+        height: "1.05em",
+        verticalAlign: "-2px",
+        bgcolor: color,
+        ml: 0.4,
+        borderRadius: "1px",
+        animation: "stream-blink 0.9s ease-in-out infinite",
+        "@keyframes stream-blink": {
+          "0%, 100%": { opacity: 1 },
+          "50%": { opacity: 0.2 },
+        },
+      }}
+    />
+  );
+}
+StreamCursor.propTypes = { color: PropTypes.string };
+
+// Fade-in + slight slide-up wrapper for any newly-mounted message card so
+// each one settles in instead of popping. ~200ms ease-out, subtle 6px lift.
+function FadeIn({ children }) {
+  return (
+    <Box
+      sx={{
+        animation: "msg-in 220ms cubic-bezier(0.2, 0.65, 0.3, 1) both",
+        "@keyframes msg-in": {
+          "0%": { opacity: 0, transform: "translateY(6px)" },
+          "100%": { opacity: 1, transform: "translateY(0)" },
+        },
+      }}
+    >
+      {children}
+    </Box>
+  );
+}
+FadeIn.propTypes = { children: PropTypes.node };
+
 // One block of a step's expanded reasoning — Claude-Code-style.
 function StepDetailBlock({ block }) {
   const theme = useTheme();
@@ -321,6 +395,12 @@ StepCard.propTypes = { step: PropTypes.object.isRequired };
 function SynthesisCard({ synthesis }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+  // Stream the headline first; once it finishes, stream the fix below it.
+  // This mirrors how an LLM emits one paragraph then another rather than
+  // dumping both at once.
+  const head = useStreamingText(synthesis.headline);
+  const headDone = !head.isStreaming;
+  const fix = useStreamingText(headDone ? synthesis.fix : "");
   return (
     <Box
       sx={{
@@ -347,30 +427,34 @@ function SynthesisCard({ synthesis }) {
         </Typography>
       </Stack>
       <Typography fontSize="13.5px" color="text.primary" sx={{ lineHeight: 1.55, mb: 1 }}>
-        {synthesis.headline}
+        {head.revealed}
+        {head.isStreaming && <StreamCursor />}
       </Typography>
-      <Stack direction="row" gap={1} alignItems="flex-start">
-        <Typography
-          fontSize="10px"
-          fontWeight={700}
-          sx={{
-            color: "#5ACE6D",
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            mt: "3px",
-            flexShrink: 0,
-            px: 0.75,
-            py: 0.25,
-            borderRadius: "3px",
-            bgcolor: alpha("#5ACE6D", isDark ? 0.14 : 0.12),
-          }}
-        >
-          Fix
-        </Typography>
-        <Typography fontSize="12.5px" color="text.secondary" sx={{ lineHeight: 1.6, flex: 1 }}>
-          {synthesis.fix}
-        </Typography>
-      </Stack>
+      {headDone && (
+        <Stack direction="row" gap={1} alignItems="flex-start">
+          <Typography
+            fontSize="10px"
+            fontWeight={700}
+            sx={{
+              color: "#5ACE6D",
+              textTransform: "uppercase",
+              letterSpacing: "0.08em",
+              mt: "3px",
+              flexShrink: 0,
+              px: 0.75,
+              py: 0.25,
+              borderRadius: "3px",
+              bgcolor: alpha("#5ACE6D", isDark ? 0.14 : 0.12),
+            }}
+          >
+            Fix
+          </Typography>
+          <Typography fontSize="12.5px" color="text.secondary" sx={{ lineHeight: 1.6, flex: 1 }}>
+            {fix.revealed}
+            {fix.isStreaming && <StreamCursor color="#5ACE6D" />}
+          </Typography>
+        </Stack>
+      )}
     </Box>
   );
 }
@@ -516,7 +600,9 @@ function SubagentStepRow({ step }) {
 SubagentStepRow.propTypes = { step: PropTypes.object.isRequired };
 
 // Light **bold** parsing for the sub-agent answer body — minimal markdown.
-function MiniMarkdown({ text }) {
+// `trailingNode` is rendered inline at the very end of the text (so a
+// streaming cursor sits next to the last revealed character).
+function MiniMarkdown({ text, trailingNode }) {
   const segments = useMemo(() => {
     const out = [];
     const re = /\*\*([^*]+)\*\*|`([^`]+)`/g;
@@ -565,10 +651,29 @@ function MiniMarkdown({ text }) {
           <React.Fragment key={i}>{s.t}</React.Fragment>
         ),
       )}
+      {trailingNode}
     </Typography>
   );
 }
-MiniMarkdown.propTypes = { text: PropTypes.string.isRequired };
+MiniMarkdown.propTypes = {
+  text: PropTypes.string.isRequired,
+  trailingNode: PropTypes.node,
+};
+
+// Stream a markdown answer word-by-word + render a blinking cursor at the
+// end until the stream completes. The partial text still goes through the
+// markdown parser; the regex tolerates unmatched `**` so styling pops in
+// as the closing marker appears — same way real LLM clients behave.
+function StreamingMarkdown({ text }) {
+  const { revealed, isStreaming } = useStreamingText(text);
+  return (
+    <MiniMarkdown
+      text={revealed}
+      trailingNode={isStreaming ? <StreamCursor /> : null}
+    />
+  );
+}
+StreamingMarkdown.propTypes = { text: PropTypes.string.isRequired };
 
 // The sub-agent container: header strip + sub-step list + final answer.
 function SubagentCard({ msg }) {
@@ -653,8 +758,9 @@ function SubagentCard({ msg }) {
         </Box>
       </Box>
 
-      {/* Final answer — appears once all steps are done. */}
-      {msg.answer && <MiniMarkdown text={msg.answer} />}
+      {/* Final answer — appears once all steps are done, then streams in
+          LLM-style with a blinking cursor at the trailing edge. */}
+      {msg.answer && <StreamingMarkdown text={msg.answer} />}
     </Stack>
   );
 }
@@ -1063,24 +1169,22 @@ export default function AnalyzeTab({ error }) {
             </Stack>
           ) : (
             messages.map((m) => {
-              if (m.type === "step") return <StepCard key={m.id} step={m} />;
-              if (m.type === "synthesis")
-                return <SynthesisCard key={m.id} synthesis={m} />;
-              if (m.type === "run_header")
-                return (
-                  <RunHeader key={m.id} label={m.label} timestamp={m.timestamp} />
-                );
-              if (m.type === "user_question")
-                return <UserQuestionBubble key={m.id} text={m.text} />;
-              if (m.type === "assistant_intro")
-                return <AssistantIntro key={m.id} text={m.text} />;
-              if (m.type === "subagent")
-                return <SubagentCard key={m.id} msg={m} />;
-              // suggestions are rendered in the bottom ComposeArea instead
-              // of inline in the thread — single source of truth, always
-              // sits next to the input where the user is composing.
-              if (m.type === "suggestions") return null;
-              return null;
+              const render = (() => {
+                if (m.type === "step") return <StepCard step={m} />;
+                if (m.type === "synthesis") return <SynthesisCard synthesis={m} />;
+                if (m.type === "run_header")
+                  return <RunHeader label={m.label} timestamp={m.timestamp} />;
+                if (m.type === "user_question")
+                  return <UserQuestionBubble text={m.text} />;
+                if (m.type === "assistant_intro")
+                  return <AssistantIntro text={m.text} />;
+                if (m.type === "subagent") return <SubagentCard msg={m} />;
+                // suggestions are rendered in the bottom ComposeArea
+                // instead of inline in the thread.
+                return null;
+              })();
+              if (!render) return null;
+              return <FadeIn key={m.id}>{render}</FadeIn>;
             })
           )}
         </Stack>
