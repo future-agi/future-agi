@@ -86,7 +86,9 @@ const CustomTraceRenderer = (params) => {
   }
 
   if (RENDERER_CONFIG.tagColumns?.includes(colId)) {
-    return <TagsCell value={value} />;
+    return (
+      <TagsCell value={value} traceId={data?.trace_id} spanId={data?.span_id} />
+    );
   }
 
   if (isEval && column?.outputType === "Pass/Fail") {
