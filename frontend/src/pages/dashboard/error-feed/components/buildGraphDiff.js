@@ -9,32 +9,29 @@
  *                                                      nodes whose spans had
  *                                                      errors)
  *
- * Each node is matched by its `(type, name)` pair — both come from the span
- * attributes and are stable identifiers.
+ * The shape we're given:
+ *   buildTraceGraph returns FLAT nodes — `{ id, name, type, errorCount,
+ *   avgLatencyMs, ... }` — NOT nested under `data`. AgentGraph itself wraps
+ *   each node into `{ id, data: { ...node, _direction }, position }` for
+ *   React Flow. So when we attach `_diffStatus` / `_isFailurePoint` at the
+ *   top level of the node, those fields flow into `data._diffStatus` /
+ *   `data._isFailurePoint` automatically — which is what AgentNode reads.
  *
- * Annotations on `node.data` (all optional, ignored when absent):
+ * Match key:
+ *   `(type, name)` — both come from span attributes and are stable
+ *   identifiers across traces of the same agent.
  *
- *   _diffStatus:
- *     "fail-only"          → extra step in failing trace
- *     "pass-only-ghost"    → ghost step injected from working (was skipped)
- *     "matched-regressed"  → exists in both, but failing has errors and/or
- *                            is ≥1.5× slower
- *     "matched"            → exists in both with comparable metrics
+ * Status labels (written as `node._diffStatus`):
+ *   "fail-only"          → extra step in failing trace
+ *   "pass-only-ghost"    → missing step ghosted INTO failing (was skipped)
+ *   "pass-only"          → step missing from failing (annotated on pass side)
+ *   "matched-regressed"  → exists both sides, but failing has errors and/or
+ *                          is ≥1.5× slower
+ *   "matched"            → exists both sides, comparable metrics
  *
- *   _isFailurePoint: true  → this node is where the failing trace errored
- *                            (takes visual priority over diff status; a
- *                            failed node is the headline, not a diff cue)
- *
- * Annotations on edges:
- *
- *   _skipped: true         → synthetic dashed edge representing a path the
- *                            failing trace did not take. Rendered red.
- *
- * The original `failGraph` / `passGraph` objects are NOT mutated.
- *
- * The `passAnnotated` graph on the right is kept simpler — its nodes get the
- * standard diff annotations, but no ghosts/skipped edges. The failing-side
- * graph is the one carrying the diagnostic story.
+ * The original graphs are NOT mutated. The pass-side graph carries the
+ * standard diff annotations only; the storytelling cues (ghosts, skipped
+ * edges, failure markers) live on the fail-side graph.
  */
 
 const SLOWER_RATIO = 1.5;
@@ -42,37 +39,36 @@ const SENTINEL_TYPES = new Set(["start", "end"]);
 const GHOST_PREFIX = "ghost-";
 
 function keyOf(node) {
-  const type = String(node?.data?.type ?? "")
-    .toLowerCase()
-    .trim();
-  const name = String(node?.data?.name ?? "")
-    .toLowerCase()
-    .trim();
+  const type = String(node?.type ?? "").toLowerCase().trim();
+  const name = String(node?.name ?? "").toLowerCase().trim();
   return `${type}|${name}`;
 }
 
+// Tolerate both camelCase (buildTraceGraph output) and snake_case (older
+// shapes / AgentNode's tooltip code). Whichever is populated, we read.
+function errorCountOf(node) {
+  return Number(node?.errorCount ?? node?.error_count ?? 0) || 0;
+}
+function avgLatencyOf(node) {
+  return Number(node?.avgLatencyMs ?? node?.avg_latency_ms ?? 0) || 0;
+}
+
 function isRegressed(failNode, passNode) {
-  const failErr = failNode?.data?.error_count ?? 0;
-  const passErr = passNode?.data?.error_count ?? 0;
+  const failErr = errorCountOf(failNode);
+  const passErr = errorCountOf(passNode);
   if (failErr > 0 && passErr === 0) return true;
 
-  const failLat = failNode?.data?.avg_latency_ms ?? 0;
-  const passLat = passNode?.data?.avg_latency_ms ?? 0;
+  const failLat = avgLatencyOf(failNode);
+  const passLat = avgLatencyOf(passNode);
   if (passLat > 0 && failLat / passLat >= SLOWER_RATIO) return true;
 
   return false;
 }
 
 function annotate(node, patch) {
-  // Shallow clone — fresh data object so React Flow + memoised consumers pick
-  // up the change without mutating the upstream graph.
-  return {
-    ...node,
-    data: {
-      ...node.data,
-      ...patch,
-    },
-  };
+  // Shallow clone — fresh object so memoised React-Flow consumers re-render
+  // without mutating the upstream graph.
+  return { ...node, ...patch };
 }
 
 export function buildGraphDiff(failGraph, passGraph) {
@@ -98,12 +94,11 @@ export function buildGraphDiff(failGraph, passGraph) {
   let shared = 0;
   let failed = 0;
 
-  // 1. Annotate the failing-side nodes in-place. A node that errored takes
-  //    visual priority via `_isFailurePoint` regardless of its diff status.
+  // 1. Annotate the failing-side nodes. Failure point takes visual priority
+  //    over diff status — a failed node is the headline, not a diff cue.
   const annotatedFailNodes = failNodes.map((node) => {
-    const isSentinel = SENTINEL_TYPES.has(node?.data?.type);
-    const errorCount = node?.data?.error_count ?? 0;
-    const isFailurePoint = !isSentinel && errorCount > 0;
+    const isSentinel = SENTINEL_TYPES.has(node?.type);
+    const isFailurePoint = !isSentinel && errorCountOf(node) > 0;
     if (isFailurePoint) failed += 1;
 
     if (isSentinel) {
@@ -127,46 +122,42 @@ export function buildGraphDiff(failGraph, passGraph) {
     });
   });
 
-  // 2. Identify pass-only (missing) nodes. Each becomes a ghost in the
-  //    failing graph carrying the working-side metadata.
+  // 2. Pass-only (missing) nodes become ghosts injected into the failing graph.
   const failByKey = new Map();
   for (const n of annotatedFailNodes) failByKey.set(keyOf(n), n);
-
-  const passIdToKey = new Map();
-  for (const n of passNodes) passIdToKey.set(n.id, keyOf(n));
 
   const ghostNodes = [];
   const ghostIds = new Set(); // working-trace ids whose ghost we created
   for (const passNode of passNodes) {
-    if (SENTINEL_TYPES.has(passNode?.data?.type)) continue;
-    if (failByKey.has(keyOf(passNode))) continue; // exists in failing → not missing
+    if (SENTINEL_TYPES.has(passNode?.type)) continue;
+    if (failByKey.has(keyOf(passNode))) continue;
     missing += 1;
     ghostNodes.push({
       ...passNode,
       id: `${GHOST_PREFIX}${passNode.id}`,
-      data: { ...passNode.data, _diffStatus: "pass-only-ghost" },
+      _diffStatus: "pass-only-ghost",
     });
     ghostIds.add(passNode.id);
   }
 
-  // 3. Build synthetic "skipped path" edges. For each working-graph edge
-  //    whose TARGET is a missing/ghost node, mirror it into the failing
-  //    graph: source is the failing-side equivalent if shared (entry into
-  //    the ghost branch), or another ghost if both endpoints are missing
-  //    (interior of a multi-hop missing chain). We do NOT mirror edges
-  //    whose target is shared — those would rejoin the real flow and
-  //    create confusing duplicate connections.
+  // 3. Synthetic "skipped path" edges. For each working-graph edge whose
+  //    TARGET is a missing/ghost node, mirror it into the failing graph.
+  //    Source resolves to: the failing-side equivalent if shared (entry into
+  //    the ghost branch), or another ghost (interior of a multi-hop missing
+  //    chain). Edges whose target is shared aren't mirrored — they'd rejoin
+  //    the real flow and create confusing duplicate connections.
   const skippedEdges = [];
+  const passNodeById = new Map();
+  for (const n of passNodes) passNodeById.set(n.id, n);
+
   for (const edge of passEdges) {
     if (!ghostIds.has(edge.target)) continue;
 
     let sourceId;
     if (ghostIds.has(edge.source)) {
-      // Ghost-to-ghost (interior of missing sub-chain).
       sourceId = `${GHOST_PREFIX}${edge.source}`;
     } else {
-      // Anchor the ghost branch back to the equivalent failing-side parent.
-      const sourcePassNode = passNodes.find((n) => n.id === edge.source);
+      const sourcePassNode = passNodeById.get(edge.source);
       if (!sourcePassNode) continue;
       const failParent = failByKey.get(keyOf(sourcePassNode));
       if (!failParent) continue;
@@ -176,7 +167,7 @@ export function buildGraphDiff(failGraph, passGraph) {
     skippedEdges.push({
       source: sourceId,
       target: `${GHOST_PREFIX}${edge.target}`,
-      transition_count: 1,
+      transitionCount: 1,
       _skipped: true,
     });
   }
@@ -187,12 +178,11 @@ export function buildGraphDiff(failGraph, passGraph) {
     edges: [...failEdges, ...skippedEdges],
   };
 
-  // 4. Working-side nodes get standard diff annotations; the working graph
-  //    is the reference view, not the storytelling view.
+  // 4. Pass-side annotations — reference view, lighter touch.
   const passAnnotated = {
     ...passGraph,
     nodes: passNodes.map((node) => {
-      if (SENTINEL_TYPES.has(node?.data?.type)) {
+      if (SENTINEL_TYPES.has(node?.type)) {
         return annotate(node, { _diffStatus: "matched" });
       }
       const match = failByKey.get(keyOf(node));
