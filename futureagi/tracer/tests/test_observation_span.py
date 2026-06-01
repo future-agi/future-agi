@@ -690,45 +690,170 @@ class TestObservationSpanListSpansObserveAPI:
 class TestObservationSpanSubmitFeedbackAPI:
     """Tests for POST /tracer/observation-span/submit_feedback/ endpoint."""
 
+    SUBMIT_FEEDBACK_URL = "/tracer/observation-span/submit_feedback/"
+
+    def _make_eval_logger(self, observation_span, custom_eval_config, error=False):
+        from tracer.models.observation_span import EvalLogger
+
+        return EvalLogger.objects.create(
+            trace=observation_span.trace,
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+            error=error,
+            error_message="oops" if error else None,
+        )
+
+    def _valid_span_payload(self, observation_span, custom_eval_config):
+        return {
+            "target_type": "span",
+            "observation_span_id": str(observation_span.id),
+            "custom_eval_config_id": str(custom_eval_config.id),
+            "feedback_value": "passed",
+            "feedback_explanation": "manual correction",
+            "feedback_improvement": "be stricter on hedged refusals",
+        }
+
     def test_submit_feedback_unauthenticated(self, api_client, observation_span):
-        """Unauthenticated requests should be rejected."""
         response = api_client.post(
-            "/tracer/observation-span/submit_feedback/",
+            self.SUBMIT_FEEDBACK_URL,
             {
-                "span_id": observation_span.id,
-                "feedback_type": "thumbs_up",
-                "feedback_value": True,
+                "target_type": "span",
+                "observation_span_id": str(observation_span.id),
+                "custom_eval_config_id": str(uuid.uuid4()),
+                "feedback_value": "passed",
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_submit_feedback_success(self, auth_client, observation_span):
-        """Submit feedback for an observation span."""
-        response = auth_client.post(
-            "/tracer/observation-span/submit_feedback/",
-            {
-                "span_id": observation_span.id,
-                "feedback_type": "thumbs_up",
-                "feedback_value": True,
-            },
-            format="json",
-        )
-        # Accept 200 or 400 (if feature not enabled)
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
+    def test_submit_feedback_rejects_missing_target_type(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        self._make_eval_logger(observation_span, custom_eval_config)
+        payload = self._valid_span_payload(observation_span, custom_eval_config)
+        payload.pop("target_type")
 
-    def test_submit_feedback_invalid_span(self, auth_client):
-        """Submit feedback for non-existent span fails."""
-        response = auth_client.post(
-            "/tracer/observation-span/submit_feedback/",
-            {
-                "span_id": "nonexistent_span_id",
-                "feedback_type": "thumbs_up",
-                "feedback_value": True,
-            },
-            format="json",
-        )
+        response = auth_client.post(self.SUBMIT_FEEDBACK_URL, payload, format="json")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_submit_feedback_span_creates_feedback_row(
+        self, auth_client, mocker, observation_span, custom_eval_config
+    ):
+        self._make_eval_logger(observation_span, custom_eval_config)
+        mocker.patch("tracer.views.observation_span.EmbeddingManager")
+
+        response = auth_client.post(
+            self.SUBMIT_FEEDBACK_URL,
+            self._valid_span_payload(observation_span, custom_eval_config),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        feedback = Feedback.objects.get(id=result["feedback_id"])
+        assert feedback.source == FeedbackSourceChoices.OBSERVE.value
+        assert feedback.source_id == str(observation_span.id)
+        assert feedback.eval_template_id == custom_eval_config.eval_template_id
+        assert feedback.custom_eval_config_id == custom_eval_config.id
+        assert feedback.user_eval_metric_id is None
+
+    def test_submit_feedback_span_calls_embedding_manager(
+        self, auth_client, mocker, observation_span, custom_eval_config
+    ):
+        self._make_eval_logger(observation_span, custom_eval_config)
+        embedding_cls = mocker.patch("tracer.views.observation_span.EmbeddingManager")
+
+        response = auth_client.post(
+            self.SUBMIT_FEEDBACK_URL,
+            self._valid_span_payload(observation_span, custom_eval_config),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        embedding_cls.return_value.data_formatter.assert_called_once()
+        call_kwargs = embedding_cls.return_value.data_formatter.call_args.kwargs
+        assert call_kwargs["eval_id"] == custom_eval_config.eval_template_id
+        assert call_kwargs["inputs_formater"] == [observation_span.id]
+        embedding_cls.return_value.close.assert_called_once()
+
+    def test_submit_feedback_rejects_errored_eval(
+        self, auth_client, mocker, observation_span, custom_eval_config
+    ):
+        self._make_eval_logger(observation_span, custom_eval_config, error=True)
+        mocker.patch("tracer.views.observation_span.EmbeddingManager")
+
+        response = auth_client.post(
+            self.SUBMIT_FEEDBACK_URL,
+            self._valid_span_payload(observation_span, custom_eval_config),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json().get("code") == "errored_eval"
+        assert not Feedback.objects.filter(
+            custom_eval_config_id=custom_eval_config.id
+        ).exists()
+
+    def test_submit_feedback_gates_trace_path(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        payload = self._valid_span_payload(observation_span, custom_eval_config)
+        payload["target_type"] = "trace"
+        payload["trace_id"] = str(observation_span.trace.id)
+
+        response = auth_client.post(self.SUBMIT_FEEDBACK_URL, payload, format="json")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json().get("code") == "not_supported"
+
+    def test_submit_feedback_gates_session_path(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        payload = self._valid_span_payload(observation_span, custom_eval_config)
+        payload.pop("observation_span_id")
+        payload["target_type"] = "session"
+        payload["trace_session_id"] = str(uuid.uuid4())
+
+        response = auth_client.post(self.SUBMIT_FEEDBACK_URL, payload, format="json")
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json().get("code") == "not_supported"
+
+    def test_submit_feedback_validator_rejects_inconsistent_ids(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        payload = self._valid_span_payload(observation_span, custom_eval_config)
+        payload["target_type"] = "session"
+        payload["trace_session_id"] = str(uuid.uuid4())
+
+        response = auth_client.post(self.SUBMIT_FEEDBACK_URL, payload, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_submit_feedback_validator_rejects_unknown_field(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        payload = self._valid_span_payload(observation_span, custom_eval_config)
+        payload["not_a_real_field"] = "garbage"
+
+        response = auth_client.post(self.SUBMIT_FEEDBACK_URL, payload, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_submit_feedback_invalid_span(self, auth_client, custom_eval_config):
+        response = auth_client.post(
+            self.SUBMIT_FEEDBACK_URL,
+            {
+                "target_type": "span",
+                "observation_span_id": "nonexistent_span_id",
+                "custom_eval_config_id": str(custom_eval_config.id),
+                "feedback_value": "passed",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.json().get("code") == "not_found"
 
     def test_feedback_detail_routes_retrieve_and_delete(
         self, auth_client, user, organization, workspace, observation_span
@@ -760,6 +885,229 @@ class TestObservationSpanSubmitFeedbackAPI:
         assert response.status_code == status.HTTP_204_NO_CONTENT
         feedback.refresh_from_db()
         assert feedback.deleted is True
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestObservationSpanSubmitFeedbackActionTypeAPI:
+    """Tests for POST /tracer/observation-span/submit_feedback_action_type/."""
+
+    ACTION_TYPE_URL = "/tracer/observation-span/submit_feedback_action_type/"
+
+    def _seed_feedback_and_logger(
+        self, user, organization, workspace, observation_span, custom_eval_config
+    ):
+        from tracer.models.observation_span import EvalLogger
+
+        feedback = Feedback.objects.create(
+            source=FeedbackSourceChoices.OBSERVE.value,
+            source_id=str(observation_span.id),
+            value="passed",
+            eval_template=custom_eval_config.eval_template,
+            custom_eval_config_id=custom_eval_config.id,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        eval_logger = EvalLogger.objects.create(
+            trace=observation_span.trace,
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+            eval_task_id=str(uuid.uuid4()),
+        )
+        return feedback, eval_logger
+
+    def _valid_span_action_payload(
+        self, observation_span, custom_eval_config, feedback, action_type
+    ):
+        return {
+            "target_type": "span",
+            "observation_span_id": str(observation_span.id),
+            "custom_eval_config_id": str(custom_eval_config.id),
+            "feedback_id": str(feedback.id),
+            "action_type": action_type,
+        }
+
+    def test_action_type_validator_rejects_unknown_string(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+    ):
+        feedback, _ = self._seed_feedback_and_logger(
+            user, organization, workspace, observation_span, custom_eval_config
+        )
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            self._valid_span_action_payload(
+                observation_span, custom_eval_config, feedback, "drink_coffee"
+            ),
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_action_type_rejects_missing_target_type(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+    ):
+        feedback, _ = self._seed_feedback_and_logger(
+            user, organization, workspace, observation_span, custom_eval_config
+        )
+        payload = self._valid_span_action_payload(
+            observation_span, custom_eval_config, feedback, "recalculate"
+        )
+        payload.pop("target_type")
+
+        response = auth_client.post(self.ACTION_TYPE_URL, payload, format="json")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_action_type_retune_persists_action_only(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+        mocker,
+    ):
+        feedback, _ = self._seed_feedback_and_logger(
+            user, organization, workspace, observation_span, custom_eval_config
+        )
+        observe_mock = mocker.patch(
+            "tracer.views.observation_span.evaluate_observation_span_observe"
+        )
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            self._valid_span_action_payload(
+                observation_span, custom_eval_config, feedback, "retune"
+            ),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["action_type"] == "retune"
+        assert result["target_type"] == "span"
+        assert result["recalculated_count"] == 0
+        feedback.refresh_from_db()
+        assert feedback.action_type == "retune"
+        observe_mock.assert_not_called()
+
+    def test_action_type_recalculate_dispatches_observe_rerun(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+        mocker,
+    ):
+        feedback, eval_logger = self._seed_feedback_and_logger(
+            user, organization, workspace, observation_span, custom_eval_config
+        )
+        # observation_span fixture has no project_version, so view picks the observe rerun.
+        observe_mock = mocker.patch(
+            "tracer.views.observation_span.evaluate_observation_span_observe",
+            return_value=True,
+        )
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            self._valid_span_action_payload(
+                observation_span, custom_eval_config, feedback, "recalculate"
+            ),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["recalculated_count"] == 1
+
+        observe_mock.assert_called_once()
+        args = observe_mock.call_args.args
+        assert args[0] == str(observation_span.id)
+        assert args[1] == str(custom_eval_config.id)
+        assert args[2] == eval_logger.eval_task_id
+
+        eval_logger.refresh_from_db()
+        assert eval_logger.deleted is True
+
+    def test_action_type_recalculate_rejects_errored_eval(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+        mocker,
+    ):
+        feedback, eval_logger = self._seed_feedback_and_logger(
+            user, organization, workspace, observation_span, custom_eval_config
+        )
+        eval_logger.error = True
+        eval_logger.error_message = "judge crashed"
+        eval_logger.save(update_fields=["error", "error_message"])
+        observe_mock = mocker.patch(
+            "tracer.views.observation_span.evaluate_observation_span_observe"
+        )
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            self._valid_span_action_payload(
+                observation_span, custom_eval_config, feedback, "recalculate"
+            ),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_409_CONFLICT
+        assert response.json().get("code") == "errored_eval"
+        observe_mock.assert_not_called()
+        eval_logger.refresh_from_db()
+        assert eval_logger.deleted is False
+
+    def test_action_type_gates_trace_target(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+    ):
+        feedback, _ = self._seed_feedback_and_logger(
+            user, organization, workspace, observation_span, custom_eval_config
+        )
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            {
+                "target_type": "trace",
+                "observation_span_id": str(observation_span.id),
+                "trace_id": str(observation_span.trace.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+                "feedback_id": str(feedback.id),
+                "action_type": "recalculate",
+            },
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json().get("code") == "not_supported"
 
 
 @pytest.mark.integration
