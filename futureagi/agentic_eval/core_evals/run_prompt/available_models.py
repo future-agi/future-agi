@@ -7252,7 +7252,7 @@ OSS_AVAILABLE_MODELS = [
         "latency": 100,
     },
     {
-        "model_name": "pulse-pro",
+        "model_name": "pulse",
         "providers": "smallest_ai",
         "api_key_name": "SMALLEST_AI_API_KEY",
         "mode": "stt",

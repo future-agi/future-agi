@@ -18,6 +18,7 @@ STT (Pulse):
 """
 
 import time
+import wave
 from io import BytesIO
 
 import requests
@@ -124,61 +125,88 @@ def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
         sample_rate=sample_rate,
     )
 
-    response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
+    # stream=True is required — without it the AWS ALB layer can return a cached
+    # zeroed-out body. Streaming bypasses the cache and delivers real PCM frames.
+    response = requests.post(
+        endpoint, json=payload, headers=headers, timeout=30, stream=True
+    )
     response.raise_for_status()
 
-    audio_bytes = response.content
+    pcm_bytes = b"".join(response.iter_content(chunk_size=4096))
+
+    # The API returns raw 16-bit PCM regardless of add_wav_header=True.
+    # Wrap in a proper RIFF/WAV container so downstream consumers (STT, players)
+    # can handle it correctly.
+    buf = BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)       # 16-bit
+        w.setframerate(sample_rate)
+        w.writeframes(pcm_bytes)
+    audio_bytes = buf.getvalue()
+
     return run_prompt_instance._format_audio_output(audio_bytes, start_time, input_text)
 
 
-def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key):
-    """Speech-to-Text via Smallest AI Pulse REST API (pulse-pro, non-streaming).
+def _ensure_wav_container(audio_bytes: bytes, sample_rate: int = 24000) -> bytes:
+    """Wrap raw PCM bytes in a RIFF/WAV container if no header is present."""
+    if audio_bytes[:4] == b"RIFF":
+        return audio_bytes
+    buf = BytesIO()
+    with wave.open(buf, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(sample_rate)
+        w.writeframes(audio_bytes)
+    return buf.getvalue()
 
-    Uses pulse-pro which supports HTTP POST. The streaming `pulse` model
-    requires a WebSocket connection and is not used here.
+
+def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key):
+    """Speech-to-Text via Smallest AI Pulse REST API.
+
+    Sends audio as raw bytes with Content-Type: audio/wav.
+    Multipart form upload returns only {"status":"success"} without a transcript.
     """
     raw_input = run_prompt_instance._get_input_audio_from_messages()
     audio_bytes = audio_bytes_from_url_or_base64(raw_input)
 
     cfg = run_prompt_instance.run_prompt_config or {}
-    language = cfg.get("language") or cfg.get("language_code") or None
+    language = cfg.get("language") or cfg.get("language_code") or "en"
     word_timestamps = cfg.get("word_timestamps", False)
     diarize = cfg.get("diarize", False)
 
-    endpoint = f"{_BASE_URL}/stt/"
-    params = {"model": "pulse-pro"}
+    endpoint = f"{_BASE_URL}/pulse/get_text"
+    params = {"model": "pulse", "language": language}
+    if word_timestamps:
+        params["word_timestamps"] = "true"
+    if diarize:
+        params["diarize"] = "true"
 
     headers = {
         "Authorization": f"Bearer {api_key}",
+        "Content-Type": "audio/wav",
     }
 
-    files = {"file": ("audio.wav", BytesIO(audio_bytes), "audio/wav")}
-    data = {}
-    if language:
-        data["language"] = language
-    if word_timestamps:
-        data["word_timestamps"] = "true"
-    if diarize:
-        data["diarize"] = "true"
+    wav_bytes = _ensure_wav_container(audio_bytes)
 
     logger.info(
         "smallest_ai_stt_request",
-        audio_size_bytes=len(audio_bytes),
+        audio_size_bytes=len(wav_bytes),
         language=language,
         word_timestamps=word_timestamps,
         diarize=diarize,
     )
 
     response = requests.post(
-        endpoint, headers=headers, params=params, files=files, data=data, timeout=60
+        endpoint, headers=headers, params=params, data=wav_bytes, timeout=60
     )
     response.raise_for_status()
 
     result = response.json()
     transcript_text = (
-        result.get("text")
+        result.get("transcription")
+        or result.get("text")
         or result.get("transcript")
-        or result.get("transcription")
         or str(result)
     )
 
