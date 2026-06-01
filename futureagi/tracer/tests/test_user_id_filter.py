@@ -2,15 +2,20 @@
 
 Regression coverage for TH-4436: the cross-project user-detail page injects
 ``userScopeFilter = [{column_id: "user_id", filter_value: <user_id_string>}]``
-into the traces view. The frontend sends the ``tracer_enduser.user_id``
+into the traces view. The frontend sends the curated EndUser ``user_id``
 string (e.g. ``"9281"`` or ``"user-11771490488.8493178"``), **not** the
 UUID primary key. Before the fix the builder treated ``user_id`` as a
 span-attribute filter and looked up ``span_attributes.user_id`` — which
 OTel instrumentation stores under ``user.id`` (dot), so the filter
 either silently returned zero traces or matched the wrong ones. The fix
-(filters.py) resolves the string to end-user UUIDs via a subquery on
-``tracer_enduser`` and wraps the result in the standard
+(filters.py) resolves the string to end-user UUIDs via a subquery on the
+curated EndUser dimension and wraps the result in the standard
 ``trace_id IN (...)`` pattern.
+
+P3b step2 precondition: the resolution subquery was cut off the legacy CDC
+``tracer_enduser`` onto the v2 ``end_users`` RMT (``id``→``end_user_id``,
+``_peerdb_is_deleted``→``is_deleted``) so it does not go stale when step2
+drops the PG get_or_create → CDC chain that fed the legacy table.
 """
 
 import unittest
@@ -35,14 +40,15 @@ class UserIdFilterTests(unittest.TestCase):
             "filter_value": value,
         }
 
-    def test_user_id_single_string_resolves_via_tracer_enduser(self):
+    def test_user_id_single_string_resolves_via_end_users(self):
         b = self._build()
         sql = b._build_condition(**self._user_id_filter("9281"))
         self.assertIsNotNone(sql, "user_id filter should produce a condition")
         # Wraps in trace_id IN (...) so trace-list/span-list both see matching traces.
         self.assertIn("trace_id IN (", sql)
-        # Resolves via tracer_enduser.user_id — not a raw span_attribute match.
-        self.assertIn("FROM tracer_enduser", sql)
+        # Resolves via the v2 `end_users` curated dimension — not a raw
+        # span_attribute match (P3b step2 precondition cut off `tracer_enduser`).
+        self.assertIn("FROM end_users", sql)
         self.assertIn("user_id =", sql)
         # Must NOT fall through to the generic span-attribute path,
         # which would JSONExtract(span_attributes, 'user_id') — spans
@@ -151,7 +157,7 @@ class UserIdFilterTests(unittest.TestCase):
             self.assertIsNotNone(
                 sql, f"user_id filter must fire for col_type={col_type_val!r}"
             )
-            self.assertIn("FROM tracer_enduser", sql)
+            self.assertIn("FROM end_users", sql)
 
     def test_user_id_does_not_affect_plain_user_filter(self):
         """``col_id == 'user'`` (UUID-valued) must still go to TRACE_END_USER."""
@@ -165,14 +171,14 @@ class UserIdFilterTests(unittest.TestCase):
         )
         self.assertIsNotNone(sql)
         # The classic TRACE_END_USER path matches on the end_user_id UUID
-        # column directly — NO tracer_enduser string-resolution subquery
+        # column directly — NO `end_users` string-resolution subquery
         # (the caller already has the UUID). That distinction is the point of
         # this regression test (TH-4436) and must hold.
-        self.assertNotIn("FROM tracer_enduser", sql)
+        self.assertNotIn("FROM end_users", sql)
         # P3b step1.5: the match is now id-remap-resolved (new→old) so a
         # cross-cutover straddler unifies. Assert the resolution is present on
         # the end_user_id column (proves we still operate on the UUID column,
-        # just resolved — not via tracer_enduser).
+        # just resolved — not via the `end_users` string subquery).
         self.assertIn("end_user_id_remap", sql)
         self.assertIn("id_remap.new_id", sql)
         self.assertIn("%(eu_1)s", sql)
@@ -188,7 +194,7 @@ class UserIdFilterTests(unittest.TestCase):
         )
         self.assertIsNotNone(sql)
         self.assertIn("trace_id IN (", sql)
-        self.assertIn("FROM tracer_enduser", sql)
+        self.assertIn("FROM end_users", sql)
         self.assertIn("user_id LIKE", sql)
         self.assertEqual(b._params.get("col_1"), "%admin%")
 
@@ -207,7 +213,7 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertNotIn("user_id NOT LIKE", sql)
         self.assertEqual(b._params.get("col_1"), "%admin%")
 
-    def test_user_id_null_ops_do_not_query_tracer_enduser(self):
+    def test_user_id_null_ops_do_not_query_end_users(self):
         for op, outer in (
             ("is_null", "trace_id NOT IN ("),
             ("is_not_null", "trace_id IN ("),
@@ -222,7 +228,7 @@ class UserIdFilterTests(unittest.TestCase):
             )
             self.assertIsNotNone(sql)
             self.assertIn(outer, sql)
-            self.assertNotIn("FROM tracer_enduser", sql)
+            self.assertNotIn("FROM end_users", sql)
             self.assertIn("end_user_id !=", sql)
             self.assertIn("00000000-0000-0000-0000-000000000000", sql)
 
@@ -231,7 +237,7 @@ class EndUserAndIdColumnFilterTests(unittest.TestCase):
     def _build(self):
         return ClickHouseFilterBuilder(table="spans")
 
-    def test_user_id_type_filter_resolves_via_enduser_table(self):
+    def test_user_id_type_filter_resolves_via_end_users_table(self):
         b = self._build()
         sql = b._build_condition(
             col_id="user_id_type",
@@ -241,7 +247,7 @@ class EndUserAndIdColumnFilterTests(unittest.TestCase):
             filter_value=["email", "phone"],
         )
         self.assertIsNotNone(sql)
-        self.assertIn("FROM tracer_enduser", sql)
+        self.assertIn("FROM end_users", sql)
         self.assertIn("user_id_type IN", sql)
         self.assertEqual(b._params.get("col_1"), ("email", "phone"))
 

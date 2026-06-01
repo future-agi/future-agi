@@ -1263,8 +1263,17 @@ class DashboardQueryBuilder:
         "span_kind": "observation_type",
         "provider": "provider",
         "session": "toString(trace_session_id)",
-        "user": "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, toString(end_user_id))",
-        "user_id_type": "dictGetOrDefault('enduser_dict', 'user_id_type', end_user_id, '')",
+        # P3b step2 precondition — LABEL source cut legacy `enduser_dict` → v2
+        # `end_users_dict` (017). The committed step1.5 slice resolves the span's
+        # `end_user_id` new→old BEFORE this lookup (so the count/group is correct
+        # for straddlers) but left the label dict as the legacy CDC dict; that
+        # dict stops getting new users once step2 drops the PG get_or_create →
+        # PG→CDC chain. `end_users_dict` is kept fresh by the P3a-ii ingest dual-
+        # write, so a post-step2 new user resolves here where the legacy dict
+        # would fall back to the raw UUID. Same key (`end_user_id`) + attrs
+        # (`user_id`/`user_id_type`) → byte-identical pre-flip (gate B).
+        "user": "dictGetOrDefault('end_users_dict', 'user_id', end_user_id, toString(end_user_id))",
+        "user_id_type": "dictGetOrDefault('end_users_dict', 'user_id_type', end_user_id, '')",
         "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
         "prompt_version": "concat(dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''), ' v', dictGetOrDefault('prompt_dict', 'template_version', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''))",
         "prompt_label": "dictGetOrDefault('prompt_label_dict', 'name', ifNull(prompt_label_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
@@ -1476,8 +1485,10 @@ class DashboardQueryBuilder:
             "span_kind": "observation_type",
             "provider": "provider",
             "session": "toString(trace_session_id)",
-            "user": "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, toString(end_user_id))",
-            "user_id_type": "dictGetOrDefault('enduser_dict', 'user_id_type', end_user_id, '')",
+            # P3b step2 precondition — LABEL source cut legacy `enduser_dict` →
+            # v2 `end_users_dict` (017), same rationale as `_BREAKDOWN_COL_MAP`.
+            "user": "dictGetOrDefault('end_users_dict', 'user_id', end_user_id, toString(end_user_id))",
+            "user_id_type": "dictGetOrDefault('end_users_dict', 'user_id_type', end_user_id, '')",
             "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
             "prompt_version": "concat(dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''), ' v', dictGetOrDefault('prompt_dict', 'template_version', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), ''))",
             "prompt_label": "dictGetOrDefault('prompt_label_dict', 'name', ifNull(prompt_label_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",

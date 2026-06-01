@@ -574,6 +574,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from tracer.services.clickhouse.v2.dispatch import (
                     get_query_builder_class,
                 )
+
                 _DashCls = get_query_builder_class("DASHBOARD")
                 builder = _DashCls(trace_config)
                 query_timeout = self._get_trace_query_timeout_ms(trace_config)
@@ -2139,11 +2140,21 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 if metric_name in enduser_string_cols:
                     enduser_col = enduser_string_cols[metric_name]
                     try:
+                        # P3b step2 precondition — the user/user_id_type filter-
+                        # value list is cut off the legacy CDC `tracer_enduser`
+                        # onto the v2 `end_users` RMT (017): `_peerdb_is_deleted`
+                        # → `is_deleted`; `user_id`/`user_id_type` columns are
+                        # identical. The legacy table stops getting new users
+                        # once step2 drops the PG get_or_create → PG→CDC chain,
+                        # so a newly-active user's `user_id` would be MISSING from
+                        # this dropdown; `end_users` is kept fresh by the P3a-ii
+                        # ingest dual-write. Both are OLD-keyed pre-flip with the
+                        # same rows → byte-identical value list (gate B).
                         sql = (
                             f"SELECT DISTINCT {enduser_col} AS val "
-                            f"FROM tracer_enduser FINAL "
+                            f"FROM end_users FINAL "
                             f"WHERE project_id IN %(project_ids)s "
-                            f"AND _peerdb_is_deleted = 0 "
+                            f"AND is_deleted = 0 "
                             f"AND {enduser_col} IS NOT NULL "
                             f"AND {enduser_col} != '' "
                             f"ORDER BY val "
@@ -2832,6 +2843,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
             from tracer.services.clickhouse.v2.dispatch import (
                 get_query_builder_class,
             )
+
             _DashCls = get_query_builder_class("DASHBOARD")
             builder = _DashCls(trace_config)
             query_timeout = self._get_trace_query_timeout_ms(trace_config)

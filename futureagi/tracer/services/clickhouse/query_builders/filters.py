@@ -227,9 +227,9 @@ class ClickHouseFilterBuilder:
         ),
     }
 
-    # These are string fields on tracer_enduser, not columns on spans. Route
-    # them centrally here so trace/span/session/voice views do not each rewrite
-    # user filters differently.
+    # These are string fields on the curated EndUser dimension (v2 `end_users`),
+    # not columns on spans. Route them centrally here so trace/span/session/voice
+    # views do not each rewrite user filters differently.
     _ENDUSER_STRING_COLUMNS: dict[str, str] = {
         "user_id": "user_id",
         "user": "user_id",
@@ -832,7 +832,7 @@ class ClickHouseFilterBuilder:
 
         ``rhs`` is the positive right-hand side of the resolved-column match,
         e.g. ``IN %(eu_1)s`` (a UUID set) or
-        ``IN (SELECT id FROM tracer_enduser …)`` (a user_id-string subquery).
+        ``IN (SELECT end_user_id FROM end_users …)`` (a user_id-string subquery).
         The left side is ``end_user_id`` resolved new→old through
         ``end_user_id_remap`` (P3b step1.5, DESIGN §3 / id_remap_sql): a
         cross-cutover straddler's NEW (deterministic) span carries
@@ -971,7 +971,7 @@ class ClickHouseFilterBuilder:
         filter_op: str | None,
         filter_value: Any,
     ) -> str | None:
-        """Filter spans by a string field on tracer_enduser.
+        """Filter spans by a string field on the curated EndUser (v2 ``end_users``).
 
         The spans table stores the EndUser UUID in ``end_user_id`` while the
         product filter uses human-readable values such as ``user_id``. Keeping
@@ -1023,19 +1023,24 @@ class ClickHouseFilterBuilder:
             return None
 
         negate = filter_op in negated_ops
+        # P3b step2 precondition — the user_id-string resolution subquery is cut
+        # off the legacy CDC `tracer_enduser` onto the v2 `end_users` RMT (017):
+        # `id`→`end_user_id`, `_peerdb_is_deleted`→`is_deleted`. The legacy table
+        # stops getting new users once step2 drops the PG get_or_create → PG→CDC
+        # chain, so a post-step2 user filtered by `user_id` would resolve to an
+        # EMPTY id-set on the legacy table; `end_users` is kept fresh by the
+        # P3a-ii ingest dual-write. Both tables are OLD-keyed pre-flip and hold
+        # the same curated rows → byte-identical id-set (gate B). The subquery
+        # still returns OLD curated ids; the spans-side new→old resolve below
+        # maps a straddler's new-id spans back onto them (step1.5, unchanged).
         enduser_subquery = (
-            f"SELECT id FROM tracer_enduser FINAL "
-            f"WHERE {inner} "
-            f"AND _peerdb_is_deleted = 0"
+            f"SELECT end_user_id FROM end_users FINAL WHERE {inner} AND is_deleted = 0"
         )
         # P3b step1.5: resolve the span's `end_user_id` new→old before matching
-        # the (old-id) `tracer_enduser` set, so a straddler's new-id spans unify
-        # under the OLD curated id — same mechanism as the UUID path. The
-        # `tracer_enduser` subquery is unchanged: it returns OLD curated ids, and
-        # the spans-side resolve maps new-id spans back onto them. (When the
-        # EndUser string-reads cutover later swaps `tracer_enduser` → the v2
-        # `end_users` table — also OLD-keyed — this spans-side resolve survives
-        # verbatim.) See `_resolved_enduser_membership`.
+        # the (old-id) `end_users` set, so a straddler's new-id spans unify under
+        # the OLD curated id — same mechanism as the UUID path. The `end_users`
+        # subquery returns OLD curated ids, and the spans-side resolve maps new-id
+        # spans back onto them. See `_resolved_enduser_membership`.
         return self._resolved_enduser_membership(
             f"IN ({enduser_subquery})", negate=negate
         )
