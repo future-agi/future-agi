@@ -1276,6 +1276,124 @@ class TestObservationSpanSubmitFeedbackActionTypeAPI:
         eval_logger.refresh_from_db()
         assert eval_logger.deleted is False
 
+    def test_action_type_retune_recalculate_starts_workflow(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+        mocker,
+    ):
+        from tracer.models.observation_span import EvalLogger, EvalTargetType
+        from tracer.models.trace_session import TraceSession
+
+        feedback, anchor_logger = self._seed_feedback_and_logger(
+            user, organization, workspace, observation_span, custom_eval_config
+        )
+        shared_eval_task_id = anchor_logger.eval_task_id
+
+        # Two more siblings under the same eval_task_id: one trace-level, one
+        # session-level. The batch workflow should sweep up all three.
+        EvalLogger.objects.create(
+            trace=observation_span.trace,
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.TRACE,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+            eval_task_id=shared_eval_task_id,
+        )
+        trace_session = TraceSession.objects.create(
+            project=observation_span.project, name="batch session"
+        )
+        EvalLogger.objects.create(
+            trace=None,
+            observation_span=None,
+            trace_session=trace_session,
+            custom_eval_config=custom_eval_config,
+            target_type=EvalTargetType.SESSION,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+            eval_task_id=shared_eval_task_id,
+        )
+
+        workflow_mock = mocker.patch(
+            "tracer.views.observation_span.start_recalculate_eval_task_workflow",
+            return_value="recalculate-eval-task-abcd",
+        )
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            self._valid_span_action_payload(
+                observation_span, custom_eval_config, feedback, "retune_recalculate"
+            ),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["action_type"] == "retune_recalculate"
+        assert result["recalculated_count"] == 3
+
+        workflow_mock.assert_called_once()
+        call_kwargs = workflow_mock.call_args.kwargs
+        assert call_kwargs["eval_task_id"] == shared_eval_task_id
+        assert call_kwargs["custom_eval_config_id"] == str(custom_eval_config.id)
+        target_types = sorted(t.target_type for t in call_kwargs["targets"])
+        assert target_types == ["session", "span", "trace"]
+
+    def test_action_type_retune_recalculate_rejects_when_no_eval_task(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+        mocker,
+    ):
+        from tracer.models.observation_span import EvalLogger
+
+        feedback = Feedback.objects.create(
+            source=FeedbackSourceChoices.OBSERVE.value,
+            source_id=str(observation_span.id),
+            value="passed",
+            eval_template=custom_eval_config.eval_template,
+            custom_eval_config_id=custom_eval_config.id,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        # EvalLogger without an eval_task_id — created by a one-off rerun.
+        EvalLogger.objects.create(
+            trace=observation_span.trace,
+            observation_span=observation_span,
+            custom_eval_config=custom_eval_config,
+            output_str="passed",
+            eval_explanation="ok",
+            results_explanation={"reason": "ok"},
+            eval_task_id=None,
+        )
+        workflow_mock = mocker.patch(
+            "tracer.views.observation_span.start_recalculate_eval_task_workflow"
+        )
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            self._valid_span_action_payload(
+                observation_span, custom_eval_config, feedback, "retune_recalculate"
+            ),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json().get("code") == "no_eval_task"
+        workflow_mock.assert_not_called()
+
 
 @pytest.mark.integration
 class TestRerunSingleHelper:
