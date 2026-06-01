@@ -139,6 +139,12 @@ describe("RequestDetailDrawer", () => {
     expect(
       screen.getByText("Turn the reviewed request into a guardrail"),
     ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /configure fallback/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /set budget/i }),
+    ).not.toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole("button", { name: /tune guardrail/i }),

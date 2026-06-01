@@ -221,6 +221,7 @@ const KeyManagementSection = () => {
               onboardingHref("/dashboard/gateway?onboarding=test-request"),
             ),
         }}
+        singleActionFocus={showOnboardingFocus}
         steps={[
           { label: "Provider", complete: true },
           {

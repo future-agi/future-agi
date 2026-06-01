@@ -544,14 +544,7 @@ const RequestDetailDrawer = ({
   const policyHandoff = showPolicyHandoff
     ? gatewayPolicyHandoffCopy(log, onboardingMode)
     : null;
-  const policyActions = policyHandoff
-    ? [
-        policyHandoff.primaryType,
-        ...Object.keys(GATEWAY_POLICY_ACTIONS).filter(
-          (type) => type !== policyHandoff.primaryType,
-        ),
-      ]
-    : [];
+  const policyActions = policyHandoff ? [policyHandoff.primaryType] : [];
 
   const handleOpenGatewayPolicy = useCallback(
     (policyType) => {

@@ -318,6 +318,7 @@ const RequestExplorerSection = () => {
               ? handleOpenFallbacks
               : handleShowAllLogs,
         }}
+        singleActionFocus={isLogOnboardingMode}
         steps={[
           { label: "Request", complete: Boolean(onboardingRequestId) },
           { label: "Log", complete: hasMatchingRequest },

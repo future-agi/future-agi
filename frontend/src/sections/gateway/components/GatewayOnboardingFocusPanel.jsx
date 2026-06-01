@@ -24,6 +24,7 @@ export default function GatewayOnboardingFocusPanel({
   hidden = false,
   primaryAction,
   secondaryAction,
+  singleActionFocus = false,
   steps = [],
   title,
   tourAnchor,
@@ -95,7 +96,7 @@ export default function GatewayOnboardingFocusPanel({
           ) : null}
         </Stack>
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-          {secondaryAction ? (
+          {secondaryAction && !singleActionFocus ? (
             <Button
               variant="outlined"
               onClick={secondaryAction.onClick}
@@ -136,6 +137,7 @@ GatewayOnboardingFocusPanel.propTypes = {
   hidden: PropTypes.bool,
   primaryAction: actionShape,
   secondaryAction: actionShape,
+  singleActionFocus: PropTypes.bool,
   steps: PropTypes.arrayOf(
     PropTypes.shape({
       complete: PropTypes.bool,

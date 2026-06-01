@@ -82,4 +82,23 @@ describe("GatewayOnboardingFocusPanel", () => {
 
     expect(screen.getByText("Step 4 of 4")).toBeVisible();
   });
+
+  it("hides secondary actions in single-action focus mode", () => {
+    render(
+      <GatewayOnboardingFocusPanel
+        singleActionFocus
+        currentStep="Request"
+        description="Send one request."
+        primaryAction={{ label: "Send request", onClick: vi.fn() }}
+        secondaryAction={{ label: "Open logs", onClick: vi.fn() }}
+        steps={[{ label: "Request", complete: false }]}
+        title="Send the first gateway request"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /send request/i })).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /open logs/i }),
+    ).not.toBeInTheDocument();
+  });
 });

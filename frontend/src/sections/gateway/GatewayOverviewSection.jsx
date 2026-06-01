@@ -357,6 +357,7 @@ const GatewayOverviewSection = () => {
         hidden={!isOnboardingRequestMode}
         primaryAction={gatewayFocusPrimaryAction}
         secondaryAction={gatewayFocusSecondaryAction}
+        singleActionFocus={isOnboardingRequestMode}
         steps={[
           { label: "Provider", complete: completionState.hasProviders },
           { label: "API key", complete: completionState.hasKeys },

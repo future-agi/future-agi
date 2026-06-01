@@ -208,6 +208,7 @@ const ProviderManagementSection = () => {
               onboardingHref("/dashboard/gateway/keys?source=onboarding"),
             ),
         }}
+        singleActionFocus={showOnboardingFocus}
         steps={[
           {
             label: "Provider",

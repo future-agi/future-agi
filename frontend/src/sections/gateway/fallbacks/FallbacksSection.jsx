@@ -628,6 +628,7 @@ const FallbacksSection = () => {
                 }
               : null
           }
+          singleActionFocus={showOnboardingFocus}
           steps={[
             { label: "Request", complete: Boolean(onboardingRequestId) },
             { label: "Provider", complete: false },
@@ -713,6 +714,7 @@ const FallbacksSection = () => {
               }
             : null
         }
+        singleActionFocus={showOnboardingFocus}
         steps={[
           { label: "Request", complete: Boolean(onboardingRequestId) },
           { label: "Provider", complete: availableModels.length > 0 },
