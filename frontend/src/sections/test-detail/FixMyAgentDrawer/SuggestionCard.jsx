@@ -71,7 +71,7 @@ const SuggestionCard = ({
                 />
               </ShowComponent>
             </Box>
-            <Typography variant="s2" color="text.disabled">
+            <Typography variant="s2" color="text.secondary">
               <TruncateText>{description}</TruncateText>
             </Typography>
           </Box>

@@ -3,12 +3,9 @@ import ApexCharts from "apexcharts";
 import { format } from "date-fns";
 import {
   Box,
-  Button,
   Chip,
-  IconButton,
   Skeleton,
   Stack,
-  Tooltip,
   Typography,
   alpha,
   useTheme,
@@ -18,6 +15,9 @@ import Iconify from "src/components/iconify";
 import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph";
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
+import { useGetProjectDetails } from "src/api/project/project-detail";
+import { PROJECT_SOURCE } from "src/utils/constants";
+import TraceVoicePanel from "./TraceVoicePanel";
 import {
   DEEP_ANALYSIS_STATUS,
   useErrorFeedDeepAnalysis,
@@ -828,7 +828,7 @@ function PatternSummary({ summary, clusterId }) {
 
   return (
     <Box
-      sx={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1 }}
+      sx={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1, overflowX: "auto" }}
     >
       {slots.map((insight, i) => (
         <Box
@@ -925,6 +925,7 @@ function TraceAgentFlow({ traceId }) {
   );
 }
 TraceAgentFlow.propTypes = { traceId: PropTypes.string };
+
 
 // ── Trace evidence reel (fail / pass tabs) ───────────────────────────────────
 
@@ -1605,6 +1606,10 @@ export default function OverviewTab({ _error: currentError }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const clusterId = currentError?.clusterId;
+  const projectId = currentError?.projectId;
+  const { data: projectDetail } = useGetProjectDetails(projectId, !!projectId);
+  const isVoiceProject =
+    projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
   const { data: overview, isLoading: isOverviewLoading } =
     useErrorFeedOverview(clusterId);
   const traces = useMemo(
@@ -1889,13 +1894,16 @@ export default function OverviewTab({ _error: currentError }) {
               <PatternSummary summary={patternSummary} clusterId={clusterId} />
             </SectionCard>
 
-            {/* Agent Flow */}
             <SectionCard
-              title="Agent Flow"
-              icon="mdi:graph-outline"
+              title={isVoiceProject ? "Call Recording" : "Agent Flow"}
+              icon={isVoiceProject ? "mdi:phone-outline" : "mdi:graph-outline"}
               collapsible
             >
-              <TraceAgentFlow traceId={trace.id} />
+              {isVoiceProject ? (
+                <TraceVoicePanel traceId={trace.id} projectId={projectId} />
+              ) : (
+                <TraceAgentFlow traceId={trace.id} />
+              )}
             </SectionCard>
 
             {/* Trace Evidence — scanner clusters only (evals don't have scanner steps) */}
@@ -1951,5 +1959,6 @@ OverviewTab.propTypes = {
   _error: PropTypes.shape({
     clusterId: PropTypes.string,
     source: PropTypes.string,
+    projectId: PropTypes.string,
   }),
 };

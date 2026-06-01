@@ -923,10 +923,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 from model_hub.models.develop_annotations import AnnotationsLabels
 
                 if filter_by_project:
-                    # Find annotation labels used in the given project(s) via
-                    # the Score model (the current write target for annotations).
-                    # Score.project_id may be NULL — scores are linked to traces,
-                    # so also look up via trace__project_id.
+    
                     from model_hub.models.score import Score
 
                     used_label_ids = list(
@@ -1904,6 +1901,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "observation_type": "observation_type",
                     "span_kind": "observation_type",  # span_kind maps to observation_type in CH
                     "service_name": "name",  # service_name maps to span name
+                    "name": "name",
+                    "span_name": "name",
                     "session": "trace_session_id",
                     "user": "toString(end_user_id)",
                     "tag": "arrayJoin(trace_tags)",
@@ -1922,12 +1921,19 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     # type is non-nullable by default — the Nullable
                     # wrapper isn't always preserved through the MV chain.
                     null_uuid = "00000000-0000-0000-0000-000000000000"
+                    # Trace Name = root span name; restrict to root spans.
+                    root_only_clause = (
+                        "AND parent_span_id IS NULL "
+                        if metric_name == "name"
+                        else ""
+                    )
                     sql = (
                         f"SELECT DISTINCT {col_expr} AS val "
                         f"FROM spans "
                         f"WHERE project_id IN %(project_ids)s "
                         f"AND _peerdb_is_deleted = 0 "
                         f"AND {col_expr} NOT IN ('', '{null_uuid}') "
+                        f"{root_only_clause}"
                         f"ORDER BY val "
                         f"LIMIT 500"
                     )
@@ -2099,7 +2105,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 result = analytics.execute_ch_query(
                     sql,
                     {"project_ids": project_ids, "attr_key": metric_name},
-                    timeout_ms=5000,
+                    timeout_ms=15000,
                 )
                 values = [
                     {"value": row["val"], "label": row["val"]} for row in result.data

@@ -2,13 +2,10 @@
 import {
   Autocomplete,
   Box,
-  Button,
   Chip,
   CircularProgress,
   IconButton,
   InputAdornment,
-  MenuItem,
-  Select,
   Tab,
   Tabs,
   TextField,
@@ -47,7 +44,7 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { useForm, useWatch } from "react-hook-form";
-import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import CustomTooltip from "src/components/tooltip";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import { JsonValueTree } from "./DatasetTestMode";
@@ -1574,11 +1571,13 @@ const TracingTestMode = React.forwardRef(
                         "&:hover": { backgroundColor: "action.hover" },
                       }}
                     >
-                      <Tooltip
+                      <CustomTooltip
+                        show
                         title={key}
                         placement="top-start"
                         enterDelay={300}
                         arrow
+                        size="small"
                       >
                         <Typography
                           variant="caption"
@@ -1592,7 +1591,7 @@ const TracingTestMode = React.forwardRef(
                         >
                           {key}
                         </Typography>
-                      </Tooltip>
+                      </CustomTooltip>
                       <DraggableColResizer
                         getCurrentWidth={() => keyColWidthRef.current}
                         onResize={setKeyColWidth}
@@ -1717,7 +1716,7 @@ const TracingTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600} color="text.secondary">
               No {rowType.toLowerCase()} data found
             </Typography>
-            <Typography variant="caption" color="text.disabled">
+            <Typography variant="caption" color="text.secondary">
               Add {rowType.toLowerCase()} to this project before running a test
             </Typography>
           </Box>

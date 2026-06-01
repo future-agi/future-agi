@@ -1379,13 +1379,29 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
       borderColor: "divider",
     }}
   >
-    <Typography
-      variant="caption"
-      color="text.secondary"
-      sx={{ width: 90, flexShrink: 0, pt: 0.25 }}
+    <CustomTooltip
+      show
+      title={label}
+      placement="top-start"
+      enterDelay={300}
+      size="small"
     >
-      {label}
-    </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          width: 90,
+          flexShrink: 0,
+          pt: 0.25,
+          pr: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </Typography>
+    </CustomTooltip>
     <Box sx={{ flex: 1, minWidth: 0 }}>
       {chip ? (
         <Chip

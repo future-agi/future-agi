@@ -894,7 +894,7 @@ function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
             <Typography fontSize="14px" fontWeight={700} color="text.primary">
               Create Linear Issue
             </Typography>
-            <Typography fontSize="11px" color="text.disabled">
+            <Typography fontSize="11px" color="text.secondary">
               Select a team to create the issue in.
             </Typography>
           </Stack>

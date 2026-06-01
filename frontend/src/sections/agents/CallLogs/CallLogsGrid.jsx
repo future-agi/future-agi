@@ -37,6 +37,7 @@ import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import { useShallowToggleAnnotationsStore } from "../store";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
+import { APP_CONSTANTS } from "src/utils/constants";
 
 const CELL_HEIGHT_MAP = { Short: 40, Medium: 52, Large: 68, "Extra Large": 88 };
 
@@ -85,6 +86,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     onSelectionMeta,
     cellHeight = "Short",
     columnVisibility,
+    onColumnsChange,
     hideDrawer = false,
     showErrors = false,
   },
@@ -274,19 +276,27 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     if (!callLogsColumnDefs) return callLogsColumnDefs;
 
     const visMap = {};
+    const orderIndex = new Map();
     const customCols = [];
-    (columnVisibility || []).forEach((c) => {
-      if (c.field) visMap[c.field] = c.isVisible !== false;
+    (columnVisibility || []).forEach((c, i) => {
+      if (c.field) {
+        visMap[c.field] = c.isVisible !== false;
+        orderIndex.set(c.field, i);
+      }
       if (c.groupBy === "Custom Columns") customCols.push(c);
     });
 
-    // Toggle visibility on existing defs
-    const updated = callLogsColumnDefs.map((col) => {
-      if (col.field && col.field in visMap) {
-        return { ...col, hide: !visMap[col.field] };
-      }
-      return col;
-    });
+    const updated = callLogsColumnDefs
+      .map((col) => ({
+        ...col,
+        ...(col.field &&
+          col.field in visMap && { hide: !visMap[col.field] }),
+      }))
+      .sort((a, b) => {
+        const ai = orderIndex.get(a?.field) ?? Infinity;
+        const bi = orderIndex.get(b?.field) ?? Infinity;
+        return ai - bi;
+      });
 
     // Add column defs for custom columns not already in the grid
     const existingFields = new Set(callLogsColumnDefs.map((c) => c.field));
@@ -346,6 +356,32 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
     };
   }, []);
 
+  // Propagate reorder to parent so the View columns dropdown stays in sync.
+  const onColumnMoved = useCallback(
+    (params) => {
+      if (!params?.finished || !params?.api || typeof onColumnsChange !== "function") return;
+      const newOrder = (params?.api?.getColumnState() ?? [])
+        .map((s) => s.colId)
+        .filter((id) => id !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN);
+
+      const cols = columnVisibility || [];
+      const byColId = new Map(cols.map((c) => [c.field || c.id, c]));
+      const reordered = newOrder.map((id) => byColId.get(id)).filter(Boolean);
+      const matched = new Set(newOrder);
+      const unmatched = cols.filter((c) => !matched.has(c.field || c.id));
+      const next = [...reordered, ...unmatched];
+
+      const sameOrder =
+        next.length === cols.length &&
+        next.every(
+          (c, i) =>
+            (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
+        );
+      if (!sameOrder) onColumnsChange(next);
+    },
+    [columnVisibility, onColumnsChange],
+  );
+
   return (
     <Box sx={{ height: "78vh", display: "flex" }}>
       <Box
@@ -383,6 +419,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
             })}
             rowHeight={CELL_HEIGHT_MAP[cellHeight] || 40}
             columnDefs={effectiveDefs}
+            onColumnMoved={onColumnMoved}
             defaultColDef={defaultColDef}
             rowData={rows}
             suppressServerSideFullWidthLoadingRow={true}
@@ -557,6 +594,7 @@ CallLogsGrid.propTypes = {
   onSelectionMeta: PropTypes.func,
   cellHeight: PropTypes.string,
   columnVisibility: PropTypes.array,
+  onColumnsChange: PropTypes.func,
   hideDrawer: PropTypes.bool,
   showErrors: PropTypes.bool,
 };

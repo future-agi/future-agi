@@ -30,7 +30,6 @@ import { objectCamelToSnake } from "src/utils/utils";
 import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import LLMTracingTraceDetailDrawer from "./LLMTracingTraceDetailDrawer";
 import { useLLMTracingStoreShallow, useTraceGridStore } from "./states";
-import _ from "lodash";
 import { APP_CONSTANTS } from "src/utils/constants";
 import { useReplaySessionsStoreShallow } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
@@ -232,35 +231,33 @@ const TraceGrid = React.forwardRef(
                 const dedupedPending = pending.filter(
                   (c) => !existingIds.has(c.id),
                 );
-                // Strip isVisible from the diff so saved-view hide maps
-                // don't keep retriggering the merge on every fetch. The
-                // hasPending clause ensures a saved-view switch with same
-                // backend cols still drains the pending customs.
-                const stripVis = (cols) =>
-                  (cols || []).map(({ isVisible, ...rest }) => rest);
-                const backendChanged = !_.isEqual(
-                  stripVis(newCols),
-                  stripVis(currentNonCustom),
-                );
+                // Diff by ID set — order isn't a schema change (TH-4996).
+                const newIds = new Set(newCols.map((c) => c.id));
+                const currentIdSet = new Set(currentNonCustom.map((c) => c.id));
+                const idSetChanged =
+                  newIds.size !== currentIdSet.size ||
+                  [...newIds].some((id) => !currentIdSet.has(id));
                 const hasPending = dedupedPending.length > 0;
-                if (backendChanged || hasPending) {
+                if (idSetChanged || hasPending) {
                   const allCustom = [...existingCustom, ...dedupedPending];
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
-                  // Preserve existing isVisible so saved-view hide intent
-                  // survives backend col changes. Pending-only path reuses
-                  // currentNonCustom to keep column identity stable.
-                  const finalNonCustom = backendChanged
-                    ? newCols.map((nc) => {
-                        const existing = currentNonCustom.find(
-                          (c) => c.id === nc.id,
-                        );
-                        return existing
-                          ? { ...nc, isVisible: existing.isVisible }
-                          : nc;
-                      })
-                    : currentNonCustom;
+                  let finalNonCustom;
+                  if (idSetChanged) {
+                    const newById = new Map(newCols.map((nc) => [nc.id, nc]));
+                    const seen = new Set();
+                    const kept = currentNonCustom
+                      .filter((cc) => newById.has(cc.id))
+                      .map((cc) => {
+                        seen.add(cc.id);
+                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                      });
+                    const added = newCols.filter((nc) => !seen.has(nc.id));
+                    finalNonCustom = [...kept, ...added];
+                  } else {
+                    finalNonCustom = currentNonCustom;
+                  }
                   setColumns(
                     allCustom.length > 0
                       ? [...finalNonCustom, ...allCustom]

@@ -75,7 +75,7 @@ const EvalCard = ({ name, description, onRemove }) => {
       <Typography
         typography={"s2"}
         fontWeight={"fontWeightRegular"}
-        color={"text.disabled"}
+        color={"text.secondary"}
       >
         {description}
       </Typography>

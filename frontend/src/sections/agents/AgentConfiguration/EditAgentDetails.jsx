@@ -1013,7 +1013,7 @@ const EditAgentDetails = ({
             </CustomTooltip>
             <Typography
               typography="s2"
-              color="text.disabled"
+              color="text.secondary"
               sx={{ marginLeft: 1 }}
               fontWeight="500"
             >

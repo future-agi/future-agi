@@ -16,7 +16,7 @@ import pandas as pd
 import structlog
 
 logger = structlog.get_logger(__name__)
-from django.db import models
+from django.db import OperationalError, connection, models, transaction
 from django.db.models import (
     Avg,
     Case,
@@ -40,8 +40,10 @@ from django.db.models.functions import (
     Round,
 )
 from django.http import FileResponse
+from rest_framework import status as drf_status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.choices import AnnotationTypeChoices
@@ -115,14 +117,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
             analytics = AnalyticsQueryService()
             if analytics.should_use_clickhouse(QueryType.TRACE_DETAIL):
-                try:
-                    return self._retrieve_clickhouse(
-                        request, trace_session_id, trace_session, project_id, analytics
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "CH session retrieve failed, falling back to PG", error=str(e)
-                    )
+                return self._retrieve_clickhouse(
+                    request, trace_session_id, trace_session, project_id, analytics
+                )
 
             serializer = self.get_serializer(trace_session)
             trace_session = serializer.data
@@ -422,9 +419,29 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     "next": has_next,
                 }
             )
+        except OperationalError as e:
+            logger.exception(
+                "trace_session_retrieve_timeout",
+                session_id=str(self.kwargs.get("pk")),
+                error=str(e),
+            )
+            return Response(
+                {
+                    "status": False,
+                    "result": (
+                        "Session detail unavailable: query exceeded time "
+                        "budget. Retry shortly."
+                    ),
+                },
+                status=drf_status.HTTP_504_GATEWAY_TIMEOUT,
+            )
         except Exception as e:
-            traceback.print_exc()
-            return self._gm.bad_request(f"Error retrieving trace session: {str(e)}")
+            logger.exception(
+                "trace_session_retrieve_failed",
+                session_id=str(self.kwargs.get("pk")),
+                error=str(e),
+            )
+            return self._gm.bad_request("Error retrieving trace session.")
 
     def _retrieve_clickhouse(
         self, request, trace_session_id, trace_session_obj, project_id, analytics
@@ -525,16 +542,44 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval metrics from CH
+        # Resolve eval-config IDs in CH (avoids a tracer_eval_logger PG
+        # scan that grows linearly with eval traffic), then fetch the
+        # PG metadata by primary key.
         trace_ids = [r["trace_id"] for r in traces_data]
-        eval_configs = list(
-            CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(trace_id__in=trace_ids).values(
-                    "custom_eval_config_id"
-                ),
-                deleted=False,
-            ).select_related("eval_template")
-        )
+        eval_configs: list = []
+        if trace_ids:
+            try:
+                config_id_result = analytics.execute_ch_query(
+                    """
+                    SELECT DISTINCT toString(custom_eval_config_id) AS config_id
+                    FROM tracer_eval_logger FINAL
+                    WHERE trace_id IN %(trace_ids)s
+                      AND _peerdb_is_deleted = 0
+                      AND (deleted = 0 OR deleted IS NULL)
+                    """,
+                    {"trace_ids": trace_ids},
+                    timeout_ms=3000,
+                )
+                pre_config_ids = [
+                    row["config_id"]
+                    for row in config_id_result.data
+                    if row.get("config_id")
+                ]
+            except Exception as e:
+                logger.warning(
+                    "ch_eval_config_id_lookup_failed",
+                    session_id=str(trace_session_id),
+                    error=str(e),
+                )
+                pre_config_ids = []
+
+            if pre_config_ids:
+                eval_configs = list(
+                    CustomEvalConfig.objects.filter(
+                        id__in=pre_config_ids,
+                        deleted=False,
+                    ).select_related("eval_template")
+                )
 
         eval_map = {}
         if eval_configs and trace_ids:

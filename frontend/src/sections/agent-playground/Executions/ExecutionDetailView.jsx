@@ -121,7 +121,7 @@ export default function ExecutionDetailView({ graphId, executionId }) {
           justifyContent: "center",
         }}
       >
-        <Typography typography="s2" color="text.disabled">
+        <Typography typography="s2" color="text.secondary">
           Select an execution to view details
         </Typography>
       </Box>

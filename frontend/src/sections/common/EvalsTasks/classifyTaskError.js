@@ -428,6 +428,7 @@ export function enrichErrorGroup(group) {
     // grouping. Fall back to the classifier's normalize() if the backend
     // returned an empty normalized field.
     normalized: group?.normalized || classified.normalized,
+    raw: sample || classified.raw,
     count: group?.count || 0,
     // ErrorGroupCard expects an array — we only get one sample per
     // group from the backend (cheap enough to render verbatim).

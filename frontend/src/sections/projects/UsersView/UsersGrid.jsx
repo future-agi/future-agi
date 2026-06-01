@@ -17,17 +17,18 @@ import { getRandomId } from "src/utils/utils";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import { APP_CONSTANTS } from "src/utils/constants";
 
-const USERS_GRID_THEME_PARAMS = {
+const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
-  headerColumnBorder: { width: 0 },
+  headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
   rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
   headerFontSize: "13px",
-  headerFontWeight: 500,
+  headerFontWeight: theme.typography.fontWeightMedium,
   headerBackgroundColor: "transparent",
+  headerTextColor: theme.palette.text.primary,
   rowHoverColor: "rgba(120,87,252,0.04)",
-};
+});
 
 const UsersGrid = React.memo(
   ({
@@ -38,7 +39,7 @@ const UsersGrid = React.memo(
     cellHeight,
   }) => {
     const theme = useTheme();
-    const agTheme = useAgThemeWith(USERS_GRID_THEME_PARAMS);
+    const agTheme = useAgThemeWith(getUsersGridThemeParams(theme));
     const gridApiRef = useRef(null);
     const {
       setGridApi,

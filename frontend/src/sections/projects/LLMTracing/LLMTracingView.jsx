@@ -4569,6 +4569,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 enabled={projectSource === PROJECT_SOURCE.SIMULATOR}
                 cellHeight={cellHeight}
                 columnVisibility={columns["primary-trace"]}
+                onColumnsChange={(next) =>
+                  setColumns((prev) => ({ ...prev, "primary-trace": next }))
+                }
                 showErrors={showErrors}
                 params={{
                   project_id: observeId,
@@ -4608,6 +4611,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 enabled={projectSource === PROJECT_SOURCE.SIMULATOR}
                 cellHeight={cellHeight}
                 columnVisibility={columns["compare-trace"]}
+                onColumnsChange={(next) =>
+                  setColumns((prev) => ({ ...prev, "compare-trace": next }))
+                }
                 showErrors={showErrors}
                 hideDrawer
                 params={{

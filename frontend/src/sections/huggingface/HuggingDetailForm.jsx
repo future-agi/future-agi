@@ -186,7 +186,7 @@ const HuggingDetailForm = ({
               required
             />
             <Typography
-              color="text.disabled"
+              color="text.secondary"
               variant="s3"
               fontWeight="fontWeightMedium"
               sx={{ mt: 0, mb: 2 }}
@@ -209,7 +209,7 @@ const HuggingDetailForm = ({
             required
           />
           <Typography
-            color="text.disabled"
+            color="text.secondary"
             variant="s3"
             fontWeight="fontWeightMedium"
             sx={{ mt: 0, mb: 2 }}
@@ -231,7 +231,7 @@ const HuggingDetailForm = ({
             required
           />
           <Typography
-            color="text.disabled"
+            color="text.secondary"
             variant="s3"
             fontWeight="fontWeightMedium"
             sx={{ mt: 0, mb: 2 }}
@@ -264,7 +264,7 @@ const HuggingDetailForm = ({
             required
           />
           <Typography
-            color="text.disabled"
+            color="text.secondary"
             variant="s3"
             fontWeight="fontWeightMedium"
             sx={{ mt: 0, mb: 2 }}

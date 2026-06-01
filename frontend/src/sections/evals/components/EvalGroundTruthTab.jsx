@@ -950,7 +950,7 @@ const EmptyState = ({ onUpload }) => (
       Upload annotated data to calibrate evaluations with human-scored reference
       examples.
     </Typography>
-    <Typography variant="caption" color="text.disabled">
+    <Typography variant="caption" color="text.secondary">
       Click anywhere to upload
     </Typography>
   </Box>

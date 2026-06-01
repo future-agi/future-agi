@@ -230,7 +230,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                         fontSize={"12px"}
                         typography={"s2_1"}
                         fontWeight={"fontWeightRegular"}
-                        color={"text.disabled"}
+                        color={"text.secondary"}
                       >
                         Defines the percentage of data processed for agent
                         compass

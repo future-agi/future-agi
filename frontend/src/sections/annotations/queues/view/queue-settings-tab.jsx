@@ -408,7 +408,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                         >
                           Auto-assign items to all annotator members
                         </Typography>
-                        <Typography variant="caption" color="text.disabled">
+                        <Typography variant="caption" color="text.secondary">
                           When on, all members with the Annotator role are
                           assigned to every item and can annotate any item
                         </Typography>

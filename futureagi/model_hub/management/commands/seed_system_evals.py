@@ -25,7 +25,7 @@ from django.utils import timezone
 logger = structlog.get_logger(__name__)
 
 # Bump this when system evals change. Seeder skips if DB is already at this version.
-SYSTEM_EVALS_VERSION = 10
+SYSTEM_EVALS_VERSION = 11
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
@@ -223,6 +223,18 @@ def seed_evals(dry_run=False, force=False, verbose=False):
     return created_count, updated_count, skipped_count
 
 
+def _eval_accepts_pdf(config):
+    """True when any of the eval's params accepts a PDF input. The picker
+    filters on eval_tags, so this is what fills the PDF filter chip."""
+    param_modalities = (config or {}).get("param_modalities") or {}
+    for modalities in param_modalities.values():
+        if isinstance(modalities, (list, tuple)) and any(
+            str(m).upper() == "PDF" for m in modalities
+        ):
+            return True
+    return False
+
+
 def _yaml_to_template_fields(eval_def):
     """Convert a YAML eval definition dict into EvalTemplate field values."""
     from model_hub.models.choices import OwnerChoices
@@ -259,6 +271,10 @@ def _yaml_to_template_fields(eval_def):
     allow_edit = permissions.get("allow_edit", False)  # System evals default to no edit
     allow_copy = permissions.get("allow_copy", True)  # But copy is allowed
 
+    eval_tags = list(eval_def.get("eval_tags", []) or [])
+    if _eval_accepts_pdf(config) and "PDF" not in eval_tags:
+        eval_tags.append("PDF")
+
     # Output type mapping
     output = config.get("output", "Pass/Fail")
     output_type_normalized = eval_def.get("output_type_normalized")
@@ -277,7 +293,7 @@ def _yaml_to_template_fields(eval_def):
         "name": eval_def["name"],
         "description": eval_def.get("description", ""),
         "criteria": eval_def.get("criteria", ""),
-        "eval_tags": eval_def.get("eval_tags", []),
+        "eval_tags": eval_tags,
         "config": config,
         "choices": eval_def.get("choices"),
         "multi_choice": eval_def.get("multi_choice", False),

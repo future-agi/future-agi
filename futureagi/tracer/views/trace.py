@@ -3795,6 +3795,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "output_type": output_type,
                     "reason": log.eval_explanation,
                     "error": log.error,
+                    "skipped": log.skipped_reason is not None,
                 }
                 if log.output_str_list:
                     # Legacy categorical eval — pre-agent-evaluator path
