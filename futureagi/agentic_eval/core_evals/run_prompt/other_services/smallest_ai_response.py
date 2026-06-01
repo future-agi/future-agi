@@ -4,17 +4,17 @@ Smallest AI Integration — Waves TTS and Pulse STT
 Source: https://docs.smallest.ai
 
 TTS (Waves):
-- REST endpoint: POST https://api.smallest.ai/waves/v1/{model-slug}/get_speech
+- REST endpoint: POST https://api.smallest.ai/waves/v1/tts
 - WebSocket streaming: wss://api.smallest.ai/waves/v1/tts/live
-- Models: lightning_v3.1, lightning_v3.1_pro
+- Models: lightning_v3.1, lightning_v3.1_pro  (passed in request body)
 - Auth: Authorization: Bearer {api_key}
-- Body: {"text", "voice_id", "sample_rate", "speed", "add_wav_header", "language"}
+- Body: {"text", "voice_id", "model", "sample_rate", "speed", "language"}
 
 STT (Pulse):
-- REST endpoint: POST https://api.smallest.ai/waves/v1/stt/
-- Models: pulse (streaming-only WebSocket), pulse-pro (REST, higher accuracy)
+- REST endpoint: POST https://api.smallest.ai/waves/v1/pulse/get_text
+- Models: pulse  (passed as ?model= query param)
 - Auth: Authorization: Bearer {api_key}
-- Body: multipart/form-data with audio file; ?model=pulse-pro as query param
+- Body: raw audio bytes, Content-Type: audio/wav
 """
 
 import time
@@ -29,6 +29,8 @@ from tfc.utils.storage import audio_bytes_from_url_or_base64, get_audio_duration
 logger = structlog.get_logger(__name__)
 
 _BASE_URL = "https://api.smallest.ai/waves/v1"
+_TTS_ENDPOINT = f"{_BASE_URL}/tts"
+_STT_ENDPOINT = f"{_BASE_URL}/pulse/get_text"
 
 # Voice IDs as returned by GET /waves/v1/lightning-v3.1/get_voices (all lowercase).
 # Both lightning_v3.1 and lightning_v3.1_pro share the same endpoint; pro is a
@@ -77,9 +79,6 @@ LIGHTNING_V3_1_PRO_VOICES = [
     "maverick", "brooks", "hunter", "colton", "wesley", "asher",
 ]
 
-# Both models use the same REST endpoint; lightning_v3.1_pro just curates a voice subset.
-_TTS_ENDPOINT_SLUG = "lightning-v3.1"
-
 
 def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
     """Text-to-Speech via Smallest AI Waves REST API."""
@@ -97,10 +96,6 @@ def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
     sample_rate = int(cfg.get("sample_rate", 24000))
     language = cfg.get("language", "en")
     speed = cfg.get("speed", 1.0)
-    add_wav_header = cfg.get("add_wav_header", True)
-
-    # Both lightning_v3.1 and lightning_v3.1_pro share the same REST endpoint.
-    endpoint = f"{_BASE_URL}/{_TTS_ENDPOINT_SLUG}/get_speech"
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -110,9 +105,9 @@ def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
     payload = {
         "text": input_text,
         "voice_id": voice_id,
+        "model": model_id,
         "sample_rate": sample_rate,
         "speed": speed,
-        "add_wav_header": add_wav_header,
         "language": language,
     }
 
@@ -128,7 +123,7 @@ def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
     # stream=True is required — without it the AWS ALB layer can return a cached
     # zeroed-out body. Streaming bypasses the cache and delivers real PCM frames.
     response = requests.post(
-        endpoint, json=payload, headers=headers, timeout=30, stream=True
+        _TTS_ENDPOINT, json=payload, headers=headers, timeout=30, stream=True
     )
     response.raise_for_status()
 
@@ -175,7 +170,6 @@ def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key)
     word_timestamps = cfg.get("word_timestamps", False)
     diarize = cfg.get("diarize", False)
 
-    endpoint = f"{_BASE_URL}/pulse/get_text"
     params = {"model": "pulse", "language": language}
     if word_timestamps:
         params["word_timestamps"] = "true"
@@ -198,7 +192,7 @@ def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key)
     )
 
     response = requests.post(
-        endpoint, headers=headers, params=params, data=wav_bytes, timeout=60
+        _STT_ENDPOINT, headers=headers, params=params, data=wav_bytes, timeout=60
     )
     response.raise_for_status()
 
