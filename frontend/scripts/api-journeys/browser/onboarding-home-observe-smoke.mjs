@@ -506,7 +506,7 @@ async function main() {
     });
     await expectVisibleText(page, "Send first trace", { exact: true });
     await expectVisibleText(page, "Review first trace", { exact: true });
-    await expectVisibleText(page, "Create evaluator", { exact: true });
+    await expectVisibleText(page, "Create quality check", { exact: true });
     await page.screenshot({ path: HOME_SCREENSHOT_PATH, fullPage: true });
     evidence.home_screenshot = HOME_SCREENSHOT_PATH;
 
@@ -733,7 +733,7 @@ async function main() {
           30000,
         );
         evidence.first_trace_review_url = relativeUrl(page.url());
-        await expectVisibleText(page, "Create evaluator", { exact: true });
+        await expectVisibleText(page, "Create quality check", { exact: true });
       } else {
         await expectVisibleText(page, "Send the first trace", { exact: true });
       }

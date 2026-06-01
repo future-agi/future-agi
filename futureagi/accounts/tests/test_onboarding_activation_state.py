@@ -332,7 +332,7 @@ def test_activation_flow_config_drives_goal_and_stage_wiring():
     assert configured_default_goal_id() == "monitor_production_ai_app"
     assert configured_goal_primary_paths()["monitor_production_ai_app"] == "observe"
     assert configured_goal_options()[0]["outcome_preview"] == (
-        "A real trace reviewed and an evaluator ready to create."
+        "A real trace reviewed and a quality check ready to add."
     )
     assert configured_stage("connect_observability")["recommended_action"] == (
         "create_observe_project"

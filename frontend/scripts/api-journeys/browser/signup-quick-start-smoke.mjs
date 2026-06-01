@@ -734,7 +734,7 @@ async function main() {
     await expectVisibleText(page, "First trace received", { timeout: 45000 });
     await expectVisibleText(
       page,
-      "Review spans, latency, cost, and model inputs here. When this signal looks right, create an evaluator.",
+      "Review spans, latency, cost, inputs, outputs, and errors here. Next, create a quality check from this trace.",
       { timeout: 45000 },
     );
     const postReviewState = await waitForSmokeActivationStage(
@@ -747,15 +747,15 @@ async function main() {
       `Expected create_trace_evaluator after reviewing a real trace, got ${postReviewState.stage}`,
     );
     assert(
-      postReviewState.recommended_action?.cta_label === "Create evaluator",
-      `Expected Create evaluator CTA, got ${postReviewState.recommended_action?.cta_label}`,
+      postReviewState.recommended_action?.cta_label === "Create quality check",
+      `Expected Create quality check CTA, got ${postReviewState.recommended_action?.cta_label}`,
     );
     assert(
       postReviewState.recommended_action?.href ===
         `/dashboard/observe/${realProject.projectId}/llm-tracing?source=onboarding&onboarding=create-evaluator`,
       `Expected focused evaluator route, got ${postReviewState.recommended_action?.href}`,
     );
-    await clickVisibleButtonText(page, "Create evaluator", 45000);
+    await clickVisibleButtonText(page, "Create quality check", 45000);
     await page.waitForFunction(
       ({ projectId }) => {
         const params = new URLSearchParams(window.location.search);

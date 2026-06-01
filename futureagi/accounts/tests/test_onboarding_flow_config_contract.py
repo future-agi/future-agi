@@ -76,7 +76,7 @@ def test_activation_flow_exposes_editable_goal_outcomes():
     outcomes_by_goal = {goal["goal"]: goal["outcome_preview"] for goal in goals}
 
     assert outcomes_by_goal["monitor_production_ai_app"] == (
-        "A real trace reviewed and an evaluator ready to create."
+        "A real trace reviewed and a quality check ready to add."
     )
     assert outcomes_by_goal["connect_voice_ai_agent"] == (
         "A test call transcript with success criteria to add."

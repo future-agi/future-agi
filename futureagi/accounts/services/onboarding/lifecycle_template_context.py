@@ -232,7 +232,7 @@ def lifecycle_action_label(action_id, campaign_group):
         "send_first_trace": "Send first trace",
         "open_sample_trace": "Open sample trace",
         "review_first_trace": "Review trace",
-        "create_trace_evaluator": "Create evaluator",
+        "create_trace_evaluator": "Create quality check",
         "create_prompt": "Create prompt",
         "run_prompt_test": "Run prompt test",
         "save_prompt_version": "Save baseline",

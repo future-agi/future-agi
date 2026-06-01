@@ -496,7 +496,7 @@ def _next_action(context, signals, routes):
     if not signals.evaluator_exists:
         write_action = {
             "id": "create_trace_evaluator",
-            "label": "Create evaluator",
+            "label": "Create quality check",
             "body": "Turn reviewed traces into repeatable quality coverage.",
             "success_event": "first_quality_loop_completed",
         }

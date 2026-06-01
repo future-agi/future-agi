@@ -195,8 +195,8 @@ async function main() {
         : "First trace received",
       { exact: true },
     );
-    await expectVisibleText(page, "Create evaluator", { exact: true });
-    await clickVisibleText(page, "Create evaluator");
+    await expectVisibleText(page, "Create quality check", { exact: true });
+    await clickVisibleText(page, "Create quality check");
     await page.waitForFunction(
       ({ setupLanguage, setupProvider }) => {
         const params = new URLSearchParams(window.location.search);

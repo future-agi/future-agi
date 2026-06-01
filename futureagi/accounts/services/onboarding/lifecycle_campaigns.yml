@@ -742,8 +742,8 @@ campaigns:
     template_key: observe_next_loop_v1
     template_version: "2026-05-27.1"
     campaign_group: next_loop
-    email_subject: Create one evaluator from the trace
-    email_preheader: Turn the reviewed trace into a repeatable evaluator for future traffic.
+    email_subject: Create one quality check from the trace
+    email_preheader: Turn the reviewed trace into a repeatable quality check for future traffic.
     primary_path: observe
     entry_stages:
       - create_trace_evaluator

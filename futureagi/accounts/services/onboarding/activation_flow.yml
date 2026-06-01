@@ -23,7 +23,7 @@ goals:
     primary_path: observe
     label: Connect your agent
     description: Connect traces from an AI app or agent.
-    outcome_preview: A real trace reviewed and an evaluator ready to create.
+    outcome_preview: A real trace reviewed and a quality check ready to add.
     estimated_minutes: 5
   improve_prompts:
     primary_path: prompt
@@ -186,7 +186,7 @@ journeys:
     primary_path: observe
     eyebrow: Observe setup
     title: Connect your agent
-    description: Connect traces, review the first trace, then create an evaluator.
+    description: Connect traces, review the first trace, then create a quality check.
     chips:
       - observe
       - quality
@@ -219,8 +219,8 @@ journeys:
         action_id: create_trace_evaluator
         success_event: first_quality_loop_completed
         tour_anchor: observe_evaluator_button
-        label: Create evaluator
-        description: Turn the reviewed trace into a repeatable evaluator.
+        label: Create quality check
+        description: Turn the reviewed trace into a repeatable quality check.
   sample_first_run:
     primary_path: sample
     eyebrow: Sample data
@@ -992,10 +992,10 @@ actions:
     fallback_route_key: get_started
   create_trace_evaluator:
     kind: improve
-    title: Create an evaluator
-    description: Turn the reviewed trace into a repeatable evaluator.
+    title: Create a quality check
+    description: Turn the reviewed trace into a repeatable quality check.
     route_key: observe_create_trace_evaluator
-    cta_label: Create evaluator
+    cta_label: Create quality check
     priority: 100
     estimated_minutes: 5
     requires_permission: observe:write
@@ -1257,9 +1257,9 @@ stages:
   create_trace_evaluator:
     home_mode: first_run
     copy:
-      eyebrow: Evaluator
-      title: Create an evaluator
-      description: Turn the reviewed trace into a repeatable evaluator.
+      eyebrow: Quality check
+      title: Create a quality check
+      description: Turn the reviewed trace into a repeatable quality check.
     progress:
       build: selected
       test: available
