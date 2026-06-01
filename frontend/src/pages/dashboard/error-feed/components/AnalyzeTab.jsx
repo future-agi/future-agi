@@ -82,6 +82,44 @@ function StreamCursor({ color = ACCENT }) {
 }
 StreamCursor.propTypes = { color: PropTypes.string };
 
+// Drop-in replacement for <Typography>{text}</Typography> that streams the
+// text in when `instant` is false. When `instant` is true (e.g., the user
+// is opening a long-completed reasoning block) the text appears in full —
+// nobody wants a 1980s typewriter for content they're just reviewing.
+function StreamingPlainText({ text, instant, cursorColor, ...typoProps }) {
+  const fullText = typeof text === "string" ? text : "";
+  const [revealedLen, setRevealedLen] = useState(
+    instant ? fullText.length : 0,
+  );
+
+  useEffect(() => {
+    setRevealedLen(instant ? fullText.length : 0);
+  }, [fullText, instant]);
+
+  useEffect(() => {
+    if (revealedLen >= fullText.length) return undefined;
+    const id = setInterval(() => {
+      setRevealedLen((n) =>
+        Math.min(n + STREAM_CHARS_PER_TICK, fullText.length),
+      );
+    }, STREAM_TICK_MS);
+    return () => clearInterval(id);
+  }, [fullText, revealedLen]);
+
+  const isStreaming = revealedLen < fullText.length;
+  return (
+    <Typography {...typoProps}>
+      {fullText.slice(0, revealedLen)}
+      {isStreaming && <StreamCursor color={cursorColor} />}
+    </Typography>
+  );
+}
+StreamingPlainText.propTypes = {
+  text: PropTypes.string,
+  instant: PropTypes.bool,
+  cursorColor: PropTypes.string,
+};
+
 // Fade-in + slight slide-up wrapper for any newly-mounted message card so
 // each one settles in instead of popping. ~200ms ease-out, subtle 6px lift.
 function FadeIn({ children }) {
@@ -101,20 +139,25 @@ function FadeIn({ children }) {
 }
 FadeIn.propTypes = { children: PropTypes.node };
 
-// One block of a step's expanded reasoning — Claude-Code-style.
-function StepDetailBlock({ block }) {
+// One block of a step's expanded reasoning — Claude-Code-style. When
+// `live` is true (the parent step is currently running) text content
+// streams in word-by-word with a blinking cursor; when false (the step
+// has already completed and the user is just reviewing it) text renders
+// in full so we don't make people watch a typewriter for content that's
+// already done.
+function StepDetailBlock({ block, live }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
 
   if (block.kind === "reasoning") {
     return (
-      <Typography
+      <StreamingPlainText
+        text={block.text}
+        instant={!live}
         fontSize="11.5px"
         color="text.secondary"
         sx={{ lineHeight: 1.65 }}
-      >
-        {block.text}
-      </Typography>
+      />
     );
   }
 
@@ -161,7 +204,9 @@ function StepDetailBlock({ block }) {
           </Typography>
         )}
         {block.output != null && (
-          <Typography
+          <StreamingPlainText
+            text={`→ ${block.output}`}
+            instant={!live}
             fontSize="10.5px"
             sx={{
               fontFamily: "ui-monospace, SFMono-Regular, monospace",
@@ -169,9 +214,7 @@ function StepDetailBlock({ block }) {
               mt: 0.3,
               wordBreak: "break-word",
             }}
-          >
-            → {block.output}
-          </Typography>
+          />
         )}
       </Box>
     );
@@ -203,13 +246,13 @@ function StepDetailBlock({ block }) {
                   flexShrink: 0,
                 }}
               />
-              <Typography
+              <StreamingPlainText
+                text={it}
+                instant={!live}
                 fontSize="11.5px"
                 color="text.secondary"
                 sx={{ lineHeight: 1.55 }}
-              >
-                {it}
-              </Typography>
+              />
             </Stack>
           ))}
         </Stack>
@@ -219,7 +262,9 @@ function StepDetailBlock({ block }) {
 
   if (block.kind === "code") {
     return (
-      <Box
+      <StreamingPlainText
+        text={block.text}
+        instant={!live}
         component="pre"
         sx={{
           m: 0,
@@ -234,14 +279,15 @@ function StepDetailBlock({ block }) {
           color: "text.secondary",
           overflow: "auto",
         }}
-      >
-        {block.text}
-      </Box>
+      />
     );
   }
   return null;
 }
-StepDetailBlock.propTypes = { block: PropTypes.object.isRequired };
+StepDetailBlock.propTypes = {
+  block: PropTypes.object.isRequired,
+  live: PropTypes.bool,
+};
 
 function StepCard({ step }) {
   const theme = useTheme();
@@ -381,7 +427,7 @@ function StepCard({ step }) {
           >
             <Stack gap={1} sx={{ pt: 1 }}>
               {step.details.map((block, i) => (
-                <StepDetailBlock key={i} block={block} />
+                <StepDetailBlock key={i} block={block} live={isRunning} />
               ))}
             </Stack>
           </Box>
