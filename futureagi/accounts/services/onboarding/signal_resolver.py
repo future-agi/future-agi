@@ -460,6 +460,23 @@ def _as_count(value):
     return 1 if value else 0
 
 
+REAL_PRODUCT_SETUP_SIGNAL_FIELDS = (
+    "first_loop_completed",
+    "prompt_first_loop_completed",
+    "agent_first_loop_completed",
+    "gateway_first_loop_completed",
+    "eval_first_loop_completed",
+    "voice_first_loop_completed",
+)
+
+
+def signals_have_real_product_setup(signals):
+    return any(
+        bool(getattr(signals, field_name, False))
+        for field_name in REAL_PRODUCT_SETUP_SIGNAL_FIELDS
+    )
+
+
 def collect_onboarding_signals(*, user, organization, workspace):
     if not organization or not workspace:
         return OnboardingSignals(first_checks={})

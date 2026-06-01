@@ -123,44 +123,51 @@ def _save_profile_onboarding_goal(request, user, goals):
         return None
 
 
-def _organization_has_completed_profile_setup(organization, *, exclude_user_id=None):
-    if not organization:
+def _workspace_has_real_product_setup(*, user, organization, workspace):
+    if not organization or not workspace:
         return False
 
-    from accounts.models.organization_membership import OrganizationMembership
-
-    member_ids = OrganizationMembership.no_workspace_objects.filter(
-        organization=organization,
-        is_active=True,
-    ).values_list("user_id", flat=True)
-    if exclude_user_id:
-        member_ids = member_ids.exclude(user_id=exclude_user_id)
-
-    completed_profile_filter = (Q(role__isnull=False) & ~Q(role="") & ~Q(goals=[])) | Q(
-        config__onboarding__completed=True
-    )
-
     try:
-        completed_profile_filter |= Q(config__has_key="onboarding_completed_at")
-    except Exception:
-        pass
+        from accounts.services.onboarding.signal_resolver import (
+            collect_onboarding_signals,
+            signals_have_real_product_setup,
+        )
 
-    return (
-        User.objects.filter(id__in=member_ids).filter(completed_profile_filter).exists()
-    )
+        signals = collect_onboarding_signals(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        return signals_have_real_product_setup(signals)
+    except Exception as exc:
+        logger.warning(
+            "User-info product setup signal check failed",
+            error=str(exc),
+            organization_id=str(getattr(organization, "id", "")),
+            workspace_id=str(getattr(workspace, "id", "")),
+            user_id=str(getattr(user, "id", "")),
+        )
+        return False
 
 
-def _organization_has_completed_product_setup(organization):
+def _organization_has_completed_product_setup(organization, *, user, workspace=None):
     if not organization:
         return False
 
     from accounts.models import OnboardingActivationEvent
 
-    return OnboardingActivationEvent.no_workspace_objects.filter(
+    if OnboardingActivationEvent.no_workspace_objects.filter(
         organization=organization,
         event_name="first_quality_loop_completed",
         is_sample=False,
-    ).exists()
+    ).exists():
+        return True
+
+    return _workspace_has_real_product_setup(
+        user=user,
+        organization=organization,
+        workspace=workspace,
+    )
 
 
 @swagger_auto_schema(
@@ -796,20 +803,6 @@ def get_user_info(request):
     )
     data["organization_role"] = current_org_role
 
-    if (
-        is_invited_user
-        and not onboarding_completed
-        and (
-            _organization_has_completed_profile_setup(
-                current_org,
-                exclude_user_id=user.id,
-            )
-            or _organization_has_completed_product_setup(current_org)
-        )
-    ):
-        onboarding_completed = True
-        data["onboarding_completed"] = True
-
     data["ws_enabled"] = current_org.ws_enabled
 
     # Helper function to determine workspace role based on hierarchy
@@ -832,12 +825,14 @@ def get_user_info(request):
     current_workspace_id = user.config.get("currentWorkspaceId") or user.config.get(
         "defaultWorkspaceId"
     )
+    current_workspace_for_onboarding = None
 
     if current_workspace_id:
         try:
             current_workspace = Workspace.objects.get(
                 id=current_workspace_id, organization=current_org, is_active=True
             )
+            current_workspace_for_onboarding = current_workspace
             data["default_workspace_id"] = str(current_workspace.id)
             data["default_workspace_name"] = current_workspace.name
             data["default_workspace_display_name"] = (
@@ -864,6 +859,7 @@ def get_user_info(request):
                 default_workspace = Workspace.objects.get(
                     organization=current_org, is_default=True, is_active=True
                 )
+                current_workspace_for_onboarding = default_workspace
                 data["default_workspace_id"] = str(default_workspace.id)
                 data["default_workspace_name"] = default_workspace.name
                 data["default_workspace_display_name"] = (
@@ -914,6 +910,7 @@ def get_user_info(request):
                 _fallback_ws = None
 
         if _fallback_ws:
+            current_workspace_for_onboarding = _fallback_ws
             data["default_workspace_id"] = str(_fallback_ws.id)
             data["default_workspace_name"] = _fallback_ws.name
             data["default_workspace_display_name"] = (
@@ -937,6 +934,18 @@ def get_user_info(request):
             data["default_workspace_name"] = None
             data["default_workspace_display_name"] = None
             data["default_workspace_role"] = None
+
+    if (
+        current_membership
+        and not onboarding_completed
+        and _organization_has_completed_product_setup(
+            current_org,
+            user=user,
+            workspace=current_workspace_for_onboarding,
+        )
+    ):
+        onboarding_completed = True
+        data["onboarding_completed"] = True
 
     # Add integer RBAC levels alongside existing string roles
     try:
