@@ -6404,6 +6404,10 @@ class UsersView(APIView):
     @validated_request(
         query_serializer=UsersQuerySerializer,
         responses={200: UsersResponseSerializer, **ERROR_RESPONSES},
+        # `export=true` returns a streamed text/csv body instead of the
+        # JSON UsersResponse shape — declare both so the runtime response
+        # validator (and the generated frontend contract) accepts either.
+        produces=["application/json", "text/csv"],
     )
     def get(self, request, *args, **kwargs):
         """
