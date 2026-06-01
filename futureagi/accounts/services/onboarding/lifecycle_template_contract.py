@@ -101,7 +101,12 @@ def required_context_keys_for_template(template_key):
     if template_key in DIGEST_PREVIEW_TEMPLATE_KEYS:
         keys.add("digest_preview")
     if template_key in OBSERVE_CREDENTIAL_CONTEXT_TEMPLATE_KEYS:
-        keys |= {"observe_credentials_ready", "observe_credentials_ready_at"}
+        keys |= {
+            "observe_credentials_ready",
+            "observe_credentials_ready_at",
+            "observe_trace_check_title",
+            "observe_trace_checks",
+        }
     return frozenset(keys)
 
 

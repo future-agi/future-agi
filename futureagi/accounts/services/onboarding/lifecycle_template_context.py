@@ -15,6 +15,74 @@ from accounts.services.onboarding.lifecycle_tokens import sign_lifecycle_token
 
 SUPPORT_URL = "/dashboard/settings/support"
 
+DEFAULT_OBSERVE_TRACE_CHECKS = {
+    "title": "Check the first-trace setup",
+    "checks": [
+        "Confirm the FutureAGI API key and secret are loaded where the request runs.",
+        "Run the request after project registration and package instrumentation.",
+        "Keep FutureAGI open so the trace can be detected and opened for review.",
+    ],
+}
+
+OBSERVE_TRACE_CHECKS_BY_PROVIDER = {
+    "anthropic": {
+        "title": "Check the Anthropic trace setup",
+        "checks": [
+            "Confirm ANTHROPIC_API_KEY is loaded where the request runs.",
+            "Call AnthropicInstrumentor before creating the Anthropic client.",
+            "Run client.messages.create once so the first trace can arrive.",
+        ],
+    },
+    "bedrock": {
+        "title": "Check the Bedrock trace setup",
+        "checks": [
+            "Confirm AWS credentials, AWS_REGION, and BEDROCK_MODEL_ID are loaded.",
+            "Confirm the role can call bedrock:InvokeModel for the selected model.",
+            "Call BedrockInstrumentor before creating or using the bedrock-runtime client.",
+        ],
+    },
+    "langchain": {
+        "title": "Check the LangChain trace setup",
+        "checks": [
+            "Confirm the model provider key, such as OPENAI_API_KEY, is loaded.",
+            "Call LangChainInstrumentor before creating ChatOpenAI or your chain.",
+            "Run llm.invoke or your chain once so the first trace can arrive.",
+        ],
+    },
+    "llama_index": {
+        "title": "Check the LlamaIndex trace setup",
+        "checks": [
+            "Confirm the LLM or embedding provider key, such as OPENAI_API_KEY, is loaded.",
+            "Call LlamaIndexInstrumentor before building the index or query engine.",
+            "Run query_engine.query once so retrieval or generation spans are created.",
+        ],
+    },
+    "mcp": {
+        "title": "Check the MCP trace setup",
+        "checks": [
+            "Confirm MCP_SERVER_URL and MCP_SERVER_TOKEN reach a server that lists tools.",
+            "Instrument both OpenAI Agents and MCP before Runner.run starts.",
+            "Run one safe MCP tool call so the trace can arrive.",
+        ],
+    },
+    "openai": {
+        "title": "Check the OpenAI trace setup",
+        "checks": [
+            "Confirm OPENAI_API_KEY is loaded where the request runs.",
+            "Call OpenAIInstrumentor before creating the OpenAI client.",
+            "Run responses.create once so the first trace can arrive.",
+        ],
+    },
+    "openai_agents": {
+        "title": "Check the OpenAI Agents trace setup",
+        "checks": [
+            "Confirm OPENAI_API_KEY is loaded where Runner.run executes.",
+            "Call OpenAIAgentsInstrumentor before constructing or running the agent.",
+            "Run Runner.run or Runner.run_sync once so the first trace can arrive.",
+        ],
+    },
+}
+
 
 def _base_url():
     base = (
@@ -60,6 +128,11 @@ def observe_setup_package_label(metadata):
     return " ".join(parts)
 
 
+def observe_trace_checks(metadata):
+    provider = (metadata.get("observe_setup_provider") or "").strip().lower()
+    return OBSERVE_TRACE_CHECKS_BY_PROVIDER.get(provider, DEFAULT_OBSERVE_TRACE_CHECKS)
+
+
 def build_lifecycle_template_context(*, send_log, campaign, target_route, now=None):
     send_metadata = send_log.metadata or {}
     click_token = sign_lifecycle_token(send_log=send_log, kind="click", now=now)
@@ -81,6 +154,7 @@ def build_lifecycle_template_context(*, send_log, campaign, target_route, now=No
         send_log.campaign_group,
     )
     email_copy = lifecycle_email_copy_for_campaign(campaign)
+    observe_trace_check_copy = observe_trace_checks(send_metadata)
 
     return {
         "user_name": user_name,
@@ -118,6 +192,8 @@ def build_lifecycle_template_context(*, send_log, campaign, target_route, now=No
         "observe_setup_provider_label": send_metadata.get(
             "observe_setup_provider_label"
         ),
+        "observe_trace_check_title": observe_trace_check_copy["title"],
+        "observe_trace_checks": observe_trace_check_copy["checks"],
     }
 
 

@@ -14,4 +14,12 @@
     <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has an observe project but no real trace yet.</p>
     <p style="margin:0;">Open setup, choose the package your app uses, send one trace, and FutureAGI will guide you from trace review to evaluator creation.</p>
   {% endif %}
+  <div style="margin:18px 0 0;padding:14px 16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+    <p style="margin:0 0 8px;font-weight:600;color:#111827;">{{ observe_trace_check_title }}</p>
+    <ul style="margin:0;padding-left:18px;">
+      {% for check in observe_trace_checks %}
+        <li style="margin:0 0 6px;">{{ check }}</li>
+      {% endfor %}
+    </ul>
+  </div>
 {% endblock %}

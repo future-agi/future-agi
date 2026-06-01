@@ -21,6 +21,7 @@ from accounts.services.onboarding.lifecycle_registry import (
     lifecycle_campaigns,
 )
 from accounts.services.onboarding.lifecycle_template_context import (
+    observe_trace_checks,
     render_lifecycle_email_preview,
 )
 from accounts.services.onboarding.lifecycle_template_contract import (
@@ -29,6 +30,25 @@ from accounts.services.onboarding.lifecycle_template_contract import (
 )
 
 CAMPAIGN_KEYS = tuple(campaign["campaign_key"] for campaign in lifecycle_campaigns())
+
+
+@pytest.mark.parametrize(
+    ("provider", "expected_text"),
+    [
+        ("openai", "responses.create"),
+        ("anthropic", "ANTHROPIC_API_KEY"),
+        ("langchain", "LangChainInstrumentor"),
+        ("openai_agents", "Runner.run"),
+        ("llama_index", "LlamaIndexInstrumentor"),
+        ("bedrock", "bedrock:InvokeModel"),
+        ("mcp", "MCP_SERVER_URL"),
+    ],
+)
+def test_observe_trace_checks_are_package_specific(provider, expected_text):
+    copy = observe_trace_checks({"observe_setup_provider": provider})
+
+    assert expected_text in " ".join(copy["checks"])
+    assert copy["title"].startswith("Check the")
 
 
 def _digest_preview(workspace, now):
@@ -188,8 +208,17 @@ def test_observe_waiting_template_uses_credential_ready_context(
 
     assert preview["context"]["observe_credentials_ready"] is True
     assert preview["context"]["observe_setup_package_label"] == ("Anthropic TypeScript")
+    assert preview["context"]["observe_trace_check_title"] == (
+        "Check the Anthropic trace setup"
+    )
+    assert "Confirm ANTHROPIC_API_KEY" in preview["context"]["observe_trace_checks"][0]
     assert "has Anthropic TypeScript setup credentials ready" in preview["text"]
     assert "Paste the copied values into the Anthropic snippet" in preview["text"]
+    assert "Check the Anthropic trace setup" in preview["text"]
+    assert (
+        "Call AnthropicInstrumentor before creating the Anthropic client"
+        in preview["text"]
+    )
 
 
 def test_lifecycle_preview_command_writes_no_send_snapshot(tmp_path):
