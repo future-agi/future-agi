@@ -15,12 +15,26 @@ from django.db.models import Count, Q
 
 
 def reseed_broken_demo_data(apps, schema_editor):
-    Dataset = apps.get_model("model_hub", "Dataset")
-    Row = apps.get_model("model_hub", "Row")
-    Cell = apps.get_model("model_hub", "Cell")
-    Column = apps.get_model("model_hub", "Column")
-    Project = apps.get_model("tracer", "Project")
-    OrganizationMembership = apps.get_model("accounts", "OrganizationMembership")
+    # This data migration declares no dependency on model_hub/tracer, so on a
+    # FRESH DB build the migration graph can schedule it before those apps are
+    # in the state → apps.get_model(...) raises LookupError. There is no demo
+    # data to reseed on a fresh DB, so skipping is a correct no-op. The real
+    # prod run (where model_hub/tracer ARE present, and this migration is already
+    # applied) is unaffected — applied migrations never re-run. Adding graph
+    # dependencies instead is risky here (accounts branches at 0020), so guard.
+    try:
+        Dataset = apps.get_model("model_hub", "Dataset")
+        Row = apps.get_model("model_hub", "Row")
+        Cell = apps.get_model("model_hub", "Cell")
+        Column = apps.get_model("model_hub", "Column")
+        Project = apps.get_model("tracer", "Project")
+        OrganizationMembership = apps.get_model("accounts", "OrganizationMembership")
+    except LookupError:
+        print(
+            "  model_hub/tracer not yet in migration state — skipping reseed "
+            "(fresh build, no demo data to fix)."
+        )
+        return
 
     from accounts.user_onboard import (
         create_demo_traces_and_spans,
