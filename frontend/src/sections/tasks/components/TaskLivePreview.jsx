@@ -23,6 +23,10 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { canonicalEntries, stripAttributePathPrefix } from "src/utils/utils";
 import { ROW_TYPE_LABELS } from "src/utils/constants";
+import {
+  buildFlatValueMap,
+  executeEvalForRow,
+} from "src/sections/evals/utils/evalExecution";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
@@ -516,91 +520,13 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   const handleRunTest = useCallback(async () => {
     if (!currentRow || !evalsDetails?.length || !spanDetail) return;
 
-    const _spanId = currentRow?.span_id;
-    const _traceId = currentRow?.trace_id;
-    const _sessionId = currentRow?.session_id;
-
-    const autoCtx = {};
-    if (rowType === "spans" && _spanId) autoCtx.span_id = _spanId;
-    if ((rowType === "spans" || rowType === "traces") && _traceId)
-      autoCtx.trace_id = _traceId;
-    if (rowType === "sessions" && _sessionId) autoCtx.session_id = _sessionId;
-    if (rowType === "voiceCalls" && _traceId) autoCtx.trace_id = _traceId;
-
-    // Sessions: the lazy fetch only populates `traces[0].spans` (other
-    // traces have empty `spans` arrays), so a walk over spanDetail can't
-    // resolve mappings into unloaded traces. The BE's
-    // `_process_session_mapping` walks the real DB and handles every path
-    // correctly — delegate by sending the saved mapping as `mapping_paths`
-    // alongside `session_id` (already in autoCtx). Same code path as
-    // eval-task runtime, so preview matches prod.
+    // Sessions delegate mapping resolution to the BE via `mapping_paths`,
+    // so the local walk is skipped. Other row types walk once and reuse
+    // the same lookup across every eval on this row.
     const isSession = rowType === "sessions";
-
-    // Build a flat fieldName→value lookup by walking spanDetail,
-    // soft-flattening span_attributes keys (same logic as the
-    // fieldNames dropdown in TracingTestMode). This ensures mapped
-    // fields like "input.value" (stripped from "span_attributes.input.value")
-    // resolve correctly even when a top-level "input" shadows the path.
-    // Limits match the dropdown walker in TracingTestMode so every path
-    // offered to the user during mapping also resolves at test time.
-    const ARRAY_PEEK = 500;
-    const DICT_LIMIT = 5000;
-    const valueMap = {};
-    const walkValues = (node, prefix) => {
-      if (Array.isArray(node)) {
-        node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
-          const path = prefix ? `${prefix}.${idx}` : String(idx);
-          valueMap[path] = item;
-          if (item && typeof item === "object") {
-            walkValues(item, path);
-          }
-        });
-        return;
-      }
-      // canonicalEntries drops the camelCase aliases the axios interceptor
-      // layers on — otherwise `span_attributes.*` and `spanAttributes.*`
-      // both end up in valueMap and only the snake side gets stripped.
-      for (const [k, v] of canonicalEntries(node)) {
-        if (k.startsWith("_")) continue;
-        const path = prefix ? `${prefix}.${k}` : k;
-        valueMap[path] = v;
-        if (v && typeof v === "object") {
-          if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
-            walkValues(v, path);
-          }
-        }
-      }
-    };
-    if (!isSession) walkValues(spanDetail, "");
-
-    // Soft-flatten: route through `stripAttributePathPrefix` so any
-    // `span_attributes.` segment — anchored *or* nested inside `spans.<n>.`
-    // or `traces.<i>.spans.<j>.` — collapses to the same form the BE
-    // dropdown emits and that saved mappings store. Top-level keys (i.e.
-    // paths that did NOT need stripping) win the dedupe.
-    const flatValueMap = {};
-    for (const [path, val] of Object.entries(valueMap)) {
-      const short = stripAttributePathPrefix(path);
-      if (!(short in flatValueMap) || short === path) {
-        flatValueMap[short] = val;
-      }
-    }
-
-    const resolveMapping = (mapping) => {
-      const resolved = {};
-      for (const [variable, field] of Object.entries(mapping || {})) {
-        if (!field) continue;
-        const val = flatValueMap[field];
-        if (val !== undefined && val !== null) {
-          resolved[variable] =
-            typeof val === "object" ? JSON.stringify(val) : String(val);
-        }
-      }
-      return resolved;
-    };
+    const flatValueMap = isSession ? {} : buildFlatValueMap(spanDetail);
 
     setIsTesting(true);
-    // Initialize all to running
     setTestResults(
       evalsDetails.reduce((acc, _ev, idx) => {
         acc[idx] = { status: "running" };
@@ -608,75 +534,62 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
       }, {}),
     );
 
-    // Run evals in parallel — each one independently
     await Promise.all(
       evalsDetails.map(async (evalItem, idx) => {
-        try {
-          const templateId = evalItem?.template_id;
-          if (!templateId) {
-            setTestResults((prev) => ({
-              ...prev,
-              [idx]: {
-                status: "error",
-                error: "Missing template id — re-add this eval",
-              },
-            }));
-            return;
-          }
-          // Build data_injection flags from the eval's saved config
-          // so the BE enables the correct context toggles (same as
-          // EvalPickerConfigFull does for tracing tab).
-          const diFlags =
-            evalItem?.data_injection ||
-            evalItem?.config?.run_config?.data_injection ||
-            evalItem?.config?.data_injection ||
-            {};
-          // Sessions delegate path resolution to the BE
-          // (`_process_session_mapping`) — see `isSession` branch above.
-          // Other row types resolve locally because their lazy fetch
-          // returns the full data they need.
-          const savedMapping = evalItem?.mapping || {};
-          const playgroundConfig = {
-            ...(Object.keys(diFlags).length > 0
-              ? { run_config: { data_injection: diFlags } }
-              : {}),
-          };
-          if (!isSession) {
-            playgroundConfig.mapping = resolveMapping(savedMapping);
-          }
-          const { data } = await axios.post(
-            endpoints.develop.eval.evalPlayground,
-            {
-              template_id: templateId,
-              model: evalItem?.model || "turing_large",
-              config: playgroundConfig,
-              ...(isSession ? { mapping_paths: savedMapping } : {}),
-              ...autoCtx,
-            },
-          );
-          if (data?.status) {
-            setTestResults((prev) => ({
-              ...prev,
-              [idx]: { status: "success", result: data.result },
-            }));
-          } else {
-            setTestResults((prev) => ({
-              ...prev,
-              [idx]: {
-                status: "error",
-                error: data?.result || "Evaluation failed",
-              },
-            }));
-          }
-        } catch (err) {
+        const templateId = evalItem?.template_id;
+        if (!templateId) {
           setTestResults((prev) => ({
             ...prev,
             [idx]: {
               status: "error",
-              error:
-                err?.response?.data?.result ||
-                err?.message ||
-                "Failed to run eval",
+              error: "Missing template id — re-add this eval",
+            },
+          }));
+          return;
+        }
+        // Forward the saved data_injection flags so the BE enables the
+        // matching auto-context (matches EvalPickerConfigFull's tracing tab).
+        const diFlags =
+          evalItem?.data_injection ||
+          evalItem?.config?.run_config?.data_injection ||
+          evalItem?.config?.data_injection ||
+          {};
+        const configExtras =
+          Object.keys(diFlags).length > 0
+            ? { run_config: { data_injection: diFlags } }
+            : {};
+        const result = await executeEvalForRow({
+          evalItem,
+          rowType,
+          currentRow,
+          spanDetail,
+          mapping: evalItem?.mapping || {},
+          flatValueMap,
+          singleEvalConfigExtras: configExtras,
+          compositeConfigExtras: configExtras,
+        });
+        if (result.ok) {
+          setTestResults((prev) => ({
+            ...prev,
+            [idx]: {
+              status: "success",
+              // EvalResultDisplay reads `compositeResult` for composite or
+              // the legacy `output`/`reason`/`score` keys for single.
+              result: result.isComposite
+                ? {
+                    output: result.output,
+                    reason: result.reason,
+                    compositeResult: result.compositeResult,
+                  }
+                : result.raw,
+            },
+          }));
+        } else {
+          setTestResults((prev) => ({
+            ...prev,
+            [idx]: {
+              status: "error",
+              error: result.errorMessage || "Failed to run eval",
             },
           }));
         }
