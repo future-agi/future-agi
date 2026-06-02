@@ -41,5 +41,13 @@ class ColumnConfig(models.Model):
         blank=True,
     )
 
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["table_name", "organization", "identifier"],
+                name="unique_column_config_per_table_org_identifier",
+            ),
+        ]
+
     def __str__(self):
         return str(self.id)

@@ -5398,7 +5398,9 @@ class EvalUsageStatsView(APIView):
                     "source": {"cell_value": source},
                     "version": {
                         "cell_value": (
-                            config.get("version_number")
+                            ""
+                            if template.owner == OwnerChoices.SYSTEM.value
+                            else config.get("version_number")
                             if isinstance(config, dict)
                             else None
                         ),
