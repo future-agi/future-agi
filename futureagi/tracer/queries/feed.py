@@ -1472,6 +1472,25 @@ def _key_moments_to_reel(
     return steps
 
 
+def _trace_judge(trace_id: str) -> tuple[str | None, float | None]:
+    """The evaluator's reasoning + score for this trace — the lowest-scoring
+    eval (the one explaining the failure), so the reason and the score badge
+    refer to the SAME eval. (None, None) for scanner traces with no eval rows.
+    Powers the eval-cluster I/O panel's judge-reason card."""
+    row = (
+        EvalLogger.objects.filter(trace_id=trace_id, deleted=False)
+        .exclude(eval_explanation__isnull=True)
+        .exclude(eval_explanation="")
+        .annotate(_score=EVAL_SCORE_EXPR)
+        .order_by("_score")
+        .values("eval_explanation", "_score")
+        .first()
+    )
+    if not row:
+        return None, None
+    return row["eval_explanation"], row["_score"]
+
+
 def _build_representative_trace(
     trace: Trace,
     has_issues: bool,
@@ -1537,6 +1556,8 @@ def _build_representative_trace(
             trace_id=str(trace.id),
         )
 
+    judge_reason, judge_score = _trace_judge(str(trace.id))
+
     return RepresentativeTrace(
         id=str(trace.id),
         status="fail" if has_issues else "pass",
@@ -1554,6 +1575,8 @@ def _build_representative_trace(
             output=output_text,
             fail_reel=fail_reel,
             pass_reel=pass_reel or [],
+            judge_reason=judge_reason,
+            score=judge_score if judge_score is not None else score,
         ),
     )
 

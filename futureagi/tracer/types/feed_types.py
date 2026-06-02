@@ -202,12 +202,15 @@ class TraceSummary:
 
 @dataclass
 class TraceEvidence:
-    """Raw input/output + optional breadcrumb reels (populated later phases)."""
+    """Raw input/output + breadcrumb reels + (eval clusters) the judge's
+    reasoning and score the artifact was scored against."""
 
     input: str | None = None
     output: str | None = None
     fail_reel: list[dict] = field(default_factory=list)
     pass_reel: list[dict] = field(default_factory=list)
+    judge_reason: str | None = None
+    score: float | None = None
 
 
 @dataclass

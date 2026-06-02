@@ -207,6 +207,8 @@ class TraceEvidenceSerializer(serializers.Serializer):
     output = serializers.CharField(allow_null=True)
     fail_reel = serializers.ListField(child=serializers.DictField())
     pass_reel = serializers.ListField(child=serializers.DictField())
+    judge_reason = serializers.CharField(allow_null=True, required=False)
+    score = serializers.FloatField(allow_null=True, required=False)
 
 
 class AgentFlowGraphSerializer(serializers.Serializer):
