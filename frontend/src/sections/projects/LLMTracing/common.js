@@ -359,11 +359,35 @@ export const applyQuickFilters =
     }
 
     if (filter) {
+      // Quick filters on a couple of columns must be rerouted to their
+      // canonical backend field before building the API filter.
+      let field = filter.column_id;
+      let fieldName;
+      let apiColType;
+      let operator = filter.filter_config?.filter_op;
+      let value = filter.filter_config?.filter_value;
+
+      if (field === "user_id") {
+        // user_id renders emails; route through the user.id span attribute.
+        field = "user.id";
+        fieldName = "User ID";
+        apiColType = "SPAN_ATTRIBUTE";
+      } else if (field === "trace_name") {
+        // trace_name maps to the canonical SYSTEM_METRIC `name` field.
+        field = "name";
+        fieldName = "Trace Name";
+        apiColType = "SYSTEM_METRIC";
+        operator = "in";
+        value = Array.isArray(value) ? value : [value];
+      }
+
       const extraFilter = buildApiFilterFromPanelRow({
-        field: filter.column_id,
+        field,
+        fieldName,
         fieldType: filter.filter_config?.filter_type,
-        operator: filter.filter_config?.filter_op,
-        value: filter.filter_config?.filter_value,
+        apiColType,
+        operator,
+        value,
       });
       setFilters((prev) => {
         const exists = (prev || []).some(

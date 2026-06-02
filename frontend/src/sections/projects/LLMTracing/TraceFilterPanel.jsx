@@ -1668,27 +1668,17 @@ const TraceFilterPanel = ({
     }
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
-    // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
+    // trace or span tab.
     const ID_FIELDS = new Set(["trace_id", "span_id"]);
-    const staticProps = getTraceFilterFields(tab).map((f) => {
-      if (isSpansView && f.value === "name") {
-        return {
-          id: "name",
-          name: "Span Name",
-          category: "system",
-          type: "string",
-        };
-      }
-      return {
-        id: f.value,
-        name: f.label,
-        // trace_id / span_id are direct column filters — omit category so
-        // col_type is not injected (the backend handles them without it).
-        ...(!ID_FIELDS.has(f.value) && { category: "system" }),
-        type: f.type === "enum" ? "string" : f.type,
-        ...(f.choices ? { choices: f.choices } : {}),
-      };
-    });
+    const staticProps = getTraceFilterFields(tab).map((f) => ({
+      id: f.value,
+      name: f.label,
+      // trace_id / span_id are direct column filters — omit category so
+      // col_type is not injected (the backend handles them without it).
+      ...(!ID_FIELDS.has(f.value) && { category: "system" }),
+      type: f.type === "enum" ? "string" : f.type,
+      ...(f.choices ? { choices: f.choices } : {}),
+    }));
     const knownIds = new Set(staticProps.map((p) => p.id));
     // Add dynamic properties not already covered by static fields
     const dynamicExtras = dynamicProperties.filter((p) => !knownIds.has(p.id));
