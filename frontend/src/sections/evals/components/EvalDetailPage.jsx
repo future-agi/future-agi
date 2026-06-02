@@ -1828,6 +1828,7 @@ const EvalDetailPage = () => {
                     codeLanguage={codeLanguage}
                     isSystemEval={isSystemEval}
                     requiredKeys={variables}
+                    multiChoice={multiChoice}
                     showVersions={!(isSystemEval && evalType === "code")}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     onTestResult={handleTestResult}
