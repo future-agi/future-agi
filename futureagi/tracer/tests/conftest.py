@@ -5,7 +5,7 @@ Provides fixtures specific to tracer models and test data.
 
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from django.utils import timezone
@@ -24,7 +24,12 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.tests._ch_seed import seed_ch_span, seed_ch_spans, truncate_ch_spans
+from tracer.tests._ch_seed import (
+    seed_ch_span,
+    seed_ch_spans,
+    seed_ch_trace_sessions,
+    truncate_ch_spans,
+)
 
 
 @pytest.fixture
@@ -395,6 +400,7 @@ def stub_cost_log(monkeypatch):
     """
     try:
         from tfc.constants.api_calls import APICallStatusChoices
+
         processing_status = APICallStatusChoices.PROCESSING.value
     except ImportError:
         processing_status = "processing"
@@ -408,7 +414,9 @@ def stub_cost_log(monkeypatch):
         def save(self):
             pass
 
-    def _stub(*, organization, api_call_type, source, source_id, config, workspace, **kwargs):
+    def _stub(
+        *, organization, api_call_type, source, source_id, config, workspace, **kwargs
+    ):
         return _StubCostLog(config)
 
     monkeypatch.setattr(
@@ -524,8 +532,16 @@ def populated_observe_project(db, observe_project):
                     observation_type="llm" if sp_idx % 2 == 0 else "tool",
                     start_time=timezone.now() - timedelta(seconds=10 - sp_idx),
                     end_time=timezone.now() - timedelta(seconds=9 - sp_idx),
-                    input={"messages": [{"role": "user", "content": f"hi s{s_idx}t{t_idx}_{sp_idx}"}]},
-                    output={"choices": [{"message": {"content": f"reply s{s_idx}t{t_idx}_{sp_idx}"}}]},
+                    input={
+                        "messages": [
+                            {"role": "user", "content": f"hi s{s_idx}t{t_idx}_{sp_idx}"}
+                        ]
+                    },
+                    output={
+                        "choices": [
+                            {"message": {"content": f"reply s{s_idx}t{t_idx}_{sp_idx}"}}
+                        ]
+                    },
                     span_attributes={
                         "input": f"hi s{s_idx}t{t_idx}_{sp_idx}",
                         "output": f"reply s{s_idx}t{t_idx}_{sp_idx}",
@@ -540,8 +556,13 @@ def populated_observe_project(db, observe_project):
                 )
             spans.extend(list(trace.observation_spans.order_by("start_time")))
 
-    # Seed CH so endpoints that read from ClickHouse see the rows.
+    # Seed CH so endpoints that read from ClickHouse see the rows. Spans carry
+    # the analytics; the curated `trace_sessions` rows back the post-P3c session
+    # reads (resolve_session_fields) — ingestion dual-writes them in prod, so the
+    # PG-direct fixture must seed them too or session reads resolve to "does not
+    # exist".
     seed_ch_spans(spans)
+    seed_ch_trace_sessions(sessions)
 
     return {
         "project": observe_project,

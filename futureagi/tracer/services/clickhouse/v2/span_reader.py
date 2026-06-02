@@ -865,7 +865,7 @@ class CHSpanReader:
         project_id: str | None = None,
         trace_ids: list[str] | None = None,
         observation_type: list[str] | str | None = None,
-        session_id: str | None = None,
+        session_id: str | list[str] | None = None,
         created_at_gte: datetime | None = None,
         created_at_range: tuple[datetime, datetime] | None = None,
     ) -> int:
@@ -909,10 +909,20 @@ class CHSpanReader:
         if session_id:
             # P3b step1.5 (id_remap_sql): resolve `trace_session_id` new→old so a
             # straddler's new-id spans are counted under the OLD id (gate B no-op
-            # pre-flip). The eval-task filter feeds the OLD curated id.
-            session_join, session_pred = self._session_filter_remap()
-            where.append(session_pred)
-            params["sid"] = session_id
+            # pre-flip). Accept a scalar id OR the UI list shape — match via IN so
+            # a list is never bound to a scalar `=` (CH TYPE_MISMATCH).
+            session_join, _ = self._session_filter_remap()
+            resolved_ts = resolved_id_expr("spans.trace_session_id", "ts_remap")
+            sids = (
+                list(session_id)
+                if isinstance(session_id, list | tuple | set)
+                else [session_id]
+            )
+            sids = [str(s) for s in sids if s]
+            if not sids:
+                return 0
+            where.append(f"{resolved_ts} IN %(sids)s")
+            params["sids"] = tuple(sids)
         if created_at_gte:
             # CH v2 spans table has a real `created_at` column (schema
             # 002_spans_v2.sql); use it directly for parity with the PG
@@ -936,7 +946,7 @@ class CHSpanReader:
         project_id: str | None = None,
         trace_ids: list[str] | None = None,
         observation_type: list[str] | str | None = None,
-        session_id: str | None = None,
+        session_id: str | list[str] | None = None,
         created_at_gte: datetime | None = None,
         created_at_range: tuple[datetime, datetime] | None = None,
     ) -> list[str]:
@@ -970,7 +980,7 @@ class CHSpanReader:
         # The remap join is ALWAYS present (the SELECT resolves new→old); a
         # session_id filter, if any, reuses the SAME ``ts_remap`` alias rather
         # than adding a second join.
-        session_join, session_pred = self._session_filter_remap()
+        session_join, _ = self._session_filter_remap()
         resolved_ts = resolved_id_expr("spans.trace_session_id", "ts_remap")
         # A session candidate must carry a session id (mirrors the
         # spans_per_session MV's ``WHERE trace_session_id IS NOT NULL``).
@@ -995,11 +1005,21 @@ class CHSpanReader:
                 where.append("observation_type = %(otype)s")
                 params["otype"] = observation_type
         if session_id:
-            # Filter to ONE session by its OLD curated id while still resolving
-            # straddler new-id spans (same predicate count_with_filters uses);
-            # reuses the unconditional ts_remap join above.
-            where.append(session_pred)
-            params["sid"] = session_id
+            # Accept BOTH a scalar id AND the UI list shape (task forms send
+            # `session_id` as a list, e.g. ["<uuid>"]). Resolve straddler new-id
+            # spans (reuses the unconditional ts_remap join) and match via IN, so
+            # a list never gets bound to a scalar `=` (which CH rejects:
+            # "Cannot convert '['<uuid>']' to UUID", TYPE_MISMATCH).
+            sids = (
+                list(session_id)
+                if isinstance(session_id, list | tuple | set)
+                else [session_id]
+            )
+            sids = [str(s) for s in sids if s]
+            if not sids:
+                return []
+            where.append(f"{resolved_ts} IN %(sids)s")
+            params["sids"] = tuple(sids)
         if created_at_gte:
             where.append("created_at >= %(cag)s")
             params["cag"] = created_at_gte
@@ -1153,7 +1173,16 @@ class CHSpanReader:
         if otype := filters.get("observation_type"):
             out["observation_type"] = otype
         if sid := filters.get("session_id"):
-            out["session_id"] = str(sid)
+            # `session_id` may be a scalar OR the UI list shape (["<uuid>"]).
+            # Preserve the list — do NOT str() it (str(["<uuid>"]) yields the
+            # repr "['<uuid>']", which then fails the CH UUID bind). The
+            # consumers (distinct_session_ids_with_filters / count_with_filters)
+            # accept both shapes and match via IN.
+            out["session_id"] = (
+                [str(s) for s in sid]
+                if isinstance(sid, list | tuple | set)
+                else str(sid)
+            )
         if dr := filters.get("date_range"):
             if isinstance(dr, list | tuple) and len(dr) == 2:
                 out["created_at_range"] = (dr[0], dr[1])

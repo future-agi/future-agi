@@ -30,7 +30,9 @@ PG→CH backfill uses, so test rows have the same shape as real spans.
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from datetime import UTC, datetime
+from typing import Any
 
 from tracer.services.clickhouse.v2 import get_v2_config
 from tracer.services.clickhouse.v2.adapter import (
@@ -83,9 +85,7 @@ def _pg_row_from_django_span(span: Any) -> dict[str, Any]:
         # ObservationSpan doesn't carry trace_session_id; resolve via trace FK.
         "trace_session_id": (
             getattr(span, "trace_session_id", None)
-            or (
-                getattr(getattr(span, "trace", None), "session_id", None)
-            )
+            or (getattr(getattr(span, "trace", None), "session_id", None))
         ),
         "prompt_version_id": getattr(span, "prompt_version_id", None),
         "prompt_label_id": getattr(span, "prompt_label_id", None),
@@ -121,7 +121,7 @@ def _get_ch_client():
     )
 
 
-def seed_ch_span(span_or_dict: Any, *, client: Optional[Any] = None) -> None:
+def seed_ch_span(span_or_dict: Any, *, client: Any | None = None) -> None:
     """Insert ONE ObservationSpan into the CH ``spans`` table.
 
     Accepts either a Django ``ObservationSpan`` instance or a dict already
@@ -134,7 +134,7 @@ def seed_ch_span(span_or_dict: Any, *, client: Optional[Any] = None) -> None:
 def seed_ch_spans(
     spans: Iterable[Any],
     *,
-    client: Optional[Any] = None,
+    client: Any | None = None,
 ) -> int:
     """Bulk-insert ObservationSpan rows into the CH ``spans`` table.
 
@@ -159,6 +159,50 @@ def seed_ch_spans(
     finally:
         if own_client:
             client.close()
+
+
+_TRACE_SESSIONS_COLUMNS = [
+    "project_id",
+    "trace_session_id",
+    "external_session_id",
+    "first_seen",
+    "version",
+    "is_deleted",
+]
+
+
+def seed_ch_trace_sessions(
+    sessions: Iterable[Any],
+    *,
+    client: Any | None = None,
+) -> int:
+    """Bulk-insert curated CH ``trace_sessions`` rows for test ``TraceSession``s.
+
+    The post-P3c session reads (``trace_session_dict_reader.resolve_session_fields``,
+    used by the session list/detail + the eval-task session dispatcher) read the
+    curated CH ``trace_sessions`` RMT — populated in prod by the ingestion
+    dual-write, but bypassed by PG-direct test fixtures. Without these rows a
+    session resolves to "does not exist". Mirrors schema 018:
+    ``trace_session_id`` == the PG ``TraceSession.id`` (P3a straight mirror),
+    ``external_session_id`` == PG ``name``.
+    """
+    now = datetime.now(UTC)
+    rows: list[tuple] = []
+    for s in sessions:
+        first_seen = getattr(s, "created_at", None) or now
+        rows.append((str(s.project_id), str(s.id), s.name or "", first_seen, now, 0))
+    if not rows:
+        return 0
+
+    own_client = client is None
+    if own_client:
+        client = _get_ch_client()
+    try:
+        client.insert("trace_sessions", rows, column_names=_TRACE_SESSIONS_COLUMNS)
+    finally:
+        if own_client:
+            client.close()
+    return len(rows)
 
     return len(rows)
 
@@ -218,9 +262,9 @@ def _score_row_from_django(score: Any) -> tuple:
     NULL on older rows).
     """
     import json
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     # Resolve project_id — try Score.project_id first, then walk source FKs.
     project_id = getattr(score, "project_id", None)
@@ -235,7 +279,11 @@ def _score_row_from_django(score: Any) -> tuple:
     def _uuid_or_none(val: Any) -> Any:
         return str(val) if val else None
 
-    value_json = json.dumps(score.value) if isinstance(score.value, dict) else str(score.value or "{}")
+    value_json = (
+        json.dumps(score.value)
+        if isinstance(score.value, dict)
+        else str(score.value or "{}")
+    )
 
     return (
         str(score.id),
@@ -259,13 +307,13 @@ def _score_row_from_django(score: Any) -> tuple:
         score.deleted_at,
         score.created_at or now,
         score.updated_at or now,
-        now,     # _peerdb_synced_at
-        0,       # _peerdb_is_deleted
-        1,       # _peerdb_version
+        now,  # _peerdb_synced_at
+        0,  # _peerdb_is_deleted
+        1,  # _peerdb_version
     )
 
 
-def seed_ch_score(score: Any, *, client: Optional[Any] = None) -> None:
+def seed_ch_score(score: Any, *, client: Any | None = None) -> None:
     """Insert ONE Score into the CH ``model_hub_score`` table.
 
     Accepts a Django ``Score`` instance. Caller-supplied ``client``
@@ -277,7 +325,7 @@ def seed_ch_score(score: Any, *, client: Optional[Any] = None) -> None:
 def seed_ch_scores(
     scores: Iterable[Any],
     *,
-    client: Optional[Any] = None,
+    client: Any | None = None,
 ) -> int:
     """Bulk-insert Score rows into the CH ``model_hub_score`` table.
 
