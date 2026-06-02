@@ -106,14 +106,6 @@ urlpatterns = [
             else "tfc.ee_stub_urls"
         ),
     ),
-    path(
-        "cluster-rca/",
-        include(
-            "ee.agenthub.cluster_rca.urls"
-            if ee_feature_enabled("ee.agenthub.cluster_rca")
-            else "tfc.ee_stub_urls"
-        ),
-    ),
     path("saml2_auth/", include("saml2_auth.urls")),
     path("call-websocket/", CallWebsocketView.as_view(), name="call-websocket"),
     path("health/", HealthCheckView.as_view(), name="health-check"),

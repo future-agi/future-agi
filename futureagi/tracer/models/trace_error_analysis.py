@@ -268,6 +268,42 @@ class TraceErrorGroup(BaseModel):
         help_text="External issue identifier (e.g. TH-123, #456)",
     )
 
+    # --- Cluster RCA agent result (cached headline) ---
+    # Populated when the cluster-rca Falcon skill finishes a run. The headline
+    # card reads these so it shows the last synthesis without re-running; the
+    # Analyze tab seeds a Falcon follow-up conversation from them.
+    rca_synthesis = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Agent's one-paragraph root-cause synthesis (last run)",
+    )
+    rca_fix = models.TextField(
+        null=True,
+        blank=True,
+        help_text="Agent's proposed fix (last run)",
+    )
+    rca_confidence = models.CharField(
+        max_length=1,
+        null=True,
+        blank=True,
+        help_text="Synthesis confidence: H / M / L",
+    )
+    rca_evidence_trace_ids = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Trace IDs the synthesis cited as evidence",
+    )
+    rca_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the last cluster-RCA run completed",
+    )
+    rca_failures_at_run = models.IntegerField(
+        null=True,
+        blank=True,
+        help_text="error_count snapshot at run time — drives the stale-result nudge",
+    )
+
     class Meta:
         db_table = "tracer_trace_error_group"
         ordering = ["cluster_id"]
