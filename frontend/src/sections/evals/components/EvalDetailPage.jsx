@@ -1055,16 +1055,16 @@ const EvalDetailPage = () => {
     try {
       const { data } = await axios.post(
         endpoints.develop.eval.duplicateEvalsTemplate,
-        { eval_template_id: evalId },
+        { eval_template_id: evalId, name: `${evalData?.name}_copy_${Date.now()}` },
       );
       enqueueSnackbar("Evaluation duplicated", { variant: "success" });
-      if (data?.result?.id)
-        navigate(`/dashboard/evaluations/${data.result.id}`);
+      if (data?.result?.eval_template_id)
+        navigate(`/dashboard/evaluations/${data.result.eval_template_id}`);
     } catch {
       enqueueSnackbar("Failed to duplicate evaluation", { variant: "error" });
     }
     setMenuAnchor(null);
-  }, [evalId, enqueueSnackbar, navigate]);
+  }, [evalId, evalData?.name, enqueueSnackbar, navigate]);
 
   if (isLoading) {
     return (
