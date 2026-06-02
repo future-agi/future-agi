@@ -19,18 +19,16 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "../iconify";
-// purple import removed - using theme tokens for dark mode support
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
-import { stripePromise } from "src/pages/dashboard/settings/stripeVariables";
 import { LoadingButton } from "@mui/lab";
 import { useNavigate } from "react-router";
 import logger from "src/utils/logger";
 
 const PLAN_TYPES = {
   FREE: "free",
-  PRO: "basic",
+  PRO: "payg",
   CUSTOM: "custom",
 };
 
@@ -45,11 +43,10 @@ const planData = {
     footerText: "Advanced features with higher limits and SLAs",
   },
   [PLAN_TYPES.PRO]: {
-    name: "Pro/Business plan",
+    name: "Pay-as-you-go",
     icon: "circle",
     iconColor: "divider", // Gray color based on the image
-    tagline: "For fast growing organization",
-    // price: 50,
+    tagline: "For fast growing organizations",
     isCurrentPlan: false,
     includes: PLAN_TYPES.FREE,
     includesLowerTier: true,
@@ -92,38 +89,14 @@ function PlanCard({
     );
   };
 
-  const handleUpgradeClick = async (subscription_type) => {
+  const handleUpgradeClick = async () => {
     setIsLoadingButton(true);
     try {
-      const stripe = await stripePromise;
-      if (!stripe) {
-        enqueueSnackbar("Failed to create checkout session", {
-          variant: "error",
-        });
-        setIsLoadingButton(false);
-        return;
-      }
-      const response = await axios.post(
-        endpoints.stripe.createCheckoutSession,
-        {
-          subscription_type: subscription_type,
-        },
-      );
+      const response = await axios.post(endpoints.settings.v2.upgradeToPayg);
+      const checkoutUrl = response?.data?.result?.checkout_url;
 
-      if (response?.data?.session_id) {
-        const { error } = await stripe.redirectToCheckout({
-          sessionId: response.data.session_id,
-        });
-        if (error) {
-          logger.error("Error during checkout:", error);
-        }
-      } else if (response?.data?.result?.message) {
-        enqueueSnackbar(response?.data?.result?.message, {
-          variant: "success",
-        });
-        enqueueSnackbar("Please refresh the page to view the changes.", {
-          variant: "info",
-        });
+      if (checkoutUrl) {
+        window.location.href = checkoutUrl;
       } else {
         enqueueSnackbar("Failed to create checkout session", {
           variant: "error",
@@ -131,6 +104,9 @@ function PlanCard({
       }
     } catch (err) {
       logger.error("Failed to create checkout session:", err);
+      enqueueSnackbar("Failed to create checkout session", {
+        variant: "error",
+      });
     } finally {
       setIsLoadingButton(false);
     }
@@ -292,27 +268,29 @@ function PlanCard({
           variant="contained"
           fullWidth
           color="primary"
-          onClick={() => handleUpgradeClick(plan)}
+          onClick={handleUpgradeClick}
           loading={isLoadingButton}
           sx={{
             mt: 3,
             borderRadius: "8px",
           }}
         >
-          Upgrade to Pro
+          Upgrade to PAYG
         </LoadingButton>
       )}
 
       {((currentPlan == PLAN_TYPES.FREE && plan == PLAN_TYPES.PRO) ||
         currentPlan == PLAN_TYPES.PRO) && (
         <Typography
+          component="div"
           fontSize={"10px"}
           sx={{
             mt: 0.5,
           }}
         >
-          Annual pro plan has upgraded limits and discounts
+          Pay-as-you-go unlocks higher limits and usage-based billing
           <Typography
+            component="span"
             fontSize={"10px"}
             fontWeight={500}
             onClick={() => redirectToPlan()}
@@ -330,7 +308,7 @@ PlanCard.propTypes = {
   name: PropTypes.string,
   icon: PropTypes.string,
   tagline: PropTypes.string,
-  price: PropTypes.number,
+  price: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   plan: PropTypes.string,
   includes: PropTypes.string,
   includesLowerTier: PropTypes.bool,
@@ -354,24 +332,67 @@ const PricingDialog = ({ open, onClose, title, description }) => {
     navigate("/dashboard/settings/pricing");
   };
 
+  const formatCompact = (value) => {
+    if (value === -1) return "Unlimited";
+    if (value >= 1000000) return `${Number(value / 1000000).toPrecision(3)}M`;
+    if (value >= 10000) return `${Number(value / 1000).toPrecision(3)}K`;
+    return value?.toLocaleString?.() ?? value;
+  };
+
+  const formatFeatureLabel = (key) =>
+    key
+      .replace(/^has_/, "")
+      .replace(/_/g, " ")
+      .replace(/\b\w/g, (char) => char.toUpperCase());
+
+  const formatFeatures = (features) => {
+    if (Array.isArray(features)) return features;
+    if (!features) return [];
+
+    return Object.entries(features)
+      .filter(([, value]) => value === true || value === -1 || value > 0)
+      .map(([key, value]) => {
+        const label = formatFeatureLabel(key);
+        if (typeof value === "number")
+          return `${label}: ${formatCompact(value)}`;
+        return label;
+      })
+      .slice(0, 8);
+  };
+
   useEffect(() => {
     let isMounted = true;
 
     const fetchAllData = async () => {
       setPlanLoading(true);
       try {
-        const [planRes, pricingRes] = await Promise.all([
-          axios.get(endpoints.stripe.subscriptionPlanStatus),
-          axios.post(endpoints.stripe.pricingCardDetails),
-        ]);
+        const planRes = await axios.get(endpoints.settings.v2.plansAndAddons);
 
         if (!isMounted) return;
 
-        setCurrentPlan(planRes.data?.result?.currentSubscription);
-        setData(planRes.data?.result?.data);
-        setBusinessMonthlyPrice(pricingRes.data?.result?.businessMonthlyPrice);
+        const result = planRes.data?.result || {};
+        const plansByKey = [
+          ...(result.tiers || []),
+          ...(result.addons || []),
+        ].reduce((acc, plan) => {
+          acc[plan.key] = plan;
+          return acc;
+        }, {});
+
+        setCurrentPlan(result.current_plan || PLAN_TYPES.FREE);
+        setData({
+          ...plansByKey,
+          [PLAN_TYPES.CUSTOM]:
+            result.customDetails || plansByKey.enterprise || plansByKey.scale,
+        });
+        setBusinessMonthlyPrice(
+          plansByKey[PLAN_TYPES.PRO]?.platform_fee_monthly || 0,
+        );
       } catch (err) {
         logger.error("Error fetching subscription or pricing details:", err);
+        if (isMounted) {
+          setData({});
+        }
       } finally {
         if (isMounted) setPlanLoading(false);
       }
@@ -460,7 +481,7 @@ const PricingDialog = ({ open, onClose, title, description }) => {
             <Grid item xs={12} md={4}>
               <PlanCard
                 {...planData[PLAN_TYPES?.FREE]}
-                features={data[PLAN_TYPES?.FREE]?.features}
+                features={formatFeatures(data?.[PLAN_TYPES?.FREE]?.features)}
                 currentPlan={currentPlan}
                 plan={PLAN_TYPES?.FREE}
                 redirectToPlan={redirectToPlan}
@@ -473,7 +494,7 @@ const PricingDialog = ({ open, onClose, title, description }) => {
               <PlanCard
                 {...planData[PLAN_TYPES?.PRO]}
                 price={businessMonthlyPrice}
-                features={data[PLAN_TYPES?.PRO]?.features}
+                features={formatFeatures(data?.[PLAN_TYPES?.PRO]?.features)}
                 currentPlan={currentPlan}
                 plan={PLAN_TYPES?.PRO}
                 redirectToPlan={redirectToPlan}
@@ -485,7 +506,7 @@ const PricingDialog = ({ open, onClose, title, description }) => {
             <Grid item xs={12} md={4}>
               <PlanCard
                 {...planData[PLAN_TYPES?.CUSTOM]}
-                features={data[PLAN_TYPES?.CUSTOM]?.features}
+                features={formatFeatures(data?.[PLAN_TYPES?.CUSTOM]?.features)}
                 currentPlan={currentPlan}
                 plan={PLAN_TYPES?.CUSTOM}
                 redirectToPlan={redirectToPlan}

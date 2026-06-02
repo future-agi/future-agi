@@ -9,19 +9,18 @@ import {
   Slide,
 } from "@mui/material";
 import PropTypes from "prop-types";
+import PricingDialog from "./UpgradeNowModal";
 import Iconify from "../iconify";
-import { useNavigate } from "react-router";
 import { useSocket } from "src/hooks/use-socket";
 import { ShowComponent } from "../show";
 import logger from "src/utils/logger";
-import { paths } from "src/routes/paths";
 
 const UploadLimitNotification = () => {
   const { socket } = useSocket();
   const [showRateLimiter, setShowRateLimiter] = useState(false);
   const [alertData, setAlertData] = useState(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const theme = useTheme();
-  const navigate = useNavigate();
 
   // Store message handler in a ref for proper cleanup
   const messageHandler = useRef((event) => {
@@ -79,10 +78,15 @@ const UploadLimitNotification = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [window.location.pathname]);
 
-  const handleUpgrade = useCallback(() => {
+  const handleOpenDialog = useCallback(() => {
+    setDialogOpen(true);
     setShowRateLimiter(false);
-    navigate(paths.dashboard.settings.pricing);
-  }, [navigate]);
+  }, []);
+
+  const handleCloseDialog = useCallback(() => {
+    setDialogOpen(false);
+    setShowRateLimiter(false);
+  }, []);
 
   return (
     <>
@@ -118,34 +122,44 @@ const UploadLimitNotification = () => {
               maxWidth: 510,
               boxShadow: "0 2px 8px rgba(0, 0, 0, 0.15)",
               padding: "16px",
-              borderRadius: "14px",
+              borderRadius: "8px",
               position: "fixed",
-              bottom: "64px",
+              bottom: "24px",
               right: "24px",
               zIndex: 9999,
+              transition: "all 0.3s ease-in-out",
             }}
           >
-            <AlertTitle>
+            <AlertTitle sx={{ m: 0 }}>
               <Box
                 sx={{
                   display: "flex",
+                  alignItems: "center",
                   justifyContent: "space-between",
+                  mb: 0.5,
                 }}
               >
                 <Typography
+                  variant="subtitle1"
                   sx={{
+                    fontSize: "16px",
                     fontWeight: "600",
-                    fontSize: "15px",
                     color: "text.primary",
                   }}
                 >
                   {alertData?.alert_title}
                 </Typography>
                 <IconButton
-                  onClick={() => setShowRateLimiter(false)}
+                  size="small"
+                  onClick={() => {
+                    setShowRateLimiter(false);
+                  }}
                   sx={{
-                    padding: "0px",
                     color: "text.primary",
+                    padding: "4px",
+                    "&:hover": {
+                      backgroundColor: "rgba(0, 0, 0, 0.04)",
+                    },
                   }}
                 >
                   <Iconify icon="oui:cross" />
@@ -166,7 +180,7 @@ const UploadLimitNotification = () => {
               </Typography>
               <Box sx={{ display: "flex", justifyContent: "flex-start" }}>
                 <Typography
-                  onClick={handleUpgrade}
+                  onClick={handleOpenDialog}
                   sx={{
                     textDecoration: "underline",
                     fontSize: "14px",
@@ -182,6 +196,12 @@ const UploadLimitNotification = () => {
           </Alert>
         </Slide>
       </ShowComponent>
+      <PricingDialog
+        open={dialogOpen}
+        onClose={handleCloseDialog}
+        title={alertData?.subscription_title}
+        description={alertData?.subscription_description}
+      />
     </>
   );
 };
