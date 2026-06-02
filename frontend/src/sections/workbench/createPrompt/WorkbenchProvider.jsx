@@ -554,9 +554,12 @@ const WorkbenchProvider = ({ children }) => {
       setModelConfigByIndex(0, {
         id: getRandomId(),
         ...modelConfigDefault,
-        ...normalizeConfigurationForLoad(data?.prompt_config?.[0]?.configuration),
+        ...normalizeConfigurationForLoad(
+          data?.prompt_config?.[0]?.configuration,
+        ),
       });
-      const savedFormat = data?.prompt_config?.[0]?.configuration?.template_format;
+      const savedFormat =
+        data?.prompt_config?.[0]?.configuration?.template_format;
       setTemplateFormat(savedFormat || "mustache");
     }
     if (data?.output?.length && !results?.[0]?.output?.length) {
@@ -736,7 +739,11 @@ const WorkbenchProvider = ({ children }) => {
         return acc;
       }, {});
 
-      const finalVariables = getVariables(currentPrompts, variableData, templateFormat);
+      const finalVariables = getVariables(
+        currentPrompts,
+        variableData,
+        templateFormat,
+      );
 
       const sanitizedMessages = currentPrompts?.map(({ id, ...rest }) => {
         return {
@@ -1321,7 +1328,11 @@ const WorkbenchProvider = ({ children }) => {
       setVariableData(...v);
       const saveDraftIndexes = prompts.reduce(
         (acc, { prompts: currentPrompts }, i) => {
-          const finalVariables = getVariables(currentPrompts, v[0], templateFormat);
+          const finalVariables = getVariables(
+            currentPrompts,
+            v[0],
+            templateFormat,
+          );
           if (Object.keys(finalVariables).length) {
             acc.push(i);
           }

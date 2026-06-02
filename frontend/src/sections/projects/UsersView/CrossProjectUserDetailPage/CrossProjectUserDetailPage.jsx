@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Box, Divider, Paper, Typography, useTheme } from "@mui/material";
 import { Helmet } from "react-helmet-async";
 import { useNavigate, useParams } from "react-router";
@@ -73,17 +79,14 @@ const UserDetailPageBody = () => {
       return;
     }
     if (lastHydratedTabRef.current === activeTab) return;
-    const customViews =
-      workspaceSavedViewsData?.customViews ??
-      workspaceSavedViewsData?.custom_views ??
-      [];
+    const customViews = workspaceSavedViewsData?.custom_views ?? [];
     if (!customViews.length) return;
     const viewId = activeTab.slice(5);
     const view = customViews.find((v) => v.id === viewId);
     if (!view?.config) return;
     lastHydratedTabRef.current = activeTab;
     setActiveViewConfig(view.config);
-    const targetSubTab = view.config.sub_tab || view.config.subTab;
+    const targetSubTab = view.config.sub_tab;
     if (targetSubTab && targetSubTab !== subTab) setSubTab(targetSubTab);
   }, [activeTab, workspaceSavedViewsData, setActiveViewConfig, subTab]);
 

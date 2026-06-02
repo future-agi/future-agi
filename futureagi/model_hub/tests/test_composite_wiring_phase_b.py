@@ -234,6 +234,41 @@ class TestExecuteCompositeChildrenSync:
         # Inverted weights: (0.2, w=3), (0.8, w=1) = (0.6 + 0.8) / 4 = 0.35
         assert outcome.aggregate_score == pytest.approx(0.35, abs=1e-6)
 
+    def test_child_config_params_are_merged_per_child(
+        self, composite_parent, organization
+    ):
+        links = list(
+            CompositeEvalChild.objects.filter(parent=composite_parent)
+            .select_related("child")
+            .order_by("order")
+        )
+        links[0].config = {"params": {"min_words": 5}}
+        links[0].save(update_fields=["config"])
+
+        seen_configs = {}
+
+        def _capture_config(config, mapping, template, *args, **kwargs):
+            seen_configs[template.name] = config
+            return _fake_run_eval_func(config, mapping, template, *args, **kwargs)
+
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_capture_config,
+        ):
+            execute_composite_children_sync(
+                parent=composite_parent,
+                child_links=links,
+                mapping={"input": "hello"},
+                config={"params": {"max_words": 20}},
+                org=organization,
+            )
+
+        assert seen_configs["child-a"]["params"] == {
+            "max_words": 20,
+            "min_words": 5,
+        }
+        assert seen_configs["child-b"]["params"] == {"max_words": 20}
+
     def test_aggregation_disabled_returns_none(self, composite_parent, organization):
         composite_parent.aggregation_enabled = False
         composite_parent.save(update_fields=["aggregation_enabled"])

@@ -9,6 +9,7 @@ import {
 } from "react";
 import {
   Box,
+  Button,
   Checkbox,
   Radio,
   Slider,
@@ -606,7 +607,69 @@ CategoricalInput.propTypes = {
 function NumericInput({ settings, value, onChange, inputRef }) {
   const min = settings.min ?? 0;
   const max = settings.max ?? 10;
-  const step = settings.step ?? 1;
+  const rawStep = settings.step_size ?? settings.step ?? 1;
+  const step = Number(rawStep) > 0 ? Number(rawStep) : 1;
+  const displayType = settings.display_type || "slider";
+
+  const clamp = (nextValue) => Math.max(min, Math.min(max, nextValue));
+  const handleNumberChange = (nextValue) => {
+    const n = nextValue === "" ? null : Number(nextValue);
+    if (n === null || !Number.isNaN(n)) {
+      onChange(n === null ? n : clamp(n));
+    }
+  };
+
+  if (displayType === "button") {
+    const buttonValues = [];
+    for (
+      let option = Number(min);
+      option <= Number(max) + Number.EPSILON && buttonValues.length < 101;
+      option += step
+    ) {
+      buttonValues.push(Number(option.toFixed(6)));
+    }
+    if (!buttonValues.includes(Number(max))) buttonValues.push(Number(max));
+
+    return (
+      <Stack spacing={1}>
+        <Stack direction="row" flexWrap="wrap" gap={0.75}>
+          {buttonValues.map((option) => {
+            const selected = Number(value) === Number(option);
+            return (
+              <Button
+                key={option}
+                size="small"
+                variant={selected ? "contained" : "outlined"}
+                color="primary"
+                onClick={() => onChange(option)}
+                sx={{
+                  minWidth: 42,
+                  borderRadius: 0.75,
+                  px: 1,
+                  fontWeight: 700,
+                }}
+              >
+                {option}
+              </Button>
+            );
+          })}
+        </Stack>
+        <TextField
+          inputRef={inputRef}
+          type="number"
+          size="small"
+          value={value ?? ""}
+          onChange={(e) => handleNumberChange(e.target.value)}
+          inputProps={{ min, max, step }}
+          sx={{
+            width: 96,
+            "& .MuiOutlinedInput-root": { fontSize: 13, color: "text.primary" },
+            "& input": { textAlign: "center", px: 0.5 },
+          }}
+        />
+      </Stack>
+    );
+  }
 
   return (
     <Stack direction="row" spacing={2} alignItems="center">
@@ -623,12 +686,7 @@ function NumericInput({ settings, value, onChange, inputRef }) {
         type="number"
         size="small"
         value={value ?? ""}
-        onChange={(e) => {
-          const n = e.target.value === "" ? null : Number(e.target.value);
-          if (n === null || !Number.isNaN(n)) {
-            onChange(n === null ? n : Math.max(min, Math.min(max, n)));
-          }
-        }}
+        onChange={(e) => handleNumberChange(e.target.value)}
         inputProps={{ min, max, step }}
         sx={{
           width: 64,

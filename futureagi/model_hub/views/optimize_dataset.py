@@ -4,6 +4,8 @@ import time
 
 import structlog
 from django.db.models import Case, Prefetch, When
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.exceptions import NotFound
 from rest_framework.generics import CreateAPIView, ListAPIView
 from rest_framework.permissions import IsAuthenticated
@@ -22,6 +24,24 @@ from model_hub.models.column_config import ColumnConfig
 from model_hub.models.conversations import Message, Node
 from model_hub.models.metric import Metric
 from model_hub.serializers.column_config import ColumnConfigSerializer
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubEmptyRequestSerializer,
+    OptimizeDatasetColumnConfigResponseSerializer,
+    OptimizeDatasetColumnConfigUpdateRequestSerializer,
+    OptimizeDatasetColumnConfigUpdateResponseSerializer,
+    OptimizeDatasetCreateResponseSerializer,
+    OptimizeDatasetDetailResponseSerializer,
+    OptimizeDatasetKnowledgeBaseCreateResponseSerializer,
+    OptimizeDatasetKnowledgeBaseDetailResponseSerializer,
+    OptimizeDatasetKnowledgeBaseListResponseSerializer,
+    OptimizeDatasetKnowledgeBaseRequestSerializer,
+    OptimizeDatasetListQuerySerializer,
+    OptimizeDatasetMutationRequestSerializer,
+    OptimizeDatasetPageRequestSerializer,
+    OptimizeDatasetPaginatedResponseSerializer,
+    OptimizeDatasetTemplateResultsResponseSerializer,
+)
 from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
@@ -35,31 +55,87 @@ from model_hub.utils.optimize import (
 )
 from model_hub.utils.utils import check_valid_metrics
 from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.pagination import ExtendedPageNumberPagination
 
 logger = structlog.get_logger(__name__)
-from tfc.utils.pagination import ExtendedPageNumberPagination
+
+OPTIMIZE_DATASET_DYNAMIC_ROW_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        "id": openapi.Schema(type=openapi.TYPE_STRING),
+        "input": openapi.Schema(type=openapi.TYPE_STRING),
+        "output": openapi.Schema(type=openapi.TYPE_STRING),
+        "right_answer": openapi.Schema(type=openapi.TYPE_STRING),
+    },
+    additional_properties=openapi.Schema(
+        type=openapi.TYPE_NUMBER,
+        description="Metric score column keyed by metric id and score variant.",
+    ),
+)
+OPTIMIZE_DATASET_DYNAMIC_ROWS_RESPONSE_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        "results": openapi.Schema(
+            type=openapi.TYPE_ARRAY,
+            items=OPTIMIZE_DATASET_DYNAMIC_ROW_SCHEMA,
+        ),
+        "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+        "total_pages": openapi.Schema(type=openapi.TYPE_INTEGER),
+        "current_page": openapi.Schema(type=openapi.TYPE_INTEGER),
+        "next": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+        "previous": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+        "message": openapi.Schema(type=openapi.TYPE_STRING),
+    },
+    required=[
+        "results",
+        "count",
+        "total_pages",
+        "current_page",
+        "next",
+        "previous",
+        "message",
+    ],
+)
+
+
+def _validate_request(serializer_class, data):
+    serializer = serializer_class(data=data)
+    if not serializer.is_valid():
+        return None, Response(serializer.errors, status=400)
+    return serializer.validated_data, None
 
 
 class OptimizedDatasetView(APIView):
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @validated_request(
+        query_serializer=OptimizeDatasetListQuerySerializer,
+        responses={
+            200: OptimizeDatasetPaginatedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def get(self, request, model_id, *args, **kwarg):
         try:
-            # sort_by = request.query_params.get("sort_by")
-            filters = request.query_params.get("filters", [])
+            filters = request.validated_query_data["filters"]
 
-            model = AIModel.objects.filter(id=model_id)
+            model = AIModel.objects.only("id").get(id=model_id)
 
-            filter_dict = {"model": model[0]}
-            for filter in filters:
-                if filter["operator"] in ["between"]:
-                    filter_dict[f'{filter["key"]}__gte'] = filter["value"][0]
-                    filter_dict[f'{filter["key"]}__lte'] = filter["value"][1]
-                elif filter["dataType"] in ["equal", ""]:
-                    filter_dict[f'{filter["key"]}'] = filter["value"][0]
+            filter_dict = {"model": model}
+            for filter_item in filters:
+                filter_key = filter_item["key"]
+                filter_value = filter_item["value"]
+                if filter_item["operator"] == "between":
+                    filter_dict[f"{filter_key}__gte"] = filter_value[0]
+                    filter_dict[f"{filter_key}__lte"] = filter_value[1]
+                else:
+                    filter_dict[filter_key] = filter_value[0]
 
             optimized_dataset_queryset = OptimizeDataset.objects.filter(**filter_dict)
 
@@ -72,22 +148,25 @@ class OptimizedDatasetView(APIView):
             serializer = OptimizeDatasetSerializer(result_page, many=True)
             return paginator.get_paginated_response(serializer.data)
 
+        except AIModel.DoesNotExist:
+            raise NotFound("AI model not found.") from None
         except NotFound:
             raise
         except Exception as e:
             logger.error(e)
-            return Response(
-                {
-                    "status": "Failed",
-                    "message": str(e),
-                    "data": None,
-                },
-                status=500,
-            )
+            return GeneralMethods().internal_server_error_response(str(e))
 
+    @validated_request(
+        request_serializer=OptimizeDatasetMutationRequestSerializer,
+        responses={
+            200: OptimizeDatasetCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
-            data = request.data
+            data = request.validated_data
             name = data.get("name")
             start_date = data.get("start_date").split("T")[0]
             end_date = data.get("end_date").split("T")[0]
@@ -118,7 +197,7 @@ class OptimizedDatasetView(APIView):
             )
 
             if not valid:
-                return self.gm.bad_request(get_error_message("IN_VALID_METRICS"))
+                return self._gm.bad_request(get_error_message("IN_VALID_METRICS"))
 
             metrics_list = Metric.objects.filter(id__in=metrics)
 
@@ -199,19 +278,18 @@ class OptimizedDatasetView(APIView):
             )
         except Exception as e:
             logger.error(e)
-            return Response(
-                {
-                    "status": "Failed",
-                    "message": str(e),
-                    "data": None,
-                },
-                status=500,
-            )
+            return GeneralMethods().internal_server_error_response(str(e))
 
 
 class OptimizeDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetDetailResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, model_id, optimization_id):
         AIModel.objects.filter(id=model_id)
 
@@ -250,14 +328,7 @@ class KOptimizedPromptTemplateView(APIView):
             )
 
         except Exception as e:
-            return Response(
-                {
-                    "status": "Failed",
-                    "message": str(e),
-                    "data": None,
-                },
-                status=500,
-            )
+            return GeneralMethods().internal_server_error_response(str(e))
 
 
 class RightAnswerResultsView(APIView):
@@ -431,13 +502,23 @@ class RightAnswerResultsView(APIView):
 
         return result
 
+    @validated_request(
+        request_serializer=OptimizeDatasetPageRequestSerializer,
+        responses={
+            200: OPTIMIZE_DATASET_DYNAMIC_ROWS_RESPONSE_SCHEMA,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, model_id, optimization_id):
+        payload = request.validated_data
+
         optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
             id=optimization_id
         )
 
-        page = int(request.data["page"]) or 1
-        limit = int(request.data["limit"]) or 10
+        page = payload["page"]
+        limit = payload["limit"]
         offset = (int(page) - 1) * limit
         environment = optimization.environment
         version = optimization.version
@@ -650,12 +731,12 @@ class TemplateResultsView(APIView):
 
         for i in range(num_templates):
             score_columns.append(
-                f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_{i}_score')) AS temp{i+1}_score"
+                f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_{i}_score')) AS temp{i + 1}_score"
             )
             score_conditions.append(
-                f"if(isNotNull(temp{i+1}_score) AND temp{i+1}_score != '', toFloat32(temp{i+1}_score), -1) AS t{i+1}_score"
+                f"if(isNotNull(temp{i + 1}_score) AND temp{i + 1}_score != '', toFloat32(temp{i + 1}_score), -1) AS t{i + 1}_score"
             )
-            avg_scores.append(f"AVG(t{i+1}_score) AS avg_t{i+1}_score")
+            avg_scores.append(f"AVG(t{i + 1}_score) AS avg_t{i + 1}_score")
 
         # Include the original score column and condition
         score_columns.append(
@@ -669,23 +750,31 @@ class TemplateResultsView(APIView):
         # Construct the SQL query dynamically
         query = f"""
         WITH
-            {', '.join(score_columns)},
-            {', '.join(score_conditions)}
+            {", ".join(score_columns)},
+            {", ".join(score_conditions)}
         SELECT
-            {', '.join(avg_scores)}
+            {", ".join(avg_scores)}
         FROM events
         WHERE AIModel = '{model_id}'
         AND ModelVersion = '{version}'
         AND Environment = {environment}
         AND has(Features.Key, 'node_id')
         AND deleted = 0
-        AND {' AND '.join([f"t{i+1}_score != -1" for i in range(num_templates)])}
+        AND {" AND ".join([f"t{i + 1}_score != -1" for i in range(num_templates)])}
         AND og_score != -1
         GROUP BY AIModel
         """
 
         return query
 
+    @validated_request(
+        request_serializer=ModelHubEmptyRequestSerializer,
+        responses={
+            200: OptimizeDatasetTemplateResultsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, model_id, optimization_id, *args, **kwarg):
         try:
             optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
@@ -728,14 +817,7 @@ class TemplateResultsView(APIView):
                 status=200,
             )
         except Exception as e:
-            return Response(
-                {
-                    "status": "Failed",
-                    "message": str(e),
-                    "data": None,
-                },
-                status=500,
-            )
+            return GeneralMethods().internal_server_error_response(str(e))
 
 
 class TemplateExploreView(APIView):
@@ -909,13 +991,23 @@ class TemplateExploreView(APIView):
 
         return result
 
+    @validated_request(
+        request_serializer=OptimizeDatasetPageRequestSerializer,
+        responses={
+            200: OPTIMIZE_DATASET_DYNAMIC_ROWS_RESPONSE_SCHEMA,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, model_id, optimization_id):
+        payload = request.validated_data
+
         optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
             id=optimization_id
         )
 
-        page = int(request.data["page"]) or 1
-        limit = int(request.data["limit"]) or 10
+        page = payload["page"]
+        limit = payload["limit"]
         offset = (int(page) - 1) * limit
         environment = optimization.environment
         version = optimization.version
@@ -1059,6 +1151,12 @@ class TemplateExploreView(APIView):
 class OptimizeDatasetColumnConfig(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetColumnConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, model_id):
         user_organization = (
             getattr(self.request, "organization", None)
@@ -1080,7 +1178,17 @@ class OptimizeDatasetColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
+    @validated_request(
+        request_serializer=OptimizeDatasetColumnConfigUpdateRequestSerializer,
+        responses={
+            200: OptimizeDatasetColumnConfigUpdateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, model_id):
+        payload = request.validated_data
+
         user_organization = (
             getattr(self.request, "organization", None)
             or self.request.user.organization
@@ -1092,7 +1200,7 @@ class OptimizeDatasetColumnConfig(APIView):
             identifier=f"{model_id}",
         )
 
-        column_config.columns = request.data["columns"]
+        column_config.columns = payload["columns"]
 
         column_config.save()
 
@@ -1129,6 +1237,12 @@ class OptimizeDatasetRightColumnConfig(APIView):
 
         return existing_cols
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetColumnConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(
         self,
         request,
@@ -1166,12 +1280,22 @@ class OptimizeDatasetRightColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
+    @validated_request(
+        request_serializer=OptimizeDatasetColumnConfigUpdateRequestSerializer,
+        responses={
+            200: OptimizeDatasetColumnConfigUpdateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(
         self,
         request,
         model_id,
         optimization_id,
     ):
+        payload = request.validated_data
+
         user_organization = (
             getattr(self.request, "organization", None)
             or self.request.user.organization
@@ -1183,7 +1307,7 @@ class OptimizeDatasetRightColumnConfig(APIView):
             identifier=f"{model_id}-{optimization_id}-right-answers-explore",
         )
 
-        column_config.columns = request.data["columns"]
+        column_config.columns = payload["columns"]
 
         column_config.save()
 
@@ -1204,7 +1328,7 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
                     # Add the new metric if it doesn't exist in the input array
                     existing_cols.append(
                         {
-                            "label": f"(T{idx+1}) {metric.name}",
+                            "label": f"(T{idx + 1}) {metric.name}",
                             "value": f"{str(metric.id)}-{idx}",
                             "enabled": True,
                         }
@@ -1221,6 +1345,12 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
 
         return existing_cols
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetColumnConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(
         self,
         request,
@@ -1260,12 +1390,22 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
+    @validated_request(
+        request_serializer=OptimizeDatasetColumnConfigUpdateRequestSerializer,
+        responses={
+            200: OptimizeDatasetColumnConfigUpdateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(
         self,
         request,
         model_id,
         optimization_id,
     ):
+        payload = request.validated_data
+
         user_organization = (
             getattr(self.request, "organization", None)
             or self.request.user.organization
@@ -1277,7 +1417,7 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
             identifier=f"{model_id}-{optimization_id}-prompt-template-explore",
         )
 
-        column_config.columns = request.data["columns"]
+        column_config.columns = payload["columns"]
 
         column_config.save()
 
@@ -1288,9 +1428,20 @@ class OptimizedDatasetKbView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=OptimizeDatasetKnowledgeBaseRequestSerializer,
+        responses={
+            200: OptimizeDatasetKnowledgeBaseCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
+    def post(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         try:
-            data = request.data
+            data = request.validated_data
             name = data.get("name")
             knowledge_base_metrics = data.get("knowledge_base_metrics")
             knowledge_base_filters = data.get("knowledge_base_filters")
@@ -1364,6 +1515,12 @@ class OptimizeDatasetList(ListAPIView):
     serializer_class = OptimizeDatasetKbSerializer
     queryset = OptimizeDataset.objects.all()
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetKnowledgeBaseListResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def list(self, request, *args, **kwargs):
         try:
             # Fetch all OptimizeDataset instances
@@ -1382,6 +1539,12 @@ class OptimizeDatasetGet(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetKnowledgeBaseDetailResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, optim_id, *args, **kwargs):
         try:
             logger.exception(optim_id)

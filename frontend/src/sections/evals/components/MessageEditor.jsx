@@ -57,6 +57,7 @@ const MessageEditor = ({
   datasetColumns = [],
   datasetJsonSchemas = {},
   disabled = false,
+  modelSelectorDisabled,
   // Optional model selector — when provided, renders inline in the top
   // bar alongside the template format picker so LLM-as-a-judge has the
   // same top-bar layout as the agent InstructionEditor.
@@ -201,7 +202,7 @@ const MessageEditor = ({
                 onModelChange={onModelChange}
                 showMode={false}
                 showPlus={false}
-                disabled={disabled}
+                disabled={modelSelectorDisabled ?? disabled}
               />
             </Box>
           ) : (
@@ -411,6 +412,7 @@ MessageEditor.propTypes = {
   datasetColumns: PropTypes.array,
   datasetJsonSchemas: PropTypes.object,
   disabled: PropTypes.bool,
+  modelSelectorDisabled: PropTypes.bool,
 };
 
 export default MessageEditor;

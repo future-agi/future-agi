@@ -31,15 +31,15 @@ import LLMPromptEditor from "./LLMPromptEditor";
 import OutputTypeConfig from "./OutputTypeConfig";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
+import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys";
-import CodeEditor from "./CodeEditor";
 import CodeEvalEditor, {
   PYTHON_CODE_TEMPLATE,
-  JS_CODE_TEMPLATE,
 } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import { extractVariables } from "src/utils/utils";
+import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
@@ -117,12 +117,19 @@ const resolveContextOptions = (dataInjection) => {
   }
   const opts = [];
   if (dataInjection.full_row || dataInjection.fullRow) opts.push("dataset_row");
-  if (dataInjection.span_context || dataInjection.spanContext) opts.push("span_context");
-  if (dataInjection.trace_context || dataInjection.traceContext) opts.push("trace_context");
-  if (dataInjection.session_context || dataInjection.sessionContext) opts.push("session_context");
-  if (dataInjection.call_context || dataInjection.callContext) opts.push("call_context");
+  if (dataInjection.span_context || dataInjection.spanContext)
+    opts.push("span_context");
+  if (dataInjection.trace_context || dataInjection.traceContext)
+    opts.push("trace_context");
+  if (dataInjection.session_context || dataInjection.sessionContext)
+    opts.push("session_context");
+  if (dataInjection.call_context || dataInjection.callContext)
+    opts.push("call_context");
   if (opts.length > 0) return opts;
-  if (dataInjection.variables_only === false || dataInjection.variablesOnly === false) {
+  if (
+    dataInjection.variables_only === false ||
+    dataInjection.variablesOnly === false
+  ) {
     return ["full_row"];
   }
   return ["variables_only"];
@@ -243,7 +250,7 @@ const EvalCreatePage = () => {
             setInstructions(d.instructions || "");
             setCode(config.code || d.code || PYTHON_CODE_TEMPLATE);
             setCodeLanguage(config.language || "python");
-            setModel(config.model || d.model || ("turing_large"));
+            setModel(config.model || d.model || "turing_large");
             setOutputType(d.output_type_normalized || "pass_fail");
             setPassThreshold(d.pass_threshold ?? 0.5);
             setChoiceScores(d.choice_scores || {});
@@ -313,23 +320,7 @@ const EvalCreatePage = () => {
   const autoSaveTimer = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
   const buildUpdatePayload = useCallback(() => {
-    const dataInjection = (() => {
-      if (
-        contextOptions.length === 0 ||
-        (contextOptions.length === 1 && contextOptions[0] === "variables_only")
-      ) {
-        return { variables_only: true };
-      }
-      // Send individual flags so the backend can enable the right tools
-      const flags = {};
-      if (contextOptions.includes("dataset_row")) flags.full_row = true;
-      if (contextOptions.includes("span_context")) flags.span_context = true;
-      if (contextOptions.includes("trace_context")) flags.trace_context = true;
-      if (contextOptions.includes("session_context")) flags.session_context = true;
-      if (contextOptions.includes("call_context")) flags.call_context = true;
-      // If nothing specific matched, default to full_row for backward compat
-      return Object.keys(flags).length > 0 ? flags : { full_row: true };
-    })();
+    const dataInjection = buildDataInjection(contextOptions);
 
     const summary =
       summaryType === "custom"
@@ -364,8 +355,9 @@ const EvalCreatePage = () => {
       summary: evalType === "agent" ? summary : undefined,
       error_localizer_enabled: errorLocalizerEnabled,
       messages: evalType === "llm" ? messages : undefined,
+      // Send [] for LLM evals so the BE can persist a user-cleared list.
       few_shot_examples:
-        evalType === "llm" && fewShotExamples.length > 0
+        evalType === "llm"
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
@@ -468,6 +460,7 @@ const EvalCreatePage = () => {
     enqueueSnackbar,
     navigate,
     isOSS,
+    evalType,
     model,
   ]);
 
@@ -481,14 +474,23 @@ const EvalCreatePage = () => {
         }
         return acc;
       }, {});
+      const pinnedVersions = selectedChildren.reduce((acc, child) => {
+        if (child.pinned_version_id) {
+          acc[child.child_id] = child.pinned_version_id;
+        }
+        return acc;
+      }, {});
       const payload = {
         name: compositeName.trim(),
         description: compositeDescription || null,
         child_template_ids: childIds,
+        child_configs: buildCompositeChildConfigs(selectedChildren),
         aggregation_enabled: aggregationEnabled,
         aggregation_function: aggregationFunction,
         composite_child_axis: compositeChildAxis,
         child_weights: Object.keys(weights).length > 0 ? weights : null,
+        child_pinned_versions:
+          Object.keys(pinnedVersions).length > 0 ? pinnedVersions : null,
       };
       const result = await createComposite.mutateAsync(payload);
       enqueueSnackbar("Composite evaluation created successfully", {
@@ -570,8 +572,7 @@ const EvalCreatePage = () => {
   // excluded: the save button is already disabled while `isLoading`, so the
   // user can't double-fire, and including it here would open a dialog about
   // "clearing test results" when there are none to clear.
-  const hasProgressToDiscard =
-    testPassed || testError !== null || isTesting;
+  const hasProgressToDiscard = testPassed || testError !== null || isTesting;
 
   const handleModeChange = useCallback(
     (_, val) => {
@@ -788,7 +789,7 @@ const EvalCreatePage = () => {
                       fontWeight={600}
                       sx={{ mb: 0.5 }}
                     >
-                      Eval Name<span style={{ color: "red" }}>*</span>
+                      Eval Name<Box component="span" sx={{ color: "error.main", ml: 0.25 }}>*</Box>
                     </Typography>
                     <TextField
                       fullWidth
@@ -979,7 +980,7 @@ const EvalCreatePage = () => {
                       >
                         <Typography variant="caption">0</Typography>
                         <Slider
-                          value={passThreshold * 100}
+                          value={Math.round(passThreshold * 100)}
                           onChange={(_, val) => setPassThreshold(val / 100)}
                           min={0}
                           max={100}
@@ -1217,6 +1218,8 @@ const EvalCreatePage = () => {
                           child_template_ids: selectedChildren.map(
                             (c) => c.child_id,
                           ),
+                          child_configs:
+                            buildCompositeChildConfigs(selectedChildren),
                           aggregation_enabled: aggregationEnabled,
                           aggregation_function: aggregationFunction,
                           composite_child_axis: compositeChildAxis || "",
@@ -1313,8 +1316,13 @@ const EvalCreatePage = () => {
                   } else if (mode === "composite" && !hasCompositeChildren) {
                     testDisabledReason =
                       "Add at least one child evaluation to run a test.";
-                  } else if (mode !== "composite" && evalType === "code" && !hasCode) {
-                    testDisabledReason = "Write some code before running a test.";
+                  } else if (
+                    mode !== "composite" &&
+                    evalType === "code" &&
+                    !hasCode
+                  ) {
+                    testDisabledReason =
+                      "Write some code before running a test.";
                   } else if (
                     mode !== "composite" &&
                     evalType !== "code" &&
@@ -1329,8 +1337,8 @@ const EvalCreatePage = () => {
                   ) {
                     testDisabledReason =
                       templateFormat === "jinja"
-                        ? 'Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) so test input can be passed in.'
-                        : 'Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) so test input can be passed in.';
+                        ? "Your Jinja template has no variables. Reference an input with a {{ variable }} expression or a {% ... %} block (e.g. {{ input }}) so test input can be passed in."
+                        : "Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) so test input can be passed in.";
                   }
 
                   return (
@@ -1378,7 +1386,8 @@ const EvalCreatePage = () => {
                         "Add at least one child evaluation before saving.";
                     }
                   } else if (!name.trim()) {
-                    saveDisabledReason = "Give this evaluation a name before saving.";
+                    saveDisabledReason =
+                      "Give this evaluation a name before saving.";
                   } else if (evalType === "code" && !code.trim()) {
                     saveDisabledReason = "Write some code before saving.";
                   } else if (evalType !== "code" && !instructions.trim()) {

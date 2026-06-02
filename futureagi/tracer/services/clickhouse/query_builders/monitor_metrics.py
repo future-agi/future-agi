@@ -104,7 +104,10 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
             self._filter_params = {}
             return
 
-        fb = ClickHouseFilterBuilder(table=SPANS_TABLE)
+        # Monitor queries bind start_time/end_time per query method, not
+        # start_date/end_date. Disable score date pruning here so annotation
+        # filters do not emit an unbound ``%(start_date)s`` placeholder.
+        fb = ClickHouseFilterBuilder(table=SPANS_TABLE, score_date_scope=False)
 
         for key, value in self.raw_filters.items():
             if key == "span_attributes_filters" and isinstance(value, list):
@@ -738,6 +741,7 @@ class MonitorMetricsQueryBuilder(BaseQueryBuilder):
         return (
             f"WHERE custom_eval_config_id = toUUID(%(eval_config_id)s) "
             f"AND _peerdb_is_deleted = 0 "
+            f"AND (deleted = 0 OR deleted IS NULL) "
             f"AND observation_span_id IN ("
             f"  SELECT id FROM {SPANS_TABLE} "
             f"  WHERE project_id = %(project_id)s "

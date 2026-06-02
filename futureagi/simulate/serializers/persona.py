@@ -450,7 +450,7 @@ class PersonaCreateSerializer(serializers.Serializer):
                 except (ValueError, TypeError):
                     raise serializers.ValidationError(
                         f"Invalid finished_speaking_sensitivity value: '{v}'. Must be an integer between 1 and 10."
-                    )
+                    ) from None
                 if num < 1 or num > 10:
                     raise serializers.ValidationError(
                         f"Invalid finished_speaking_sensitivity value: {num}. Must be between 1 and 10."
@@ -466,7 +466,7 @@ class PersonaCreateSerializer(serializers.Serializer):
                 except (ValueError, TypeError):
                     raise serializers.ValidationError(
                         f"Invalid interrupt_sensitivity value: '{v}'. Must be an integer between 1 and 10."
-                    )
+                    ) from None
                 if num < 1 or num > 10:
                     raise serializers.ValidationError(
                         f"Invalid interrupt_sensitivity value: {num}. Must be between 1 and 10."
@@ -611,6 +611,19 @@ class PersonaCreateSerializer(serializers.Serializer):
         )
 
         return persona
+
+
+class PersonaDuplicateRequestSerializer(serializers.Serializer):
+    """Request payload for duplicating a persona under a new workspace name."""
+
+    name = serializers.CharField(max_length=255)
+
+
+class PersonaDuplicateResponseSerializer(serializers.Serializer):
+    """GeneralMethods success envelope returned by persona duplicate endpoints."""
+
+    status = serializers.BooleanField(default=True)
+    result = PersonaSerializer(read_only=True)
 
 
 class PersonaFieldOptionsSerializer(serializers.Serializer):

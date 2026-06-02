@@ -13,9 +13,8 @@ ID) into every span row, we can compute per-session aggregates in a single
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
-from tracer.utils.filter_operators import normalize_filter_op
 
 
 class SessionListQueryBuilder(BaseQueryBuilder):
@@ -92,7 +91,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         # Translate span-level filters (exclude session-level aggregate filters)
         span_filters = self._extract_span_filters()
-        fb = ClickHouseFilterBuilder(table=self.TABLE)
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
         extra_where, extra_params = fb.translate(span_filters)
         self.params.update(extra_params)
 
@@ -134,6 +137,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         FROM {self.TABLE}
         {self.project_where()}
           AND trace_session_id IS NOT NULL
+          AND trace_session_id != toUUID('{NIL_UUID}')
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND start_time >= %(start_date)s
           AND start_time < %(end_date)s
@@ -191,7 +195,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     def _build_simple_count_query(self) -> Tuple[str, Dict[str, Any]]:
         """Fast count using count(DISTINCT ...) — no GROUP BY needed."""
         span_filters = self._extract_span_filters()
-        fb = ClickHouseFilterBuilder(table=self.TABLE)
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
         extra_where, extra_params = fb.translate(span_filters)
 
         params = dict(self.params)
@@ -209,6 +217,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         FROM {self.TABLE}
         {self.project_where()}
           AND trace_session_id IS NOT NULL
+          AND trace_session_id != toUUID('{NIL_UUID}')
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND start_time >= %(start_date)s
           AND start_time < %(end_date)s
@@ -220,7 +229,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     def _build_aggregated_count_query(self) -> Tuple[str, Dict[str, Any]]:
         """Full aggregation count — required when HAVING clauses exist."""
         span_filters = self._extract_span_filters()
-        fb = ClickHouseFilterBuilder(table=self.TABLE)
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
         extra_where, extra_params = fb.translate(span_filters)
 
         params = dict(self.params)
@@ -250,6 +263,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             FROM {self.TABLE}
             {self.project_where()}
               AND trace_session_id IS NOT NULL
+              AND trace_session_id != toUUID('{NIL_UUID}')
               AND (parent_span_id IS NULL OR parent_span_id = '')
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
@@ -329,13 +343,16 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             )
 
         for row in rows:
+            session_id = str(_get(row, "session_id", 0, ""))
+            if session_id == NIL_UUID:
+                continue
             session_start = _get(row, "session_start", 1)
             session_end = _get(row, "session_end", 2)
             duration_val = _get(row, "duration", 3, 0)
 
             results.append(
                 {
-                    "session_id": str(_get(row, "session_id", 0, "")),
+                    "session_id": session_id,
                     "session_name": None,
                     "start_time": (
                         session_start.isoformat()
@@ -384,10 +401,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             if col_id not in self.SESSION_FILTER_MAP:
                 continue
 
-            config = f.get("filter_config") or f.get("filterConfig", {})
-            filter_op = normalize_filter_op(
-                config.get("filter_op") or config.get("filterOp")
-            )
+            config = f.get("filter_config") or f.get("filterConfig") or {}
+            filter_op = config.get("filter_op") or config.get("filterOp")
             filter_value = config.get("filter_value", config.get("filterValue"))
             ch_col = self.SESSION_FILTER_MAP[col_id]
 

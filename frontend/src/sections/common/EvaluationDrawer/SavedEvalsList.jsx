@@ -303,7 +303,9 @@ const EvalRow = ({
           )}
           <Tooltip
             title={
-              disableDelete ? disableDeleteReason || "Delete disabled" : "Delete"
+              disableDelete
+                ? disableDeleteReason || "Delete disabled"
+                : "Delete"
             }
             arrow
           >

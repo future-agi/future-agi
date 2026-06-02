@@ -42,10 +42,10 @@ from tracer.views.span_attributes import (
 )
 
 info_api = openapi.Info(
-    title="TFC Management API",
+    title="Future AGI Management API",
     default_version="v1",
-    description="The endpoints defined below allow users to programmatically carry out various actions on the tfc platform.",
-    terms_of_service="https://tfc.com/legal",
+    description="The endpoints defined below allow users to programmatically carry out various actions on the Future AGI platform.",
+    terms_of_service="https://futureagi.com/legal",
     contact=openapi.Contact(email="help@futureagi.com"),
     license=openapi.License(
         name="Apache 2.0", url="http://www.apache.org/licenses/LICENSE-2.0.html"

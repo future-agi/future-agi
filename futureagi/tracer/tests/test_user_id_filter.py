@@ -1,7 +1,7 @@
 """Tests for the ``user_id`` filter path in the ClickHouse filter builder.
 
 Regression coverage for TH-4436: the cross-project user-detail page injects
-``userScopeFilter = [{columnId: "user_id", filterValue: <user_id_string>}]``
+``userScopeFilter = [{column_id: "user_id", filter_value: <user_id_string>}]``
 into the traces view. The frontend sends the ``tracer_enduser.user_id``
 string (e.g. ``"9281"`` or ``"user-11771490488.8493178"``), **not** the
 UUID primary key. Before the fix the builder treated ``user_id`` as a
@@ -25,8 +25,8 @@ class UserIdFilterTests(unittest.TestCase):
         return ClickHouseFilterBuilder(table=table)
 
     def _user_id_filter(self, value, col_type=None):
-        # Default to NORMAL because that's what the frontend's ``userScopeFilter``
-        # actually sends (``filterConfig`` with no ``col_type`` key).
+        # Default to NORMAL because that's what the frontend's user scope
+        # filter sends when no explicit ``col_type`` is present.
         return dict(
             col_id="user_id",
             col_type=col_type or ClickHouseFilterBuilder.NORMAL,
@@ -43,7 +43,7 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertIn("trace_id IN (", sql)
         # Resolves via tracer_enduser.user_id — not a raw span_attribute match.
         self.assertIn("FROM tracer_enduser", sql)
-        self.assertIn("WHERE user_id IN", sql)
+        self.assertIn("user_id =", sql)
         # Must NOT fall through to the generic span-attribute path,
         # which would JSONExtract(span_attributes, 'user_id') — spans
         # don't store the attribute under that key in OTel convention.
@@ -51,7 +51,7 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertNotIn("span_attr", sql)
         # Uses a bound parameter, not a literal, for the user id.
         self.assertNotIn("'9281'", sql)
-        self.assertEqual(b._params.get("uid_s_1"), ("9281",))
+        self.assertEqual(b._params.get("col_1"), "9281")
 
     def test_user_id_special_chars(self):
         """Dots / hyphens in the user_id string shouldn't be treated as SQL."""
@@ -63,8 +63,8 @@ class UserIdFilterTests(unittest.TestCase):
         # Value always passes via bound parameter — never inlined into SQL.
         self.assertNotIn("user-11771490488.8493178", sql)
         self.assertEqual(
-            b._params.get("uid_s_1"),
-            ("user-11771490488.8493178",),
+            b._params.get("col_1"),
+            "user-11771490488.8493178",
         )
 
     def test_user_id_list_values(self):
@@ -78,7 +78,7 @@ class UserIdFilterTests(unittest.TestCase):
         )
         self.assertIsNotNone(sql)
         self.assertIn("user_id IN", sql)
-        self.assertEqual(b._params.get("uid_s_1"), ("9281", "106749"))
+        self.assertEqual(b._params.get("col_1"), ("9281", "106749"))
 
     def test_user_id_empty_value_returns_none(self):
         b = self._build()
@@ -96,7 +96,7 @@ class UserIdFilterTests(unittest.TestCase):
 
     def test_user_id_negation_ops(self):
         """``not_equals`` / ``not_in`` flip the outer membership to NOT IN."""
-        for op in ("not_equals", "not_in", "!=", "is_not"):
+        for op in ("not_equals", "not_in"):
             b = self._build()
             sql = b._build_condition(
                 col_id="user_id",
@@ -111,8 +111,10 @@ class UserIdFilterTests(unittest.TestCase):
                 sql,
                 f"op {op!r} should produce `trace_id NOT IN`, got: {sql}",
             )
-            # Inner resolve-users subquery is always IN — we flip at the outer layer.
-            self.assertIn("WHERE user_id IN", sql)
+            # Inner resolve-users predicate is positive; we flip at the outer layer.
+            self.assertTrue("user_id =" in sql or "user_id IN" in sql)
+            self.assertNotIn("user_id !=", sql)
+            self.assertNotIn("user_id NOT IN", sql)
 
     def test_user_id_integer_value_coerced_to_string(self):
         """``filter_value=9281`` (int) must be stringified before binding."""
@@ -125,7 +127,7 @@ class UserIdFilterTests(unittest.TestCase):
             filter_value=9281,
         )
         self.assertIsNotNone(sql)
-        self.assertEqual(b._params.get("uid_s_1"), ("9281",))
+        self.assertEqual(b._params.get("col_1"), "9281")
 
     def test_user_id_fires_regardless_of_col_type(self):
         """Fix must work for both NORMAL (frontend default) and SYSTEM_METRIC.
@@ -169,3 +171,127 @@ class UserIdFilterTests(unittest.TestCase):
         # the UUID.
         self.assertIn("end_user_id IN", sql)
         self.assertNotIn("FROM tracer_enduser", sql)
+
+    def test_user_id_contains(self):
+        b = self._build()
+        sql = b._build_condition(
+            col_id="user_id",
+            col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
+            filter_type="text",
+            filter_op="contains",
+            filter_value="admin",
+        )
+        self.assertIsNotNone(sql)
+        self.assertIn("trace_id IN (", sql)
+        self.assertIn("FROM tracer_enduser", sql)
+        self.assertIn("user_id LIKE", sql)
+        self.assertEqual(b._params.get("col_1"), "%admin%")
+
+    def test_user_id_not_contains_flips_outer(self):
+        b = self._build()
+        sql = b._build_condition(
+            col_id="user_id",
+            col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
+            filter_type="text",
+            filter_op="not_contains",
+            filter_value="admin",
+        )
+        self.assertIsNotNone(sql)
+        self.assertIn("trace_id NOT IN (", sql)
+        self.assertIn("user_id LIKE", sql)
+        self.assertNotIn("user_id NOT LIKE", sql)
+        self.assertEqual(b._params.get("col_1"), "%admin%")
+
+    def test_user_id_null_ops_do_not_query_tracer_enduser(self):
+        for op, outer in (("is_null", "trace_id NOT IN ("), ("is_not_null", "trace_id IN (")):
+            b = self._build()
+            sql = b._build_condition(
+                col_id="user_id",
+                col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
+                filter_type="text",
+                filter_op=op,
+                filter_value=None,
+            )
+            self.assertIsNotNone(sql)
+            self.assertIn(outer, sql)
+            self.assertNotIn("FROM tracer_enduser", sql)
+            self.assertIn("end_user_id !=", sql)
+            self.assertIn("00000000-0000-0000-0000-000000000000", sql)
+
+
+class EndUserAndIdColumnFilterTests(unittest.TestCase):
+    def _build(self):
+        return ClickHouseFilterBuilder(table="spans")
+
+    def test_user_id_type_filter_resolves_via_enduser_table(self):
+        b = self._build()
+        sql = b._build_condition(
+            col_id="user_id_type",
+            col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
+            filter_type="text",
+            filter_op="in",
+            filter_value=["email", "phone"],
+        )
+        self.assertIsNotNone(sql)
+        self.assertIn("FROM tracer_enduser", sql)
+        self.assertIn("user_id_type IN", sql)
+        self.assertEqual(b._params.get("col_1"), ("email", "phone"))
+
+    def test_trace_id_in_multi_value(self):
+        b = self._build()
+        sql = b._build_condition(
+            col_id="trace_id",
+            col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
+            filter_type="text",
+            filter_op="in",
+            filter_value=[
+                "0037bb41-c09b-4616-96d2-857ab075afe0",
+                "01810b1a-1677-4a9b-bf08-8d43ce11fde9",
+            ],
+        )
+        self.assertIsNotNone(sql)
+        self.assertIn("trace_id IN", sql)
+        self.assertEqual(
+            b._params.get("col_1"),
+            (
+                "0037bb41-c09b-4616-96d2-857ab075afe0",
+                "01810b1a-1677-4a9b-bf08-8d43ce11fde9",
+            ),
+        )
+
+    def test_span_id_in_uses_id_column(self):
+        b = self._build()
+        sql = b._build_condition(
+            col_id="span_id",
+            col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
+            filter_type="text",
+            filter_op="in",
+            filter_value=["c55aeff2afd24d8c"],
+        )
+        self.assertIsNotNone(sql)
+        self.assertIn("id IN", sql)
+        self.assertNotIn("span_id IN", sql)
+
+    def test_session_aliases_map_to_trace_session_id(self):
+        for col_id in ("session", "session_id", "trace_session_id"):
+            b = self._build()
+            sql = b._build_condition(
+                col_id=col_id,
+                col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
+                filter_type="text",
+                filter_op="in",
+                filter_value=["003b76f1-2b4a-4af5-b0dc-224d687374d4"],
+            )
+            self.assertIsNotNone(sql)
+            self.assertIn("toString(trace_session_id) IN", sql)
+
+    def test_nullable_uuid_null_checks_do_not_compare_to_empty_string(self):
+        b = self._build()
+        self.assertEqual(
+            b._build_column_condition("trace_session_id", "text", "is_null", None),
+            "trace_session_id IS NULL",
+        )
+        self.assertEqual(
+            b._build_column_condition("end_user_id", "text", "is_not_null", None),
+            "end_user_id IS NOT NULL",
+        )

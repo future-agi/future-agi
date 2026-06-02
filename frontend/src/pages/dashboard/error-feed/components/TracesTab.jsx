@@ -241,8 +241,7 @@ export default function TracesTab({ error }) {
 
   // Sim/voice projects need the VAPI call drawer, not the generic trace drawer.
   const { data: projectDetail } = useGetProjectDetails(projectId, !!projectId);
-  const isVoiceProject =
-    projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
+  const isVoiceProject = projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
   const { data: voiceCallData, isFetching: voiceLoading } = useVoiceCallDetail(
     drawerTraceId,
     isVoiceProject && !!drawerTraceId,
@@ -334,7 +333,11 @@ export default function TracesTab({ error }) {
             <VoiceDetailDrawerV2
               data={
                 voiceCallData
-                  ? { ...voiceCallData, project_id: projectId }
+                  ? {
+                      ...voiceCallData,
+                      project_id: projectId,
+                      module: "project",
+                    }
                   : { trace_id: drawerTraceId, project_id: projectId }
               }
               onClose={() => setDrawerTraceId(null)}

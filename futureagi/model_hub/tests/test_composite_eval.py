@@ -2,10 +2,18 @@
 Tests for Phase 7: Composite Evals.
 """
 
+import uuid
+
 import pytest
 
+from accounts.models.organization import Organization
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import OwnerChoices
-from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate
+from model_hub.models.evals_metric import (
+    CompositeEvalChild,
+    EvalTemplate,
+    EvalTemplateVersion,
+)
 from model_hub.types import CompositeChildResult
 from model_hub.utils.composite_aggregation import (
     aggregate_error_localizers,
@@ -40,6 +48,41 @@ def child_eval_2(organization, workspace):
     )
 
 
+def _create_other_org_composite(user):
+    suffix = uuid.uuid4().hex[:8]
+    other_org = Organization.objects.create(name=f"Other Org {suffix}")
+    other_workspace = Workspace.objects.create(
+        name=f"Other Workspace {suffix}",
+        organization=other_org,
+        is_default=True,
+        is_active=True,
+        created_by=user,
+    )
+    child = EvalTemplate.no_workspace_objects.create(
+        name=f"other-child-{suffix}",
+        organization=other_org,
+        workspace=other_workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "Pass/Fail"},
+        visible_ui=True,
+        output_type_normalized="pass_fail",
+    )
+    parent = EvalTemplate.no_workspace_objects.create(
+        name=f"other-composite-{suffix}",
+        organization=other_org,
+        workspace=other_workspace,
+        owner=OwnerChoices.USER.value,
+        config={},
+        visible_ui=True,
+        template_type="composite",
+        aggregation_enabled=True,
+        aggregation_function="weighted_avg",
+        composite_child_axis="pass_fail",
+    )
+    CompositeEvalChild.objects.create(parent=parent, child=child, order=0, weight=1.0)
+    return parent
+
+
 @pytest.mark.e2e
 @pytest.mark.django_db
 class TestCompositeEvalCreateAPI:
@@ -67,6 +110,26 @@ class TestCompositeEvalCreateAPI:
         parent = EvalTemplate.objects.get(id=result["id"])
         assert parent.template_type == "composite"
         assert CompositeEvalChild.objects.filter(parent=parent).count() == 2
+
+    def test_create_composite_stores_child_configs(
+        self, auth_client, child_eval_1, child_eval_2
+    ):
+        response = auth_client.post(
+            self.url,
+            {
+                "name": "param-composite",
+                "child_template_ids": [str(child_eval_1.id), str(child_eval_2.id)],
+                "child_configs": {
+                    str(child_eval_2.id): {"params": {"min_words": 5}},
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        parent = EvalTemplate.objects.get(id=response.data["result"]["id"])
+        link = CompositeEvalChild.objects.get(parent=parent, child=child_eval_2)
+        assert link.config == {"params": {"min_words": 5}}
 
     def test_create_composite_invalid_child(self, auth_client, child_eval_1):
         response = auth_client.post(
@@ -103,6 +166,72 @@ class TestCompositeEvalCreateAPI:
         )
         assert response.status_code == 400
 
+    def test_create_composite_persists_child_pinned_version(
+        self, auth_client, user, child_eval_1
+    ):
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=child_eval_1,
+            config_snapshot={"code": "def evaluate(**kwargs): return True"},
+            criteria="Pinned child version",
+            model="",
+            user=user,
+            organization=child_eval_1.organization,
+            workspace=child_eval_1.workspace,
+        )
+
+        response = auth_client.post(
+            self.url,
+            {
+                "name": "pinned-composite",
+                "child_template_ids": [str(child_eval_1.id)],
+                "child_pinned_versions": {
+                    str(child_eval_1.id): str(version.id),
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200, response.data
+        result = response.data["result"]
+        child = result["children"][0]
+        assert child["pinned_version_id"] == str(version.id)
+        assert child["pinned_version_number"] == version.version_number
+
+        link = CompositeEvalChild.objects.get(
+            parent_id=result["id"],
+            child=child_eval_1,
+            deleted=False,
+        )
+        assert link.pinned_version_id == version.id
+
+    def test_create_composite_rejects_pinned_version_for_wrong_child(
+        self, auth_client, user, child_eval_1, child_eval_2
+    ):
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=child_eval_2,
+            config_snapshot={"code": "def evaluate(**kwargs): return True"},
+            criteria="Wrong child version",
+            model="",
+            user=user,
+            organization=child_eval_2.organization,
+            workspace=child_eval_2.workspace,
+        )
+
+        response = auth_client.post(
+            self.url,
+            {
+                "name": "wrong-pin-composite",
+                "child_template_ids": [str(child_eval_1.id)],
+                "child_pinned_versions": {
+                    str(child_eval_1.id): str(version.id),
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "Pinned version" in str(response.data)
+
 
 @pytest.mark.e2e
 @pytest.mark.django_db
@@ -129,6 +258,31 @@ class TestCompositeEvalDetailAPI:
         assert result["children"][0]["child_name"] == "child-eval-one"
         assert result["children"][1]["child_name"] == "child-eval-two"
 
+    def test_get_composite_detail_includes_child_configs(
+        self, auth_client, child_eval_1, child_eval_2
+    ):
+        response = auth_client.post(
+            "/model-hub/eval-templates/create-composite/",
+            {
+                "name": "detail-config-composite",
+                "child_template_ids": [str(child_eval_1.id), str(child_eval_2.id)],
+                "child_configs": {
+                    str(child_eval_2.id): {"params": {"max_words": 12}},
+                },
+            },
+            format="json",
+        )
+        composite_id = response.data["result"]["id"]
+
+        response = auth_client.get(
+            f"/model-hub/eval-templates/{composite_id}/composite/"
+        )
+
+        assert response.status_code == 200
+        children = response.data["result"]["children"]
+        child = next(c for c in children if c["child_id"] == str(child_eval_2.id))
+        assert child["config"] == {"params": {"max_words": 12}}
+
     def test_get_nonexistent_composite(self, auth_client):
         response = auth_client.get(
             "/model-hub/eval-templates/00000000-0000-0000-0000-000000000000/composite/"
@@ -140,6 +294,32 @@ class TestCompositeEvalDetailAPI:
         response = auth_client.get(
             f"/model-hub/eval-templates/{child_eval_1.id}/composite/"
         )
+        assert response.status_code == 404
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db
+class TestCompositeEvalIsolation:
+    """Composite detail and execute endpoints must not expose other org data."""
+
+    def test_get_other_org_composite_404(self, auth_client, user):
+        other_composite = _create_other_org_composite(user)
+
+        response = auth_client.get(
+            f"/model-hub/eval-templates/{other_composite.id}/composite/"
+        )
+
+        assert response.status_code == 404
+
+    def test_execute_other_org_composite_404(self, auth_client, user):
+        other_composite = _create_other_org_composite(user)
+
+        response = auth_client.post(
+            f"/model-hub/eval-templates/{other_composite.id}/composite/execute/",
+            {"mapping": {}},
+            format="json",
+        )
+
         assert response.status_code == 404
 
 
@@ -456,6 +636,81 @@ class TestCompositeEvalUpdateAPI:
         assert result["children"][0]["weight"] == 2.5
         assert result["children"][1]["child_id"] == str(child_eval_1.id)
         assert result["children"][1]["weight"] == 0.5
+
+    def test_update_child_list_persists_pinned_versions(
+        self, auth_client, user, child_eval_1, child_eval_2
+    ):
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=child_eval_2,
+            config_snapshot={"code": "def evaluate(**kwargs): return True"},
+            criteria="Replacement pinned version",
+            model="",
+            user=user,
+            organization=child_eval_2.organization,
+            workspace=child_eval_2.workspace,
+        )
+        cid = self._create_composite(
+            auth_client, "child-pin-replace", [str(child_eval_1.id)]
+        )
+
+        resp = auth_client.patch(
+            f"/model-hub/eval-templates/{cid}/composite/",
+            {
+                "child_template_ids": [str(child_eval_2.id)],
+                "child_pinned_versions": {
+                    str(child_eval_2.id): str(version.id),
+                },
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.data
+        child = resp.data["result"]["children"][0]
+        assert child["child_id"] == str(child_eval_2.id)
+        assert child["pinned_version_id"] == str(version.id)
+        assert child["pinned_version_number"] == version.version_number
+
+        link = CompositeEvalChild.objects.get(
+            parent_id=cid,
+            child=child_eval_2,
+            deleted=False,
+        )
+        assert link.pinned_version_id == version.id
+
+    def test_update_pinned_versions_only_can_clear_pin(
+        self, auth_client, user, child_eval_1
+    ):
+        version = EvalTemplateVersion.objects.create_version(
+            eval_template=child_eval_1,
+            config_snapshot={"code": "def evaluate(**kwargs): return True"},
+            criteria="Pinned version",
+            model="",
+            user=user,
+            organization=child_eval_1.organization,
+            workspace=child_eval_1.workspace,
+        )
+        cid = self._create_composite(
+            auth_client,
+            "pin-clear",
+            [str(child_eval_1.id)],
+            child_pinned_versions={str(child_eval_1.id): str(version.id)},
+        )
+
+        resp = auth_client.patch(
+            f"/model-hub/eval-templates/{cid}/composite/",
+            {"child_pinned_versions": {str(child_eval_1.id): None}},
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.data
+        child = resp.data["result"]["children"][0]
+        assert child["pinned_version_id"] is None
+        link = CompositeEvalChild.objects.get(
+            parent_id=cid,
+            child=child_eval_1,
+            deleted=False,
+        )
+        assert link.pinned_version_id is None
 
     def test_update_weights_only(self, auth_client, child_eval_1, child_eval_2):
         cid = self._create_composite(

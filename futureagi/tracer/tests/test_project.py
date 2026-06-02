@@ -7,6 +7,7 @@ Tests for /tracer/project/ endpoints.
 import pytest
 from rest_framework import status
 
+from accounts.models.user import OrgApiKey
 from model_hub.models.ai_model import AIModel
 from tracer.models.project import Project
 
@@ -138,6 +139,31 @@ class TestProjectListAPI:
         assert response.status_code == status.HTTP_200_OK
         data = get_result(response)
         assert data["projects"][0]["name"] == "Zebra Project"
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestObserveProjectListAPI:
+    """Tests for GET /tracer/project/list_projects/ endpoint."""
+
+    def test_list_projects_issues_sort_falls_back(self, auth_client, observe_project):
+        """Synthetic issue-count sorting should not be passed to the ORM."""
+        response = auth_client.get(
+            "/tracer/project/list_projects/",
+            {
+                "project_type": "observe",
+                "sort_by": "issues",
+                "sort_direction": "desc",
+                "page_number": 0,
+                "page_size": 10,
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = get_result(response)
+        assert data["metadata"]["total_rows"] == 1
+        assert data["table"][0]["id"] == str(observe_project.id)
+        assert data["table"][0]["issues"] == 0
 
 
 @pytest.mark.integration
@@ -523,6 +549,42 @@ class TestProjectSDKCodeAPI:
         assert "installation_guide" in data
         assert "project_add_code" in data
         assert "keys" in data
+
+    def test_get_sdk_code_uses_placeholders_and_does_not_create_keys(
+        self, auth_client, organization, user
+    ):
+        """SDK code samples should not expose or create persisted user keys."""
+        OrgApiKey.objects.create(
+            organization=organization,
+            type="user",
+            enabled=True,
+            user=user,
+            api_key="a" * 32,
+            secret_key="b" * 32,
+        )
+        key_count_before = OrgApiKey.objects.filter(
+            organization=organization,
+            type="user",
+            user=user,
+        ).count()
+
+        response = auth_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "experiment"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        key_count_after = OrgApiKey.objects.filter(
+            organization=organization,
+            type="user",
+            user=user,
+        ).count()
+        assert key_count_after == key_count_before
+
+        payload_text = str(get_result(response))
+        assert "YOUR_FI_API_KEY" in payload_text
+        assert "YOUR_FI_SECRET_KEY" in payload_text
+        assert "a" * 32 not in payload_text
+        assert "b" * 32 not in payload_text
 
     def test_get_sdk_code_observe(self, auth_client):
         """Get SDK code for observe project type."""

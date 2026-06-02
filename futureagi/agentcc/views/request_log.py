@@ -110,6 +110,14 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
             if parsed:
                 queryset = queryset.filter(status_code__in=parsed)
 
+        min_status_code = _parse_int(params.get("min_status_code"))
+        if min_status_code is not None:
+            queryset = queryset.filter(status_code__gte=min_status_code)
+
+        max_status_code = _parse_int(params.get("max_status_code"))
+        if max_status_code is not None:
+            queryset = queryset.filter(status_code__lte=max_status_code)
+
         # Boolean filters
         is_error = params.get("is_error")
         if is_error not in (None, ""):
@@ -258,6 +266,18 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                 Q(session_id="") | Q(session_id__isnull=True)
             )
 
+            ordering = request.query_params.get("ordering") or "-last_request_at"
+            allowed_ordering = {
+                "last_request_at",
+                "-last_request_at",
+                "request_count",
+                "-request_count",
+                "total_cost",
+                "-total_cost",
+            }
+            if ordering not in allowed_ordering:
+                ordering = "-last_request_at"
+
             sessions = (
                 queryset.values("session_id")
                 .annotate(
@@ -275,7 +295,7 @@ class AgentccRequestLogViewSet(BaseModelViewSetMixinWithUserOrg, ReadOnlyModelVi
                     models=ArrayAgg("model", distinct=True),
                     providers=ArrayAgg("provider", distinct=True),
                 )
-                .order_by("-last_request_at")
+                .order_by(ordering)
             )
 
             page = self.paginate_queryset(list(sessions))

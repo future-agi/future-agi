@@ -1,9 +1,7 @@
 import React from "react";
 import { Box, Chip, Skeleton, useTheme } from "@mui/material";
 import PropTypes from "prop-types";
-import { ShowComponent } from "src/components/show";
-import { getStatusColor } from "../common";
-import { getLabel } from "../common";
+import { getStatusColor, normalizeEvalResult } from "../common";
 import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 
@@ -22,7 +20,6 @@ const SkeletonLoader = () => (
 
 const StatusCellRenderer = ({ cellValue, status, isLoading, type }) => {
   const theme = useTheme();
-
   if (status === "running" || isLoading) return <SkeletonLoader />;
   if (status === "error") {
     return (
@@ -52,87 +49,60 @@ const StatusCellRenderer = ({ cellValue, status, isLoading, type }) => {
     );
   }
 
-  if (
-    typeof cellValue === "string" &&
-    cellValue?.startsWith("[") &&
-    cellValue?.endsWith("]")
-  ) {
-    cellValue = JSON.parse(cellValue.replace(/'/g, '"'));
-  }
-  if (cellValue === undefined || cellValue === "" || cellValue === null) return;
+  const result = normalizeEvalResult(cellValue, type);
+  if (result.kind === "empty") return null;
 
+  const chipSx = (v) => ({
+    ...getStatusColor(v, theme),
+    transition: "none",
+    "&:hover": {
+      backgroundColor: getStatusColor(v, theme).backgroundColor,
+      boxShadow: "none",
+    },
+  });
+
+  if (result.kind === "score") {
+    const pct = result.score <= 1 ? result.score * 100 : result.score;
+    return (
+      <Chip
+        variant="soft"
+        label={`${Math.round(pct)}%`}
+        size="small"
+        sx={chipSx(result.score)}
+      />
+    );
+  }
+
+  if (result.kind === "passfail") {
+    return (
+      <Chip
+        variant="soft"
+        label={result.label}
+        size="small"
+        sx={chipSx(result.label)}
+      />
+    );
+  }
+
+  // choices — show first chip plus a +N counter if more.
+  const first = result.items[0];
   return (
-    <>
-      <ShowComponent condition={!Array.isArray(cellValue)}>
+    <Box>
+      <Chip
+        variant="soft"
+        label={first}
+        size="small"
+        sx={{ ...chipSx(first), marginRight: "10px" }}
+      />
+      {result.items.length > 1 && (
         <Chip
           variant="soft"
-          label={getLabel(cellValue)}
+          label={`+${result.items.length - 1}`}
           size="small"
-          sx={{
-            ...getStatusColor(cellValue, theme),
-            transition: "none",
-            "&:hover": {
-              backgroundColor: getStatusColor(cellValue, theme).backgroundColor, // Lock it to same color
-              boxShadow: "none",
-            },
-          }}
+          sx={chipSx(first)}
         />
-      </ShowComponent>
-      <ShowComponent condition={Array.isArray(cellValue)}>
-        <ShowComponent condition={cellValue.length === 0}>
-          <Chip
-            variant="soft"
-            label={"None"}
-            size="small"
-            sx={{
-              backgroundColor: theme.palette.red.o10,
-              color: theme.palette.red[500],
-              marginRight: "10px",
-              transition: "none",
-              "&:hover": {
-                backgroundColor: theme.palette.red.o10, // Lock it to same color
-                boxShadow: "none",
-              },
-            }}
-          />
-        </ShowComponent>
-        <ShowComponent condition={cellValue.length > 0}>
-          <Box>
-            <Chip
-              variant="soft"
-              label={getLabel(cellValue)}
-              size="small"
-              sx={{
-                ...getStatusColor(cellValue, theme),
-                marginRight: "10px",
-                transition: "none",
-                "&:hover": {
-                  backgroundColor: getStatusColor(cellValue, theme)
-                    .backgroundColor, // Lock it to same color
-                  boxShadow: "none",
-                },
-              }}
-            />
-            {cellValue.length > 1 && (
-              <Chip
-                variant="soft"
-                label={`+${cellValue.length - 1}`}
-                size="small"
-                sx={{
-                  ...getStatusColor(cellValue, theme),
-                  transition: "none",
-                  "&:hover": {
-                    backgroundColor: getStatusColor(cellValue, theme)
-                      .backgroundColor, // Lock it to same color
-                    boxShadow: "none",
-                  },
-                }}
-              />
-            )}
-          </Box>
-        </ShowComponent>
-      </ShowComponent>
-    </>
+      )}
+    </Box>
   );
 };
 

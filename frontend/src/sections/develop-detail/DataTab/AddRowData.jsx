@@ -75,9 +75,9 @@ const AddRowData = ({ dataset }) => {
     },
   });
   useMemo(() => {
-    setValue("Pcode", data?.result?.code?.pythonAddCol || "");
-    setValue("Tcode", data?.result?.code?.typescriptAddCol || "");
-    setValue("CUcode", data?.result?.code?.curlAddCol || "");
+    setValue("Pcode", data?.result?.code?.python_add_col || "");
+    setValue("Tcode", data?.result?.code?.typescript_add_col || "");
+    setValue("CUcode", data?.result?.code?.curl_add_col || "");
   }, [data, setValue]);
 
   if (isLoading) {

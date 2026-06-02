@@ -28,6 +28,7 @@ import { useAlertStore } from "../../store/useAlertStore";
 import { useAlertSheetView } from "../../store/useAlertSheetView";
 import { AlertTableSkeleton } from "../AlertSkeletons";
 import _ from "lodash";
+import { isAlertMuted } from "../../common";
 const Issues = lazy(() => import("./Issues"));
 const AlertDetails = lazy(() => import("./AlertDetails"));
 
@@ -57,6 +58,7 @@ export default function AlertsSheetView() {
         refreshMainGrid();
       },
     });
+  const alertIsMuted = isAlertMuted(alertRuleDetails);
 
   const handleDuplicateAlert = () => {
     setDuplicateModal(false);
@@ -227,12 +229,12 @@ export default function AlertsSheetView() {
     if (openSheetView) {
       trackEvent(Events.alertMuteClicked, {
         [PropertyName.list]: [openSheetView],
-        [PropertyName.toggle]: alertRuleDetails?.isMute ? "Unmute" : "Mute",
+        [PropertyName.toggle]: alertIsMuted ? "Unmute" : "Mute",
         [PropertyName.source]: "alert_edit",
       });
       mutateAlerts({
         ids: [openSheetView],
-        is_mute: !alertRuleDetails?.isMute,
+        is_mute: !alertIsMuted,
       });
     }
   };
@@ -342,7 +344,7 @@ export default function AlertsSheetView() {
                   variant="outlined"
                   size="small"
                   startIcon={
-                    alertRuleDetails?.isMute ? (
+                    alertIsMuted ? (
                       <SvgColor src="/assets/icons/ic_mute.svg" />
                     ) : (
                       <SvgColor src="/assets/icons/ic_unmute.svg" />
@@ -351,7 +353,7 @@ export default function AlertsSheetView() {
                   disabled={isMutingAlerts}
                   onClick={handleToggleMute}
                 >
-                  {alertRuleDetails?.isMute ? "Unmute" : "Mute"}
+                  {alertIsMuted ? "Unmute" : "Mute"}
                 </Button>
                 <Button
                   variant="outlined"

@@ -194,14 +194,16 @@ const SimulationTestMode = React.forwardRef(
     const [loadingMoreRunTests, setLoadingMoreRunTests] = useState(false);
     const [runTestsPage, setRunTestsPage] = useState(1);
     const [runTestsHasMore, setRunTestsHasMore] = useState(true);
-    const [selectedRunTestId, setSelectedRunTestId] =
-      useState(initialRunTestId || "");
+    const [selectedRunTestId, setSelectedRunTestId] = useState(
+      initialRunTestId || "",
+    );
 
     // Run test context (agent def, scenarios, persona, evals)
     const [runTestContext, setRunTestContext] = useState(null);
 
     // Test executions (runs within a simulation)
     const [executions, setExecutions] = useState([]);
+    const [executionsFetched, setExecutionsFetched] = useState(false);
     const [selectedExecutionId, setSelectedExecutionId] = useState("");
 
     // Call executions (individual calls)
@@ -325,8 +327,10 @@ const SimulationTestMode = React.forwardRef(
         setExecutions([]);
         setSelectedExecutionId("");
         setRunTestContext(null);
+        setExecutionsFetched(false);
         return;
       }
+      setExecutionsFetched(false);
       const fetchAll = async () => {
         try {
           // Fetch detail (agent def, scenarios, persona, evals) and executions in parallel
@@ -344,12 +348,14 @@ const SimulationTestMode = React.forwardRef(
           // Executions: paginated {results: [...]}
           const items = execRes.data?.results || [];
           setExecutions(items);
+          setExecutionsFetched(true);
           if (items.length > 0) {
             setSelectedExecutionId(items[0].id || "");
           }
         } catch {
           setExecutions([]);
           setRunTestContext(null);
+          setExecutionsFetched(true);
         }
       };
       fetchAll();
@@ -718,8 +724,7 @@ const SimulationTestMode = React.forwardRef(
         "providerCallData",
       ]);
       const walk = (obj, prefix) => {
-        // canonicalEntries filters out the camelCase aliases the axios
-        // interceptor adds alongside snake_case keys.
+        // canonicalEntries filters out the camelCase aliases that may exist in legacy objects alongside snake_case keys.
         const entries = canonicalEntries(obj);
         for (const [k, v] of entries) {
           const path = prefix ? `${prefix}.${k}` : k;
@@ -801,8 +806,7 @@ const SimulationTestMode = React.forwardRef(
     const isReady = useMemo(
       () =>
         !!selectedRunTestId &&
-        variables.length > 0 &&
-        variables.every((v) => !!mapping[v]),
+        (variables.length === 0 || variables.every((v) => !!mapping[v])),
       [selectedRunTestId, variables, mapping],
     );
 
@@ -978,8 +982,11 @@ const SimulationTestMode = React.forwardRef(
       totalCalls === 0 &&
       !loadingCalls &&
       !isPendingCallsFetch;
+    const hasNoExecutions =
+      !!selectedRunTestId && executionsFetched && executions.length === 0;
     const isMappingPending =
       !isConfirmedEmpty &&
+      !hasNoExecutions &&
       (loadingRunTests ||
         loadingCalls ||
         isPendingCallsFetch ||
@@ -1117,11 +1124,8 @@ const SimulationTestMode = React.forwardRef(
           </Box>
         )}
 
-        {/* Empty state */}
-        {selectedExecutionId &&
-          !loadingCalls &&
-          !isPendingCallsFetch &&
-          totalCalls === 0 && (
+        {/* Empty state — simulation has no executions */}
+        {hasNoExecutions && (
           <Box
             sx={{
               display: "flex",
@@ -1140,148 +1144,179 @@ const SimulationTestMode = React.forwardRef(
               sx={{ color: "text.disabled" }}
             />
             <Typography variant="body2" fontWeight={600} color="text.secondary">
-              No calls in this simulation
+              This simulation has no data
             </Typography>
             <Typography variant="caption" color="text.disabled">
-              Add calls to the simulation before running a test
+              Run the simulation first to generate call data for testing
             </Typography>
           </Box>
         )}
+
+        {/* Empty state */}
+        {selectedExecutionId &&
+          !loadingCalls &&
+          !isPendingCallsFetch &&
+          totalCalls === 0 && (
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 0.75,
+                py: 3,
+                border: "1px dashed",
+                borderColor: "divider",
+                borderRadius: "8px",
+              }}
+            >
+              <Iconify
+                icon="mdi:table-off"
+                width={28}
+                sx={{ color: "text.disabled" }}
+              />
+              <Typography
+                variant="body2"
+                fontWeight={600}
+                color="text.secondary"
+              >
+                No calls in this simulation
+              </Typography>
+              <Typography variant="caption" color="text.disabled">
+                Add calls to the simulation before running a test
+              </Typography>
+            </Box>
+          )}
 
         {/* Call navigator */}
         {selectedExecutionId &&
           totalCalls > 0 &&
           !loadingCalls &&
           !isPendingCallsFetch && (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Typography variant="caption" color="text.secondary">
-              Call {currentCallIndex + 1} of {totalCalls}
-            </Typography>
-            <IconButton
-              size="small"
-              disabled={currentCallIndex === 0}
-              onClick={() => {
-                setCurrentCallIndex((i) => Math.max(0, i - 1));
-                setResult(null);
-                setError(null);
-                onClearResult?.();
-              }}
-              sx={{ width: 24, height: 24 }}
-            >
-              <Iconify icon="mdi:chevron-left" width={16} />
-            </IconButton>
-            <IconButton
-              size="small"
-              disabled={currentCallIndex >= totalCalls - 1}
-              onClick={() => {
-                setCurrentCallIndex((i) => Math.min(totalCalls - 1, i + 1));
-                setResult(null);
-                setError(null);
-                onClearResult?.();
-              }}
-              sx={{ width: 24, height: 24 }}
-            >
-              <Iconify icon="mdi:chevron-right" width={16} />
-            </IconButton>
-          </Box>
-        )}
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Typography variant="caption" color="text.secondary">
+                Call {currentCallIndex + 1} of {totalCalls}
+              </Typography>
+              <IconButton
+                size="small"
+                disabled={currentCallIndex === 0}
+                onClick={() => {
+                  setCurrentCallIndex((i) => Math.max(0, i - 1));
+                  setResult(null);
+                  setError(null);
+                  onClearResult?.();
+                }}
+                sx={{ width: 24, height: 24 }}
+              >
+                <Iconify icon="mdi:chevron-left" width={16} />
+              </IconButton>
+              <IconButton
+                size="small"
+                disabled={currentCallIndex >= totalCalls - 1}
+                onClick={() => {
+                  setCurrentCallIndex((i) => Math.min(totalCalls - 1, i + 1));
+                  setResult(null);
+                  setError(null);
+                  onClearResult?.();
+                }}
+                sx={{ width: 24, height: 24 }}
+              >
+                <Iconify icon="mdi:chevron-right" width={16} />
+              </IconButton>
+            </Box>
+          )}
 
         {/* Variable mapping — skeleton rows stay visible until callDetail
             resolves, so we don't flicker between two loading states. The
             shell (search bar, header, rows area with maxHeight 320) mirrors
             the real table structure so the swap-in is layout-stable. */}
         {isMappingPending && (
+          <Box
+            sx={{
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "6px",
+              overflow: "hidden",
+            }}
+          >
             <Box
               sx={{
-                border: "1px solid",
+                px: 1,
+                py: 0.75,
+                borderBottom: "1px solid",
                 borderColor: "divider",
-                borderRadius: "6px",
-                overflow: "hidden",
               }}
             >
-              <Box
-                sx={{
-                  px: 1,
-                  py: 0.75,
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
+              <TextField
+                size="small"
+                fullWidth
+                placeholder="Search columns or values..."
+                value=""
+                disabled
+                InputProps={{
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <Iconify
+                        icon="mdi:magnify"
+                        width={14}
+                        sx={{ color: "text.disabled" }}
+                      />
+                    </InputAdornment>
+                  ),
+                  sx: { fontSize: "12px", height: 28 },
                 }}
-              >
-                <TextField
-                  size="small"
-                  fullWidth
-                  placeholder="Search columns or values..."
-                  value=""
-                  disabled
-                  InputProps={{
-                    startAdornment: (
-                      <InputAdornment position="start">
-                        <Iconify
-                          icon="mdi:magnify"
-                          width={14}
-                          sx={{ color: "text.disabled" }}
-                        />
-                      </InputAdornment>
-                    ),
-                    sx: { fontSize: "12px", height: 28 },
-                  }}
-                />
-              </Box>
-              <Box
-                sx={{
-                  display: "flex",
-                  px: 1.5,
-                  py: 0.5,
-                  backgroundColor: (theme) =>
-                    theme.palette.mode === "dark"
-                      ? "rgba(255,255,255,0.03)"
-                      : "#fafafa",
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                }}
-              >
-                <Typography
-                  variant="caption"
-                  fontWeight={600}
-                  sx={{ width: 200, flexShrink: 0 }}
-                >
-                  Columns
-                </Typography>
-                <Typography
-                  variant="caption"
-                  fontWeight={600}
-                  sx={{ flex: 1 }}
-                >
-                  Value
-                </Typography>
-              </Box>
-              <Box sx={{ maxHeight: 320, overflowY: "auto" }}>
-                {Array.from({ length: 10 }).map((_, i) => (
-                  <Box
-                    key={i}
-                    sx={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      px: 1.5,
-                      py: 0.6,
-                      borderBottom: "1px solid",
-                      borderColor: "divider",
-                      "&:last-child": { borderBottom: "none" },
-                    }}
-                  >
-                    <Skeleton
-                      variant="text"
-                      width={180}
-                      sx={{ flexShrink: 0, pt: 0.25 }}
-                    />
-                    <Box sx={{ flex: 1, pl: 1.5 }}>
-                      <Skeleton variant="text" />
-                    </Box>
-                  </Box>
-                ))}
-              </Box>
+              />
             </Box>
-          )}
+            <Box
+              sx={{
+                display: "flex",
+                px: 1.5,
+                py: 0.5,
+                backgroundColor: (theme) =>
+                  theme.palette.mode === "dark"
+                    ? "rgba(255,255,255,0.03)"
+                    : "#fafafa",
+                borderBottom: "1px solid",
+                borderColor: "divider",
+              }}
+            >
+              <Typography
+                variant="caption"
+                fontWeight={600}
+                sx={{ width: 200, flexShrink: 0 }}
+              >
+                Columns
+              </Typography>
+              <Typography variant="caption" fontWeight={600} sx={{ flex: 1 }}>
+                Value
+              </Typography>
+            </Box>
+            <Box sx={{ maxHeight: 320, overflowY: "auto" }}>
+              {Array.from({ length: 10 }).map((_, i) => (
+                <Box
+                  key={i}
+                  sx={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    px: 1.5,
+                    py: 0.6,
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                    "&:last-child": { borderBottom: "none" },
+                  }}
+                >
+                  <Skeleton
+                    variant="text"
+                    width={180}
+                    sx={{ flexShrink: 0, pt: 0.25 }}
+                  />
+                  <Box sx={{ flex: 1, pl: 1.5 }}>
+                    <Skeleton variant="text" />
+                  </Box>
+                </Box>
+              ))}
+            </Box>
+          </Box>
+        )}
 
         {callDetail &&
           !loadingDetail &&
@@ -1560,14 +1595,14 @@ const SimulationTestMode = React.forwardRef(
           !loadingCalls &&
           !isPendingCallsFetch &&
           totalCalls === 0 && (
-          <Typography
-            variant="body2"
-            color="text.disabled"
-            sx={{ textAlign: "center", py: 3 }}
-          >
-            No calls found for this simulation run
-          </Typography>
-        )}
+            <Typography
+              variant="body2"
+              color="text.disabled"
+              sx={{ textAlign: "center", py: 3 }}
+            >
+              No calls found for this simulation run
+            </Typography>
+          )}
 
         {/* Variable mapping */}
         {variables.length > 0 && (

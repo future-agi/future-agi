@@ -16,6 +16,7 @@ import RenderMeta from "../RenderMeta";
 import EvaluateArrayCellRenderer from "./EvaluateArrayCellRenderer";
 import NumericCell from "./NumericCell";
 import { OutputTypes } from "../CellRenderers/cellRendererHelper";
+import { normalizeEvalResult } from "src/sections/develop-detail/DataTab/common";
 const getScorePercentage = (s, decimalPlaces = 0) => {
   if (s <= 0) s = 0;
   const score = s * 100;
@@ -42,6 +43,8 @@ const parseValueInfos = (cellData) => {
   return raw;
 };
 
+//Being used in experiments & Compare datasets
+//In compare dataset we are not getting choices map
 const EvaluateCell = ({
   value,
   dataType,
@@ -54,7 +57,6 @@ const EvaluateCell = ({
 }) => {
   const output = cellData?.valueInfos?.output || outputType;
 
-
   // Detect composite eval cells. The Phase B runner writes a `composite_id`
   // key and a `children` array into `value_infos` alongside the aggregate
   // score. Use either as a liveness signal so both newer (composite_id)
@@ -66,9 +68,9 @@ const EvaluateCell = ({
 
   const isComposite = Boolean(
     parsedValueInfos?.composite_id ||
-    (Array.isArray(parsedValueInfos?.children) &&
-      parsedValueInfos.children.length > 0 &&
-      parsedValueInfos.children[0]?.child_id),
+      (Array.isArray(parsedValueInfos?.children) &&
+        parsedValueInfos.children.length > 0 &&
+        parsedValueInfos.children[0]?.child_id),
   );
   const [compositeDialogOpen, setCompositeDialogOpen] = useState(false);
 
@@ -145,9 +147,10 @@ const EvaluateCell = ({
   }
   if (output === OutputTypes.SCORE) {
     const result = parsedValueInfos?.data?.result;
-    if (hasRenderableValue(result)) {
+
+    if (hasRenderableValue(result) && !Number.isNaN(result)) {
       return (
-        <Box sx={{ display: "inline-flex", p: 1, maxWidth: "100%" }}>
+        <Box sx={{ display: "flex",alignItems:"flex-start", p: 1,height:"100%", maxWidth: "100%" }}>
           <Chip
             label={result}
             size="small"
@@ -198,9 +201,46 @@ const EvaluateCell = ({
     );
   }
   if (dataType === "float") {
-    const hasValue = hasRenderableValue(cellData?.cellValue);
+    const normalized = normalizeEvalResult(value, output);
+    if (normalized.kind === "choices") {
+      return (
+        <Box
+          sx={{
+            p: 1,
+            display: "flex",
+            gap: 1,
+            flexWrap: "wrap",
+            overflow: "auto",
+            height: "100%",
+            alignItems: "flex-start",
+            alignContent: "flex-start",
+          }}
+        >
+          {normalized?.items?.map((item) => (
+            <Chip
+              key={item}
+              label={item}
+              size="small"
+              variant="outlined"
+              sx={{
+                borderRadius: "4px",
+                borderColor: "purple.500",
+                color: "purple.500",
+                fontWeight: 400,
+                typography: "s3",
+              }}
+            />
+          ))}
+        </Box>
+      );
+    }
+    const parsedValue = Number(value);
+    const numericValue = Number.isFinite(parsedValue)
+      ? parsedValue
+      : normalized.score;
+    const hasValue = Number.isFinite(numericValue);
     const bgColor = hasValue
-      ? interpolateColorBasedOnScore(value, 1)
+      ? interpolateColorBasedOnScore(numericValue, 1)
       : "";
     return (
       <>
@@ -214,7 +254,7 @@ const EvaluateCell = ({
             alignItems: "center",
           }}
         >
-          {hasValue ? `${getScorePercentage(value)}%` : ""}
+          {hasValue ? `${getScorePercentage(numericValue)}%` : ""}
           {compositeBadge}
           <RenderMeta
             originType={originType}

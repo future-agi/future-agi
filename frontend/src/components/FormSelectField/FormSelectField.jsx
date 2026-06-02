@@ -277,7 +277,7 @@ const FormSelectField = (
   );
 };
 
-FormSelectField.propTypes = {
+const formSelectFieldPropTypes = {
   control: PropTypes.any,
   options: PropTypes.arrayOf(
     PropTypes.shape({
@@ -307,3 +307,4 @@ FormSelectField.propTypes = {
 
 // @ts-ignore
 export const EnhancedFormSelectField = React.forwardRef(FormSelectField);
+EnhancedFormSelectField.propTypes = formSelectFieldPropTypes;

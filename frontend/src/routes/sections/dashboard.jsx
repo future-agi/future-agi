@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import React from "react";
 import { Suspense } from "react";
-import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 
 import { AuthGuard } from "src/auth/guard";
 import DashboardLayout from "src/layouts/dashboard";
@@ -107,9 +107,6 @@ const EvalsUsage = lazyWithRetry(
 );
 const EvalCreate = lazyWithRetry(
   () => import("src/pages/dashboard/evals/EvalCreate"),
-);
-const EvalDetailView = lazyWithRetry(
-  () => import("src/sections/evals/EvalDetails/EvalDetailView"),
 );
 const EvalDetail = lazyWithRetry(
   () => import("src/pages/dashboard/evals/EvalDetail"),
@@ -226,10 +223,6 @@ const CrossProjectUserDetailPage = lazyWithRetry(
     ),
 );
 
-const Alerts = lazyWithRetry(
-  () => import("src/sections/projects/Alerts/Alerts.jsx"),
-);
-
 const GetStarted = lazyWithRetry(
   () => import("src/pages/dashboard/get-started/GetStarted"),
 );
@@ -247,9 +240,6 @@ const TaskDetail = lazyWithRetry(
 );
 const UsersView = lazyWithRetry(
   () => import("src/sections/projects/UsersView/UsersView"),
-);
-const EvalsInside = lazyWithRetry(
-  () => import("src/pages/dashboard/projects/EvalsInside"),
 );
 const KnowledgeBase = lazyWithRetry(
   () => import("src/pages/dashboard/knowledge-base/KnowledgeBase"),
@@ -373,10 +363,6 @@ const WorkspaceGeneral = lazyWithRetry(
 const FalconAIPage = lazyWithRetry(
   () => import("src/pages/dashboard/falcon-ai/FalconAI"),
 );
-const Feed = lazyWithRetry(() => import("src/pages/dashboard/feed/Feed"));
-const FeedDetail = lazyWithRetry(
-  () => import("src/pages/dashboard/feed/FeedDetail"),
-);
 const ErrorFeed = lazyWithRetry(
   () => import("src/pages/dashboard/error-feed/ErrorFeed"),
 );
@@ -389,6 +375,11 @@ const AnnotationLabelsPage = lazyWithRetry(
 const AnnotationQueuesPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/queues"),
 );
+
+function LegacyFeedDetailRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/dashboard/error-feed/${id}`} replace />;
+}
 const QueueDetailPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/queue-detail"),
 );
@@ -468,9 +459,8 @@ export const dashboardRoutes = (
   workspaceRole,
   { isOSS = false } = {},
 ) => {
-  const userOrgRole = user?.organization_role ?? user?.organizationRole;
-  const userDefaultWsRole =
-    user?.default_workspace_role ?? user?.defaultWorkspaceRole;
+  const userOrgRole = user?.organization_role;
+  const userDefaultWsRole = user?.default_workspace_role;
   const isOwner = user === null ? true : userOrgRole === "Owner";
   const effectiveWsRole = workspaceRole || userDefaultWsRole;
   const isAdmin =
@@ -708,7 +698,7 @@ export const dashboardRoutes = (
     );
   }
 
-  if (user === null || (user?.ws_enabled ?? user?.wsEnabled)) {
+  if (user === null || user?.ws_enabled) {
     settingsRoute.push({
       path: "workspace",
       children: [
@@ -1082,7 +1072,7 @@ export const dashboardRoutes = (
         },
         {
           path: "evals-tasks",
-          element: <EvalsInside />,
+          element: <Navigate to="../llm-tracing" replace />,
         },
         {
           path: "charts",
@@ -1090,7 +1080,7 @@ export const dashboardRoutes = (
         },
         {
           path: "alerts",
-          element: <Alerts />,
+          element: <Navigate to="../llm-tracing" replace />,
         },
         {
           path: "users",
@@ -1254,11 +1244,11 @@ export const dashboardRoutes = (
       children: [
         {
           index: true,
-          element: <Feed />,
+          element: <Navigate to="/dashboard/error-feed" replace />,
         },
         {
           path: ":id",
-          element: <FeedDetail />,
+          element: <LegacyFeedDetailRedirect />,
         },
       ],
     },

@@ -25,6 +25,7 @@ export function useUrlState(key, defaultValue) {
   const [value, setStateValue] = useState(() =>
     parseUrlValue(searchParams.get(key), defaultValue),
   );
+  const valueRef = useRef(value);
 
   // Flag to track if the URL change was triggered internally
   const isInternalUpdate = useRef(false);
@@ -40,18 +41,16 @@ export function useUrlState(key, defaultValue) {
   // each setter merges with the latest URL state correctly.
   const setValue = useCallback(
     (newValue, options = { replace: true }) => {
-      setStateValue((currentValue) => {
-        const nextValue =
-          typeof newValue === "function" ? newValue(currentValue) : newValue;
+      const nextValue =
+        typeof newValue === "function" ? newValue(valueRef.current) : newValue;
 
-        isInternalUpdate.current = true;
+      valueRef.current = nextValue;
+      setStateValue(nextValue);
+      isInternalUpdate.current = true;
 
-        const newSearchParams = new URLSearchParams(window.location.search);
-        newSearchParams.set(key, stringifyUrlValue(nextValue));
-        setSearchParams(newSearchParams, { replace: options.replace });
-
-        return nextValue;
-      });
+      const newSearchParams = new URLSearchParams(window.location.search);
+      newSearchParams.set(key, stringifyUrlValue(nextValue));
+      setSearchParams(newSearchParams, { replace: options.replace });
     },
     [key, setSearchParams],
   );
@@ -64,6 +63,7 @@ export function useUrlState(key, defaultValue) {
       newSearchParams.delete(key);
       setSearchParams(newSearchParams, { replace: options.replace });
 
+      valueRef.current = defaultValue;
       setStateValue(defaultValue);
     },
     [key, setSearchParams, defaultValue],
@@ -84,8 +84,13 @@ export function useUrlState(key, defaultValue) {
     }
 
     const newValue = parseUrlValue(searchParams.get(key), defaultValue);
+    valueRef.current = newValue;
     setStateValue(newValue);
   }, [searchParams, key, defaultValue, value]);
+
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   return [value, setValue, removeValue];
 }

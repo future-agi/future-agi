@@ -7,7 +7,11 @@ Tests for user authentication, token management, and user info endpoints.
 import pytest
 from django.core.cache import cache
 from rest_framework import status
-from rest_framework.test import APIClient
+
+
+def assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert response.json()["details"][field_name] == ["Unknown field."]
 
 
 @pytest.fixture
@@ -79,6 +83,8 @@ class TestTokenObtainAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_nonexistent_email(self, api_client, db, clear_cache):
         """Login fails with nonexistent email."""
@@ -91,6 +97,8 @@ class TestTokenObtainAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_inactive_user(self, api_client, inactive_user, clear_cache):
         """Login fails for inactive user."""
@@ -103,6 +111,8 @@ class TestTokenObtainAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        data = response.json()
+        assert data["result"]["error_code"] == "LOGIN_ACCOUNT_DEACTIVATED"
 
     def test_login_email_case_insensitive(self, api_client, user, clear_cache):
         """Login works with email in different case."""
@@ -234,6 +244,122 @@ class TestFirstChecksAPI:
         for key in ["keys", "dataset", "evaluation", "experiment", "observe", "invite"]:
             assert isinstance(result.get(key), bool)
 
+    def test_first_checks_ignores_other_workspace_experiments(
+        self, auth_client, user, organization, workspace
+    ):
+        """Experiment completion should reflect the active workspace."""
+        from accounts.models.workspace import Workspace
+        from model_hub.models.develop_dataset import Dataset
+        from model_hub.models.experiments import ExperimentsTable
+
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="Other workspace dataset",
+            organization=organization,
+            workspace=other_workspace,
+            user=user,
+        )
+        ExperimentsTable.no_workspace_objects.create(
+            name="Other workspace experiment",
+            dataset=other_dataset,
+            user=user,
+            prompt_config=[],
+        )
+
+        response = auth_client.get("/accounts/first-checks/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["experiment"] is False
+
+        active_dataset = Dataset.no_workspace_objects.create(
+            name="Active workspace dataset",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+        )
+        ExperimentsTable.no_workspace_objects.create(
+            name="Active workspace experiment",
+            dataset=active_dataset,
+            user=user,
+            prompt_config=[],
+        )
+
+        response = auth_client.get("/accounts/first-checks/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["experiment"] is True
+
+    def test_first_checks_invites_are_active_workspace_scoped(
+        self, auth_client, user, organization, workspace
+    ):
+        """Invite completion should not be satisfied by another workspace."""
+        from accounts.models import User
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.workspace import Workspace, WorkspaceMembership
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        other_workspace = Workspace.objects.create(
+            name="Invite Other Workspace",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        invitee = User.objects.create_user(
+            email="invited-workspace-only@futureagi.com",
+            password="testpassword123",
+            name="Invited Workspace User",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+            invited_by=user,
+        )
+        org_membership = OrganizationMembership.no_workspace_objects.create(
+            user=invitee,
+            organization=organization,
+            role=OrganizationRoles.MEMBER,
+            level=Level.MEMBER,
+            is_active=True,
+            invited_by=user,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=other_workspace,
+            user=invitee,
+            role=OrganizationRoles.WORKSPACE_MEMBER,
+            level=Level.WORKSPACE_MEMBER,
+            organization_membership=org_membership,
+            invited_by=user,
+            is_active=True,
+        )
+
+        response = auth_client.get("/accounts/first-checks/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["invite"] is False
+
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=workspace,
+            user=invitee,
+            role=OrganizationRoles.WORKSPACE_MEMBER,
+            level=Level.WORKSPACE_MEMBER,
+            organization_membership=org_membership,
+            invited_by=user,
+            is_active=True,
+        )
+
+        response = auth_client.get("/accounts/first-checks/")
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json().get("result", {})
+        assert result["invite"] is True
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -269,6 +395,19 @@ class TestUserOnboardingAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
+
+    def test_post_onboarding_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/onboarding/",
+            {
+                "role": "developer",
+                "goals": ["Build AI apps"],
+                "selectedGoals": ["legacy camel alias"],
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "selectedGoals")
 
     def test_post_onboarding_updates_user(self, auth_client, user):
         """Onboarding data is saved to user model."""
@@ -336,6 +475,20 @@ class TestManageRedisKeyAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_manage_redis_key_rejects_unknown_request_fields(self, auth_client):
+        response = auth_client.post(
+            "/accounts/redis-key/",
+            {
+                "access_token_id": "invalid-token",
+                "key": "test_key",
+                "value": "test_value",
+                "accessTokenId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        assert_unknown_field(response, "accessTokenId")
+
     def test_manage_redis_key_missing_key(self, auth_client):
         """Request without key fails."""
         response = auth_client.post(
@@ -352,7 +505,7 @@ class TestLoginRateLimiting:
     """Tests for login rate limiting and account blocking."""
 
     def test_failed_login_tracks_attempts(self, api_client, user, clear_cache):
-        """Failed login attempts are tracked."""
+        """Failed login attempts are tracked and error_code is returned."""
         response = api_client.post(
             "/accounts/token/",
             {"email": user.email, "password": "wrongpassword"},
@@ -361,12 +514,13 @@ class TestLoginRateLimiting:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
         result = data.get("result", data)
-        # Should include remaining attempts info
+        # Should include remaining attempts info and structured error_code
         assert (
             "remainingAttempts" in result
             or "remaining_attempts" in result
             or "error" in result
         )
+        assert result.get("error_code") == "LOGIN_INVALID_CREDENTIALS"
 
     def test_login_with_remember_me(self, api_client, user, clear_cache):
         """Login with remember_me flag."""

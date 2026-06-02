@@ -22,7 +22,7 @@ import IPOPTooltipComponent from "./Renderers/IPOPTooltipComponent";
 import { isCellValueEmpty } from "src/components/table/utils";
 import AnnotationHeaderCellRenderer from "../../agents/CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "../../agents/NewAnnotationCellRenderer";
-import headerComponentLabels from "../../agents/headerComponetLabels";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
 export const AllowedGroups = [
   "Evaluation Metrics",
@@ -210,11 +210,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: col.id,
@@ -226,17 +226,17 @@ export const applyQuickFilters =
     }
 
     if (!col.groupBy) {
-      let filterType = "text";
+      let filter_type = "text";
       if (DATE_FILTER_FIELDS.includes(col.name)) {
-        filterType = "date";
+        filter_type = "date";
       }
 
       filter = {
-        columnId: col.id,
-        filterConfig: {
-          filterType: filterType,
-          filterOp: "equals",
-          filterValue: value,
+        column_id: col.id,
+        filter_config: {
+          filter_type: filter_type,
+          filter_op: "equals",
+          filter_value: value,
         },
         _meta: {
           parentProperty: col.id,
@@ -245,19 +245,19 @@ export const applyQuickFilters =
       };
 
       if (col.id === "node_type") {
-        filter.filterConfig = {
-          filterType: "text",
-          filterOp: "contains",
-          filterValue: [value],
+        filter.filter_config = {
+          filter_type: "text",
+          filter_op: "contains",
+          filter_value: [value],
         };
       }
       if (DATE_FILTER_FIELDS.includes(col.name)) {
         filter = {
-          columnId: _.snakeCase(col.id),
-          filterConfig: {
-            filterType: "datetime",
-            filterOp: "equals",
-            filterValue: [value],
+          column_id: _.snakeCase(col.id),
+          filter_config: {
+            filter_type: "datetime",
+            filter_op: "equals",
+            filter_value: [value],
           },
           _meta: {
             parentProperty: col.id,
@@ -273,11 +273,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: "Evaluation Metrics",
@@ -288,7 +288,7 @@ export const applyQuickFilters =
       });
     } else if (col?.groupBy === "Annotation Metrics") {
       filter = {
-        columnId: col.id,
+        column_id: col.id,
         _meta: {
           parentProperty: "Annotation Metrics",
           "Annotation Metrics": col.id,
@@ -299,10 +299,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.STAR: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "number",
-              filterOp: "equals",
-              filterValue: [value, ""],
+            filter_config: {
+              filter_type: "number",
+              filter_op: "equals",
+              filter_value: [value, ""],
             },
           };
           break;
@@ -310,10 +310,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.TEXT: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "text",
-              filterOp: "equals",
-              filterValue: value,
+            filter_config: {
+              filter_type: "text",
+              filter_op: "equals",
+              filter_value: value,
             },
           };
           break;
@@ -321,10 +321,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.THUMBS_UP_DOWN: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "boolean",
-              filterOp: "equals",
-              filterValue: value === "up" ? true : false,
+            filter_config: {
+              filter_type: "boolean",
+              filter_op: "equals",
+              filter_value: value === "up" ? true : false,
             },
           };
           break;
@@ -332,10 +332,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.CATEGORICAL: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "text",
-              filterOp: "contains",
-              filterValue: value,
+            filter_config: {
+              filter_type: "text",
+              filter_op: "contains",
+              filter_value: value,
             },
           };
           break;
@@ -346,10 +346,10 @@ export const applyQuickFilters =
             value,
             filter: {
               ...filter,
-              filterConfig: {
-                filterType: "number",
-                filterOp: "equals",
-                filterValue: [value, ""],
+              filter_config: {
+                filter_type: "number",
+                filter_op: "equals",
+                filter_value: [value, ""],
               },
             },
           });
@@ -359,34 +359,36 @@ export const applyQuickFilters =
     }
 
     if (filter) {
-      // Convert to extraFilters format (snake_case) for the new filter state
-      const extraFilter = {
-        column_id: filter.columnId,
-        filter_config: {
-          filter_type: filter.filterConfig?.filterType || "text",
-          filter_op: filter.filterConfig?.filterOp || "equals",
-          filter_value: Array.isArray(filter.filterConfig?.filterValue)
-            ? filter.filterConfig.filterValue.join(",")
-            : filter.filterConfig?.filterValue,
-        },
-      };
-      // user_id column renders emails; route through the user.id custom
-      // attribute so the value picker matches.
-      if (extraFilter.column_id === "user_id") {
-        extraFilter.column_id = "user.id";
-        extraFilter.display_name = "User ID";
-        extraFilter.filter_config.col_type = "SPAN_ATTRIBUTE";
+      // Quick filters on a couple of columns must be rerouted to their
+      // canonical backend field before building the API filter.
+      let field = filter.column_id;
+      let fieldName;
+      let apiColType;
+      let operator = filter.filter_config?.filter_op;
+      let value = filter.filter_config?.filter_value;
+
+      if (field === "user_id") {
+        // user_id renders emails; route through the user.id span attribute.
+        field = "user.id";
+        fieldName = "User ID";
+        apiColType = "SPAN_ATTRIBUTE";
+      } else if (field === "trace_name") {
+        // trace_name maps to the canonical SYSTEM_METRIC `name` field.
+        field = "name";
+        fieldName = "Trace Name";
+        apiColType = "SYSTEM_METRIC";
+        operator = "in";
+        value = Array.isArray(value) ? value : [value];
       }
-      // Remap to the property-picker / backend `name` field with the
-      // canonical SYSTEM_METRIC wire shape.
-      if (extraFilter.column_id === "trace_name") {
-        const fv = extraFilter.filter_config.filter_value;
-        extraFilter.column_id = "name";
-        extraFilter.display_name = "Trace Name";
-        extraFilter.filter_config.col_type = "SYSTEM_METRIC";
-        extraFilter.filter_config.filter_op = "in";
-        extraFilter.filter_config.filter_value = Array.isArray(fv) ? fv : [fv];
-      }
+
+      const extraFilter = buildApiFilterFromPanelRow({
+        field,
+        fieldName,
+        fieldType: filter.filter_config?.filter_type,
+        apiColType,
+        operator,
+        value,
+      });
       setFilters((prev) => {
         const exists = (prev || []).some(
           (f) =>
@@ -591,7 +593,7 @@ export const getTraceListColumnDefs = (col) => {
     headerName: COLUMN_NAME_OVERRIDES[colId] || col.name,
     ...(isCustomColumn ? { colId: col.id } : { field: col.id }),
     hide: !col?.isVisible,
-    col,
+    context: { sourceColumn: col },
     minWidth: defaultMinWidth,
     flex: 1,
     resizable: true,
@@ -645,7 +647,7 @@ export const getTraceListColumnDefs = (col) => {
         // No renderer for empty values
         return null;
       }
-      const column = params?.colDef?.col;
+      const column = params?.colDef?.context?.sourceColumn;
       const colId = column?.id;
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
@@ -706,9 +708,8 @@ export const generateAnnotationColumnsForTracing = (
     }
   }
 
-  return Object.entries(grouping).map(([groupName, metrics]) => ({
-    headerName: groupName,
-    children: metrics.map((metric) => {
+  return Object.values(grouping).flatMap((metrics) =>
+    metrics.flatMap((metric) => {
       const metricId = metric?.id;
       const displayName = metric?.name?.replace(/_/g, " ") || metricId;
       const outputType = metric?.annotationLabelType;
@@ -717,7 +718,6 @@ export const generateAnnotationColumnsForTracing = (
         outputType === "text" || expandedMetrics.includes(metricId);
 
       if (!isExpanded) {
-        // Collapsed: flat column under group → 2 header rows
         return {
           headerName: displayName,
           field: metricId,
@@ -728,6 +728,7 @@ export const generateAnnotationColumnsForTracing = (
             displayName: displayName,
             metricId,
             isTextType: outputType === "text",
+            showActions: true,
           },
           valueGetter: (params) => {
             const metricData = params?.data?.[metricId];
@@ -746,7 +747,8 @@ export const generateAnnotationColumnsForTracing = (
         };
       }
 
-      // Expanded: nested group → 3 header rows with annotator columns
+      // Expanded columns stay flat so AG Grid does not create a tall global
+      // grouped-header row that makes unrelated columns look oversized.
       const metricAnnotators = Object.values(metric?.annotators || {});
 
       const avgColumn = {
@@ -754,10 +756,14 @@ export const generateAnnotationColumnsForTracing = (
         field: `${metricId}.score`,
         flex: 1,
         minWidth: 200,
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: "Avg",
-          isAverage: true,
+          displayName,
+          metricId,
+          isTextType: false,
+          subLabel: "Avg",
+          subLabelType: "average",
+          showActions: true,
         },
         valueGetter: (params) => {
           const metricData = params?.data?.[metricId];
@@ -781,10 +787,14 @@ export const generateAnnotationColumnsForTracing = (
         flex: 1,
         minWidth: 200,
         ...(outputType === "text" ? { wrapText: true, autoHeight: true } : {}),
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: annotator?.user_name,
-          isAverage: false,
+          displayName,
+          metricId,
+          isTextType: outputType === "text",
+          subLabel: annotator?.user_name,
+          subLabelType: "person",
+          showActions: outputType === "text",
         },
         valueGetter: (params) => {
           const annotatorData =
@@ -803,21 +813,40 @@ export const generateAnnotationColumnsForTracing = (
         },
       }));
 
-      return {
-        headerName: displayName,
-        headerGroupComponent: AnnotationHeaderCellRenderer,
-        headerGroupComponentParams: {
-          displayName,
-          metricId,
-          isTextType: outputType === "text",
-        },
-        children: [
-          ...(outputType !== "text" ? [avgColumn] : []),
-          ...annotatorColumns,
-        ],
-      };
+      if (outputType === "text" && metricAnnotators.length === 0) {
+        return [
+          {
+            headerName: displayName,
+            field: metricId,
+            flex: 1,
+            minWidth: 200,
+            wrapText: true,
+            autoHeight: true,
+            headerComponent: AnnotationHeaderCellRenderer,
+            headerComponentParams: {
+              displayName,
+              metricId,
+              isTextType: true,
+              showActions: false,
+            },
+            valueGetter: () => null,
+            cellRenderer: NewAnnotationCellRenderer,
+            cellRendererParams: {
+              annotationType: outputType,
+              isAverage: false,
+              settings,
+              originType: "Tracing",
+            },
+          },
+        ];
+      }
+
+      return [
+        ...(outputType !== "text" ? [avgColumn] : []),
+        ...annotatorColumns,
+      ];
     }),
-  }));
+  );
 };
 
 export const DOC_LINKS = {
@@ -825,7 +854,7 @@ export const DOC_LINKS = {
   sessions: "https://docs.futureagi.com/docs/observe/features/session",
   evals: "https://docs.futureagi.com/docs/observe/features/evals",
   alerts: "https://docs.futureagi.com/docs/observe/features/alerts",
-  users: "https://docs.futureagi.com/docs/tracing/manual/set-session-user-id",
+  users: "https://docs.futureagi.com/docs/observe/features/manual-tracing/set-session-user-id",
   charts: "https://docs.futureagi.com/docs/observe/features/evals",
 };
 
@@ -835,11 +864,11 @@ export const LLM_TABS = {
 };
 
 export const FILTER_FOR_HAS_EVAL = {
-  columnId: "has_eval",
-  filterConfig: {
-    filterType: "boolean",
-    filterOp: "equals",
-    filterValue: true,
+  column_id: "has_eval",
+  filter_config: {
+    filter_type: "boolean",
+    filter_op: "equals",
+    filter_value: true,
   },
 };
 

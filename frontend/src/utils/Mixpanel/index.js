@@ -1,2 +1,2 @@
-export * from './EventNames';
-export * from './mixpanel';
+export * from "./EventNames";
+export * from "./mixpanel";

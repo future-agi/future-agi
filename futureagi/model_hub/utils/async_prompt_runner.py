@@ -11,10 +11,11 @@ from model_hub.services.derived_variable_service import (
     extract_derived_variables_from_output,
 )
 from model_hub.utils.column_utils import is_json_response_format
+from tfc.constants.api_calls import APICallTypeChoices
+
 try:
-    from ee.usage.utils.usage_entries import APICallTypeChoices, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
-    APICallTypeChoices = None
     log_and_deduct_cost_for_api_request = None
 
 
@@ -136,13 +137,14 @@ async def run_template_async(
                     token_config = metadata.get("usage", {})
 
                     # Wrap the synchronous DB call
-                    await database_sync_to_async(log_and_deduct_cost_for_api_request)(
-                        organization,
-                        APICallTypeChoices.PROMPT_BENCH.value,
-                        config=token_config,
-                        source="run_prompt_gen",
-                        workspace=workspace,
-                    )
+                    if log_and_deduct_cost_for_api_request is not None:
+                        await database_sync_to_async(log_and_deduct_cost_for_api_request)(
+                            organization,
+                            APICallTypeChoices.PROMPT_BENCH.value,
+                            config=token_config,
+                            source="run_prompt_gen",
+                            workspace=workspace,
+                        )
 
                     # Dual-write: emit usage event for new billing system
                     try:
@@ -155,8 +157,9 @@ async def run_template_async(
                         except ImportError:
                             emit = None
 
-                        emit(
-                            UsageEvent(
+                        if emit is not None and UsageEvent is not None:
+                            emit(
+                                UsageEvent(
                                 org_id=str(organization.id),
                                 event_type=APICallTypeChoices.PROMPT_BENCH.value,
                                 properties={

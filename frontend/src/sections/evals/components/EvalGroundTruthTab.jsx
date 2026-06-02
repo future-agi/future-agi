@@ -25,6 +25,7 @@ import { AgGridReact } from "ag-grid-react";
 import { useAgTheme } from "src/hooks/use-ag-theme";
 import Iconify from "src/components/iconify";
 import { canonicalEntries } from "src/utils/utils";
+import { apiPath } from "src/api/contracts/api-surface";
 
 import {
   useDevelopDatasetList,
@@ -232,9 +233,14 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
       const datasetId = selectedDataset.dataset_id || selectedDataset.id;
       const { data: res } = await (
         await import("src/utils/axios")
-      ).default.get(`/model-hub/develops/${datasetId}/get-dataset-table/`, {
-        params: { current_page_index: 0, page_size: 10000 },
-      });
+      ).default.get(
+        apiPath("/model-hub/develops/{dataset_id}/get-dataset-table/", {
+          dataset_id: datasetId,
+        }),
+        {
+          params: { current_page_index: 0, page_size: 10000 },
+        },
+      );
       const tableData = res?.result;
       const tableRows = tableData?.table || [];
 

@@ -127,6 +127,36 @@ class ModelServingClient:
             logger.error(f"Text embedding failed: {e}")
             raise
 
+    def embed_text_batch(self, texts: list[str]) -> list[list[float]]:
+        """
+        Batch text embedding: send N texts in one request, get N vectors back.
+
+        Deliberately does NOT go through _make_request — that path unwraps
+        embeddings[0] for single-input convenience, which silently drops all
+        but the first vector for a batch. The /embed endpoint already returns
+        one vector per input in order, so we return it as-is.
+        """
+        if not texts:
+            return []
+        if not all(isinstance(t, str) for t in texts):
+            raise ValueError("All text inputs must be strings")
+
+        data = {"text": texts, "input_type": "text"}
+        response = self.session.post(
+            f"{self.base_url}/model/v1/embed", json=data, timeout=self.default_timeout
+        )
+        if response.status_code != 200:
+            response.raise_for_status()
+        embeddings = response.json().get("embeddings", [])
+        if len(embeddings) != len(texts):
+            # Contract violation — caller decides how to fall back rather
+            # than us silently returning misaligned vectors.
+            raise ValueError(
+                f"serving returned {len(embeddings)} embeddings for "
+                f"{len(texts)} texts"
+            )
+        return embeddings
+
     def embed_image(self, image: str | Image.Image | bytes, model_name: str = "image_embedding") -> list[float]:
         """
         ✅ IMPROVED: Get image embeddings from the serving service with better image handling.

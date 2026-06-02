@@ -31,6 +31,7 @@ import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { enqueueSnackbar } from "notistack";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
+import { apiPath } from "src/api/contracts/api-surface";
 import SmartPreview from "./SmartPreview";
 import { isOpenAIMessages } from "./ChatMessageView";
 import useSearchHighlight from "./useSearchHighlight";
@@ -1208,12 +1209,14 @@ const InlineTagsRow = ({ tags = [], traceId, spanId }) => {
   const { mutate: saveTags, isPending } = useMutation({
     mutationFn: (newTags) => {
       if (spanId) {
-        return axios.post(`/tracer/observation-span/update-tags/`, {
+        return axios.post(apiPath("/tracer/observation-span/update-tags/"), {
           span_id: spanId,
           tags: newTags,
         });
       }
-      return axios.patch(`/tracer/trace/${traceId}/tags/`, { tags: newTags });
+      return axios.patch(apiPath("/tracer/trace/{id}/tags/", { id: traceId }), {
+        tags: newTags,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });

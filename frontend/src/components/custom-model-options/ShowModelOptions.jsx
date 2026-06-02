@@ -100,7 +100,7 @@ const ShowModelOptionsChild = (
   );
 };
 
-ShowModelOptionsChild.propTypes = {
+const showModelOptionsPropTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
   id: PropTypes.string,
@@ -113,3 +113,4 @@ ShowModelOptionsChild.propTypes = {
 
 // @ts-ignore
 export const ShowModelOptions = forwardRef(ShowModelOptionsChild);
+ShowModelOptions.propTypes = showModelOptionsPropTypes;

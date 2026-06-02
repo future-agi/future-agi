@@ -14,7 +14,7 @@ import PropTypes from "prop-types";
 import axios, { endpoints } from "src/utils/axios";
 import { getEvalsTaskColumnConfig } from "./common";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import { preventHeaderSelection, objectCamelToSnake } from "src/utils/utils";
+import { preventHeaderSelection } from "src/utils/utils";
 import logger from "src/utils/logger";
 import { APP_CONSTANTS } from "src/utils/constants";
 
@@ -164,7 +164,7 @@ const EvalsGrid = forwardRef(
                     direction: sort,
                   })),
               ),
-              filters: JSON.stringify(objectCamelToSnake(filters)),
+              filters: JSON.stringify(filters),
             },
           });
 
@@ -209,7 +209,7 @@ const EvalsGrid = forwardRef(
                 column_id: colId,
                 direction: sort,
               })),
-              filters: JSON.stringify(objectCamelToSnake(filters)),
+              filters: JSON.stringify(filters),
             },
           });
 

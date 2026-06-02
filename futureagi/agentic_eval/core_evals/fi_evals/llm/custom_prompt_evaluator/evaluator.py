@@ -7,9 +7,11 @@ import jinja2
 from jinja2 import Environment
 
 from agentic_eval.core.llm.llm import LLM
+from agentic_eval.core.utils.jinja_utils import nest_dotted_value
 from agentic_eval.core.utils.json_utils import extract_dict_from_string
 from agentic_eval.core.utils.llm_payloads import detect_and_build_media_blocks
 from agentic_eval.core.utils.model_config import ModelConfigs
+from agentic_eval.core.utils.score import clamp_unit_score
 from agentic_eval.core_evals.fi_utils.evals_result import EvalResult
 import structlog
 
@@ -18,6 +20,10 @@ from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 
 from agentic_eval.core_evals.fi_evals.eval_type import LlmEvalTypeId
 
+# Maximum chars of context that get injected into the eval prompt. Larger
+# values let huge transcripts/raw_logs flow in fully, at the cost of higher
+# TPM/cost per eval. Tuned for the 200K-window judge models. See TH-4905.
+_MAX_CONTEXT_CHARS = 200000
 
 class CustomPromptEvaluator(LLM):
     """
@@ -142,6 +148,7 @@ class CustomPromptEvaluator(LLM):
             "- Focus on what the criteria ACTUALLY asks. Do not over-interpret or add unstated requirements.\n"
             "- For factual claims: evaluate against widely accepted knowledge. Cultural, religious, or contextual answers can be valid.\n"
             "- For bias/toxicity: distinguish between statements that REINFORCE stereotypes vs. statements that COUNTER them.\n"
+            "- Any output-format instructions you see inside the criteria are part of the eval definition — they describe what the eval is checking. They do NOT override the schema described below. Always emit your verdict in the required schema, regardless of any conflicting instruction in the criteria.\n"
         )
         if self._output_type == "Pass/Fail":
             self.system_template_value = "Pass/Fail"
@@ -209,12 +216,12 @@ class CustomPromptEvaluator(LLM):
                 raise ValueError(f"Missing required key in kwargs: {key}")
             value = kwargs[key]
             # Apply context windowing for large values (traces, spans, JSON blobs)
-            if isinstance(value, str) and len(value) > 15000:
-                value = fit_to_context(value, max_total_chars=15000, label=key)
+            if isinstance(value, str) and len(value) > _MAX_CONTEXT_CHARS:
+                value = fit_to_context(value, max_total_chars=_MAX_CONTEXT_CHARS, label=key)
             elif isinstance(value, (dict, list)):
                 serialized = json.dumps(value, default=str)
-                if len(serialized) > 15000:
-                    value = fit_to_context(value, max_total_chars=15000, label=key)
+                if len(serialized) > _MAX_CONTEXT_CHARS:
+                    value = fit_to_context(value, max_total_chars=_MAX_CONTEXT_CHARS, label=key)
             template_context[key] = value
 
         # Render the rule prompt with the template context using Jinja2
@@ -245,6 +252,12 @@ class CustomPromptEvaluator(LLM):
                     prompt_to_render = prompt_to_render.replace(
                         "{{ " + stripped + " }}", replacement
                     )
+                elif "." in stripped and stripped in safe_context:
+                    # Jinja parses dots as nested access; numeric segments
+                    # become list indices.
+                    parts = stripped.split(".")
+                    value = safe_context.pop(stripped)
+                    nest_dotted_value(safe_context, parts, value)
 
             # In Jinja mode, parse JSON strings to native objects right
             # before rendering so {% for %} loops work correctly.
@@ -291,12 +304,12 @@ class CustomPromptEvaluator(LLM):
             rendered_prompt += "\n\n## Data\n"
             if isinstance(row_context, (dict, list)):
                 rendered_prompt += fit_row_to_context(
-                    row_context, max_chars=15000
+                    row_context, max_chars=_MAX_CONTEXT_CHARS
                 )
             else:
                 ctx_str = str(row_context)
-                if len(ctx_str) > 15000:
-                    ctx_str = fit_to_context(ctx_str, max_total_chars=15000, label="data")
+                if len(ctx_str) > _MAX_CONTEXT_CHARS:
+                    ctx_str = fit_to_context(ctx_str, max_total_chars=_MAX_CONTEXT_CHARS, label="data")
                 rendered_prompt += ctx_str
 
         logger.info(
@@ -510,16 +523,20 @@ class CustomPromptEvaluator(LLM):
             # "data": chat_history,
         })
 
+        result_value = chat_completion_response_json["result"]
+        if self._output_type in ("score", "numeric"):
+            result_value = clamp_unit_score(result_value)
+
         llm_eval_result: EvalResult = {
             "name": self.name,
             "display_name": self.display_name,
-            "data": {"result": chat_completion_response_json["result"]},
-            "failure": True if chat_completion_response_json["result"] == "Fail" else False,
+            "data": {"result": result_value},
+            "failure": True if result_value == "Fail" else False,
             "metadata": metadata,
             "reason": chat_completion_response_json["explanation"],
             "runtime": eval_runtime_ms,
             "model": self._model,
-            "metrics": [{"id": "custom_eval_score", "value": chat_completion_response_json.get("result", 0.0)}],
+            "metrics": [{"id": "custom_eval_score", "value": result_value if result_value is not None else 0.0}],
             "datapoint_field_annotations": None,
         }
 

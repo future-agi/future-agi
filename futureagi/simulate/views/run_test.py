@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 import structlog
 from django.db import connection, models, transaction
 from django.db.models import Avg, Count, Max, Prefetch, Q
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
@@ -21,33 +21,6 @@ from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-
-from simulate.utils.test_execution import (
-    DEFAULT_CHAT_SIM_COL,
-    DEFAULT_VOICE_SIM_COL,
-    LEGACY_SIM_COLUMN_ID_MAP,
-)
-from tracer.models.observation_span import ObservationSpan
-from tracer.models.replay_session import ReplaySession, ReplaySessionStep
-from tracer.models.trace import Trace
-from tracer.services.clickhouse.span_attribute_lookups import (
-    spans_by_eval_attribute_call_execution_ids,
-)
-
-logger = structlog.get_logger(__name__)
-
-
-def _empty_call_log_summary(reason: str) -> dict:
-    return {
-        "total_entries": 0,
-        "level_counts": {},
-        "category_counts": {},
-        "last_logged_at": None,
-        "skipped_reason": reason,
-    }
-
-
-from drf_yasg.utils import swagger_auto_schema
 
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
@@ -85,6 +58,8 @@ from simulate.serializers.requests.call_execution import (
 )
 from simulate.serializers.requests.run_test import (
     CreateRunTestSerializer,
+    ExecuteRunTestSerializer,
+    RunTestComponentsUpdateSerializer,
     RunTestFilterSerializer,
     UpdateRunTestSerializer,
 )
@@ -100,12 +75,14 @@ from simulate.serializers.requests.test_execution import (
 )
 from simulate.serializers.response.call_execution import (
     CallExecutionDeleteResponseSerializer,
+    CallExecutionErrorLocalizerTasksResponseSerializer,
     CallExecutionErrorResponseSerializer,
     CallExecutionLogsResponseSerializer,
 )
 from simulate.serializers.response.run_test import (
-    AddEvalConfigResponseSerializer,
+    RunTestCallExecutionsResponseSerializer,
     RunTestErrorResponseSerializer,
+    RunTestExecutionResponseSerializer,
     RunTestExecutionsResponseSerializer,
     RunTestMessageResponseSerializer,
     RunTestResponseSerializer,
@@ -115,7 +92,7 @@ from simulate.serializers.response.run_test import (
 from simulate.serializers.response.run_test_evals import (
     AddEvalConfigsResponseSerializer,
     DeleteEvalConfigResponseSerializer,
-    EvalConfigResponseSerializer,
+    EvalConfigStructureResponseSerializer,
     EvalConfigUpdateResponseSerializer,
     EvalErrorResponseSerializer,
     EvalSummaryComparisonResponseSerializer,
@@ -131,15 +108,28 @@ from simulate.serializers.run_test import (
     RunTestSerializer,
 )
 from simulate.serializers.test_execution import (
+    AllActiveTestsSerializer,
     CallExecutionDetailSerializer,
     CallExecutionSerializer,
     CallExecutionSnapshotSerializer,
+    EvalExplanationSummaryRefreshResponseSerializer,
+    EvalExplanationSummaryResponseSerializer,
+    ExecutionDetailQuerySerializer,
+    OptimiserAnalysisRefreshResponseSerializer,
+    OptimiserAnalysisResponseSerializer,
     PerformanceSummarySerializer,
+    RunTestAnalyticsSerializer,
+    RunTestKPIsResponseSerializer,
     TestExecutionAnalyticsSerializer,
+    TestExecutionBulkDeleteResponseSerializer,
     TestExecutionBulkDeleteSerializer,
+    TestExecutionColumnOrderResponseSerializer,
     TestExecutionColumnOrderSerializer,
+    TestExecutionDetailResponseSerializer,
+    TestExecutionRerunResponseSerializer,
     TestExecutionRerunSerializer,
     TestExecutionSerializer,
+    TestExecutionStatusSerializer,
 )
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
@@ -149,6 +139,7 @@ from simulate.services.test_executor import (
     run_new_evals_on_call_executions_task,
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
+from simulate.utils.baseline import resolve_baseline_id
 from simulate.utils.agent_optimiser import (
     create_optimiser_run_for_test_execution,
     get_latest_optimiser_result,
@@ -167,13 +158,43 @@ from simulate.utils.sql_query import (
     get_kpi_eval_metrics_query,
     get_kpi_metrics_query,
 )
+from simulate.utils.test_execution import (
+    DEFAULT_CHAT_SIM_COL,
+    DEFAULT_VOICE_SIM_COL,
+    LEGACY_SIM_COLUMN_ID_MAP,
+)
 from simulate.utils.test_execution_utils import TestExecutionUtils
+from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
+from tfc.utils.api_serializers import (
+    ApiTextErrorResponseSerializer,
+    EmptyRequestSerializer,
+)
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.models.replay_session import ReplaySession, ReplaySessionStep
+from tracer.models.trace import Trace
+from tracer.services.clickhouse.span_attribute_lookups import (
+    spans_by_eval_attribute_call_execution_ids,
+)
+
+logger = structlog.get_logger(__name__)
+_gm = GeneralMethods()
+
+
+def _empty_call_log_summary(reason: str) -> dict:
+    return {
+        "total_entries": 0,
+        "level_counts": {},
+        "category_counts": {},
+        "last_logged_at": None,
+        "skipped_reason": reason,
+    }
 
 
 def _voice_sim_gate_response(user_organization, gm):
@@ -195,22 +216,48 @@ def _voice_sim_gate_response(user_organization, gm):
     except ImportError:
         # ee.usage.deployment exists but entitlements is missing — partial
         # EE install. Fail closed.
+        message = (
+            "Voice simulation is not available on this deployment. "
+            "Upgrade to cloud or enterprise to run voice calls."
+        )
         return Response(
-            {
-                "error": (
-                    "Voice simulation is not available on this deployment. "
-                    "Upgrade to cloud or enterprise to run voice calls."
-                ),
-                "upgrade_required": True,
-                "feature": "voice_sim",
-            },
-            status=402,
+            build_error_envelope(
+                message,
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                code="payment_required",
+                extra={"upgrade_required": True, "feature": "voice_sim"},
+            ),
+            status=status.HTTP_402_PAYMENT_REQUIRED,
         )
 
     feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
     if not feat_check.allowed:
         return gm.forbidden_response(feat_check.reason)
     return None
+
+
+def _visible_eval_template_query(user_organization, workspace):
+    """Templates available from the active workspace plus global system templates."""
+    template_query = Q(organization__isnull=True)
+    if workspace is None:
+        return template_query | Q(organization=user_organization)
+
+    workspace_query = Q(organization=user_organization, workspace=workspace)
+    if getattr(workspace, "is_default", False):
+        workspace_query |= Q(
+            organization=user_organization,
+            workspace__is_default=True,
+            workspace__organization_id=user_organization.id,
+        ) | Q(organization=user_organization, workspace__isnull=True)
+
+    return template_query | workspace_query
+
+
+def _soft_delete_run_test_eval_configs(run_test):
+    SimulateEvalConfig.objects.filter(run_test=run_test, deleted=False).update(
+        deleted=True,
+        deleted_at=timezone.now(),
+    )
 
 
 class RunTestListView(APIView):
@@ -224,12 +271,13 @@ class RunTestListView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=RunTestFilterSerializer,
         responses={
             200: RunTestResponseSerializer(many=True),
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, *args, **kwargs):
         """
@@ -250,27 +298,12 @@ class RunTestListView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
-            # Validate and parse query parameters
-            filter_serializer = RunTestFilterSerializer(data=request.query_params)
-            if not filter_serializer.is_valid():
-                return self.gm.bad_request(
-                    {
-                        "error": "Invalid query parameters",
-                        "details": filter_serializer.errors,
-                    }
-                )
-            search_query = filter_serializer.validated_data.get("search", "").strip()
-            simulation_type = filter_serializer.validated_data.get(
-                "simulation_type", ""
-            ).strip()
-            prompt_template_id = filter_serializer.validated_data.get(
-                "prompt_template_id"
-            )
+            query_data = request.validated_query_data
+            search_query = query_data.get("search", "").strip()
+            simulation_type = query_data.get("simulation_type", "").strip()
+            prompt_template_id = query_data.get("prompt_template_id")
 
             # Filter run tests by organization (only non-deleted)
             # Prefetch simulate_eval_configs to avoid N+1 in serializer's to_representation
@@ -332,9 +365,8 @@ class RunTestListView(APIView):
             return paginator.get_paginated_response(serializer.data)
 
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve run tests: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to retrieve run tests: {str(e)}"
             )
 
 
@@ -349,28 +381,21 @@ class CreateRunTestView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=CreateRunTestSerializer,
+    @validated_request(
+        request_serializer=CreateRunTestSerializer,
         responses={
             201: RunTestResponseSerializer,
             400: RunTestErrorResponseSerializer,
             404: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
+        serializer_context=lambda request: {"request": request},
     )
     def post(self, request, *args, **kwargs):
         """Create a new RunTest"""
         try:
-            # Validate request data
-            serializer = CreateRunTestSerializer(
-                data=request.data, context={"request": request}
-            )
-            if not serializer.is_valid():
-                return self.gm.bad_request(
-                    {"error": "Invalid data", "details": serializer.errors}
-                )
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
 
             # Get the organization of the logged-in user
             user_organization = (
@@ -378,10 +403,7 @@ class CreateRunTestView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Resolve the agent definition up-front so we can gate on its
             # type. Only voice simulations are entitlement-gated; chat
@@ -398,7 +420,7 @@ class CreateRunTestView(APIView):
 
             # Create the RunTest
             with transaction.atomic():
-                agent_version = request.data.get("agent_version")
+                agent_version = validated_data.get("agent_version")
                 if agent_version:
                     agent_version = AgentVersion.objects.get(
                         id=agent_version, deleted=False, organization=user_organization
@@ -459,7 +481,7 @@ class CreateRunTestView(APIView):
                                     ),
                                     mapping=eval_config_data.get("mapping", {}),
                                     run_test=run_test,
-                                    filters=eval_config_data.get("filters", {}),
+                                    filters=eval_config_data.get("filters", []),
                                     error_localizer=eval_config_data.get(
                                         "error_localizer", False
                                     ),
@@ -499,9 +521,8 @@ class CreateRunTestView(APIView):
             return self.gm.not_found(get_error_message("REPLAY_SESSION_NOT_FOUND"))
 
         except Exception as e:
-            return Response(
-                {"error": f"Failed to create run test: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to create run test: {str(e)}"
             )
 
 
@@ -537,24 +558,23 @@ class RunTestDetailView(APIView):
             serializer = RunTestSerializer(run_test)
             return Response(serializer.data, status=status.HTTP_200_OK)
 
-        except RunTest.DoesNotExist:
-            return Response(
-                {"error": "Run test not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+        except (Http404, RunTest.DoesNotExist):
+            return self.gm.not_found("Run test not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve run test: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to retrieve run test: {str(e)}"
             )
 
-    @swagger_auto_schema(
-        request_body=UpdateRunTestSerializer,
+    @validated_request(
+        request_serializer=UpdateRunTestSerializer,
         responses={
             200: RunTestResponseSerializer,
             400: RunTestErrorResponseSerializer,
             404: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
+        partial_request_validation=True,
     )
     def patch(self, request, run_test_id, *args, **kwargs):
         """Update a specific RunTest"""
@@ -567,15 +587,7 @@ class RunTestDetailView(APIView):
                 RunTest, id=run_test_id, organization=user_organization, deleted=False
             )
 
-            # Validate request data
-            serializer = UpdateRunTestSerializer(
-                data=request.data, context={"request": request}
-            )
-
-            if not serializer.is_valid():
-                return self.gm.bad_request("Invalid data")
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
 
             # Update fields if provided
             with transaction.atomic():
@@ -625,14 +637,11 @@ class RunTestDetailView(APIView):
                 response_serializer = RunTestSerializer(run_test)
                 return Response(response_serializer.data, status=status.HTTP_200_OK)
 
-        except RunTest.DoesNotExist:
-            return Response(
-                {"error": "Run test not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+        except (Http404, RunTest.DoesNotExist):
+            return self.gm.not_found("Run test not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to update run test: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to update run test: {str(e)}"
             )
 
     @swagger_auto_schema(
@@ -654,6 +663,7 @@ class RunTestDetailView(APIView):
             )
 
             # Soft delete the run test
+            _soft_delete_run_test_eval_configs(run_test)
             run_test.delete()  # This calls the custom delete method that sets deleted=True
 
             response_serializer = RunTestMessageResponseSerializer(
@@ -661,14 +671,11 @@ class RunTestDetailView(APIView):
             )
             return Response(response_serializer.data, status=status.HTTP_200_OK)
 
-        except RunTest.DoesNotExist:
-            return Response(
-                {"error": "Run test not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+        except (Http404, RunTest.DoesNotExist):
+            return self.gm.not_found("Run test not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to delete run test: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to delete run test: {str(e)}"
             )
 
 
@@ -682,8 +689,24 @@ class RunTestExecutionView(APIView):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
-        self.test_executor = TestExecutor()
+        self._test_executor = None
 
+    @property
+    def test_executor(self):
+        if self._test_executor is None:
+            self._test_executor = TestExecutor()
+        return self._test_executor
+
+    @validated_request(
+        request_serializer=ExecuteRunTestSerializer,
+        responses={
+            200: RunTestExecutionResponseSerializer,
+            400: RunTestErrorResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, run_test_id, *args, **kwargs):
         """Execute a test run"""
         try:
@@ -693,14 +716,15 @@ class RunTestExecutionView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Get the run test
             run_test = get_object_or_404(
-                RunTest, id=run_test_id, organization=user_organization, deleted=False
+                RunTest,
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
             if (
@@ -712,9 +736,9 @@ class RunTestExecutionView(APIView):
                 if forbidden is not None:
                     return forbidden
 
-            # Get parameters from request
-            scenario_ids = request.data.get("scenario_ids", [])
-            simulator_id = request.data.get("simulator_id", None)
+            # Get parameters from the runtime-validated request contract.
+            scenario_ids = request.validated_data.get("scenario_ids", [])
+            simulator_id = request.validated_data.get("simulator_id", None)
             # select_all = request.data.get("select_all", False)
 
             # Get all available scenario IDs for this run test
@@ -731,9 +755,8 @@ class RunTestExecutionView(APIView):
 
             # Validate that at least one scenario is available for execution
             if not final_scenario_ids:
-                return Response(
-                    {"error": "At least one scenario is required to execute the test."},
-                    status=status.HTTP_400_BAD_REQUEST,
+                return self.gm.bad_request(
+                    "At least one scenario is required to execute the test."
                 )
 
             gate_response = check_scenarios_incomplete(final_scenario_ids, run_test)
@@ -774,10 +797,11 @@ class RunTestExecutionView(APIView):
             else:
                 return self.gm.bad_request(result["error"])
 
+        except Http404:
+            return self.gm.not_found("Run test not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to execute test: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to execute test: {str(e)}"
             )
 
     def _execute_with_temporal(
@@ -854,6 +878,13 @@ class TestExecutionStatusView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: TestExecutionStatusSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """Get test execution status"""
         try:
@@ -863,26 +894,24 @@ class TestExecutionStatusView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the run test
             get_object_or_404(
                 RunTest, id=run_test_id, organization=user_organization, deleted=False
             )
-            test_executor = TestExecutor()
+            test_executor = TestExecutor(initialize_voice_service=False)
 
             # Get test execution status
             result = test_executor.get_test_status(run_test_id)
 
             return Response(result, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Run test not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to get test status: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to get test status: {str(e)}"
             )
 
 
@@ -898,13 +927,15 @@ class TestExecutionCancelView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
         responses={
             200: CancelTestExecutionResponseSerializer,
             400: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, run_test_id=None, test_execution_id=None, *args, **kwargs):
         """Cancel a test execution"""
@@ -915,10 +946,7 @@ class TestExecutionCancelView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Verify access to the test
             if test_execution_id:
@@ -952,7 +980,11 @@ class TestExecutionCancelView(APIView):
                 result = self._cancel_with_temporal(test_execution)
             else:
                 # Cancel using legacy test executor (Celery)
-                test_executor = TestExecutor()
+                test_executor = TestExecutor(
+                    initialize_voice_service=self._needs_voice_service_for_cancel(
+                        test_execution
+                    )
+                )
                 result = test_executor.cancel_test(
                     run_test_id=run_test_id, test_execution_id=test_execution_id
                 )
@@ -972,11 +1004,12 @@ class TestExecutionCancelView(APIView):
             else:
                 return self.gm.bad_request(result.get("error", "Failed to cancel test"))
 
+        except Http404:
+            return self.gm.not_found("Test execution not found")
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to cancel test: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to cancel test: {str(e)}"
             )
 
     def _cancel_with_temporal(self, test_execution) -> dict:
@@ -1027,10 +1060,24 @@ class TestExecutionCancelView(APIView):
             logger.exception(f"Failed to cancel Temporal workflow: {str(e)}")
             return self._cancel_via_db(test_execution_id)
 
+    def _needs_voice_service_for_cancel(self, test_execution) -> bool:
+        return (
+            CallExecution.objects.filter(test_execution=test_execution)
+            .exclude(service_provider_call_id__isnull=True)
+            .exclude(service_provider_call_id="")
+            .exists()
+        )
+
     def _cancel_via_db(self, test_execution_id: str) -> dict:
         """Fallback: cancel test execution directly in DB when Temporal is unavailable."""
         try:
-            test_executor = TestExecutor()
+            needs_voice_service = (
+                CallExecution.objects.filter(test_execution_id=test_execution_id)
+                .exclude(service_provider_call_id__isnull=True)
+                .exclude(service_provider_call_id="")
+                .exists()
+            )
+            test_executor = TestExecutor(initialize_voice_service=needs_voice_service)
             return test_executor.cancel_test(test_execution_id=test_execution_id)
         except Exception as e:
             logger.exception(f"DB fallback cancellation also failed: {str(e)}")
@@ -1048,6 +1095,13 @@ class AllActiveTestsView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: AllActiveTestsSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, *args, **kwargs):
         """Get all active tests"""
         try:
@@ -1057,11 +1111,8 @@ class AllActiveTestsView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            test_executor = TestExecutor()
+                return _gm.not_found("Organization not found for the user.")
+            test_executor = TestExecutor(initialize_voice_service=False)
 
             # Get all active tests
             active_tests = test_executor.get_all_active_tests()
@@ -1072,9 +1123,8 @@ class AllActiveTestsView(APIView):
             )
 
         except Exception as e:
-            return Response(
-                {"error": f"Failed to get active tests: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to get active tests: {str(e)}"
             )
 
 
@@ -1085,13 +1135,14 @@ class RunTestAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=RunTestFilterSerializer,
         responses={
             200: RunTestResponseSerializer(many=True),
             404: RunTestErrorResponseSerializer,
             500: RunTestErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, *args, **kwargs):
         """
@@ -1108,22 +1159,9 @@ class RunTestAPIView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
-            # Validate and parse query parameters
-            filter_serializer = RunTestFilterSerializer(data=request.query_params)
-            if not filter_serializer.is_valid():
-                return Response(
-                    {
-                        "error": "Invalid query parameters",
-                        "details": filter_serializer.errors,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            search_query = filter_serializer.validated_data.get("search", "").strip()
+            search_query = request.validated_query_data.get("search", "").strip()
 
             # Filter run tests by organization (only non-deleted)
             run_tests = (
@@ -1161,9 +1199,8 @@ class RunTestAPIView(APIView):
         except NotFound:
             raise
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve run tests: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve run tests: {str(e)}"
             )
 
 
@@ -1197,10 +1234,7 @@ class TestExecutionAPIView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get query parameters
             search_query = request.query_params.get("search", "").strip()
@@ -1239,9 +1273,8 @@ class TestExecutionAPIView(APIView):
         except NotFound:
             raise
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve test executions: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve test executions: {str(e)}"
             )
 
 
@@ -1252,13 +1285,14 @@ class CallExecutionAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(
+    @validated_request(
         query_serializer=CallExecutionFilterSerializer,
         responses={
             200: CallExecutionSerializer(many=True),
             404: CallExecutionErrorResponseSerializer,
             500: CallExecutionErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, *args, **kwargs):
         """
@@ -1277,26 +1311,14 @@ class CallExecutionAPIView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
-            # Validate and parse query parameters
-            filter_serializer = CallExecutionFilterSerializer(data=request.query_params)
-            if not filter_serializer.is_valid():
-                return Response(
-                    {
-                        "error": "Invalid query parameters",
-                        "details": filter_serializer.errors,
-                    },
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            search_query = filter_serializer.validated_data.get("search", "").strip()
-            status_filter = filter_serializer.validated_data.get("status", "").strip()
+            query_data = request.validated_query_data
+            search_query = query_data.get("search", "").strip()
+            status_filter = query_data.get("status", "").strip()
             test_execution_id = (
-                str(filter_serializer.validated_data["test_execution_id"])
-                if filter_serializer.validated_data.get("test_execution_id")
+                str(query_data["test_execution_id"])
+                if query_data.get("test_execution_id")
                 else ""
             )
 
@@ -1341,9 +1363,8 @@ class CallExecutionAPIView(APIView):
         except NotFound:
             raise
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve call executions: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve call executions: {str(e)}"
             )
 
 
@@ -1356,7 +1377,7 @@ class RunTestKPIsView(APIView):
 
     @swagger_auto_schema(
         responses={
-            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            200: RunTestKPIsResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
@@ -1373,10 +1394,7 @@ class RunTestKPIsView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the run test
             test_executor = get_object_or_404(
@@ -1424,7 +1442,7 @@ class RunTestKPIsView(APIView):
                 cursor.execute(kpi_query, kpi_params)
                 columns = [col[0] for col in cursor.description]
                 row = cursor.fetchone()
-            metrics = dict(zip(columns, row)) if row else {}
+            metrics = dict(zip(columns, row, strict=False)) if row else {}
 
             total_calls = metrics.get("total_calls", 0) or 0
             pending_calls = metrics.get("pending_calls", 0) or 0
@@ -1621,9 +1639,8 @@ class RunTestKPIsView(APIView):
 
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to retrieve KPI data: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve KPI data: {str(e)}"
             )
 
 
@@ -1634,6 +1651,13 @@ class RunTestCallExecutionsView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestCallExecutionsResponseSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """
         Get all call executions for a specific run test with pagination and search
@@ -1650,10 +1674,7 @@ class RunTestCallExecutionsView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the run test
             run_test = get_object_or_404(
@@ -1790,7 +1811,9 @@ class RunTestCallExecutionsView(APIView):
                 if item_type == "call_execution":
                     call_exec = call_executions_dict.get(str(item_id))
                     if call_exec:
-                        serializer = CallExecutionDetailSerializer(call_exec)
+                        serializer = CallExecutionDetailSerializer(
+                            call_exec, context={"detail_mode": False}
+                        )
                         call_data = serializer.data
                         call_data["is_snapshot"] = False
                         # Remove rerun_snapshots since we're flattening
@@ -1803,7 +1826,9 @@ class RunTestCallExecutionsView(APIView):
                     if snapshot:
                         # Get the original call execution for context
                         original_call_exec = snapshot.call_execution
-                        serializer = CallExecutionDetailSerializer(original_call_exec)
+                        serializer = CallExecutionDetailSerializer(
+                            original_call_exec, context={"detail_mode": False}
+                        )
                         original_data = serializer.data
 
                         # Convert snapshot to call execution format
@@ -1855,10 +1880,11 @@ class RunTestCallExecutionsView(APIView):
 
             return Response(response_data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Run test not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve call executions: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve call executions: {str(e)}"
             )
 
     def _convert_snapshot_to_call_execution(self, snapshot, original_call_exec):
@@ -1926,12 +1952,14 @@ class TestExecutionDetailView(APIView):
     permission_classes = [IsAuthenticated]
     utils = TestExecutionUtils()
 
-    @swagger_auto_schema(
+    @validated_request(
+        query_serializer=ExecutionDetailQuerySerializer,
         responses={
-            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            200: TestExecutionDetailResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, test_execution_id, *args, **kwargs):
         """
@@ -1950,34 +1978,22 @@ class TestExecutionDetailView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
+
+            query_data = request.validated_query_data
+            search_query = query_data.get("search", "").strip()
+            filters = query_data.get("filters", [])
+            row_groups = query_data.get("row_groups", [])
+            group_keys = query_data.get("group_keys", [])
 
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
             )
-
-            # Get query parameters
-            search_query = request.query_params.get("search", "").strip()
-            filters = request.query_params.get("filters", "[]")
-            row_groups = request.query_params.get("row_groups", "[]")
-            group_keys = request.query_params.get("group_keys", "[]")
-
-            # Parse JSON parameters
-            try:
-                filters = json.loads(filters) if filters else []
-                row_groups = json.loads(row_groups) if row_groups else []
-                group_keys = json.loads(group_keys) if group_keys else []
-            except json.JSONDecodeError:
-                filters = []
-                row_groups = []
-                group_keys = []
 
             # Get call executions for this test execution
             call_executions = (
@@ -2212,8 +2228,6 @@ class TestExecutionDetailView(APIView):
                         for col in tool_columns:
                             col_id = col.get("id")
                             col_name = col.get("column_name") or col.get("columnName")
-                            col_type = col.get("type", "tool_evaluation")
-
                             # Only add if this column ID doesn't exist and name doesn't exist
                             if (
                                 col_id
@@ -2311,8 +2325,8 @@ class TestExecutionDetailView(APIView):
                     column_order,
                 )
                 # Grouping now always returns a list, so handle pagination manually
-                page = int(request.query_params.get("page", 1))
-                page_size = int(request.query_params.get("limit", 30))
+                page = query_data.get("page", 1)
+                page_size = query_data.get("limit", 30)
                 start = (page - 1) * page_size
                 end = start + page_size
                 paginated_calls = call_executions[start:end]
@@ -2361,7 +2375,7 @@ class TestExecutionDetailView(APIView):
                         "previous": None,
                         "results": [],
                         "total_pages": total_pages,
-                        "current_page": int(request.query_params.get("page", 1) or 1),
+                        "current_page": query_data.get("page", 1),
                         "column_order": column_order,
                         "error_messages": error_messages,
                         "status": test_execution.status,
@@ -2398,13 +2412,7 @@ class TestExecutionDetailView(APIView):
                 for row_id, metadata in Row.all_objects.filter(
                     id__in=row_ids
                 ).values_list("id", "metadata"):
-                    if not isinstance(metadata, dict):
-                        continue
-                    # Chat replays use session_id, voice replays use trace_id.
-                    # For replay sessions, intent_id is the baseline trace ID.
-                    baseline_id = metadata.get("session_id") or metadata.get("trace_id")
-                    if not baseline_id and is_replay:
-                        baseline_id = metadata.get("intent_id")
+                    baseline_id = resolve_baseline_id(metadata, is_replay=is_replay)
                     if baseline_id:
                         row_session_id_map[str(row_id)] = baseline_id
 
@@ -2501,9 +2509,8 @@ class TestExecutionDetailView(APIView):
 
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to retrieve test execution: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve test execution: {str(e)}"
             )
 
 
@@ -2559,14 +2566,12 @@ class PerformanceSummaryView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
@@ -2622,9 +2627,9 @@ class PerformanceSummaryView(APIView):
 
                 # Get overall score if available
                 if call_execution.overall_score is not None:
-                    scenario_performance[scenario_id][
-                        "total_score"
-                    ] += call_execution.overall_score
+                    scenario_performance[scenario_id]["total_score"] += (
+                        call_execution.overall_score
+                    )
                     scenario_performance[scenario_id]["scores"].append(
                         call_execution.overall_score
                     )
@@ -2677,9 +2682,8 @@ class PerformanceSummaryView(APIView):
 
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to retrieve performance summary: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve performance summary: {str(e)}"
             )
 
 
@@ -2723,6 +2727,13 @@ class TestExecutionAnalyticsView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: TestExecutionAnalyticsSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, test_execution_id, *args, **kwargs):
         """
         Get analytics data for a specific test execution
@@ -2737,10 +2748,7 @@ class TestExecutionAnalyticsView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the test execution
             test_execution = get_object_or_404(
@@ -2909,9 +2917,8 @@ class TestExecutionAnalyticsView(APIView):
 
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to retrieve analytics data: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve analytics data: {str(e)}"
             )
 
 
@@ -2981,6 +2988,13 @@ class RunTestAnalyticsView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: RunTestAnalyticsSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, *args, **kwargs):
         """
         Get analytics data for a specific run test across multiple test executions
@@ -2996,10 +3010,7 @@ class RunTestAnalyticsView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the run test
             run_test = get_object_or_404(
@@ -3131,9 +3142,8 @@ class RunTestAnalyticsView(APIView):
 
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to retrieve run test analytics: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve run test analytics: {str(e)}"
             )
 
 
@@ -3164,10 +3174,7 @@ class CallExecutionDetailView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Get the call execution
             call_execution = get_object_or_404(
@@ -3177,6 +3184,29 @@ class CallExecutionDetailView(APIView):
                 test_execution__run_test__deleted=False,
             )
 
+            # Mirror the list endpoint's lookup so the drawer's
+            # "Compare with baseline" button stays visible after the
+            # detail fetch.
+            row_session_id_map = {}
+            row_id = call_execution.row_id
+            if not row_id and isinstance(call_execution.call_metadata, dict):
+                row_id = call_execution.call_metadata.get("row_id")
+            if row_id:
+                metadata = (
+                    Row.all_objects.filter(id=row_id)
+                    .values_list("metadata", flat=True)
+                    .first()
+                )
+                scenario_ids = call_execution.test_execution.scenario_ids
+                is_replay = bool(scenario_ids) and Scenarios.objects.filter(
+                    id__in=scenario_ids,
+                    deleted=False,
+                    metadata__created_from="replay_session",
+                ).exists()
+                baseline_id = resolve_baseline_id(metadata, is_replay=is_replay)
+                if baseline_id:
+                    row_session_id_map[str(row_id)] = baseline_id
+
             # Serialize with the same serializer as the list view, but with full detail
             serializer = CallExecutionDetailSerializer(
                 call_execution,
@@ -3184,7 +3214,7 @@ class CallExecutionDetailView(APIView):
                     "request": request,
                     "eval_configs": {},
                     "scenarios": {},
-                    "row_session_id_map": {},
+                    "row_session_id_map": row_session_id_map,
                     "rows_map": {},
                     "columns_by_dataset": {},
                     "cells_by_row": {},
@@ -3256,26 +3286,28 @@ class CallExecutionDetailView(APIView):
 
             return Response(response_data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return self.gm.not_found("Call execution not found")
         except Exception as e:
             logger.exception(
                 "error_retrieving_call_execution",
                 call_execution_id=str(call_execution_id),
                 error=str(e),
             )
-            return Response(
-                {"error": f"Failed to retrieve call execution: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to retrieve call execution: {str(e)}"
             )
 
     # used only for marking call failed.
-    @swagger_auto_schema(
-        request_body=CallExecutionStatusUpdateSerializer,
+    @validated_request(
+        request_serializer=CallExecutionStatusUpdateSerializer,
         responses={
             200: CallExecutionSerializer,
             400: CallExecutionErrorResponseSerializer,
             404: CallExecutionErrorResponseSerializer,
             500: CallExecutionErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def patch(self, request, call_execution_id, *args, **kwargs):
         """Update the status of a specific call execution"""
@@ -3289,22 +3321,18 @@ class CallExecutionDetailView(APIView):
                 return self.gm.bad_request("Organization not found for the user")
 
             # Get the call execution
-            call_execution = get_object_or_404(
+            get_object_or_404(
                 CallExecution,
                 id=call_execution_id,
                 test_execution__run_test__organization=user_organization,
                 test_execution__run_test__deleted=False,
             )
 
-            # Validate request data
-            request_serializer = CallExecutionStatusUpdateSerializer(data=request.data)
-            if not request_serializer.is_valid():
-                return self.gm.bad_request(request_serializer.errors)
-            new_status = request_serializer.validated_data["status"]
+            new_status = request.validated_data["status"]
             # Do NOT persist raw error details from the client into DB.
             # Use a safe generic reason instead (prevents leaking internal errors/stacktraces).
             generic_failure_reason = "Error processing simulation"
-            ended_reason = request_serializer.validated_data.get("ended_reason")
+            ended_reason = request.validated_data.get("ended_reason")
 
             # Update status atomically
             with transaction.atomic():
@@ -3383,9 +3411,8 @@ class CallExecutionDetailView(APIView):
                 call_execution_id=str(call_execution_id),
                 error=str(e),
             )
-            return Response(
-                {"error": "Failed to update call execution status"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                "Failed to update call execution status"
             )
 
 
@@ -3597,6 +3624,16 @@ class TestExecutionColumnOrderView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=TestExecutionColumnOrderSerializer,
+        responses={
+            200: TestExecutionColumnOrderResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def put(self, request, test_execution_id, *args, **kwargs):
         """Update column order for a test execution"""
         try:
@@ -3606,10 +3643,7 @@ class TestExecutionColumnOrderView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Get the test execution
             test_execution = get_object_or_404(
@@ -3619,13 +3653,8 @@ class TestExecutionColumnOrderView(APIView):
                 run_test__deleted=False,
             )
 
-            # Validate request data
-            serializer = TestExecutionColumnOrderSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self.gm.bad_request("Invalid column order data")
-
             # Update column order in execution_metadata
-            column_order = serializer.validated_data["column_order"]
+            column_order = request.validated_data["column_order"]
             test_execution.execution_metadata["column_order"] = column_order
             test_execution.save()
 
@@ -3637,10 +3666,11 @@ class TestExecutionColumnOrderView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return self.gm.not_found("Test execution not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to update column order: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to update column order: {str(e)}"
             )
 
 
@@ -3655,6 +3685,13 @@ class TestExecutionDeleteView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiTextErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        }
+    )
     def delete(self, request, test_execution_id, *args, **kwargs):
         """Delete a specific test execution"""
         try:
@@ -3664,14 +3701,12 @@ class TestExecutionDeleteView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
@@ -3683,7 +3718,10 @@ class TestExecutionDeleteView(APIView):
                     "Cannot delete a test execution that is currently running."
                 )
 
-            # Delete the test execution (this will cascade to call executions)
+            now = timezone.now()
+            test_execution.calls.filter(deleted=False).update(
+                deleted=True, deleted_at=now
+            )
             test_execution.delete()
 
             return Response(
@@ -3691,10 +3729,11 @@ class TestExecutionDeleteView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return self.gm.not_found("Test execution not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to delete test execution: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to delete test execution: {str(e)}"
             )
 
 
@@ -3710,6 +3749,16 @@ class TestExecutionBulkDeleteView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=TestExecutionBulkDeleteSerializer,
+        responses={
+            200: TestExecutionBulkDeleteResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, run_test_id):
         """
         Delete multiple test executions within a run test.
@@ -3723,10 +3772,7 @@ class TestExecutionBulkDeleteView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self._gm.not_found("Organization not found for the user.")
 
             run_test = get_object_or_404(
                 RunTest,
@@ -3735,12 +3781,8 @@ class TestExecutionBulkDeleteView(APIView):
                 deleted=False,
             )
 
-            serializer = TestExecutionBulkDeleteSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request("Invalid request data")
-
-            select_all = serializer.validated_data.get("select_all", False)
-            test_execution_ids = serializer.validated_data.get("test_execution_ids", [])
+            select_all = request.validated_data.get("select_all", False)
+            test_execution_ids = request.validated_data.get("test_execution_ids", [])
 
             # Get test executions to delete
             if select_all:
@@ -3771,9 +3813,9 @@ class TestExecutionBulkDeleteView(APIView):
                     f"Active IDs: {[str(id) for id in active_ids]}"
                 )
 
-            deleted_ids = list(
+            deleted_ids = [
                 str(id) for id in test_executions.values_list("id", flat=True)
-            )
+            ]
             count = len(deleted_ids)
 
             # Hard delete (cascades to call executions)
@@ -3793,12 +3835,13 @@ class TestExecutionBulkDeleteView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return self._gm.not_found("Run test not found")
         except Exception as e:
             logger.error(f"Error in bulk test execution delete: {str(e)}")
             traceback.print_exc()
-            return Response(
-                {"error": "Failed to delete test executions"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                "Failed to delete test executions"
             )
 
 
@@ -3827,16 +3870,15 @@ class CallExecutionDeleteView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the call execution
             call_execution = get_object_or_404(
                 CallExecution,
+                run_test_workspace_filter(request, "test_execution__run_test"),
                 id=call_execution_id,
                 test_execution__run_test__organization=user_organization,
+                test_execution__run_test__deleted=False,
                 deleted=False,
             )
 
@@ -3850,10 +3892,11 @@ class CallExecutionDeleteView(APIView):
             )
             return Response(response_serializer.data, status=status.HTTP_204_NO_CONTENT)
 
+        except Http404:
+            return _gm.not_found("Call execution not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to delete call execution: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to delete call execution: {str(e)}"
             )
 
 
@@ -3868,6 +3911,13 @@ class RunTestDeleteView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiTextErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        }
+    )
     def delete(self, request, run_test_id, *args, **kwargs):
         """Delete a specific run test"""
         try:
@@ -3877,10 +3927,7 @@ class RunTestDeleteView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Get the run test
             run_test = get_object_or_404(
@@ -3898,20 +3945,18 @@ class RunTestDeleteView(APIView):
                 )
 
             # Soft delete the run test
+            _soft_delete_run_test_eval_configs(run_test)
             run_test.delete()  # This calls the custom delete method that sets deleted=True
 
             return Response(
                 {"message": "Run test deleted successfully"}, status=status.HTTP_200_OK
             )
 
-        except RunTest.DoesNotExist:
-            return Response(
-                {"error": "Run test not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+        except (Http404, RunTest.DoesNotExist):
+            return self.gm.not_found("Run test not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to delete run test: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to delete run test: {str(e)}"
             )
 
 
@@ -3927,6 +3972,16 @@ class RunTestComponentsUpdateView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=RunTestComponentsUpdateSerializer,
+        responses={
+            200: RunTestResponseSerializer,
+            400: RunTestErrorResponseSerializer,
+            404: RunTestErrorResponseSerializer,
+            500: RunTestErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def patch(self, request, run_test_id, *args, **kwargs):
         """Update components of a specific RunTest"""
         try:
@@ -3935,10 +3990,7 @@ class RunTestComponentsUpdateView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Get the run test
             run_test = get_object_or_404(
@@ -3949,10 +4001,11 @@ class RunTestComponentsUpdateView(APIView):
                 # Track if agent version will be changed
                 agent_version_changed = False
                 new_agent_version = None
+                data = request.validated_data
 
                 # Update AgentDefinition if provided
-                if "agent_definition_id" in request.data:
-                    agent_definition_id = request.data["agent_definition_id"]
+                if "agent_definition_id" in data:
+                    agent_definition_id = data["agent_definition_id"]
                     try:
                         agent_definition = AgentDefinition.objects.get(
                             id=agent_definition_id,
@@ -3964,13 +4017,10 @@ class RunTestComponentsUpdateView(APIView):
                         new_agent_version = agent_definition.latest_version
                         agent_version_changed = True
                     except AgentDefinition.DoesNotExist:
-                        return Response(
-                            {"error": "Agent definition not found"},
-                            status=status.HTTP_404_NOT_FOUND,
-                        )
+                        return self.gm.not_found("Agent definition not found")
 
-                if "version" in request.data:
-                    version_id = request.data["version"]
+                if "version" in data:
+                    version_id = data["version"]
                     try:
                         version = AgentVersion.objects.get(
                             id=version_id, organization=user_organization, deleted=False
@@ -3979,14 +4029,11 @@ class RunTestComponentsUpdateView(APIView):
                         new_agent_version = version
                         agent_version_changed = True
                     except AgentVersion.DoesNotExist:
-                        return Response(
-                            {"error": "Agent version not found"},
-                            status=status.HTTP_404_NOT_FOUND,
-                        )
+                        return self.gm.not_found("Agent version not found")
 
                 # Update SimulatorAgent if provided
-                if "simulator_agent_id" in request.data:
-                    simulator_agent_id = request.data["simulator_agent_id"]
+                if "simulator_agent_id" in data:
+                    simulator_agent_id = data["simulator_agent_id"]
                     try:
                         simulator_agent = SimulatorAgent.objects.get(
                             id=simulator_agent_id,
@@ -3995,14 +4042,11 @@ class RunTestComponentsUpdateView(APIView):
                         )
                         run_test.simulator_agent = simulator_agent
                     except SimulatorAgent.DoesNotExist:
-                        return Response(
-                            {"error": "Simulator agent not found"},
-                            status=status.HTTP_404_NOT_FOUND,
-                        )
+                        return self.gm.not_found("Simulator agent not found")
 
                 # Handle scenarios - replace with new list to maintain only specified scenarios as final state
-                if "scenarios" in request.data:
-                    scenario_ids = request.data["scenarios"]
+                if "scenarios" in data:
+                    scenario_ids = data["scenarios"]
 
                     # Validate scenarios data structure
                     if not isinstance(scenario_ids, list):
@@ -4020,19 +4064,16 @@ class RunTestComponentsUpdateView(APIView):
                     if len(scenarios_to_set) != len(scenario_ids):
                         found_ids = set(scenarios_to_set.values_list("id", flat=True))
                         missing_ids = set(scenario_ids) - found_ids
-                        return Response(
-                            {"error": f"Scenarios not found: {list(missing_ids)}"},
-                            status=status.HTTP_404_NOT_FOUND,
+                        return self.gm.not_found(
+                            f"Scenarios not found: {list(missing_ids)}"
                         )
 
                     # Replace all scenarios with the new list to maintain only specified scenarios as final state
                     run_test.scenarios.set(scenarios_to_set)
 
                 # Update enable_tool_evaluation if provided
-                if "enable_tool_evaluation" in request.data:
-                    run_test.enable_tool_evaluation = request.data[
-                        "enable_tool_evaluation"
-                    ]
+                if "enable_tool_evaluation" in data:
+                    run_test.enable_tool_evaluation = data["enable_tool_evaluation"]
 
                 # Validate that if tool evaluation is enabled, agent has required api_key and assistant_id
                 if run_test.enable_tool_evaluation:
@@ -4089,16 +4130,13 @@ class RunTestComponentsUpdateView(APIView):
                 response_serializer = RunTestSerializer(run_test)
                 return Response(response_serializer.data, status=status.HTTP_200_OK)
 
-        except RunTest.DoesNotExist:
+        except (Http404, RunTest.DoesNotExist):
             traceback.print_exc()
-            return Response(
-                {"error": "Run test not found"}, status=status.HTTP_404_NOT_FOUND
-            )
+            return self.gm.not_found("Run test not found")
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to update run test components: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to update run test components: {str(e)}"
             )
 
 
@@ -4109,6 +4147,13 @@ class CallExecutionErrorLocalizerTasksView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: CallExecutionErrorLocalizerTasksResponseSerializer,
+            404: CallExecutionErrorResponseSerializer,
+            500: CallExecutionErrorResponseSerializer,
+        },
+    )
     def get(self, request, call_execution_id, *args, **kwargs):
         """Get error localizer tasks for a specific call execution"""
         try:
@@ -4118,10 +4163,7 @@ class CallExecutionErrorLocalizerTasksView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get eval_config_id from query parameters
             eval_config_id = request.query_params.get("eval_config_id")
@@ -4211,10 +4253,11 @@ class CallExecutionErrorLocalizerTasksView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return _gm.not_found("Call execution not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve error localizer tasks: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve error localizer tasks: {str(e)}"
             )
 
 
@@ -4247,10 +4290,7 @@ class RunTestScenariosView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the run test and verify it belongs to the user's organization
             run_test = get_object_or_404(
@@ -4306,10 +4346,11 @@ class RunTestScenariosView(APIView):
             )
             return paginator.get_paginated_response(scenario_serializer.data)
 
+        except Http404:
+            return _gm.not_found("Run test not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to retrieve scenarios: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve scenarios: {str(e)}"
             )
 
 
@@ -4324,11 +4365,11 @@ class AddEvalConfigView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         tags=["Run Tests - Eval Configs"],
         operation_summary="Add evaluation configurations",
         operation_description="Adds evaluation configurations to a test run. Returns 201 with the created configs.",
-        request_body=AddEvalConfigsRequestSerializer,
+        request_serializer=AddEvalConfigsRequestSerializer,
         responses={
             201: AddEvalConfigsResponseSerializer,
             400: EvalErrorResponseSerializer,
@@ -4336,6 +4377,7 @@ class AddEvalConfigView(APIView):
             404: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, run_test_id, *args, **kwargs):
         """
@@ -4348,21 +4390,14 @@ class AddEvalConfigView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Get the run test and verify it belongs to the user's organization
             run_test = get_object_or_404(
                 RunTest, id=run_test_id, organization=user_organization, deleted=False
             )
 
-            # Validate request data (Phase 0.3: moved from raw dict access)
-            req_serializer = AddEvalConfigsRequestSerializer(data=request.data)
-            if not req_serializer.is_valid():
-                return self.gm.bad_request(req_serializer.errors)
-            evaluations_config = req_serializer.validated_data["evaluations_config"]
+            evaluations_config = request.validated_data["evaluations_config"]
 
             # Get existing eval config names for this run test
             existing_eval_configs = SimulateEvalConfig.objects.filter(
@@ -4383,8 +4418,10 @@ class AddEvalConfigView(APIView):
                     # Get EvalTemplate by ID
                     try:
                         eval_template = EvalTemplate.no_workspace_objects.get(
-                            Q(organization=user_organization)
-                            | Q(organization__isnull=True),
+                            _visible_eval_template_query(
+                                user_organization,
+                                getattr(request, "workspace", None),
+                            ),
                             id=template_id,
                         )
                     except EvalTemplate.DoesNotExist:
@@ -4412,7 +4449,7 @@ class AddEvalConfigView(APIView):
                         ),
                         mapping=eval_config_data.get("mapping", {}),
                         run_test=run_test,
-                        filters=eval_config_data.get("filters", {}),
+                        filters=eval_config_data.get("filters", []),
                         error_localizer=eval_config_data.get("error_localizer", False),
                         model=eval_config_data.get("model", None),
                     )
@@ -4442,10 +4479,11 @@ class AddEvalConfigView(APIView):
             else:
                 return self.gm.bad_request("Failed to create any evaluation configs")
 
+        except Http404:
+            return self.gm.not_found("Run test not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to add evaluation configs: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to add evaluation configs: {str(e)}"
             )
 
 
@@ -4479,10 +4517,7 @@ class DeleteEvalConfigView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the run test and verify it belongs to the user's organization
             run_test = get_object_or_404(
@@ -4495,21 +4530,15 @@ class DeleteEvalConfigView(APIView):
                 )
                 # Ensure at least one eval config remains after deletion
                 if active_configs.count() <= 1:
-                    return Response(
-                        {
-                            "error": "Cannot delete the last evaluation config. At least one evaluation config must remain."
-                        },
-                        status=status.HTTP_400_BAD_REQUEST,
+                    return _gm.bad_request(
+                        "Cannot delete the last evaluation config. At least one evaluation config must remain."
                     )
 
                 # Get the eval config and verify it belongs to the run test
                 try:
                     eval_config = active_configs.get(id=eval_config_id)
                 except SimulateEvalConfig.DoesNotExist:
-                    return Response(
-                        {"error": "Evaluation config not found"},
-                        status=status.HTTP_404_NOT_FOUND,
-                    )
+                    return _gm.not_found("Evaluation config not found")
 
                 # Soft delete the eval config
                 eval_config.deleted = True
@@ -4524,14 +4553,10 @@ class DeleteEvalConfigView(APIView):
             )
 
         except SimulateEvalConfig.DoesNotExist:
-            return Response(
-                {"error": "Evaluation config not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _gm.not_found("Evaluation config not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to delete evaluation config: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to delete evaluation config: {str(e)}"
             )
 
 
@@ -4547,6 +4572,13 @@ class GetEvalConfigStructureView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: EvalConfigStructureResponseSerializer,
+            404: EvalErrorResponseSerializer,
+            500: EvalErrorResponseSerializer,
+        },
+    )
     def get(self, request, run_test_id, eval_config_id, *args, **kwargs):
         """
         Get the structure of an evaluation config
@@ -4558,10 +4590,7 @@ class GetEvalConfigStructureView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self._gm.not_found("Organization not found for the user.")
 
             # Get the run test and verify it belongs to the user's organization
             run_test = get_object_or_404(
@@ -4672,14 +4701,14 @@ class UpdateEvalConfigView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         tags=["Run Tests - Eval Configs"],
         operation_summary="Update evaluation configuration",
         operation_description=(
             "Updates an evaluation configuration and optionally triggers a rerun. "
             "When run=true, test_execution_id is required."
         ),
-        request_body=EvalConfigUpdateRequestSerializer,
+        request_serializer=EvalConfigUpdateRequestSerializer,
         responses={
             200: EvalConfigUpdateResponseSerializer,
             400: EvalErrorResponseSerializer,
@@ -4687,6 +4716,7 @@ class UpdateEvalConfigView(APIView):
             404: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, run_test_id, eval_config_id, *args, **kwargs):
         """
@@ -4699,16 +4729,9 @@ class UpdateEvalConfigView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
-            # Validate request (Phase 0.2: cross-field run+test_execution_id check moved to serializer)
-            req_serializer = EvalConfigUpdateRequestSerializer(data=request.data)
-            if not req_serializer.is_valid():
-                return self._gm.bad_request(req_serializer.errors)
-            validated = req_serializer.validated_data
+            validated = request.validated_data
 
             # Get the run test and verify it belongs to the user's organization
             run_test = get_object_or_404(
@@ -4738,7 +4761,20 @@ class UpdateEvalConfigView(APIView):
 
             # Update other fields if provided
             if "name" in validated:
-                eval_config.name = validated.get("name")
+                new_name = validated.get("name")
+                if (
+                    SimulateEvalConfig.objects.filter(
+                        run_test=run_test,
+                        name=new_name,
+                        deleted=False,
+                    )
+                    .exclude(id=eval_config.id)
+                    .exists()
+                ):
+                    return self._gm.bad_request(
+                        f"An evaluation config with the name '{new_name}' already exists in this run test. Please use a different name."
+                    )
+                eval_config.name = new_name
             if "model" in validated:
                 eval_config.model = validated.get("model")
             if "error_localizer" in validated:
@@ -4909,10 +4945,7 @@ class RunTestExecutionsView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("Organization not found for the user.")
 
             # Get the run test and verify it belongs to the user's organization
             run_test = get_object_or_404(
@@ -4967,12 +5000,12 @@ class RunTestExecutionsView(APIView):
                 ).values_list("id", flat=True)
 
                 # Search in scenario names by getting scenario IDs and filtering
-                matching_scenario_ids = set(
+                matching_scenario_ids = {
                     str(sid)
                     for sid in Scenarios.objects.filter(
                         name__regex=pattern, deleted=False
                     ).values_list("id", flat=True)
-                )
+                }
 
                 # Get test executions that have any of the matching scenarios in their scenario_ids
                 # Use a more efficient approach - filter in DB where possible
@@ -5220,9 +5253,8 @@ class RunTestExecutionsView(APIView):
 
         except Exception as e:
             traceback.print_exc()
-            return Response(
-                {"error": f"Failed to retrieve test executions: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return _gm.internal_server_error_response(
+                f"Failed to retrieve test executions: {str(e)}"
             )
 
 
@@ -5237,6 +5269,41 @@ class CSVExportView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        manual_parameters=[
+            openapi.Parameter(
+                "type",
+                openapi.IN_QUERY,
+                description="Export source type.",
+                type=openapi.TYPE_STRING,
+                enum=["runtest", "testexecution"],
+                required=True,
+            ),
+            openapi.Parameter(
+                "search",
+                openapi.IN_QUERY,
+                description="Optional call-execution search term.",
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+            openapi.Parameter(
+                "status",
+                openapi.IN_QUERY,
+                description="Optional call-execution status filter.",
+                type=openapi.TYPE_STRING,
+                required=False,
+            ),
+        ],
+        responses={
+            200: openapi.Response(
+                "CSV export",
+                schema=openapi.Schema(type=openapi.TYPE_FILE),
+            ),
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     def get(self, request, item_id, *args, **kwargs):
         """
         Export data as CSV based on type parameter
@@ -5252,10 +5319,7 @@ class CSVExportView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self.gm.not_found("Organization not found for the user.")
 
             # Get the type parameter
             export_type = request.query_params.get("type", "").lower().strip()
@@ -5454,10 +5518,11 @@ class CSVExportView(APIView):
 
             return response
 
+        except Http404:
+            return self.gm.not_found("Export source not found")
         except Exception as e:
-            return Response(
-                {"error": f"Failed to export data: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self.gm.internal_server_error_response(
+                f"Failed to export data: {str(e)}"
             )
 
 
@@ -5470,7 +5535,7 @@ class RunTestEvalSummaryView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         tags=["Run Tests - Eval Summary"],
         operation_summary="Get evaluation summary",
         operation_description="Returns evaluation summary statistics for a test run, optionally scoped to a single execution.",
@@ -5481,16 +5546,14 @@ class RunTestEvalSummaryView(APIView):
             404: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, run_test_id, *args, **kwargs):
         try:
             user_organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
-            filter_serializer = EvalSummaryFilterSerializer(data=request.query_params)
-            if not filter_serializer.is_valid():
-                return self._gm.bad_request_response(filter_serializer.errors)
-            execution_id = filter_serializer.validated_data.get("execution_id")
+            execution_id = request.validated_query_data.get("execution_id")
 
             run_test = RunTest.objects.get(
                 id=run_test_id, organization=user_organization
@@ -5498,7 +5561,7 @@ class RunTestEvalSummaryView(APIView):
             eval_configs = _get_eval_configs_with_template(run_test)
 
             if not eval_configs:
-                return Response([], status=status.HTTP_200_OK)
+                return self._gm.success_response([])
 
             call_executions = _get_completed_call_executions(run_test, execution_id)
             template_stats = _build_template_statistics(eval_configs, call_executions)
@@ -5521,7 +5584,7 @@ class RunTestEvalSummaryComparisonView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         tags=["Run Tests - Eval Summary"],
         operation_summary="Compare evaluation summaries",
         operation_description="Compares evaluation summary statistics across multiple test executions.",
@@ -5533,6 +5596,7 @@ class RunTestEvalSummaryComparisonView(APIView):
             404: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def get(self, request, run_test_id, *args, **kwargs):
         """
@@ -5543,11 +5607,7 @@ class RunTestEvalSummaryComparisonView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            # Phase 0.1: replaced raw json.loads with EvalSummaryComparisonFilterSerializer
-            filter_serializer = EvalSummaryComparisonFilterSerializer(data=request.GET)
-            if not filter_serializer.is_valid():
-                return self._gm.bad_request_response(filter_serializer.errors)
-            execution_ids = filter_serializer.validated_data["execution_ids"]
+            execution_ids = request.validated_query_data["execution_ids"]
 
             run_test = RunTest.objects.get(
                 id=run_test_id, organization=user_organization
@@ -5556,7 +5616,7 @@ class RunTestEvalSummaryComparisonView(APIView):
             eval_configs = _get_eval_configs_with_template(run_test)
 
             if not eval_configs:
-                return Response({}, status=status.HTTP_200_OK)
+                return self._gm.success_response({})
 
             comparison_results = {}
 
@@ -5589,7 +5649,7 @@ class RunTestEvalExplanationSummaryView(APIView):
 
     @swagger_auto_schema(
         responses={
-            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            200: EvalExplanationSummaryResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
@@ -5604,8 +5664,12 @@ class RunTestEvalExplanationSummaryView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            test_execution = TestExecution.objects.get(
-                id=test_execution_id, run_test__organization=organization
+            test_execution = get_object_or_404(
+                TestExecution,
+                run_test_workspace_filter(request, "run_test"),
+                id=test_execution_id,
+                run_test__organization=organization,
+                run_test__deleted=False,
             )
 
             if test_execution.eval_explanation_summary is None:
@@ -5623,10 +5687,8 @@ class RunTestEvalExplanationSummaryView(APIView):
                 }
             )
 
-        except TestExecution.DoesNotExist:
-            return self._gm.not_found_response(
-                get_error_message("TEST_EXECUTION_NOT_FOUND")
-            )
+        except (TestExecution.DoesNotExist, Http404):
+            return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
             return self._gm.internal_server_error_response(
                 get_error_message("UNABLE_TO_FETCH_EVAL_REASON_SUMMARY")
@@ -5643,6 +5705,15 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            200: EvalExplanationSummaryRefreshResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, test_execution_id, *args, **kwargs):
         """
         Refresh the evaluation explanation summary by recalculating it.
@@ -5653,8 +5724,12 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            test_execution = TestExecution.objects.get(
-                id=test_execution_id, run_test__organization=organization
+            test_execution = get_object_or_404(
+                TestExecution,
+                run_test_workspace_filter(request, "run_test"),
+                id=test_execution_id,
+                run_test__organization=organization,
+                run_test__deleted=False,
             )
             test_execution.eval_explanation_summary_status = (
                 EvalExplanationSummaryStatus.PENDING
@@ -5666,10 +5741,8 @@ class RunTestEvalExplanationSummaryRefreshView(APIView):
                 {"message": "Summary refresh initiated successfully"}
             )
 
-        except TestExecution.DoesNotExist:
-            return self._gm.not_found_response(
-                get_error_message("TEST_EXECUTION_NOT_FOUND")
-            )
+        except (TestExecution.DoesNotExist, Http404):
+            return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
             return self._gm.internal_server_error_response(
                 get_error_message("UNABLE_TO_REFRESH_EVAL_REASON_SUMMARY")
@@ -5686,6 +5759,13 @@ class TestExecutionOptimiserAnalysisView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimiserAnalysisResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     def get(self, request, test_execution_id, *args, **kwargs):
         """
         Fetch the agent optimiser analysis for a test execution.
@@ -5696,8 +5776,12 @@ class TestExecutionOptimiserAnalysisView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            test_execution = TestExecution.objects.get(
-                id=test_execution_id, run_test__organization=organization
+            test_execution = get_object_or_404(
+                TestExecution,
+                run_test_workspace_filter(request, "run_test"),
+                id=test_execution_id,
+                run_test__organization=organization,
+                run_test__deleted=False,
             )
 
             optimiser = get_or_create_optimiser_for_test_execution(test_execution)
@@ -5706,10 +5790,8 @@ class TestExecutionOptimiserAnalysisView(APIView):
 
             return self._gm.success_response(result_data)
 
-        except TestExecution.DoesNotExist:
-            return self._gm.not_found_response(
-                get_error_message("TEST_EXECUTION_NOT_FOUND")
-            )
+        except (TestExecution.DoesNotExist, Http404):
+            return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
             return self._gm.internal_server_error_response(
                 get_error_message("UNABLE_TO_FETCH_OPTIMISER_ANALYSIS")
@@ -5726,6 +5808,16 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=EmptyRequestSerializer,
+        responses={
+            200: OptimiserAnalysisRefreshResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, test_execution_id, *args, **kwargs):
         """
         Trigger a new agent optimiser analysis run.
@@ -5735,8 +5827,12 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            test_execution = TestExecution.objects.get(
-                id=test_execution_id, run_test__organization=organization
+            test_execution = get_object_or_404(
+                TestExecution,
+                run_test_workspace_filter(request, "run_test"),
+                id=test_execution_id,
+                run_test__organization=organization,
+                run_test__deleted=False,
             )
 
             optimiser = get_or_create_optimiser_for_test_execution(test_execution)
@@ -5755,14 +5851,12 @@ class TestExecutionOptimiserAnalysisRefreshView(APIView):
                     }
                 )
             else:
-                return self._gm.bad_request_response(
+                return self._gm.bad_request(
                     "Unable to prepare input data. Ensure test execution has completed calls."
                 )
 
-        except TestExecution.DoesNotExist:
-            return self._gm.not_found_response(
-                get_error_message("TEST_EXECUTION_NOT_FOUND")
-            )
+        except (TestExecution.DoesNotExist, Http404):
+            return self._gm.not_found(get_error_message("TEST_EXECUTION_NOT_FOUND"))
         except Exception:
             return self._gm.internal_server_error_response(
                 get_error_message("UNABLE_TO_REFRESH_OPTIMISER_ANALYSIS")
@@ -6002,14 +6096,15 @@ class CallExecutionRerunView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
-    @swagger_auto_schema(
-        request_body=CallExecutionRerunSerializer,
+    @validated_request(
+        request_serializer=CallExecutionRerunSerializer,
         responses={
             200: RerunCallsResponseSerializer,
             400: ErrorResponseSerializer,
             404: ErrorResponseSerializer,
             500: ErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, test_execution_id):
         """
@@ -6025,16 +6120,15 @@ class CallExecutionRerunView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self._gm.not_found("Organization not found for the user.")
 
             # Get the test execution
             test_execution = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
+                run_test__deleted=False,
             )
 
             # Reject rerun if test execution is in a non-terminal status
@@ -6048,14 +6142,9 @@ class CallExecutionRerunView(APIView):
                     "Wait for it to complete or cancel it first."
                 )
 
-            # Validate request data
-            serializer = CallExecutionRerunSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request("Invalid request data")
-
-            rerun_type = serializer.validated_data["rerun_type"]
-            select_all = serializer.validated_data.get("select_all", False)
-            call_execution_ids = serializer.validated_data.get("call_execution_ids", [])
+            rerun_type = request.validated_data["rerun_type"]
+            select_all = request.validated_data.get("select_all", False)
+            call_execution_ids = request.validated_data.get("call_execution_ids", [])
 
             # Validate CHAT/TEXT agents can only use eval_only rerun type
             if rerun_type != "eval_only" and test_execution.run_test.agent_definition:
@@ -6241,12 +6330,13 @@ class CallExecutionRerunView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return self._gm.not_found("Test execution not found")
         except Exception as e:
             logger.error(f"Error in bulk call execution rerun: {str(e)}")
             traceback.print_exc()
-            return Response(
-                {"error": "Failed to rerun call executions"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                "Failed to rerun call executions"
             )
 
     def _clear_call_execution_data(self, call_execution: CallExecution):
@@ -6495,6 +6585,16 @@ class TestExecutionRerunView(APIView):
 
         return successful_reruns, failed_reruns
 
+    @validated_request(
+        request_serializer=TestExecutionRerunSerializer,
+        responses={
+            200: TestExecutionRerunResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, run_test_id):
         """
         Rerun multiple test executions (either evaluation only or call + evaluation).
@@ -6509,24 +6609,19 @@ class TestExecutionRerunView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self._gm.not_found("Organization not found for the user.")
 
             run_test = get_object_or_404(
                 RunTest,
+                run_test_workspace_filter(request),
                 id=run_test_id,
                 organization=user_organization,
+                deleted=False,
             )
 
-            serializer = TestExecutionRerunSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            rerun_type = serializer.validated_data["rerun_type"]
-            select_all = serializer.validated_data.get("select_all", False)
-            test_execution_ids = serializer.validated_data.get("test_execution_ids", [])
+            rerun_type = request.validated_data["rerun_type"]
+            select_all = request.validated_data.get("select_all", False)
+            test_execution_ids = request.validated_data.get("test_execution_ids", [])
 
             # Validate CHAT/TEXT agents can only use eval_only rerun type
             if rerun_type != "eval_only" and run_test.agent_definition:
@@ -6666,12 +6761,13 @@ class TestExecutionRerunView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return self._gm.not_found("Run test not found")
         except Exception as e:
             logger.error(f"Error in bulk test execution rerun: {str(e)}")
             traceback.print_exc()
-            return Response(
-                {"error": "Failed to rerun test executions"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                "Failed to rerun test executions"
             )
 
 
@@ -6686,14 +6782,14 @@ class RunNewEvalsOnTestExecutionView(APIView):
         super().__init__(**kwargs)
         self._gm = GeneralMethods()
 
-    @swagger_auto_schema(
+    @validated_request(
         tags=["Run Tests - Eval Configs"],
         operation_summary="Run new evaluations on test executions",
         operation_description=(
             "Runs new evaluations on completed test executions. "
             "Either test_execution_ids or select_all=true must be provided."
         ),
-        request_body=RunNewEvalsOnTestExecutionSerializer,
+        request_serializer=RunNewEvalsOnTestExecutionSerializer,
         responses={
             200: RunNewEvalsResponseSerializer,
             400: EvalErrorResponseSerializer,
@@ -6701,6 +6797,7 @@ class RunNewEvalsOnTestExecutionView(APIView):
             404: EvalErrorResponseSerializer,
             500: EvalErrorResponseSerializer,
         },
+        reject_unknown_fields=True,
     )
     def post(self, request, run_test_id):
         """
@@ -6713,25 +6810,21 @@ class RunNewEvalsOnTestExecutionView(APIView):
             )
 
             if not user_organization:
-                return Response(
-                    {"error": "Organization not found for the user."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return self._gm.not_found("Organization not found for the user.")
 
             # Get the run test
             run_test = get_object_or_404(
-                RunTest, id=run_test_id, organization=user_organization, deleted=False
+                RunTest,
+                run_test_workspace_filter(request),
+                id=run_test_id,
+                organization=user_organization,
+                deleted=False,
             )
 
-            # Validate request data
-            serializer = RunNewEvalsOnTestExecutionSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(serializer.errors)
-
-            select_all = serializer.validated_data.get("select_all", False)
-            test_execution_ids = serializer.validated_data.get("test_execution_ids", [])
-            eval_config_ids = serializer.validated_data.get("eval_config_ids", [])
-            enable_tool_evaluation = serializer.validated_data.get(
+            select_all = request.validated_data.get("select_all", False)
+            test_execution_ids = request.validated_data.get("test_execution_ids", [])
+            eval_config_ids = request.validated_data.get("eval_config_ids", [])
+            enable_tool_evaluation = request.validated_data.get(
                 "enable_tool_evaluation"
             )
 
@@ -6945,15 +7038,13 @@ class RunNewEvalsOnTestExecutionView(APIView):
                 status=status.HTTP_200_OK,
             )
 
+        except Http404:
+            return self._gm.not_found("Run test not found")
         except Exception as e:
             logger.error(f"Error running new evaluations on test executions: {str(e)}")
             traceback.print_exc()
-            return Response(
-                {
-                    "error": "Failed to run new evaluations on test executions",
-                    "details": str(e),
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            return self._gm.internal_server_error_response(
+                f"Failed to run new evaluations on test executions: {str(e)}"
             )
 
 
@@ -6975,9 +7066,7 @@ def add_trace_details_to_call_executions(call_executions):
     # (``tracer_obse_eval_attr_gin``) was dropped in migration 0074. The
     # equivalent containment check now goes to ClickHouse, which has the
     # same data and is much cheaper for this access pattern.
-    spans_by_call_exec = spans_by_eval_attribute_call_execution_ids(
-        call_execution_ids
-    )
+    spans_by_call_exec = spans_by_eval_attribute_call_execution_ids(call_execution_ids)
 
     # Collect trace IDs and build trace_details
     trace_ids = set()
@@ -6990,7 +7079,11 @@ def add_trace_details_to_call_executions(call_executions):
         # original PG version also took whichever row came first).
         span = spans[0]
         try:
-            eval_attrs = json.loads(span["eval_attributes"]) if span.get("eval_attributes") else {}
+            eval_attrs = (
+                json.loads(span["eval_attributes"])
+                if span.get("eval_attributes")
+                else {}
+            )
         except (TypeError, ValueError):
             eval_attrs = {}
         trace_id_str = span["trace_id"]
@@ -7016,7 +7109,7 @@ def add_trace_details_to_call_executions(call_executions):
             trace_to_session[str(trace_id)] = str(session_id)
 
         # Add sessions to trace_details (as list for consistency with serializer format)
-        for call_exec_id, trace_details in trace_details_map.items():
+        for _call_exec_id, trace_details in trace_details_map.items():
             trace_id_uuid = trace_details["_trace_id_uuid"]
             if trace_id_uuid in trace_to_session:
                 trace_details["simulated_sessions"] = [trace_to_session[trace_id_uuid]]

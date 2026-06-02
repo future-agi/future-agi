@@ -150,6 +150,10 @@ class CustomModelsAPITestCase(APITestCase):
             deleted=deleted,
         )
 
+    def assert_unknown_field(self, response, field_name):
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn(field_name, response.data["details"])
+
 
 # =============================================================================
 # List Endpoints Tests
@@ -314,6 +318,22 @@ class TestCustomModelsSimplifiedListView(CustomModelsAPITestCase):
 
 class TestCustomModelsCreateView(CustomModelsAPITestCase):
     """Tests for POST custom_models/create/ endpoint."""
+
+    def test_create_rejects_unknown_request_fields(self):
+        data = {
+            "model_provider": "openai",
+            "model_name": "gpt-4-turbo",
+            "input_token_cost": 0.01,
+            "output_token_cost": 0.03,
+            "config_json": {"key": "sk-test-key"},
+            "modelProvider": "legacy camel alias",
+        }
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/create/", data, format="json"
+        )
+
+        self.assert_unknown_field(response, "modelProvider")
 
     @patch("model_hub.views.custom_model.validate_model_working")
     def test_create_openai_model_success(self, mock_validate):
@@ -678,6 +698,17 @@ class TestCustomModelsDetailsView(CustomModelsAPITestCase):
         self.assertEqual(model.input_token_cost, 0.02)
         self.assertEqual(model.output_token_cost, 0.04)
 
+    def test_update_model_details_rejects_unknown_request_fields(self):
+        model = self.create_custom_model()
+
+        response = self.client.post(
+            f"{BASE_URL}/custom-models/{model.id}/",
+            {"model_name": "new-name", "modelName": "legacy camel alias"},
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "modelName")
+
     def test_update_model_details_not_found(self):
         """Test updating non-existent model returns 404."""
         fake_id = uuid.uuid4()
@@ -783,6 +814,21 @@ class TestUpdateBaselineView(CustomModelsAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["status"], "success")
 
+    def test_update_baseline_rejects_unknown_request_fields(self):
+        model = self.create_custom_model()
+
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/update-baseline/{model.id}/",
+            {
+                "environment": "production",
+                "model_version": "v2.0",
+                "modelVersion": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "modelVersion")
+
     def test_update_baseline_not_found(self):
         """Test updating baseline for non-existent model."""
         fake_id = uuid.uuid4()
@@ -818,6 +864,22 @@ class TestUpdateBaselineView(CustomModelsAPITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class TestUpdateDefaultMetricView(CustomModelsAPITestCase):
+    """Tests for POST custom_models/update-metric/<uuid:id>/ endpoint."""
+
+    def test_update_metric_rejects_unknown_request_fields(self):
+        response = self.client.post(
+            f"{BASE_URL}/custom_models/update-metric/{uuid.uuid4()}/",
+            {
+                "metric_id": str(uuid.uuid4()),
+                "metricId": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "metricId")
 
 
 # =============================================================================
@@ -902,6 +964,19 @@ class TestEditCustomModelView(CustomModelsAPITestCase):
         self.assertEqual(model.user_model_id, "new-name")
         self.assertEqual(model.input_token_cost, 0.02)
 
+    def test_patch_edit_model_rejects_unknown_request_fields(self):
+        response = self.client.patch(
+            f"{BASE_URL}/custom_models/edit/",
+            {
+                "id": str(uuid.uuid4()),
+                "model_name": "new-name",
+                "modelName": "legacy camel alias",
+            },
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "modelName")
+
     def test_patch_edit_model_missing_id(self):
         """Test patching model without ID returns error."""
         data = {
@@ -982,6 +1057,15 @@ class TestEditCustomModelView(CustomModelsAPITestCase):
 
 class TestDeleteCustomModelView(CustomModelsAPITestCase):
     """Tests for DELETE custom_models/delete/ endpoint."""
+
+    def test_delete_rejects_unknown_request_fields(self):
+        response = self.client.delete(
+            f"{BASE_URL}/custom_models/delete/",
+            {"ids": [], "modelIds": ["legacy camel alias"]},
+            format="json",
+        )
+
+        self.assert_unknown_field(response, "modelIds")
 
     def test_delete_single_model_success(self):
         """Test deleting a single model."""

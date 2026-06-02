@@ -16,7 +16,7 @@ from django.core.exceptions import ObjectDoesNotExist, ValidationError
 from django.db import close_old_connections
 from django.db.models import Q
 from django.http import Http404
-from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
 from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
@@ -25,6 +25,7 @@ from rest_framework.views import APIView
 
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
 # (available_models always available)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
@@ -44,6 +45,22 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.openai_tools import Tools
 from model_hub.models.run_prompt import RunPrompter, UserResponseSchema
 from model_hub.queries.tts_voices import get_custom_voices
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    DatasetRunPromptStatsResponseSerializer,
+    LiteLLMModelVoicesResponseSerializer,
+    ModelHubPaginatedResponseSerializer,
+    ModelHubStringResultResponseSerializer,
+    ModelHubSuccessMessageResponseSerializer,
+    ModelParametersResponseSerializer,
+    RunPromptColumnConfigResponseSerializer,
+    RunPromptForRowsRequestSerializer,
+    RunPromptOptionsResponseSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DevelopDatasetMessageResponseSerializer,
+    RunPromptColumnPreviewResponseSerializer,
+)
 from model_hub.serializers.run_prompt import (
     AddRunPromptSerializer,
     ApiKeySerializer,
@@ -74,6 +91,7 @@ from tfc.utils.error_codes import (
     get_error_message,
     get_specific_error_message,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_prompt_stats
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
@@ -82,15 +100,61 @@ from tfc.utils.storage import (
     convert_image_from_url_to_base64,
     detect_audio_format,
 )
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
     log_and_deduct_cost_for_api_request = None
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    workspace = getattr(request, "workspace", None)
+    if not workspace:
+        return Q()
+
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{field_name: workspace})
+            | Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization_id": workspace.organization_id,
+                }
+            )
+            | Q(**{f"{field_name}__isnull": True})
+        )
+
+    return Q(**{field_name: workspace})
+
+
+def _request_dataset_queryset(request):
+    return Dataset.objects.filter(
+        _request_workspace_filter(request),
+        organization=_request_organization(request),
+        deleted=False,
+    )
+
+
+def _request_column_queryset(request):
+    return Column.objects.filter(
+        _request_workspace_filter(request, field_name="dataset__workspace"),
+        dataset__organization=_request_organization(request),
+        deleted=False,
+        dataset__deleted=False,
+    )
+
+
+def _request_run_prompter_queryset(request):
+    return RunPrompter.objects.filter(
+        _request_workspace_filter(request),
+        organization=_request_organization(request),
+        deleted=False,
+    )
+
 
 PROVIDERS_WITH_JSON = ["vertex_ai", "azure", "bedrock", "sagemaker"]
 
@@ -846,82 +910,90 @@ class LitellmAPIView(CreateAPIView):
             },
         )
 
+    @validated_request(
+        request_serializer=LitellmSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
-        # Validate incoming data with the serializer
-        serializer = LitellmSerializer(data=request.data)
+        validated_data = request.validated_data
+        # `validated_request` owns request-shape validation; from here the view
+        # handles only domain execution errors.
+        organization = (
+            getattr(request, "organization", None) or request.user.organization
+        )
+        dataset = Dataset.objects.filter(
+            id=validated_data.get("dataset_id"), deleted=False
+        ).first()
+        if not dataset or dataset.organization_id != organization.id:
+            return self._gm.not_found("Dataset not found")
+        # Retrieve tools based on the IDs from the validated data
+        tool_ids = validated_data.get("tools", [])
+        tools = Tools.objects.filter(id__in=tool_ids)
 
-        # Check if data is valid
-        if serializer.is_valid():
-            # Extract validated data
-            validated_data = serializer.validated_data
-            dataset = Dataset.objects.filter(id=validated_data.get("dataset_id")).get()
-            # Retrieve tools based on the IDs from the validated data
-            tool_ids = validated_data.get("tools", [])
-            tools = Tools.objects.filter(id__in=tool_ids)
+        # Use transaction to ensure atomicity
+        with transaction.atomic():
+            run_prompter = RunPrompter.objects.create(
+                name=validated_data.get("name"),
+                model=validated_data.get("model"),
+                organization=organization,
+                messages=validated_data.get("messages"),
+                temperature=validated_data.get("temperature"),
+                frequency_penalty=validated_data.get("frequency_penalty"),
+                presence_penalty=validated_data.get("presence_penalty"),
+                max_tokens=validated_data.get("max_tokens"),
+                top_p=validated_data.get("top_p"),
+                response_format=validated_data.get("response_format"),
+                tool_choice=validated_data.get("tool_choice"),
+                output_format=validated_data.get("output_format"),
+                dataset=dataset,
+                concurrency=validated_data.get("concurrency"),
+                run_prompt_config=validated_data.get("run_prompt_config"),
+                status=StatusType.NOT_STARTED.value,  # Start with NOT_STARTED
+            )
+            if tools:
+                # Associate the tools with the RunPrompter instance
+                run_prompter.tools.set(tools)
 
-            # Use transaction to ensure atomicity
-            with transaction.atomic():
-                run_prompter = RunPrompter.objects.create(
-                    name=validated_data.get("name"),
-                    model=validated_data.get("model"),
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    messages=validated_data.get("messages"),
-                    temperature=validated_data.get("temperature"),
-                    frequency_penalty=validated_data.get("frequency_penalty"),
-                    presence_penalty=validated_data.get("presence_penalty"),
-                    max_tokens=validated_data.get("max_tokens"),
-                    top_p=validated_data.get("top_p"),
-                    response_format=validated_data.get("response_format"),
-                    tool_choice=validated_data.get("tool_choice"),
-                    output_format=validated_data.get("output_format"),
-                    dataset=dataset,
-                    concurrency=validated_data.get("concurrency"),
-                    run_prompt_config=validated_data.get("run_prompt_config"),
-                    status=StatusType.NOT_STARTED.value,  # Start with NOT_STARTED
-                )
-                if tools:
-                    # Associate the tools with the RunPrompter instance
-                    run_prompter.tools.set(tools)
+            run_prompter_id = str(run_prompter.id)
 
-                run_prompter_id = str(run_prompter.id)
+        # After transaction commits, trigger workflow and update status
+        from model_hub.tasks.run_prompt import process_prompts_single
 
-            # After transaction commits, trigger workflow and update status
-            from model_hub.tasks.run_prompt import process_prompts_single
+        try:
+            # Set status to RUNNING before triggering workflow
+            RunPrompter.objects.filter(id=run_prompter_id).update(
+                status=StatusType.RUNNING.value
+            )
 
-            try:
-                # Set status to RUNNING before triggering workflow
-                RunPrompter.objects.filter(id=run_prompter_id).update(
-                    status=StatusType.RUNNING.value
-                )
+            result = process_prompts_single.apply_async(
+                args=({"type": "not_started", "prompt_id": run_prompter_id},)
+            )
+            logger.info(
+                "run_prompt_workflow_started",
+                run_prompt_id=run_prompter_id,
+                workflow_id=str(result.id) if result else "None",
+            )
+        except Exception as e:
+            logger.exception(
+                "run_prompt_workflow_start_failed",
+                run_prompt_id=run_prompter_id,
+                error=str(e),
+            )
+            # Set status to FAILED if workflow couldn't start
+            RunPrompter.objects.filter(id=run_prompter_id).update(
+                status=StatusType.FAILED.value
+            )
+            return self._gm.internal_server_error_response(
+                "Failed to start run prompt workflow"
+            )
 
-                result = process_prompts_single.apply_async(
-                    args=({"type": "not_started", "prompt_id": run_prompter_id},)
-                )
-                logger.info(
-                    "run_prompt_workflow_started",
-                    run_prompt_id=run_prompter_id,
-                    workflow_id=str(result.id) if result else "None",
-                )
-            except Exception as e:
-                logger.exception(
-                    "run_prompt_workflow_start_failed",
-                    run_prompt_id=run_prompter_id,
-                    error=str(e),
-                )
-                # Set status to FAILED if workflow couldn't start
-                RunPrompter.objects.filter(id=run_prompter_id).update(
-                    status=StatusType.FAILED.value
-                )
-                return self._gm.internal_server_error_response(
-                    "Failed to start run prompt workflow"
-                )
-
-            return self._gm.success_response("success")
-        else:
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+        return self._gm.success_response("success")
 
 
 class RunPrompts:
@@ -1117,56 +1189,56 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                try:
-                    api_call_config = {"reference_id": str(self.run_prompt_id)}
-                    api_call_log_row = log_and_deduct_cost_for_api_request(
-                        self.run_prompt_model.organization,
-                        APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                        config=api_call_config,
-                        workspace=row.dataset.workspace,
-                    )
-                    logger.info(
-                        "RunPrompts_process_row_api_call_logged",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                        api_call_log_row_id=(
-                            str(api_call_log_row.id) if api_call_log_row else None
-                        ),
-                    )
-                except Exception as api_err:
-                    logger.error(
-                        "RunPrompts_process_row_api_call_validation_error",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                        error=str(api_err),
-                    )
-                    raise ValueError("Error in API call validation")  # noqa: B904
-                if not api_call_log_row:
-                    logger.error(
-                        "RunPrompts_process_row_api_call_log_row_none",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                    )
-                    raise ValueError("Error in API call validation")
-                elif api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                    error_message = get_error_for_api_status(api_call_log_row.status)
-                    logger.error(
-                        "RunPrompts_process_row_api_call_status_invalid",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                        status=api_call_log_row.status,
-                        error_message=error_message,
-                    )
-                    raise ValueError(error_message)
-                elif api_call_log_row.status == APICallStatusChoices.PROCESSING.value:
-                    # by default set the status to success since we are not deducting cost
-                    api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                    api_call_log_row.save()
-                    logger.info(
-                        "RunPrompts_process_row_api_call_status_set_success",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                    )
+                if log_and_deduct_cost_for_api_request is not None:
+                    try:
+                        api_call_config = {"reference_id": str(self.run_prompt_id)}
+                        api_call_log_row = log_and_deduct_cost_for_api_request(
+                            self.run_prompt_model.organization,
+                            APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                            config=api_call_config,
+                            workspace=row.dataset.workspace,
+                        )
+                        logger.info(
+                            "RunPrompts_process_row_api_call_logged",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                            api_call_log_row_id=(
+                                str(api_call_log_row.id) if api_call_log_row else None
+                            ),
+                        )
+                    except Exception as api_err:
+                        logger.error(
+                            "RunPrompts_process_row_api_call_validation_error",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                            error=str(api_err),
+                        )
+                        raise ValueError("Error in API call validation")  # noqa: B904
+                    if not api_call_log_row:
+                        logger.error(
+                            "RunPrompts_process_row_api_call_log_row_none",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                        )
+                        raise ValueError("Error in API call validation")
+                    elif api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                        error_message = get_error_for_api_status(api_call_log_row.status)
+                        logger.error(
+                            "RunPrompts_process_row_api_call_status_invalid",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                            status=api_call_log_row.status,
+                            error_message=error_message,
+                        )
+                        raise ValueError(error_message)
+                    elif api_call_log_row.status == APICallStatusChoices.PROCESSING.value:
+                        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+                        api_call_log_row.save()
+                        logger.info(
+                            "RunPrompts_process_row_api_call_status_set_success",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                        )
 
                 # Dual-write: emit usage event for new billing system
                 try:
@@ -1179,7 +1251,10 @@ class RunPrompts:
                     except ImportError:
                         emit = None
 
-                    emit(
+                    if emit is not None and UsageEvent is not None:
+
+
+                        emit(
                         UsageEvent(
                             org_id=str(self.run_prompt_model.organization.id),
                             event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
@@ -1475,15 +1550,19 @@ class AddRunPromptColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=AddRunPromptSerializer,
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
         try:
-            serializer = AddRunPromptSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(serializer))
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             name = validated_data["name"]
             config = validated_data[
@@ -1607,14 +1686,17 @@ class PreviewRunPromptColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=PreviewRunPromptSerializer,
+        responses={
+            200: RunPromptColumnPreviewResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
-            # Validate incoming data
-            serializer = PreviewRunPromptSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(serializer))
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             config = validated_data["config"]
 
@@ -1744,34 +1826,36 @@ class EditRunPromptColumnView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=EditRunPromptColumnSerializer,
+        responses={
+            200: DevelopDatasetMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         from django.db import transaction
 
         try:
-            serializer = EditRunPromptColumnSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(serializer))
-
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             column_id = validated_data["column_id"]
             config = validated_data["config"]
             name = validated_data["name"]
             run_prompt_config = config.get("run_prompt_config", {})
 
-            # Validate dataset and column exist
-            dataset = get_object_or_404(Dataset, id=dataset_id)
-
-            # Enforce organization isolation
-            if (
-                dataset.organization_id
-                != (
-                    getattr(request, "organization", None) or request.user.organization
-                ).id
-            ):
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if not dataset:
                 return self._gm.not_found("Dataset not found")
 
-            column = get_object_or_404(Column, id=column_id, dataset=dataset)
+            column = (
+                _request_column_queryset(request)
+                .filter(id=column_id, dataset=dataset)
+                .first()
+            )
+            if not column:
+                return self._gm.not_found("Column or dataset not found")
 
             # Verify column is a run prompt column
             if column.source != SourceChoices.RUN_PROMPT.value:
@@ -1780,9 +1864,16 @@ class EditRunPromptColumnView(APIView):
             # Lock the RunPrompter row to prevent race conditions
             # Use of=('self',) to avoid issues with nullable foreign keys causing outer joins
             with transaction.atomic():
-                run_prompter = RunPrompter.objects.select_for_update(of=("self",)).get(
-                    id=column.source_id
+                run_prompter = (
+                    _request_run_prompter_queryset(request)
+                    .select_for_update(of=("self",))
+                    .filter(id=column.source_id, dataset=dataset)
+                    .first()
                 )
+                if not run_prompter:
+                    return self._gm.not_found(
+                        "Column or run prompt configuration not found"
+                    )
 
                 # Check if currently running - warn but allow edit
                 was_running = run_prompter.status == StatusType.RUNNING.value
@@ -1907,19 +1998,18 @@ class RetrieveRunPromptColumnConfigView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: RunPromptColumnConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request):
         try:
             # Get the column and verify it's a run prompt column
             column_id = request.query_params.get("column_id")
-            column = get_object_or_404(Column, id=column_id)
-
-            # Enforce organization isolation through the column's dataset
-            if (
-                column.dataset.organization_id
-                != (
-                    getattr(request, "organization", None) or request.user.organization
-                ).id
-            ):
+            column = _request_column_queryset(request).filter(id=column_id).first()
+            if not column:
                 return self._gm.not_found(
                     "Column or run prompt configuration not found"
                 )
@@ -1928,7 +2018,15 @@ class RetrieveRunPromptColumnConfigView(APIView):
                 return self._gm.bad_request(get_error_message("COLUMN_IS_IN_VALID"))
 
             # Get associated RunPrompter instance
-            run_prompter = get_object_or_404(RunPrompter, id=column.source_id)
+            run_prompter = (
+                _request_run_prompter_queryset(request)
+                .filter(id=column.source_id, dataset=column.dataset)
+                .first()
+            )
+            if not run_prompter:
+                return self._gm.not_found(
+                    "Column or run prompt configuration not found"
+                )
 
             # Get tools configuration
             tools = []
@@ -2056,6 +2154,9 @@ class RetrieveRunPromptOptionsView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: RunPromptOptionsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             # Get available models from LiteLLM model manager
@@ -2146,6 +2247,9 @@ class DatasetRunPromptStatsView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: DatasetRunPromptStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, dataset_id):
         try:
             # Enforce organization isolation - verify dataset belongs to user's org
@@ -2190,6 +2294,12 @@ class DatasetRunPromptStatsView(APIView):
 class LiteLLMModelListView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: ModelHubPaginatedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, *args, **kwargs):
         # Get the organization from the request
         organization = (
@@ -2331,6 +2441,12 @@ class LiteLLMModelVoicesView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: LiteLLMModelVoicesResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, *args, **kwargs):
         try:
             model_name = request.query_params.get("model", None)
@@ -2418,6 +2534,9 @@ class ModelParametersView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: ModelParametersResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         try:
             model_name = request.query_params.get("model")
@@ -2442,13 +2561,20 @@ class RunPromptForRowsView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=RunPromptForRowsRequestSerializer,
+        responses={
+            200: ModelHubSuccessMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
-            # Extract the run_prompt_ids and row_ids from the request data
-            run_prompt_ids = request.data.get("run_prompt_ids", [])
-            row_ids = request.data.get("row_ids", [])
-
-            selected_all_rows = request.data.get("selected_all_rows", False)
+            data = request.validated_data
+            run_prompt_ids = data.get("run_prompt_ids", [])
+            row_ids = data.get("row_ids", [])
+            selected_all_rows = data.get("selected_all_rows", False)
 
             if not run_prompt_ids:
                 return self._gm.bad_request(
@@ -2462,12 +2588,29 @@ class RunPromptForRowsView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             user_org_id = user_org.id if hasattr(user_org, "id") else user_org
-            run_prompters = list(RunPrompter.objects.filter(id__in=run_prompt_ids))
+            run_prompters = list(
+                RunPrompter.objects.filter(id__in=run_prompt_ids, deleted=False)
+            )
             if len(run_prompters) != len(set(map(str, run_prompt_ids))):
                 return self._gm.not_found("Run prompt not found")
             for rp in run_prompters:
                 if rp.organization_id != user_org_id:
                     return self._gm.not_found("Run prompt not found")
+
+            dataset_ids = {rp.dataset_id for rp in run_prompters}
+            if len(dataset_ids) != 1:
+                return self._gm.bad_request(
+                    "Run prompts must belong to the same dataset"
+                )
+            dataset_id = next(iter(dataset_ids))
+
+            if row_ids and not selected_all_rows:
+                requested_row_ids = set(map(str, row_ids))
+                scoped_rows = Row.objects.filter(
+                    id__in=row_ids, dataset_id=dataset_id, deleted=False
+                ).values_list("id", flat=True)
+                if set(map(str, scoped_rows)) != requested_row_ids:
+                    return self._gm.not_found("Row not found")
 
             # Run all evaluations in a single async task
             run_prompt = None

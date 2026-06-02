@@ -51,7 +51,10 @@ export default function DevKeysView() {
     () => (data?.status ? data?.result?.table : []) ?? [],
     [data],
   );
-  const total = data?.result?.metadata?.totalRows ?? 0;
+  const total =
+    data?.result?.metadata?.totalRows ??
+    data?.result?.metadata?.total_rows ??
+    0;
   const hasData = rows.length > 0 || !!debouncedSearchQuery || isLoading;
 
   const handleRefresh = useCallback(() => {

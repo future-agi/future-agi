@@ -42,8 +42,8 @@ class PromptLabel(BaseModel):
         return self.name
 
     @classmethod
-    def create_default_system_labels(cls):
-        """Create default system labels: Production, Staging, Development for the given organization."""
+    def create_default_system_labels(cls, _organization=None):
+        """Create the global Production, Staging, and Development system labels."""
         default_labels = ["Production", "Staging", "Development"]
         created_labels = []
         for label_name in default_labels:

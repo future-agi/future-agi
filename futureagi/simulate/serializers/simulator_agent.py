@@ -65,3 +65,33 @@ class SimulatorAgentSerializer(serializers.ModelSerializer):
             )
 
         return SimulatorAgent.objects.create(**validated_data)
+
+
+class SimulatorAgentListResponseSerializer(serializers.Serializer):
+    """Paginated response envelope for GET /simulate/simulator-agents/."""
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = SimulatorAgentSerializer(many=True, read_only=True)
+    total_pages = serializers.IntegerField(read_only=True)
+    current_page = serializers.IntegerField(read_only=True)
+
+
+class SimulatorAgentDeleteResponseSerializer(serializers.Serializer):
+    """Response shape for deleting a simulator agent."""
+
+    message = serializers.CharField(read_only=True)
+
+
+class SimulatorAgentValidationErrorResponseSerializer(serializers.Serializer):
+    """Field-error map returned directly from DRF serializer validation."""
+
+    class Meta:
+        swagger_schema_fields = {
+            "type": "object",
+            "additionalProperties": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        }

@@ -119,7 +119,9 @@ export default function PromptNodeForm({ nodeId }) {
         onToolsApply={handleToolsApply}
         disabled={isUnsupportedOutputFormat}
         templateFormat={templateFormat}
-        onTemplateFormatChange={(v) => setValue("templateFormat", v, { shouldDirty: true })}
+        onTemplateFormatChange={(v) =>
+          setValue("templateFormat", v, { shouldDirty: true })
+        }
       />
 
       {/* Model Parameters Popover */}

@@ -575,6 +575,7 @@ const ModelSelector = ({
   onSelectedKBsChange,
   activeContextOptions: activeContextOptionsProp,
   onActiveContextOptionsChange,
+  hideDatasetContextToggle = false,
 }) => {
   // For each field, pick "controlled" (parent-driven) or "uncontrolled" (local state).
   const [modeLocal, setModeLocal] = useState("agent");
@@ -706,7 +707,11 @@ const ModelSelector = ({
     queryKey: ["eval-model-list", debouncedModelSearch],
     queryFn: ({ pageParam }) =>
       axios.get(endpoints.develop.modelList, {
-        params: { page: pageParam, search: debouncedModelSearch, model_type: "llm" },
+        params: {
+          page: pageParam,
+          search: debouncedModelSearch,
+          model_type: "llm",
+        },
       }),
     getNextPageParam: (o) => (o.data.next ? o.data.current_page + 1 : null),
     initialPageParam: 1,
@@ -1672,7 +1677,10 @@ const ModelSelector = ({
             {/* ══ Data Injection submenu ══ */}
             {plusSubmenu === "injection" && (
               <Box>
-                {CONTEXT_OPTIONS.map((opt) => {
+                {CONTEXT_OPTIONS.filter(
+                  (opt) =>
+                    !(hideDatasetContextToggle && opt.value === "dataset_row"),
+                ).map((opt) => {
                   const isActive = activeContextOptions.includes(opt.value);
                   return (
                     <MenuItem
@@ -1797,6 +1805,7 @@ ModelSelector.propTypes = {
   disabled: PropTypes.bool,
   showMode: PropTypes.bool,
   showPlus: PropTypes.bool,
+  hideDatasetContextToggle: PropTypes.bool,
 };
 
 export default ModelSelector;

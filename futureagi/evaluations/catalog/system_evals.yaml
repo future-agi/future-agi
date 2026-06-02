@@ -548,6 +548,47 @@ detect_hallucination:
 
     <context>{{context}}</context>
 
+conversation_hallucination:
+  eval_type: agent
+  output: Pass/Fail
+  required_keys: [conversation, context]
+  description: Identifies if the agent fabricated facts across the conversation, optionally grounded against provided context.
+  tags: [Hallucination, Conversation, Agents]
+  rule_prompt: |
+    You are evaluating whether the agent's turns in the conversation contain fabricated information not supported by the conversation history or the provided context.
+
+    ## Criteria
+
+    1. User-attributed fabrication: The agent claims the user said, asked, or believes something that does not appear in the user's actual turns.
+       - Pass: "You mentioned you live in Austin" when the user did state this earlier in the conversation.
+       - Fail: "You said you preferred email" when the user never expressed that preference.
+
+    2. Self-contradiction or self-attributed fabrication: The agent contradicts its own prior turn or claims to have already said or done something it did not.
+       - Pass: Agent's later turns remain consistent with earlier ones; corrections are explicitly framed as such.
+       - Fail: Agent says "As I told you, the deadline is Friday" when no such statement was made earlier, or quotes a price that contradicts a price it gave in an earlier turn.
+
+    3. External fact fabrication: The agent asserts world-facts (names, dates, numbers, events, policies) not supported by the conversation or, when provided, by the context.
+       - Pass: Every concrete factual claim is grounded in conversation content or in the provided context.
+       - Fail: Agent invents a product spec, policy detail, or statistic that has no basis in either source.
+
+    ## Anti-bias Rules
+
+    - If context is empty or absent, evaluate against the conversation alone; do not treat the absence of context as a hallucination signal.
+    - Reasonable logical inferences from facts present in the conversation or context are NOT hallucinations.
+    - Generic filler ("That's a great question", "Let me help") making no factual claims is NOT a hallucination.
+    - Agent acknowledgments of uncertainty ("I don't have that information") are NOT hallucinations, even if the underlying fact is known to be true elsewhere.
+    - Evaluate only the agent's turns; user turns are the ground truth for what the user said, not subjects of evaluation.
+
+    ## Scoring
+
+    Return 'Passed' if every claim in every agent turn is supported by the conversation history or the provided context (or appropriately hedged as uncertain). Return 'Failed' if any agent turn contains a fabricated user attribution, a self-contradiction or false self-quotation, or an unsupported external factual claim.
+
+    ## Inputs
+
+    <conversation>{{conversation}}</conversation>
+
+    <context>{{context}}</context>
+
 is_factually_consistent:
   eval_type: agent
   output: Pass/Fail

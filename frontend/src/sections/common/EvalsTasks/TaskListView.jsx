@@ -5,7 +5,6 @@ import {
   Chip,
   IconButton,
   Popover,
-  Tooltip,
   Typography,
 } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
@@ -18,6 +17,7 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "src/components/snackbar";
 import DeleteConfirmation from "./DeleteConfirmation";
 
 // ── Status Config ──
@@ -194,8 +194,9 @@ const buildFilterChips = (filtersApplied) => {
   if (!filtersApplied) return [];
   const chips = [];
 
-  if (filtersApplied.dateRange?.length === 2) {
-    const [start, end] = filtersApplied.dateRange;
+  const dateRange = filtersApplied.date_range || filtersApplied.dateRange;
+  if (dateRange?.length === 2) {
+    const [start, end] = dateRange;
     const fmt = (d) => {
       try {
         return new Date(d).toLocaleDateString(undefined, {
@@ -209,20 +210,45 @@ const buildFilterChips = (filtersApplied) => {
     };
     chips.push(`Date: ${fmt(start)} → ${fmt(end)}`);
   }
-  if (filtersApplied.observationType?.length) {
-    filtersApplied.observationType.forEach((t) => chips.push(`Type: ${t}`));
+  const observationTypes =
+    filtersApplied.observation_type || filtersApplied.observationType;
+  if (observationTypes?.length) {
+    observationTypes.forEach((t) => chips.push(`Type: ${t}`));
   }
-  if (filtersApplied.spanAttributesFilters?.length) {
-    filtersApplied.spanAttributesFilters.forEach((f) => {
-      const key = f.key || f.field || f.name;
-      const op = f.operator || f.op || "=";
-      const val = f.value ?? "";
-      chips.push(`${key} ${op} ${val}`);
+  const spanAttributeFilters =
+    filtersApplied.span_attributes_filters ||
+    filtersApplied.spanAttributesFilters;
+  if (spanAttributeFilters?.length) {
+    spanAttributeFilters.forEach((f) => {
+      const key = f.columnId || f.column_id;
+      if (!key) return;
+      const op =
+        f.filterConfig?.filterOp || f.filter_config?.filter_op || "equals";
+      const rawVal =
+        f.filterConfig?.filterValue ?? f.filter_config?.filter_value;
+      const val = Array.isArray(rawVal) ? rawVal.join(", ") : (rawVal ?? "");
+      const isValuelessOp = op === "is_null" || op === "is_not_null";
+      chips.push(
+        isValuelessOp
+          ? `${key} ${op.replace(/_/g, " ")}`
+          : `${key} ${op} ${val}`,
+      );
     });
   }
   if (filtersApplied.project_id) {
     chips.push(`Project: ${filtersApplied.project_id.slice(0, 8)}…`);
   }
+  [
+    ["trace_id", "Trace"],
+    ["span_id", "Span"],
+    ["session_id", "Session"],
+  ].forEach(([key, label]) => {
+    const values = filtersApplied[key];
+    const arr = Array.isArray(values) ? values : values ? [values] : [];
+    arr.forEach((value) => {
+      chips.push(`${label}: ${String(value).slice(0, 8)}…`);
+    });
+  });
   return chips;
 };
 
@@ -277,11 +303,11 @@ const TaskListView = ({
     ],
     queryFn: async () => {
       const params = {
-        page: page + 1,
+        page_number: page,
         page_size: pageSize,
       };
       if (observeId) params.project_id = observeId;
-      if (debouncedSearch) params.search = debouncedSearch;
+      if (debouncedSearch) params.name = debouncedSearch;
 
       // Map tanstack column IDs (camelCase) → backend column IDs (snake_case).
       // Backend expects snake_case sort keys; the DataTable column IDs are camelCase
@@ -297,8 +323,9 @@ const TaskListView = ({
       const rawSortId = sorting[0]?.id || "created_at";
       const sortField = SORT_FIELD_MAP[rawSortId] || rawSortId;
       const sortDir = sorting[0]?.desc ? "desc" : "asc";
-      params.sort_by = sortField;
-      params.sort_order = sortDir;
+      params.sort_params = JSON.stringify([
+        { column_id: sortField, direction: sortDir },
+      ]);
 
       const { data: resp } = await axios.get(apiEndpoint(), { params });
       return resp?.result;
@@ -316,9 +343,11 @@ const TaskListView = ({
     [data],
   );
   const total =
-    data?.metadata?.total_count ||
-    data?.total ||
-    data?.total_count ||
+    data?.metadata?.total_rows ??
+    data?.metadata?.total_count ??
+    data?.total_rows ??
+    data?.total ??
+    data?.total_count ??
     items.length;
 
   // Pause/Resume mutations
@@ -330,7 +359,14 @@ const TaskListView = ({
   const { mutate: resumeTask } = useMutation({
     mutationFn: (taskId) =>
       axios.post(endpoints.project.resumeEvalTask(taskId)),
+    meta: { errorHandled: true },
     onSuccess: () => refetch(),
+    onError: () => {
+      refetch();
+      enqueueSnackbar("Failed to resume task. It may have already finished.", {
+        variant: "error",
+      });
+    },
   });
 
   // Delete mutation

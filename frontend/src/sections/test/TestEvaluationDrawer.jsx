@@ -93,7 +93,6 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
     });
   }, [queryClient, testId]);
 
-
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
       if (!testId) return;
@@ -137,7 +136,7 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
       <Drawer
         anchor="right"
         open={openTestEvaluation}
-        variant="temporary"
+        variant={onSuccessOfAdditionOfEvals ? "temporary" : "persistent"}
         onClose={onCloseHandler}
         PaperProps={{
           sx: (theme) => ({

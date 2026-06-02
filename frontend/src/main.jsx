@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
+import "./utils/apexchartsCompat";
 
 // Self-hosted Inter font — loads from bundle, no external request to Google Fonts
 import "@fontsource/inter/400.css";
@@ -79,7 +80,10 @@ initReddit();
 // Initialize Twitter (X) pixel (no-op if env vars are unset)
 initTwitter();
 
-if (CURRENT_ENVIRONMENT === "local") {
+if (
+  CURRENT_ENVIRONMENT === "local" &&
+  import.meta.env.VITE_ENABLE_MSW !== "false"
+) {
   logger.debug("STARTING MOCK SERVER");
   worker.start({ onUnhandledRequest: "bypass" });
 }

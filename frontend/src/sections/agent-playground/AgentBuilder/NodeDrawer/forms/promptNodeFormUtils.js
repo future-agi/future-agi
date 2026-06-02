@@ -183,7 +183,10 @@ export function buildPatchPayload(nodeUpdate, config) {
       tools: promptPayloadConfig?.tools || cfg.modelConfig?.tools || [],
       tool_choice:
         promptPayloadConfig?.tool_choice || cfg.modelConfig?.toolChoice || "",
-      template_format: promptPayloadConfig?.template_format || cfg.templateFormat || "mustache",
+      template_format:
+        promptPayloadConfig?.template_format ||
+        cfg.templateFormat ||
+        "mustache",
       save_prompt_version: false,
     };
   }

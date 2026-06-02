@@ -1,12 +1,15 @@
 import structlog
 from django.db import transaction
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import GenericViewSet
 
 from agent_playground.models.choices import GraphVersionStatus
 from agent_playground.models.graph_dataset import GraphDataset
 from agent_playground.models.graph_version import GraphVersion
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.dataset_link import (
     CellUpdateSerializer,
     ColumnSerializer,
@@ -24,7 +27,16 @@ from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
+agent_playground_errors = swagger_auto_schema(
+    responses=AGENT_PLAYGROUND_ERROR_RESPONSES
+)
 
+
+@method_decorator(name="retrieve", decorator=agent_playground_errors)
+@method_decorator(name="create_row", decorator=agent_playground_errors)
+@method_decorator(name="delete_rows", decorator=agent_playground_errors)
+@method_decorator(name="update_cell", decorator=agent_playground_errors)
+@method_decorator(name="execute", decorator=agent_playground_errors)
 class GraphDatasetViewSet(GenericViewSet):
     """
     ViewSet for Graph-linked Dataset operations.

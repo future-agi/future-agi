@@ -21,6 +21,39 @@ class IntegrationPlatform(models.TextChoices):
     LINEAR = "linear", "Linear"
 
 
+class IntegrationCategory(models.TextChoices):
+    """How an integration is used.
+
+    - DATA_SYNC: pulls traces/spans/metrics on a recurring schedule.
+      Owned by the Temporal sync orchestrator.
+    - ACTION_ONLY: one-shot outbound actions (create ticket, post message).
+      Skipped by the sync orchestrator; restricted to one live connection
+      per (organization, workspace).
+    """
+
+    DATA_SYNC = "data_sync", "Data Sync"
+    ACTION_ONLY = "action_only", "Action Only"
+
+
+# Single source of truth for platform → category. When a new platform is
+# added to IntegrationPlatform it MUST get an entry here, otherwise the
+# orchestrator and uniqueness rules can't classify it.
+PLATFORM_CATEGORY: dict[str, IntegrationCategory] = {
+    IntegrationPlatform.LANGFUSE.value: IntegrationCategory.DATA_SYNC,
+    IntegrationPlatform.DATADOG.value: IntegrationCategory.DATA_SYNC,
+    IntegrationPlatform.POSTHOG.value: IntegrationCategory.DATA_SYNC,
+    IntegrationPlatform.PAGERDUTY.value: IntegrationCategory.DATA_SYNC,
+    IntegrationPlatform.MIXPANEL.value: IntegrationCategory.DATA_SYNC,
+    IntegrationPlatform.CLOUD_STORAGE.value: IntegrationCategory.DATA_SYNC,
+    IntegrationPlatform.MESSAGE_QUEUE.value: IntegrationCategory.DATA_SYNC,
+    IntegrationPlatform.LINEAR.value: IntegrationCategory.ACTION_ONLY,
+}
+
+ACTION_ONLY_PLATFORMS: frozenset[str] = frozenset(
+    p for p, cat in PLATFORM_CATEGORY.items() if cat == IntegrationCategory.ACTION_ONLY
+)
+
+
 class ConnectionStatus(models.TextChoices):
     ACTIVE = "active", "Active"
     PAUSED = "paused", "Paused"
@@ -118,6 +151,17 @@ class IntegrationConnection(BaseModel):
                 ],
                 condition=models.Q(deleted=False),
                 name="uq_intconn_org_ws_plat_extproj",
+            ),
+            # Action-only integrations (Linear, etc.) have org-wide credentials
+            # and no per-project mapping, so the broader (org, ws, platform,
+            # external_project_name) constraint above doesn't catch re-adds —
+            # external_project_name is set non-deterministically. Restrict
+            # action-only platforms to one live connection per workspace.
+            models.UniqueConstraint(
+                fields=["organization", "workspace", "platform"],
+                condition=models.Q(platform__in=sorted(ACTION_ONLY_PLATFORMS))
+                & models.Q(deleted=False),
+                name="uq_intconn_org_ws_action_only_active",
             ),
         ]
 

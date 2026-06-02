@@ -32,6 +32,7 @@ def list_feed_issues(
     *,
     search: Optional[str] = None,
     status: Optional[str] = None,
+    severity: Optional[str] = None,
     fix_layer: Optional[str] = None,
     source: Optional[str] = None,
     issue_group: Optional[str] = None,
@@ -46,6 +47,7 @@ def list_feed_issues(
         project_ids,
         search=search,
         status=status,
+        severity=severity,
         fix_layer=fix_layer,
         source=source,
         issue_group=issue_group,
@@ -87,43 +89,60 @@ def update_feed_issue(
     return feed_queries.update_cluster(cluster_id, project_ids, payload)
 
 
-def get_overview_tab(cluster_id: str) -> Optional[OverviewResponse]:
+def get_overview_tab(
+    cluster_id: str, project_ids: Optional[List[str]] = None
+) -> Optional[OverviewResponse]:
     """Overview tab: events over time, pattern summary, representative traces."""
-    return feed_queries.get_overview(cluster_id)
+    return feed_queries.get_overview(cluster_id, project_ids)
 
 
 def get_traces_tab(
-    cluster_id: str, *, limit: int = 50, offset: int = 0
+    cluster_id: str,
+    project_ids: Optional[List[str]] = None,
+    *,
+    limit: int = 50,
+    offset: int = 0,
 ) -> Optional[TracesTabResponse]:
     """Traces tab: aggregates + paginated trace list."""
-    return feed_queries.get_traces_tab(cluster_id, limit=limit, offset=offset)
+    return feed_queries.get_traces_tab(
+        cluster_id, project_ids, limit=limit, offset=offset
+    )
 
 
-def get_trends_tab(cluster_id: str, *, days: int = 14) -> Optional[TrendsTabResponse]:
+def get_trends_tab(
+    cluster_id: str, project_ids: Optional[List[str]] = None, *, days: int = 14
+) -> Optional[TrendsTabResponse]:
     """Trends tab: KPI metrics, daily events, score trends, heatmap."""
-    return feed_queries.get_trends_tab(cluster_id, days=days)
+    return feed_queries.get_trends_tab(cluster_id, project_ids, days=days)
 
 
 def get_sidebar(
-    cluster_id: str, *, trace_id: Optional[str] = None
+    cluster_id: str,
+    project_ids: Optional[List[str]] = None,
+    *,
+    trace_id: Optional[str] = None,
 ) -> Optional[FeedSidebar]:
     """Right panel: timeline, AI metadata, evaluations, co-occurring issues.
 
     ``trace_id`` scopes AI Metadata + Evaluations to that specific trace
     so the sidebar stays in sync with the Overview tab's selection.
     """
-    return feed_queries.get_sidebar(cluster_id, trace_id=trace_id)
+    return feed_queries.get_sidebar(cluster_id, project_ids, trace_id=trace_id)
 
 
 def get_deep_analysis(
-    cluster_id: str, *, trace_id: str
+    cluster_id: str, project_ids: Optional[List[str]] = None, *, trace_id: str
 ) -> Optional[DeepAnalysisResponse]:
     """Read the cached deep analysis for a cluster's trace."""
-    return feed_queries.get_deep_analysis(cluster_id, trace_id)
+    return feed_queries.get_deep_analysis(cluster_id, trace_id, project_ids)
 
 
 def dispatch_deep_analysis(
-    cluster_id: str, *, trace_id: str, force: bool = False
+    cluster_id: str,
+    project_ids: Optional[List[str]] = None,
+    *,
+    trace_id: str,
+    force: bool = False,
 ) -> Optional[DeepAnalysisDispatchResponse]:
     """Kick off (or no-op) a deep analysis run on the given trace."""
     logger.info(
@@ -132,4 +151,6 @@ def dispatch_deep_analysis(
         trace_id=trace_id,
         force=force,
     )
-    return feed_queries.dispatch_deep_analysis(cluster_id, trace_id, force=force)
+    return feed_queries.dispatch_deep_analysis(
+        cluster_id, trace_id, project_ids, force=force
+    )

@@ -1,10 +1,14 @@
 import { Chip, Stack, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
+import {
+  normalizeEvalCellValue,
+  extractScore,
+  extractChoiceLabel,
+} from "src/sections/develop-detail/DataTab/common";
 
-const getEvaluationMetricColor = (value) => {
-  const numericValue =
-    typeof value?.score === "number" ? value.score : parseFloat(value?.score);
+const getEvaluationMetricColor = ( normalized) => {
+  const numericValue = extractScore(normalized);
   if (numericValue < 50) {
     return { backgroundColor: "red.o10", borderColor: "red.500" };
   }
@@ -36,9 +40,17 @@ export default function EvaluationsContent({ evaluationMetrics = {} }) {
         </Typography>
       ) : (
         Object.keys(evaluationMetrics).map((key, index) => {
-          const { backgroundColor, borderColor } = getEvaluationMetricColor(
-            evaluationMetrics[key],
-          );
+          const metric = evaluationMetrics[key];
+          const normalized = normalizeEvalCellValue(metric?.score);
+          const { backgroundColor, borderColor } =
+            getEvaluationMetricColor(normalized);
+          const numericScore = extractScore(normalized);
+          const choiceLabel = extractChoiceLabel(normalized);
+          const scoreText = choiceLabel
+            ? choiceLabel
+            : isNaN(numericScore)
+              ? "—"
+              : `${numericScore}%`;
           return (
             <Chip
               key={index}
@@ -47,7 +59,7 @@ export default function EvaluationsContent({ evaluationMetrics = {} }) {
                   typography="s2"
                   sx={{ color: borderColor }}
                   fontWeight={"fontWeightMedium"}
-                >{`${evaluationMetrics[key].name}: ${evaluationMetrics[key].score}%`}</Typography>
+                >{`${metric.name}: ${scoreText}`}</Typography>
               }
               sx={{
                 backgroundColor: backgroundColor,

@@ -39,6 +39,6 @@ export const getDocsLinkBasedOnOptimizer = (optimiserName) => {
 
   return (
     OPTIMIZER_DOCS_MAP[optimiserName] ??
-    "https://docs.futureagi.com/docs/optimization/optimizers/overview"
+    "https://docs.futureagi.com/docs/optimization"
   );
 };

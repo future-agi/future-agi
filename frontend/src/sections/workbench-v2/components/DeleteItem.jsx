@@ -85,7 +85,7 @@ export const DeleteItem = ({
       }}
       onSubmit={handleDelete}
       isLoading={isDeleting}
-      isValid={id}
+      isValid={Boolean(id)}
     >
       <Box
         sx={{

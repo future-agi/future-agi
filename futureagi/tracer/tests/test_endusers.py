@@ -20,6 +20,18 @@ from tracer.utils.helper import get_default_project_version_config
 User = get_user_model()
 
 
+def _canonical_span_attr_filter(filter_op="equals", filter_value="alpha"):
+    return {
+        "column_id": "customer_tier",
+        "filter_config": {
+            "col_type": "SPAN_ATTRIBUTE",
+            "filter_type": "text",
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+        },
+    }
+
+
 @pytest.mark.integration
 @pytest.mark.core_backend
 class TestUsersViewAPI(APITestCase):
@@ -266,7 +278,9 @@ class TestUsersViewAPI(APITestCase):
 
         data = {
             "project_id": self.test_project_id,
-            "sort_params": json.dumps({"column_id": "total_cost", "direction": "asc"}),
+            "sort_params": json.dumps(
+                [{"column_id": "total_cost", "direction": "asc"}]
+            ),
         }
 
         response = self.client.get(self.url, data)
@@ -287,7 +301,9 @@ class TestUsersViewAPI(APITestCase):
 
         data = {
             "project_id": self.test_project_id,
-            "sort_params": json.dumps({"column_id": "num_traces", "direction": "desc"}),
+            "sort_params": json.dumps(
+                [{"column_id": "num_traces", "direction": "desc"}]
+            ),
         }
 
         response = self.client.get(self.url, data)
@@ -307,8 +323,22 @@ class TestUsersViewAPI(APITestCase):
         mock_get_spans.return_value = mock_results
 
         test_filters = [
-            {"column": "total_cost", "operator": "gt", "value": 10},
-            {"column": "num_traces", "operator": "gte", "value": 5},
+            {
+                "column_id": "total_cost",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than",
+                    "filter_value": 10,
+                },
+            },
+            {
+                "column_id": "num_traces",
+                "filter_config": {
+                    "filter_type": "number",
+                    "filter_op": "greater_than_or_equal",
+                    "filter_value": 5,
+                },
+            },
         ]
 
         data = {"project_id": self.test_project_id, "filters": json.dumps(test_filters)}
@@ -331,10 +361,12 @@ class TestUsersViewAPI(APITestCase):
         data = {
             "project_id": self.test_project_id,
             "sort_params": json.dumps(
-                {
-                    "column_id": "avg_trace_latency",  # Should map to avg_latency_trace
-                    "direction": "asc",
-                }
+                [
+                    {
+                        "column_id": "avg_trace_latency",  # Should map to avg_latency_trace
+                        "direction": "asc",
+                    }
+                ]
             ),
         }
 
@@ -492,7 +524,9 @@ class TestUsersViewAPI(APITestCase):
 
         data = {
             "project_id": self.test_project_id,
-            "sort_params": json.dumps({"column_id": "num_traces", "direction": "desc"}),
+            "sort_params": json.dumps(
+                [{"column_id": "num_traces", "direction": "desc"}]
+            ),
         }
 
         response = self.client.get(self.url, data)
@@ -514,7 +548,7 @@ class TestUsersViewAPI(APITestCase):
         data = {
             "project_id": self.test_project_id,
             "sort_params": json.dumps(
-                {"column_id": "invalid_column", "direction": "asc"}
+                [{"column_id": "invalid_column", "direction": "asc"}]
             ),
         }
 
@@ -691,12 +725,12 @@ class TestUserMetricsAndGraphAPI(APITestCase):
     def test_get_user_metrics_missing_project_id(self):
         """Test get_user_metrics with missing project_id"""
         url = f"{self.base_url}get_user_metrics/"
-        data = {"user_id": self.test_user_id, "filters": []}
+        data = {"end_user_id": str(self.end_user.id), "filters": []}
 
         response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("Project id is required", str(response.data["result"]))
+        self.assertIn("project_id", str(response.data["result"]))
 
     def test_get_user_metrics_missing_user_id(self):
         """Test get_user_metrics with missing end_user_id"""
@@ -706,7 +740,7 @@ class TestUserMetricsAndGraphAPI(APITestCase):
         response = self.client.post(url, data, format="json")
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("End User id is required", str(response.data["result"]))
+        self.assertIn("end_user_id", str(response.data["result"]))
 
     def test_get_user_metrics_user_not_found(self):
         """Test get_user_metrics with non-existent user"""
@@ -761,7 +795,7 @@ class TestUserMetricsAndGraphAPI(APITestCase):
         mock_get_spans.return_value = mock_spans
 
         url = f"{self.base_url}get_user_metrics/"
-        test_filters = [{"column": "total_cost", "operator": "gt", "value": 10}]
+        test_filters = [_canonical_span_attr_filter()]
         data = {
             "end_user_id": str(self.end_user.id),
             "project_id": self.test_project_id,
@@ -864,11 +898,11 @@ class TestUserMetricsAndGraphAPI(APITestCase):
         data = {"interval": "hour", "filters": []}
 
         response = self.client.post(
-            f"{url}?user_id={self.test_user_id}", data, format="json"
+            f"{url}?end_user_id={self.end_user.id}", data, format="json"
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("Project id is required", str(response.data["result"]))
+        self.assertIn("project_id", str(response.data["result"]))
 
     def test_get_user_graph_data_missing_user_id(self):
         """Test get_user_graph_data with missing end_user_id"""
@@ -880,7 +914,7 @@ class TestUserMetricsAndGraphAPI(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn("End User id is required", str(response.data["result"]))
+        self.assertIn("end_user_id", str(response.data["result"]))
 
     def test_get_user_graph_data_user_not_found(self):
         """Test get_user_graph_data with non-existent user"""
@@ -961,9 +995,7 @@ class TestUserMetricsAndGraphAPI(APITestCase):
         mock_graph_engine.return_value = mock_graph_instance
 
         url = f"{self.base_url}get_user_graph_data/"
-        test_filters = [
-            {"column": "created_at", "operator": "gte", "value": "2024-01-01"}
-        ]
+        test_filters = [_canonical_span_attr_filter()]
         data = {"interval": "hour", "filters": test_filters}
 
         response = self.client.post(

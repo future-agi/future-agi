@@ -1,10 +1,11 @@
-import json
 import time
 
 import structlog
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.viewsets import ModelViewSet
+from rest_framework import status
+from rest_framework.response import Response
+from rest_framework.viewsets import GenericViewSet
 
 logger = structlog.get_logger(__name__)
 from accounts.utils import get_request_organization
@@ -17,13 +18,41 @@ from tracer.serializers.monitor import (
 from tracer.utils.graphs_optimized import (
     get_all_system_metrics,
     get_eval_graph_data,
+    get_system_metric_data,
 )
 
 
-class ChartsView(ModelViewSet):
+class ChartsView(GenericViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     serializer_class = FetchGraphSerializer
+
+    def _unsupported_crud_response(self):
+        return Response(
+            {
+                "status": False,
+                "detail": "Charts CRUD is not supported. Use /tracer/charts/fetch_graph/.",
+            },
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
+    def list(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def create(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def retrieve(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def update(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def partial_update(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
+
+    def destroy(self, request, *args, **kwargs):
+        return self._unsupported_crud_response()
 
     @action(detail=False, methods=["get"])
     def fetch_graph(self, request, *args, **kwargs):
@@ -46,31 +75,7 @@ class ChartsView(ModelViewSet):
         start_time = time.time()
 
         try:
-            # Get data from query parameters
-            query_data = {
-                "interval": request.query_params.get("interval"),
-                "filters": request.query_params.get("filters"),
-                "property": request.query_params.get("property"),
-                "req_data_config": request.query_params.get("req_data_config")
-                or request.query_params.get("reqDataConfig"),
-                "project_id": request.query_params.get("project_id")
-                or request.query_params.get("projectId"),
-            }
-
-            # Parse JSON fields
-            try:
-                if query_data["filters"]:
-                    query_data["filters"] = json.loads(query_data["filters"])
-                if query_data["req_data_config"]:
-                    query_data["req_data_config"] = json.loads(
-                        query_data["req_data_config"]
-                    )
-            except json.JSONDecodeError as e:
-                return self._gm.bad_request(
-                    f"Invalid JSON format in query parameters: {str(e)}"
-                )
-
-            serializer = self.serializer_class(data=query_data)
+            serializer = self.serializer_class(data=request.query_params)
             if not serializer.is_valid():
                 return self._gm.bad_request(serializer.errors)
 
@@ -96,10 +101,15 @@ class ChartsView(ModelViewSet):
 
             try:
                 project = Project.objects.get(
-                    id=project_id, organization=get_request_organization(request)
+                    id=project_id,
+                    organization=get_request_organization(request),
+                    workspace=request.workspace,
+                    deleted=False,
                 )
             except Project.DoesNotExist:
                 return self._gm.bad_request("Project does not exist")
+
+            project_id = str(project.id)
 
             if data_type == "EVAL":
                 metric_data = get_eval_graph_data(
@@ -117,6 +127,16 @@ class ChartsView(ModelViewSet):
                     filters=filters,
                     property=property,
                     system_metric_filters={"project_id": project_id},
+                )
+
+            elif data_type == "SYSTEM_METRIC":
+                metric_data = get_system_metric_data(
+                    interval=interval,
+                    filters=filters,
+                    property=property,
+                    req_data_config=req_data_config,
+                    system_metric_filters={"project_id": project_id},
+                    observe_type="charts",
                 )
 
             else:

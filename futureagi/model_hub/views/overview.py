@@ -3,6 +3,7 @@ import datetime
 from django.db.models import Count
 from django.db.models.functions import TruncHour
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -10,6 +11,10 @@ from rest_framework.views import APIView
 from accounts.utils import get_request_organization
 from model_hub.models.monitor_alert import MonitorAlert
 from model_hub.serializers.ai_model import AIModelSerializer
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    OverviewResponseSerializer,
+)
 from model_hub.utils.clickhouse import get_model_volume
 
 
@@ -17,6 +22,9 @@ class OverviewView(APIView):
     serializer_class = AIModelSerializer
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: OverviewResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         # Get the organization of the logged-in user
         user_organization = get_request_organization(self.request)

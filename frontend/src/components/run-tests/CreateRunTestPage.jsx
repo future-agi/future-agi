@@ -547,13 +547,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
             evalConfig.evalTemplateName ||
             "Unnamed Evaluation",
           template_id: evalConfig.templateId || evalConfig.id?.split("_")[0], // Extract original template ID
-          template_name: evalConfig.evalTemplateName,
           mapping: evalConfig.config?.mapping || {},
           config: evalConfig.config || {},
-          description: evalConfig.description || "",
-          type: evalConfig.type || "user_built",
-          required_keys: evalConfig.evalRequiredKeys || [],
-          tags: evalConfig.evalTemplateTags || [],
           error_localizer: evalConfig?.errorLocalizer,
           ...(evalConfig?.model && { model: evalConfig.model }),
           ...(evalConfig?.evalGroup && { eval_group: evalConfig.evalGroup }),

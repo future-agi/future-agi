@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import {
   Box,
+  ButtonBase,
   Chip,
   IconButton,
   Skeleton,
@@ -9,6 +10,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
+import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
@@ -16,10 +18,15 @@ import { useQueryClient } from "@tanstack/react-query";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
+
+import PartialInputWarningDetails, {
+  PARTIAL_INPUT_WARNING_TYPE,
+} from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
 import { isEditableElement } from "src/utils/keyboardUtils";
@@ -140,33 +147,81 @@ const useColumns = () =>
         id: "result",
         accessorKey: "result",
         header: "Result",
-        size: 100,
+        size: 130,
         cell: ({ getValue, row: tableRow }) => {
           const v = getValue();
+          const warnings = tableRow.original?.warnings || [];
+          const partial = warnings.find?.(
+            (w) => w?.type === PARTIAL_INPUT_WARNING_TYPE,
+          );
+          const partialBadge = partial ? (
+            <CustomTooltip
+              show
+              arrow
+              title={
+                partial.message ||
+                `Eval ran with some inputs empty: ${(partial.empty_keys || []).join(", ")}`
+              }
+            >
+              <Box
+                sx={(theme) => ({
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 18,
+                  height: 18,
+                  borderRadius: "50%",
+                  backgroundColor: alpha(
+                    theme.palette.warning.main,
+                    theme.palette.mode === "dark" ? 0.24 : 0.16,
+                  ),
+                  color:
+                    theme.palette.mode === "dark"
+                      ? theme.palette.warning.light
+                      : theme.palette.warning.dark,
+                  cursor: "help",
+                })}
+                data-testid="usage-partial-input-warning"
+              >
+                <Iconify
+                  icon="material-symbols:warning-rounded"
+                  width="14px"
+                  height="14px"
+                />
+              </Box>
+            </CustomTooltip>
+          ) : null;
+
           if (!v) {
             if (tableRow.original?.status === "error") {
               return (
-                <Chip
-                  label="Error"
-                  size="small"
-                  color="error"
-                  variant="outlined"
-                  sx={{ fontSize: "11px", height: 20 }}
-                />
+                <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                  <Chip
+                    label="Error"
+                    size="small"
+                    color="error"
+                    variant="outlined"
+                    sx={{ fontSize: "11px", height: 20 }}
+                  />
+                  {partialBadge}
+                </Box>
               );
             }
-            return null;
+            return partialBadge;
           }
           const isPassed = v === "Passed" || v === "Pass";
           const isFailed = v === "Failed" || v === "Fail";
           return (
-            <Chip
-              label={v}
-              size="small"
-              color={isPassed ? "success" : isFailed ? "error" : "default"}
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 20 }}
-            />
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+              <Chip
+                label={v}
+                size="small"
+                color={isPassed ? "success" : isFailed ? "error" : "default"}
+                variant="outlined"
+                sx={{ fontSize: "11px", height: 20 }}
+              />
+              {partialBadge}
+            </Box>
           );
         },
       },
@@ -409,7 +464,15 @@ const EvalUsageTab = ({
   }, [detailIndex, filteredLogs.length]);
 
   return (
-    <Box sx={{ display: "flex", height: "100%", minHeight: 0 }}>
+    <Box
+      sx={{
+        display: "flex",
+        height: "100%",
+        minHeight: 0,
+        position: "relative",
+        overflow: "hidden",
+      }}
+    >
       {/* ── Main content ── */}
       <Box
         sx={{
@@ -418,6 +481,7 @@ const EvalUsageTab = ({
           flexDirection: "column",
           minHeight: 0,
           minWidth: 0,
+          marginRight: detailIndex !== null ? "420px" : 0,
           transition: "margin-right 0.25s",
         }}
       >
@@ -562,7 +626,7 @@ const EvalUsageTab = ({
               />
             </Box>
           </Box>
-          <Box sx={{ flex: 1, minHeight: 0 }}>
+          <Box sx={{ flex: 1,overflowY: "auto", minHeight: 0 }}>
             <DataTable
               columns={columns}
               data={filteredLogs}
@@ -596,14 +660,17 @@ const EvalUsageTab = ({
       >
         <Box
           sx={{
+            position: "absolute",
+            top: 0,
+            right: 0,
+            bottom: 0,
             width: 420,
-            flexShrink: 0,
             borderLeft: "1px solid",
             borderColor: "divider",
             display: "flex",
             flexDirection: "column",
-            height: "100%",
             backgroundColor: "background.paper",
+            zIndex: 1,
           }}
         >
           {/* Header with prev/next */}
@@ -721,6 +788,7 @@ const EvalUsageTab = ({
   );
 };
 
+
 // ── Detail panel content with Formatted/JSON tabs + feedback ──
 const DetailPanelContent = ({
   row,
@@ -733,6 +801,7 @@ const DetailPanelContent = ({
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
   const detail = row.detail || {};
+  const warnings = row.warnings || detail.warnings || [];
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
 
   return (
@@ -753,17 +822,17 @@ const DetailPanelContent = ({
         }}
       >
         {["formatted", "json"].map((m) => (
-          <Box
+          <ButtonBase
             key={m}
             onClick={() => setViewMode(m)}
+            disableRipple
             sx={{
               px: 1.5,
               py: 0.375,
               borderRadius: "5px",
               fontSize: "11px",
-              cursor: "pointer",
               fontWeight: viewMode === m ? 600 : 400,
-              color: viewMode === m ? "text.primary" : "text.disabled",
+              color: viewMode === m ? "text.primary" : "text.secondary",
               backgroundColor:
                 viewMode === m
                   ? (t) =>
@@ -771,10 +840,16 @@ const DetailPanelContent = ({
                         ? "rgba(255,255,255,0.08)"
                         : "action.hover"
                   : "transparent",
+              "&:hover": {
+                backgroundColor: (t) =>
+                  t.palette.mode === "dark"
+                    ? "rgba(255,255,255,0.04)"
+                    : "action.hover",
+              },
             }}
           >
             {m === "formatted" ? "Formatted" : "JSON"}
-          </Box>
+          </ButtonBase>
         ))}
       </Box>
 
@@ -875,6 +950,7 @@ const DetailPanelContent = ({
                       : "default"
                 }
               />
+              <PartialInputWarningDetails warnings={warnings} />
               <DetailRow
                 label="Source"
                 value={

@@ -117,6 +117,15 @@ class TestAgentccGatewayAPI:
         assert data["result"]["provider_count"] == 0
         assert data["result"]["model_count"] == 0
 
+    def test_health_check_rejects_body_fields(self, auth_client, gateway_id):
+        response = auth_client.post(
+            f"/agentcc/gateways/{gateway_id}/health_check/",
+            {"unexpected": True},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["unexpected"] == ["Unknown field."]
+
     @patch("agentcc.views.gateway.get_gateway_client")
     def test_health_check_unreachable(self, mock_get_client, auth_client, gateway_id):
         from agentcc.services.gateway_client import GatewayClientError
@@ -128,7 +137,9 @@ class TestAgentccGatewayAPI:
         response = auth_client.post(f"/agentcc/gateways/{gateway_id}/health_check/")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         data = response.json()
-        assert data["result"]["status"] == "unreachable"
+        assert data["status"] is False
+        assert data["details"]["status"] == ["unreachable"]
+        assert "Connection refused" in data["detail"]
 
     @patch("agentcc.views.gateway.get_gateway_client")
     def test_get_config(self, mock_get_client, auth_client, gateway_id):
@@ -399,6 +410,26 @@ class TestWebhookAPI:
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"]["ingested"] == 0
 
+    def test_webhook_rejects_unknown_body_field(self, api_client):
+        response = api_client.post(
+            "/agentcc/webhook/logs/",
+            {"logs": [], "legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_shadow_webhook_rejects_unknown_body_field(self, api_client):
+        response = api_client.post(
+            "/agentcc/webhook/shadow-results/",
+            {"results": [], "legacy_extra": True},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.json()["details"]["legacy_extra"] == ["Unknown field."]
+
     def test_webhook_with_secret(self, api_client, gateway_id):
         with patch("agentcc.views.webhook.AGENTCC_WEBHOOK_SECRET", "my-secret"):
             # Without secret — should fail
@@ -581,6 +612,15 @@ class TestRequestLogAdvancedFilters:
         data = response.json()
         assert data["count"] == 1
 
+    def test_filter_by_status_code_range(self, auth_client, sample_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/?min_status_code=400&max_status_code=499"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 1
+        assert data["results"][0]["status_code"] == 429
+
     def test_ordering_by_latency(self, auth_client, sample_logs):
         response = auth_client.get("/agentcc/request-logs/?ordering=-latency_ms")
         assert response.status_code == status.HTTP_200_OK
@@ -683,6 +723,28 @@ class TestRequestLogSessions:
         assert sess_b["request_count"] == 1
         assert sess_b["error_count"] == 0
 
+    def test_sessions_ordering_by_request_count(self, auth_client, sample_logs):
+        response = auth_client.get(
+            "/agentcc/request-logs/sessions/?ordering=-request_count"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["results"][0]["session_id"] == "sess-A"
+        assert data["results"][0]["request_count"] == 2
+
+    def test_sessions_apply_log_filters_before_aggregation(
+        self, auth_client, sample_logs
+    ):
+        response = auth_client.get(
+            "/agentcc/request-logs/sessions/?provider=anthropic"
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 1
+        assert data["results"][0]["session_id"] == "sess-A"
+        assert data["results"][0]["request_count"] == 1
+        assert data["results"][0]["providers"] == ["anthropic"]
+
     def test_session_detail(self, auth_client, sample_logs):
         response = auth_client.get("/agentcc/request-logs/sessions/sess-A/")
         assert response.status_code == status.HTTP_200_OK
@@ -721,7 +783,7 @@ class TestRequestLogExport:
         assert response.status_code == status.HTTP_200_OK
         assert "ndjson" in response["Content-Type"]
         content = b"".join(response.streaming_content).decode()
-        lines = [l for l in content.strip().split("\n") if l]
+        lines = [line for line in content.strip().split("\n") if line]
         assert len(lines) == 4  # 4 data rows (no header in JSON)
 
     def test_export_with_filters(self, auth_client, sample_logs):
@@ -940,7 +1002,9 @@ class TestAnalyticsUsageTimeseries:
         assert total == 10
 
     def test_usage_grouped_by_model(self, auth_client, analytics_logs):
-        response = auth_client.get("/agentcc/analytics/usage-timeseries/?group_by=model")
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?group_by=model"
+        )
         assert response.status_code == status.HTTP_200_OK
         result = response.json()["result"]
         assert result["group_by"] == "model"
@@ -958,7 +1022,9 @@ class TestAnalyticsUsageTimeseries:
         assert "anthropic" in result["groups"]
 
     def test_usage_with_granularity(self, auth_client, analytics_logs):
-        response = auth_client.get("/agentcc/analytics/usage-timeseries/?granularity=day")
+        response = auth_client.get(
+            "/agentcc/analytics/usage-timeseries/?granularity=day"
+        )
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["result"]["granularity"] == "day"
 
@@ -997,7 +1063,9 @@ class TestAnalyticsCostBreakdown:
             assert field in item, f"Missing field: {field}"
 
     def test_cost_by_provider(self, auth_client, analytics_logs):
-        response = auth_client.get("/agentcc/analytics/cost-breakdown/?group_by=provider")
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=provider"
+        )
         assert response.status_code == status.HTTP_200_OK
         result = response.json()["result"]
         assert result["group_by"] == "provider"
@@ -1006,7 +1074,9 @@ class TestAnalyticsCostBreakdown:
         assert "anthropic" in names
 
     def test_cost_by_user(self, auth_client, analytics_logs):
-        response = auth_client.get("/agentcc/analytics/cost-breakdown/?group_by=user_id")
+        response = auth_client.get(
+            "/agentcc/analytics/cost-breakdown/?group_by=user_id"
+        )
         assert response.status_code == status.HTTP_200_OK
         result = response.json()["result"]
         assert len(result["breakdown"]) == 3  # user-1, user-2, user-3

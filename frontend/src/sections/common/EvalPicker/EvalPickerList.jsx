@@ -2,7 +2,9 @@ import {
   Box,
   Button,
   Chip,
+  CircularProgress,
   IconButton,
+  InputAdornment,
   Table,
   TableBody,
   TableCell,
@@ -178,7 +180,9 @@ const EvalDetailPanel = ({ evalData }) => {
   const { data: configData, isLoading } = useQuery({
     queryKey: ["evals", "detail", templateId],
     queryFn: async () => {
-      const { data } = await axios.get(endpoints.develop.eval.getEvalDetail(templateId));
+      const { data } = await axios.get(
+        endpoints.develop.eval.getEvalDetail(templateId),
+      );
       return data?.result;
     },
     enabled: !!templateId,
@@ -201,7 +205,8 @@ const EvalDetailPanel = ({ evalData }) => {
   const normalizedConfigData = normalizeEvalPickerEval(configData);
   const normalizedEvalData = normalizeEvalPickerEval(evalData);
 
-  const evalType = normalizedConfigData?.evalType || normalizedEvalData?.evalType || "llm";
+  const evalType =
+    normalizedConfigData?.evalType || normalizedEvalData?.evalType || "llm";
   const outputType =
     normalizedConfigData?.outputType || normalizedEvalData?.outputType || "";
   const description = configData?.description || evalData?.description || "";
@@ -222,7 +227,8 @@ const EvalDetailPanel = ({ evalData }) => {
     configData?.choicesMap ||
     {};
   const instructions = configData?.instructions || evalData?.instructions || "";
-  const code = getEvalCode(normalizedConfigData) || getEvalCode(normalizedEvalData);
+  const code =
+    getEvalCode(normalizedConfigData) || getEvalCode(normalizedEvalData);
   const codeLanguage =
     getEvalCodeLanguage(normalizedConfigData) ||
     getEvalCodeLanguage(normalizedEvalData);
@@ -487,6 +493,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     items,
     total,
     isLoading,
+    isSearching,
     searchQuery,
     setSearchQuery,
     page,
@@ -589,8 +596,23 @@ const EvalPickerList = ({ onSelectEval }) => {
               setPage(0);
               setExpandedEvalId(null);
             }}
+            InputProps={
+              isSearching && searchQuery.trim()
+                ? {
+                    endAdornment: (
+                      <InputAdornment position="end">
+                        <CircularProgress
+                          size={14}
+                          thickness={5}
+                          aria-label="Searching evaluations"
+                        />
+                      </InputAdornment>
+                    ),
+                  }
+                : undefined
+            }
           />
-          {!lockedFilters && (
+
             <Button
               size="small"
               variant="outlined"
@@ -607,12 +629,12 @@ const EvalPickerList = ({ onSelectEval }) => {
             >
               Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
             </Button>
-          )}
+
         </Box>
       </Box>
 
       {/* Quick tag filters */}
-      {!lockedFilters && (
+
         <Box
           sx={{
             display: "flex",
@@ -683,7 +705,6 @@ const EvalPickerList = ({ onSelectEval }) => {
             />
           ) : null}
         </Box>
-      )}
 
       {/* Scrollable Table */}
       <TableContainer sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
@@ -929,6 +950,7 @@ const EvalPickerList = ({ onSelectEval }) => {
         open={Boolean(filterAnchorEl)}
         onClose={() => setFilterAnchorEl(null)}
         currentFilters={filters}
+        lockedFilters={lockedFilters}
         onApply={(newFilters) => {
           setFilters(newFilters);
           setPage(0);

@@ -81,8 +81,8 @@ const EvaluateArrayCellRenderer = ({
               sx={{
                 borderRadius: theme.spacing(0.5),
                 borderColor:
-                  choicesBorderColourMap[choicesMap[item] ?? "neutral"],
-                color: choicesFontColourMap[choicesMap[item] ?? "neutral"],
+                  choicesBorderColourMap?.[choicesMap?.[item] ?? "neutral"],
+                color: choicesFontColourMap?.[choicesMap?.[item] ?? "neutral"],
                 fontWeight: 400,
                 typography: "s3",
               }}

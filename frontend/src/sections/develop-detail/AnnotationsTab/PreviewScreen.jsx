@@ -87,7 +87,7 @@ export default function PreviewScreen() {
         endpoints.annotation.annotateRow(annotationId),
         {
           params: {
-            rowOrder: rowOrder,
+            row_order: rowOrder,
           },
         },
       );

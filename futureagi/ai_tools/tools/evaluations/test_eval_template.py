@@ -53,15 +53,20 @@ class TestEvalTemplateTool(BaseTool):
 
         config = template.config or {}
         required_keys = config.get("required_keys", [])
+        is_user_custom_eval = bool(config.get("custom_eval", False))
 
-        # Validate required keys are present in mapping
-        missing_keys = [k for k in required_keys if k not in params.mapping]
-        if missing_keys:
-            return ToolResult.error(
-                f"Missing required keys in mapping: {', '.join(f'`{k}`' for k in missing_keys)}. "
-                f"Required: {', '.join(f'`{k}`' for k in required_keys)}",
-                error_code="VALIDATION_ERROR",
-            )
+        # System evals stay strict — every required key must be mapped.
+        # Custom evals let missing keys flow through; the shared validator
+        # at execute time decides whether to fail (all empty) or run with
+        # a partial_input warning.
+        if not is_user_custom_eval:
+            missing_keys = [k for k in required_keys if k not in params.mapping]
+            if missing_keys:
+                return ToolResult.error(
+                    f"Missing required keys in mapping: {', '.join(f'`{k}`' for k in missing_keys)}. "
+                    f"Required: {', '.join(f'`{k}`' for k in required_keys)}",
+                    error_code="VALIDATION_ERROR",
+                )
 
         # Build eval config
         eval_config = {

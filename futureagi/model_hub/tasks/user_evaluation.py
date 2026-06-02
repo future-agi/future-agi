@@ -42,12 +42,12 @@ from tfc.utils.distributed_locks import distributed_lock_manager
 from tfc.utils.distributed_state import evaluation_tracker
 from tfc.utils.error_codes import get_error_for_api_status
 from tracer.models.observation_span import EvalLogger
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.models.usage import APICallLog, APICallStatusChoices, APICallTypeChoices
+    from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
-    APICallStatusChoices = None
-    APICallTypeChoices = None
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
 except ImportError:
@@ -181,10 +181,20 @@ def process_single_evaluation(user_eval_metric):
         if is_oss():
             user_eval_metric.status = StatusType.FAILED.value
             user_eval_metric.save(update_fields=["status"])
-            raise ValueError(
+            _err_msg = (
                 "Agent evaluations are not available on your plan. "
                 "Use LLM-as-a-Judge or Code evaluations instead."
             )
+            # Mark cells as error so the UI doesn't stay stuck on loading
+            class _ErrInfo:
+                error_code = "ENTITLEMENT_DENIED"
+                reason = _err_msg
+                dimension = ""
+                current_usage = 0
+                limit = 0
+                upgrade_cta = None
+            _mark_cells_usage_limit_error(user_eval_metric, _ErrInfo())
+            raise ValueError(_err_msg)
 
     try:
         from ee.usage.services.metering import check_usage
@@ -1090,27 +1100,28 @@ def process_single_error_localization(task_id):
                 raise ValueError(usage_check.reason or "Usage limit exceeded")
 
         # Log and deduct cost for error localization
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=task.organization,
-            api_call_type=APICallTypeChoices.ERROR_LOCALIZER.value,
-            workspace=task.workspace,
-            source="error_localizer",
-            source_id=str(task.id),
-            config={
-                "reference_id": str(task.source_id),
-                "error_localizer_task_id": str(task.id),
-            },
-        )
+        if log_and_deduct_cost_for_api_request is not None:
+            api_call_log_row = log_and_deduct_cost_for_api_request(
+                organization=task.organization,
+                api_call_type=APICallTypeChoices.ERROR_LOCALIZER.value,
+                workspace=task.workspace,
+                source="error_localizer",
+                source_id=str(task.id),
+                config={
+                    "reference_id": str(task.source_id),
+                    "error_localizer_task_id": str(task.id),
+                },
+            )
 
-        if not api_call_log_row:
-            logger.error("API call not allowed : Error validating the api call.")
-            task.mark_as_failed("API call not allowed : Error validating the api call.")
-            raise ValueError("API call not allowed : Error validating the api call.")
+            if not api_call_log_row:
+                logger.error("API call not allowed : Error validating the api call.")
+                task.mark_as_failed("API call not allowed : Error validating the api call.")
+                raise ValueError("API call not allowed : Error validating the api call.")
 
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            error_message = get_error_for_api_status(api_call_log_row.status)
-            task.mark_as_failed(error_message)
-            return
+            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                error_message = get_error_for_api_status(api_call_log_row.status)
+                task.mark_as_failed(error_message)
+                return
 
         try:
             localizer = ErrorLocalizer(
@@ -1134,7 +1145,8 @@ def process_single_error_localization(task_id):
                 f"Error in process_single_error_localization: {str(e)}\n{traceback.format_exc()}"
             )
             task.mark_as_failed(str(e))
-            refund_cost_for_api_call(api_call_log_row)
+            if refund_cost_for_api_call is not None:
+                refund_cost_for_api_call(api_call_log_row)
             return
 
         # Check if we got valid results
@@ -1143,7 +1155,8 @@ def process_single_error_localization(task_id):
                 f"Error localization returned empty results for cell {task.source_id}"
             )
             task.mark_as_skipped("Error localization returned empty results")
-            refund_cost_for_api_call(api_call_log_row)
+            if refund_cost_for_api_call is not None:
+                refund_cost_for_api_call(api_call_log_row)
             return
 
         # Update the task with the results
@@ -1173,9 +1186,11 @@ def process_single_error_localization(task_id):
             actual_cost = getattr(localizer, "cost", {}).get("total_cost", 0)
             if not actual_cost and hasattr(localizer, "llm"):
                 actual_cost = getattr(localizer.llm, "cost", {}).get("total_cost", 0)
-            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+            if BillingConfig is not None:
+                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            emit(
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                emit(
                 UsageEvent(
                     org_id=str(task.organization.id),
                     event_type=BillingEventType.ERROR_LOCALIZER,
@@ -1212,7 +1227,8 @@ def process_single_error_localization(task_id):
                 metadata = task.metadata
                 if metadata.get("log_id", None):
                     try:
-                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        if APICallLog is not None:
+                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
                         config = json.loads(log.config)
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
@@ -1226,7 +1242,8 @@ def process_single_error_localization(task_id):
                         logger.info("Log doesn't exist.")
             except Exception as e:
                 logger.error(f"Error in updating cell metadata: {str(e)}")
-                refund_cost_for_api_call(api_call_log_row)
+                if refund_cost_for_api_call is not None:
+                    refund_cost_for_api_call(api_call_log_row)
                 task.mark_as_failed(str(e))
 
         elif task.source == ErrorLocalizerSource.OBSERVE:
@@ -1248,7 +1265,8 @@ def process_single_error_localization(task_id):
                 metadata = task.metadata
                 if metadata.get("log_id", None):
                     try:
-                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        if APICallLog is not None:
+                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
                         config = json.loads(log.config)
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
@@ -1263,12 +1281,14 @@ def process_single_error_localization(task_id):
 
             except Exception as e:
                 logger.error(f"Error in updating span metadata: {str(e)}")
-                refund_cost_for_api_call(api_call_log_row)
+                if refund_cost_for_api_call is not None:
+                    refund_cost_for_api_call(api_call_log_row)
                 task.mark_as_failed(str(e))
 
         elif task.source == ErrorLocalizerSource.PLAYGROUND:
             try:
-                eval_logger = APICallLog.objects.get(log_id=task.source_id)
+                if APICallLog is not None:
+                    eval_logger = APICallLog.objects.get(log_id=task.source_id)
                 config = json.loads(eval_logger.config) or {}
                 config["error_localizer"] = {
                     "error_analysis": error_analysis,
@@ -1280,7 +1300,8 @@ def process_single_error_localization(task_id):
                 eval_logger.save(update_fields=["config"])
             except Exception as e:
                 logger.exception(f"Error in updating log config: {str(e)}")
-                refund_cost_for_api_call(api_call_log_row)
+                if refund_cost_for_api_call is not None:
+                    refund_cost_for_api_call(api_call_log_row)
                 task.mark_as_failed(str(e))
     finally:
         close_old_connections()

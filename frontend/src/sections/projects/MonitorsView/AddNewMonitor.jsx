@@ -25,7 +25,7 @@ const AddNewMonitor = ({
   const { control, handleSubmit, watch, reset } = useForm({
     defaultValues: {
       name: "",
-      metric: "latency",
+      metric: "span_response_time",
       thresholdType: "greater_than",
       thresholdValue: "",
       notificationEmails: [],
@@ -49,38 +49,51 @@ const AddNewMonitor = ({
   const { data: metricList } = useQuery({
     queryKey: ["monitor-metric-list", observeId],
     queryFn: () =>
-      axios.get(endpoints.project.getMonitorMetricList(), {
+      axios.get(endpoints.project.getMonitorMetricOptions, {
         params: { project_id: observeId },
       }),
-    select: (data) => data.data.result,
+    select: (data) => data.data.result || [],
   });
 
   const showMetricName = metricList?.find((metric) => metric.id === metricName);
 
+  const getMonitorPayload = (data) => {
+    const metric = metricList?.find((metric) => metric.id === data.metric);
+    const isEvalMetric = metric?.metric_type === "evaluation_metrics";
+
+    return {
+      name: data.name,
+      metric: isEvalMetric ? data.metric : null,
+      threshold_operator: data.thresholdType,
+      threshold_type:
+        thresholdType === "manual" ? "static" : "percentage_change",
+      critical_threshold_value: Number(data.thresholdValue),
+      notification_emails: data.notificationEmails,
+      threshold_metric_value:
+        isEvalMetric && thresholdMetricValue ? thresholdMetricValue : null,
+      metric_type: metric?.metric_type,
+      project: observeId,
+    };
+  };
+
   const { mutate: createMonitor, isPending: isCreating } = useMutation({
     mutationFn: (data) => {
-      const metric = metricList?.find((metric) => metric.id === data.metric);
-      return axios.post(endpoints.project.createMonitor, {
-        name: data.name,
-        metric: data.metric,
-        threshold_type: data.thresholdType,
-        threshold_value: data.thresholdValue,
-        notification_emails: data.notificationEmails,
-        threshold_method: thresholdType,
-        threshold_metric_value: thresholdMetricValue,
-        metric_type: metric?.metricType,
-        project: observeId,
-      });
+      return axios.post(
+        endpoints.project.createMonitor,
+        getMonitorPayload(data),
+      );
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (_response, variables) => {
       enqueueSnackbar("Alert created successfully", {
         variant: "success",
       });
-      const metric = metricList?.find((metric) => metric.id === data.metric);
+      const metric = metricList?.find(
+        (metric) => metric.id === variables.metric,
+      );
       trackEvent(Events.monitorSettingsSubmitted, {
         [PropertyName.formFields]: {
           ...variables,
-          metricType: metric?.metricType,
+          metricType: metric?.metric_type,
         },
       });
       onBack();
@@ -90,28 +103,22 @@ const AddNewMonitor = ({
 
   const { mutate: updateMonitor, isPending: isUpdating } = useMutation({
     mutationFn: (data) => {
-      const metric = metricList?.find((metric) => metric.id === data.metric);
-      return axios.patch(endpoints.project.createMonitor + alertData.id + "/", {
-        name: data.name,
-        metric: data.metric,
-        threshold_type: data.thresholdType,
-        threshold_value: data.thresholdValue,
-        notification_emails: data.notificationEmails,
-        threshold_method: thresholdType,
-        threshold_metric_value: thresholdMetricValue,
-        metric_type: metric?.metricType,
-        project: observeId,
-      });
+      return axios.patch(
+        endpoints.project.createMonitor + alertData.id + "/",
+        getMonitorPayload(data),
+      );
     },
-    onSuccess: (data, variables) => {
+    onSuccess: (_response, variables) => {
       enqueueSnackbar("Alert updated successfully", {
         variant: "success",
       });
-      const metric = metricList?.find((metric) => metric.id === data.metric);
+      const metric = metricList?.find(
+        (metric) => metric.id === variables.metric,
+      );
       trackEvent(Events.monitorSettingsSubmitted, {
         [PropertyName.formFields]: {
           ...variables,
-          metricType: metric?.metricType,
+          metricType: metric?.metric_type,
         },
       });
       onBack();
@@ -151,17 +158,20 @@ const AddNewMonitor = ({
     if (alertData) {
       reset({
         name: alertData.name || "",
-        metric: alertData.metric || "latency",
-        thresholdType: alertData.thresholdType || "greater_than",
-        thresholdValue: alertData.thresholdValue || "",
-        notificationEmails: (alertData.notificationEmails || []).map(
+        metric:
+          alertData.metric || alertData.metric_type || "span_response_time",
+        thresholdType: alertData.threshold_operator || "greater_than",
+        thresholdValue: alertData.critical_threshold_value || "",
+        notificationEmails: (alertData.notification_emails || []).map(
           (email) => ({
             value: email,
           }),
         ),
       });
-      setThresholdType(alertData.thresholdMethod || "auto");
-      setThresholdMetricValue(alertData.thresholdMetricValue || "");
+      setThresholdType(
+        alertData.threshold_type === "static" ? "manual" : "auto",
+      );
+      setThresholdMetricValue(alertData.threshold_metric_value || "");
     }
   }, [alertData, reset]);
 

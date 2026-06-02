@@ -208,11 +208,21 @@ providers:
   #   models:
   #     - meta-llama/Meta-Llama-3.1-70B-Instruct
 
+  # Perplexity exposes two complementary APIs over the same OpenAI-compatible base URL:
+  #   * Sonar API  (chat completions) - models: sonar, sonar-pro, sonar-reasoning, sonar-reasoning-pro, sonar-deep-research
+  #   * Agent API  (responses)        - orchestrates third-party LLMs (default model: gpt-5.1)
+  # See https://docs.perplexity.ai for full reference.
   # perplexity:
   #   api_key: "${PERPLEXITY_API_KEY}"
   #   type: "perplexity"
   #   models:
-  #     - llama-3.1-sonar-large-128k-online
+  #     - sonar-pro
+  #     - sonar
+  #     - sonar-reasoning-pro
+  #     - sonar-reasoning
+  #     - sonar-deep-research
+  #     # Agent API (third-party model via Perplexity Agent orchestration)
+  #     - gpt-5.1
 
   # cerebras:
   #   api_key: "${CEREBRAS_API_KEY}"

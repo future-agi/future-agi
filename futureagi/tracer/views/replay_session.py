@@ -7,11 +7,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
 
+from tfc.routers import uses_db
 from tfc.temporal.simulate import start_create_graph_scenario_workflow_sync
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.db_routing import DATABASE_FOR_REPLAY_SESSION_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession, ReplaySessionStep
@@ -75,6 +77,7 @@ class ReplaySessionView(ViewSet):
             queryset = queryset.filter(project__workspace=self.request.user.workspace)
         return queryset
 
+    @uses_db(DATABASE_FOR_REPLAY_SESSION_LIST, feature_key="feature:replay_session_list")
     def list(self, request: Request) -> Response:
         """
         List replay sessions for a project with pagination.
@@ -91,7 +94,10 @@ class ReplaySessionView(ViewSet):
 
         try:
             queryset = (
-                self.get_queryset().select_related("project").order_by("-created_at")
+                self.get_queryset()
+                .select_related("project")
+                .order_by("-created_at")
+                .using(DATABASE_FOR_REPLAY_SESSION_LIST)
             )
 
             if project_id:

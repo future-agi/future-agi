@@ -13,7 +13,7 @@ ENV VITE_HOST_API=${VITE_HOST_API} \
 WORKDIR /app
 
 COPY package.json yarn.lock ./
-RUN yarn install
+RUN yarn install --network-timeout 600000
 
 COPY . ./
 RUN yarn build

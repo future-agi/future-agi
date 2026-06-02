@@ -54,7 +54,9 @@ function Container({ children }) {
     const sso_token =
       queryParams.get("sso_token") || queryParams.get("access_token");
     const refreshToken = queryParams.get("refresh_token");
+    const isNewOAuthUser = queryParams.get("is_new_user") === "true";
     const returnTo = localStorage.getItem("redirectUrl");
+
 
     if (!authenticated) {
       if (sso_token) {
@@ -62,6 +64,11 @@ function Container({ children }) {
           localStorage.setItem("refreshToken", refreshToken);
         }
         localStorage.setItem("accessToken", sso_token);
+
+        if (isNewOAuthUser) {
+          localStorage.setItem("isNewOAuthSignup", "1");
+          localStorage.setItem("isNewOAuthSignupAt", String(Date.now()));
+        }
         // if (newOrg) {
         //   // redirect to onboarding page
         //   window.location.href = "/auth/jwt/setup-org";
@@ -105,6 +112,34 @@ function Container({ children }) {
     // Skip redirect logic for standalone pages (e.g. MCP OAuth consent)
     if (window.location.pathname.startsWith("/mcp/")) return;
     if (!user) return;
+    const isNewOAuthSignup = localStorage.getItem("isNewOAuthSignup") === "1";
+    if (isNewOAuthSignup) {
+      const stampedAt = Number(localStorage.getItem("isNewOAuthSignupAt") || 0);
+      const fresh = Date.now() - stampedAt < 10 * 60 * 1000;
+      const provider = localStorage.getItem("signupProvider") || "oauth";
+      if (fresh && user?.email && user?.id && provider !== "email") {
+        if (typeof window.gtag === "function") {
+          trackSignupConversion({
+            email: user.email,
+            method: provider,
+            userId: String(user.id),
+          });
+        }
+        if (typeof window.rdt === "function") {
+          trackRedditSignup({
+            email: user.email,
+            userId: String(user.id),
+          });
+        }
+        trackTwitterSignup({
+          email: user.email,
+          method: provider,
+          userId: String(user.id),
+        });
+      }
+      localStorage.removeItem("isNewOAuthSignup");
+      localStorage.removeItem("isNewOAuthSignupAt");
+    }
 
     // New user to platform (requires_org_setup) — redirect to org-setup
     // flow and, for OAuth/SSO paths, fire ad-platform signup conversions.
@@ -154,6 +189,7 @@ function Container({ children }) {
         router.replace("/dashboard/get-started");
       }
       localStorage.setItem("initial-render", "done");
+      localStorage.removeItem("redirectUrl");
     }
   }, [postLoginPath, user, router]);
 
@@ -167,7 +203,7 @@ function Container({ children }) {
     // Once onboarding is complete, users with an organization_role are fully
     // set up — leave them where they are.
     if (user?.organization_role && user?.onboarding_completed) return;
-    if( user?.default_workspace_role===ROLES.WORKSPACE_VIEWER) return;
+    if (user?.default_workspace_role === ROLES.WORKSPACE_VIEWER) return;
     let orgName = currentOrganizationName;
     if (!orgName || orgName.trim() === "") {
       orgName = currentOrganizationDisplayName;

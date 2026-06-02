@@ -15,7 +15,7 @@ from rest_framework import status
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.models import AgentDefinition, Scenarios
-from simulate.models.run_test import CreateCallExecution, RunTest
+from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import (
     CallExecution,
@@ -316,6 +316,27 @@ class TestCallExecutionRerunView:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_rerun_rejects_unknown_fields(
+        self, mock_rerun, auth_client, test_execution
+    ):
+        """Unknown request fields should fail before any rerun work starts."""
+        url = self.URL_TEMPLATE.format(test_execution.id)
+        response = auth_client.post(
+            url,
+            {
+                "rerun_type": "eval_only",
+                "select_all": True,
+                "legacy_extra": "should-not-be-accepted",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+        mock_rerun.assert_not_called()
+
     def test_rerun_nonexistent_test_execution(self, auth_client):
         """Test rerun with non-existent test_execution_id returns error."""
         url = self.URL_TEMPLATE.format(uuid.uuid4())
@@ -530,6 +551,25 @@ class TestTestExecutionRerunView:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    @patch("simulate.temporal.client.rerun_call_executions")
+    def test_rerun_rejects_unknown_fields(self, mock_rerun, auth_client, run_test):
+        """Unknown request fields should fail before any rerun work starts."""
+        url = self.URL_TEMPLATE.format(run_test.id)
+        response = auth_client.post(
+            url,
+            {
+                "rerun_type": "eval_only",
+                "select_all": True,
+                "legacy_extra": "should-not-be-accepted",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+        mock_rerun.assert_not_called()
+
     def test_rerun_nonexistent_run_test(self, auth_client):
         """Test rerun with non-existent run_test_id returns error."""
         url = self.URL_TEMPLATE.format(uuid.uuid4())
@@ -602,6 +642,130 @@ class TestTestExecutionRerunView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestTestExecutionRuntimeContracts:
+    """Request validation tests for related test-execution actions."""
+
+    def test_column_order_update_accepts_canonical_body(
+        self, auth_client, test_execution
+    ):
+        url = f"/simulate/test-executions/{test_execution.id}/column-order/"
+        column_order = [
+            {"id": "status", "column_name": "Status", "visible": True},
+            {"id": "latency", "column_name": "Latency", "visible": False},
+        ]
+
+        response = auth_client.put(
+            url,
+            {"column_order": column_order},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["column_order"] == column_order
+        test_execution.refresh_from_db()
+        assert test_execution.execution_metadata["column_order"] == column_order
+
+    def test_column_order_update_rejects_unknown_fields(
+        self, auth_client, test_execution
+    ):
+        url = f"/simulate/test-executions/{test_execution.id}/column-order/"
+        response = auth_client.put(
+            url,
+            {
+                "column_order": [
+                    {"id": "status", "column_name": "Status", "visible": True}
+                ],
+                "legacy_extra": "should-not-be-accepted",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+
+    @patch("simulate.views.run_test.TestExecutor")
+    def test_cancel_accepts_empty_body(
+        self, mock_test_executor, auth_client, test_execution
+    ):
+        mock_test_executor.return_value.cancel_test.return_value = {
+            "success": True,
+            "message": "Cancellation initiated",
+            "test_execution_id": str(test_execution.id),
+        }
+        url = f"/simulate/test-executions/{test_execution.id}/cancel/"
+
+        response = auth_client.post(url, {}, format="json")
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.data["success"] is True
+        test_execution.refresh_from_db()
+        assert test_execution.status == TestExecution.ExecutionStatus.CANCELLING
+
+    def test_cancel_rejects_unknown_fields(self, auth_client, test_execution):
+        url = f"/simulate/test-executions/{test_execution.id}/cancel/"
+        response = auth_client.post(
+            url,
+            {"legacy_extra": "should-not-be-accepted"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_eval_summary_refresh_rejects_unknown_fields(
+        self, auth_client, test_execution
+    ):
+        url = (
+            f"/simulate/test-executions/{test_execution.id}/"
+            "eval-explanation-summary/refresh/"
+        )
+        response = auth_client.post(
+            url,
+            {"legacy_extra": "should-not-be-accepted"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_optimiser_refresh_rejects_unknown_fields(
+        self, auth_client, test_execution
+    ):
+        url = (
+            f"/simulate/test-executions/{test_execution.id}/optimiser-analysis/refresh/"
+        )
+        response = auth_client.post(
+            url,
+            {"legacy_extra": "should-not-be-accepted"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_run_new_evals_rejects_unknown_fields(self, auth_client, run_test):
+        url = f"/simulate/run-tests/{run_test.id}/run-new-evals/"
+        response = auth_client.post(
+            url,
+            {
+                "select_all": True,
+                "eval_config_ids": [],
+                "legacy_extra": "should-not-be-accepted",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
 
 
 # ============================================================================
@@ -774,6 +938,19 @@ class TestTestExecutionBulkDeleteView:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_delete_rejects_unknown_fields(self, auth_client, run_test):
+        """Unknown request fields should fail before matching executions."""
+        url = self.URL_TEMPLATE.format(run_test.id)
+        response = auth_client.post(
+            url,
+            {"select_all": True, "legacy_extra": "should-not-be-accepted"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
 
     def test_delete_nonexistent_run_test(self, auth_client):
         """Test delete with non-existent run_test_id."""

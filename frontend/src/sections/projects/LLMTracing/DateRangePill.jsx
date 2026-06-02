@@ -1,12 +1,7 @@
 import React, { useRef, useState } from "react";
 import PropTypes from "prop-types";
 import { Button, MenuItem, Popover } from "@mui/material";
-import {
-  startOfToday,
-  startOfTomorrow,
-  startOfYesterday,
-  sub,
-} from "date-fns";
+import { startOfToday, startOfTomorrow, startOfYesterday, sub } from "date-fns";
 import Iconify from "src/components/iconify";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";

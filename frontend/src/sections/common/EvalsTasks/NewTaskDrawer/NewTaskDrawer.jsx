@@ -38,7 +38,6 @@ import EvaluationSection from "./EvaluationSection";
 import { useNavigate } from "react-router";
 import EvaluationDrawer from "../../EvaluationDrawer/EvaluationDrawer";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
-import { objectCamelToSnake } from "src/utils/utils";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
 
 const NewTaskDrawerChild = ({
@@ -184,7 +183,7 @@ const NewTaskDrawerChild = ({
         params: {
           project_id: project,
           row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filtersWithoutDate)),
+          filters: JSON.stringify(filtersWithoutDate),
         },
       }),
     select: (data) => data.data?.result,

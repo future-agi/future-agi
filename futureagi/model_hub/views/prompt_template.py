@@ -46,10 +46,10 @@ logger = structlog.get_logger(__name__)
 import atexit
 import concurrent.futures
 
-from agentic_eval.core_evals.fi_evals import *  # noqa: F403
-from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from django.db import connection
 
+from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from analytics.utils import (
     MixpanelEvents,
     MixpanelSources,
@@ -84,6 +84,12 @@ from model_hub.models.run_prompt import (
     PromptTemplate,
     PromptVersion,
 )
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    ColumnValuesRequestSerializer,
+    ColumnValuesResponseSerializer,
+    UploadFileResponseSerializer,
+)
 from model_hub.serializers.prompt_folder import PromptFolderSerializer
 from model_hub.serializers.prompt_template import (
     CommitSerializer,
@@ -117,6 +123,7 @@ from model_hub.utils.websocket_manager import (
 from model_hub.views.eval_runner import EvaluationRunner
 from tfc.settings.settings import BASE_URL
 from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import (
     BaseModelViewSetMixin,
     BaseModelViewSetMixinWithUserOrg,
@@ -159,14 +166,11 @@ def _safe_background_task(func, *args, **kwargs):
     return wrapped
 
 
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
 try:
-    from ee.usage.models.usage import APICallStatusChoices
+    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:
-    APICallStatusChoices = None
-try:
-    from ee.usage.utils.usage_entries import APICallTypeChoices, count_text_tokens, log_and_deduct_cost_for_api_request
-except ImportError:
-    APICallTypeChoices = None
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
 
@@ -286,7 +290,7 @@ def replace_variables(
     Returns:
         List[dict]: Messages with variables replaced in content
     """
-    from model_hub.views.run_prompt import render_template, TEMPLATE_FORMAT_JINJA2
+    from model_hub.views.run_prompt import TEMPLATE_FORMAT_JINJA2, render_template
 
     use_jinja = template_format in ("jinja", "jinja2")
 
@@ -450,6 +454,16 @@ async def replace_ids_with_column_name_async(prompt: str) -> str:
         return prompt
 
 
+def _coerce_organization_id(organization_or_id):
+    return getattr(organization_or_id, "id", organization_or_id)
+
+
+def _request_organization_id(request):
+    return _coerce_organization_id(
+        getattr(request, "organization", None) or request.user.organization
+    )
+
+
 # Add this helper method after the replace_ids_with_column_name function
 def get_next_version_number(template_id, organization_id):
     """
@@ -457,6 +471,7 @@ def get_next_version_number(template_id, organization_id):
     Uses database-level locking to ensure uniqueness.
     Gets the latest created version and increments its number.
     """
+    organization_id = _coerce_organization_id(organization_id)
 
     with transaction.atomic():
         # Use select_for_update to lock the rows and prevent race conditions
@@ -534,13 +549,14 @@ class UploadFileView(APIView):
             logger.exception(f"Unexpected error in base64 conversion: {str(e)}")
             raise ValueError(f"Failed to process file: {str(e)}")  # noqa: B904
 
+    @validated_request(
+        request_serializer=UploadFileSerializer,
+        responses={200: UploadFileResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         try:
-            serializer = UploadFileSerializer(data=request.data)
-            if not serializer.is_valid():
-                errors = parse_serialized_errors(serializer)
-                return self._gm.bad_request(str(errors))
-            validated_data = serializer.validated_data
+            validated_data = request.validated_data
 
             files = validated_data.get("files")
             links = validated_data.get("links")
@@ -867,9 +883,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 raise ValueError("Invalid version format")
 
             # Use centralized WebSocket manager
-            ws_manager = get_websocket_manager(
-                getattr(request, "organization", None) or request.user.organization.id
-            )
+            ws_manager = get_websocket_manager(_request_organization_id(request))
             result = ws_manager.handle_stop_streaming_request(
                 str(template.id), versions, session_uuids
             )
@@ -991,11 +1005,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             self.run,  # Your existing sync function
                             template,
                             obj,
-                            getattr(self.request, "organization", None)
-                            or self.request.user.organization.id,
+                            _request_organization_id(self.request),
                             version,
                             is_run,
-                            request.workspace,
+                            workspace=request.workspace,
                         )
                     )
 
@@ -1453,8 +1466,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             self.run,
                             parent_template,
                             execution,
-                            getattr(request, "organization", None)
-                            or request.user.organization.id,
+                            _request_organization_id(request),
                             version_to_run,
                             is_run,
                             None,
@@ -1752,7 +1764,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     ):
         try:
             close_old_connections()
-            organization = Organization.objects.get(id=organization_id)
+            organization = Organization.objects.get(
+                id=_coerce_organization_id(organization_id)
+            )
         except Organization.DoesNotExist:
             organization = None
 
@@ -1912,7 +1926,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         }
                         # print("token config is here:",token_config)
                         if organization:
-                            log_and_deduct_cost_for_api_request(
+                            if log_and_deduct_cost_for_api_request is not None:
+                                log_and_deduct_cost_for_api_request(
                                 organization,
                                 APICallTypeChoices.PROMPT_BENCH.value,
                                 config=token_config,
@@ -1933,7 +1948,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                                 except ImportError:
                                     emit = None
 
-                                emit(
+                                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+
+                                    emit(
                                     UsageEvent(
                                         org_id=str(organization.id),
                                         event_type=APICallTypeChoices.PROMPT_BENCH.value,
@@ -2338,6 +2356,32 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 return self._gm.bad_request(
                     get_error_message("PROMPT_EVAL_CONFIG_IDS_REQUIRED")
                 )
+
+            try:
+                prompt_eval_config_ids = [
+                    str(UUID(str(config_id))) for config_id in prompt_eval_config_ids
+                ]
+            except (TypeError, ValueError):
+                return self._gm.bad_request("Invalid evaluation configuration id.")
+
+            existing_eval_configs = set(
+                str(config_id)
+                for config_id in PromptEvalConfig.objects.filter(
+                    id__in=prompt_eval_config_ids,
+                    prompt_template=template,
+                    deleted=False,
+                ).values_list("id", flat=True)
+            )
+            missing_eval_configs = [
+                config_id
+                for config_id in prompt_eval_config_ids
+                if config_id not in existing_eval_configs
+            ]
+            if missing_eval_configs:
+                return self._gm.bad_request(
+                    "Following evaluation configurations do not exist for this prompt "
+                    f"template: {', '.join(missing_eval_configs)}"
+                )
             # Check if all versions exist
             # existing_versions = PromptVersion.objects.filter(
             #     original_template=template,
@@ -2564,28 +2608,41 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 }
             )
             org = Organization.objects.get(id=organization_id)
-            api_call_log_row = log_and_deduct_cost_for_api_request(
-                organization=org,
-                api_call_type=APICallTypeChoices.DATASET_EVALUATION.value,
-                source="prompt_template",
-                source_id=eval_template.id,
-                config=source_config,
-                workspace=evaluation.prompt_template.workspace,
-            )
-
-            if not api_call_log_row:
-                raise ValueError(
-                    "API call not allowed : Error validating the api call."
+            api_call_log_row = None
+            if log_and_deduct_cost_for_api_request is not None:
+                api_call_log_row = log_and_deduct_cost_for_api_request(
+                    organization=org,
+                    api_call_type=APICallTypeChoices.DATASET_EVALUATION.value,
+                    source="prompt_template",
+                    source_id=eval_template.id,
+                    config=source_config,
+                    workspace=evaluation.prompt_template.workspace,
                 )
 
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                raise ValueError("API call not allowed : ", api_call_log_row.status)
+                if not api_call_log_row:
+                    raise ValueError(
+                        "API call not allowed : Error validating the api call."
+                    )
+
+                if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                    raise ValueError("API call not allowed : ", api_call_log_row.status)
+            # Apply the shared empty-input rules so prompt-template evals
+            # behave the same as dataset/playground/tracing/SDK paths.
+            from model_hub.utils.eval_input_validation import (
+                validate_eval_inputs,
+            )
+
+            _mapped_kwargs = evaluation_runner.map_fields(
+                list(run_params.keys()), list(run_params.values())
+            )
+            partial_input_warning, _mapped_kwargs = validate_eval_inputs(
+                eval_template,
+                _mapped_kwargs,
+                mapped_keys=_mapped_kwargs.keys(),
+            )
+
             # Run evaluation
-            eval_result = eval_instance.run(
-                **evaluation_runner.map_fields(
-                    list(run_params.keys()), list(run_params.values())
-                )
-            )
+            eval_result = eval_instance.run(**_mapped_kwargs)
 
             # Format response
             response = {
@@ -2599,6 +2656,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 "metadata": eval_result.eval_results[0].get("metadata", {}),
                 "output": eval_template.config.get("output"),
             }
+            if partial_input_warning:
+                response["warnings"] = [partial_input_warning]
             metadata = response.get("metadata") or {}
             if isinstance(metadata, str):
                 try:
@@ -2637,7 +2696,10 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 except ImportError:
                     emit = None
 
-                emit(
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+
+                    emit(
                     UsageEvent(
                         org_id=str(org.id),
                         event_type=BillingEventType.EVAL_EXPLANATION,
@@ -3044,16 +3106,29 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     def versions(self, request, pk=None):
         try:
             template = self.get_object()
-            versions = PromptTemplate.objects.filter(root_template=template).order_by(
-                "-created_at"
+            versions = (
+                PromptVersion.objects.filter(
+                    original_template=template,
+                    original_template__organization=getattr(
+                        request, "organization", None
+                    )
+                    or request.user.organization,
+                    deleted=False,
+                )
+                .annotate(
+                    version_number=Cast(Substr("template_version", 2), IntegerField())
+                )
+                .order_by("-version_number", "-created_at")
             )
 
             page = self.paginate_queryset(versions)
+            serializer = PromptHistoryExecutionSerializer(
+                page if page is not None else versions,
+                many=True,
+            )
             if page is not None:
-                serializer = self.get_serializer(page, many=True)
                 return self.paginator.get_paginated_response(serializer.data)
 
-            serializer = self.get_serializer(versions, many=True)
             return self._gm.success_response(serializer.data)
         except Exception as e:
             logger.exception(f"Error in versions method: {e}")
@@ -3073,14 +3148,24 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         validated_data = serializer.validated_data
 
         try:
-            version_obj = PromptVersion.objects.get(
-                original_template=template,
-                template_version=validated_data.get("version_name"),
-            )
+            with transaction.atomic():
+                version_obj = PromptVersion.objects.select_for_update().get(
+                    original_template=template,
+                    template_version=validated_data.get("version_name"),
+                    deleted=False,
+                )
 
-            version_obj.is_default = True
-            version_obj.updated_at = timezone.now()
-            version_obj.save(update_fields=["is_default", "updated_at"])
+                now = timezone.now()
+                PromptVersion.objects.filter(
+                    original_template=template,
+                    deleted=False,
+                ).exclude(id=version_obj.id).update(
+                    is_default=False,
+                    updated_at=now,
+                )
+                version_obj.is_default = True
+                version_obj.updated_at = now
+                version_obj.save(update_fields=["is_default", "updated_at"])
 
             return self._gm.success_response(
                 PromptHistoryExecutionSerializer(version_obj).data
@@ -3139,12 +3224,36 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             version_obj.commit_message = validated_data.get("message")
             version_obj.is_draft = validated_data.get("is_draft", False)
 
+            now = timezone.now()
             if validated_data.get("set_default"):
-                version_obj.is_default = True
-            version_obj.updated_at = timezone.now()
-            version_obj.save(
-                update_fields=["is_default", "commit_message", "updated_at", "is_draft"]
-            )
+                with transaction.atomic():
+                    PromptVersion.objects.filter(
+                        original_template=template,
+                        deleted=False,
+                    ).exclude(id=version_obj.id).update(
+                        is_default=False,
+                        updated_at=now,
+                    )
+                    version_obj.is_default = True
+                    version_obj.updated_at = now
+                    version_obj.save(
+                        update_fields=[
+                            "is_default",
+                            "commit_message",
+                            "updated_at",
+                            "is_draft",
+                        ]
+                    )
+            else:
+                version_obj.updated_at = now
+                version_obj.save(
+                    update_fields=[
+                        "is_default",
+                        "commit_message",
+                        "updated_at",
+                        "is_draft",
+                    ]
+                )
 
             if request.headers.get("X-Api-Key") is not None:
                 properties = get_mixpanel_properties(
@@ -3164,14 +3273,16 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             )
 
     def perform_destroy(self, instance):
+        now = timezone.now()
         instance.deleted = True
-        instance.save()
+        instance.deleted_at = now
+        instance.save(update_fields=["deleted", "deleted_at", "updated_at"])
 
         # Mark all versions of the template as inactive
-        versions = PromptVersion.objects.filter(original_template=instance)
-        for version in versions:
-            version.deleted = True
-            version.save()
+        PromptVersion.objects.filter(original_template=instance).update(
+            deleted=True,
+            deleted_at=now,
+        )
 
     @action(detail=False, methods=["post"], url_path="generate-prompt")
     def generate_prompt(self, request):
@@ -3190,19 +3301,21 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             if not statement:
                 return self._gm.bad_request(get_error_message("MISSING_STATEMENT"))
 
-            config = {"input_tokens": count_text_tokens(statement)}
-            call_log_row = log_and_deduct_cost_for_api_request(
-                getattr(request, "organization", None) or request.user.organization,
-                APICallTypeChoices.PROMPT_BENCH.value,
-                config=config,
-                source="run_prompt_gen",
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row is None
-                or call_log_row.status != APICallStatusChoices.PROCESSING.value
-            ):
-                return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
+            config = {"input_tokens": (count_text_tokens(statement) if count_text_tokens else 0)}
+            call_log_row = None
+            if log_and_deduct_cost_for_api_request is not None:
+                call_log_row = log_and_deduct_cost_for_api_request(
+                    getattr(request, "organization", None) or request.user.organization,
+                    APICallTypeChoices.PROMPT_BENCH.value,
+                    config=config,
+                    source="run_prompt_gen",
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is None
+                    or call_log_row.status != APICallStatusChoices.PROCESSING.value
+                ):
+                    return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -3222,7 +3335,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                emit(
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+                    emit(
                     UsageEvent(
                         org_id=str(_org.id),
                         event_type=BillingEventType.AI_PROMPT_CREATION,
@@ -3309,22 +3424,24 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 )
 
             config = {
-                "input_tokens": count_text_tokens(
+                "input_tokens": (count_text_tokens(
                     existing_prompt + improvement_requirements
-                )
+                ) if count_text_tokens else 0)
             }
-            call_log_row = log_and_deduct_cost_for_api_request(
-                getattr(request, "organization", None) or request.user.organization,
-                APICallTypeChoices.PROMPT_BENCH.value,
-                config=config,
-                source="run_prompt_improve",
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row is None
-                or call_log_row.status != APICallStatusChoices.PROCESSING.value
-            ):
-                return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
+            call_log_row = None
+            if log_and_deduct_cost_for_api_request is not None:
+                call_log_row = log_and_deduct_cost_for_api_request(
+                    getattr(request, "organization", None) or request.user.organization,
+                    APICallTypeChoices.PROMPT_BENCH.value,
+                    config=config,
+                    source="run_prompt_improve",
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is None
+                    or call_log_row.status != APICallStatusChoices.PROCESSING.value
+                ):
+                    return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -3344,7 +3461,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                emit(
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+
+                    emit(
                     UsageEvent(
                         org_id=str(_org.id),
                         event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
@@ -3429,23 +3548,26 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             )
 
             # Get the template configuration
-            prompt_config = latest_version.prompt_config_snapshot or {}
+            prompt_config_snapshot = latest_version.prompt_config_snapshot or {}
+            prompt_config = (
+                prompt_config_snapshot
+                if isinstance(prompt_config_snapshot, list)
+                else [prompt_config_snapshot]
+            )
             variable_names = template.variable_names or {}
-            evaluation_configs = template.evaluation_configs or {}
+            evaluation_configs = latest_version.evaluation_configs or {}
             is_run = True
             name = template.name
+            first_prompt_config = (
+                prompt_config[0]
+                if prompt_config and isinstance(prompt_config[0], dict)
+                else {}
+            )
+            first_configuration = first_prompt_config.get("configuration", {})
 
             # Get model configuration from prompt_config
-            model = (
-                prompt_config[0]["configuration"].get("model", "gpt-4")
-                if prompt_config
-                else "gpt-4"
-            )
-            temperature = (
-                prompt_config[0]["configuration"].get("temperature", 0.7)
-                if prompt_config
-                else 0.7
-            )
+            model = first_configuration.get("model", "gpt-4")
+            temperature = first_configuration.get("temperature", 0.7)
 
             # Define available language options and their corresponding code templates
             code_templates = {
@@ -3699,10 +3821,16 @@ class ColumnValuesAPIView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=ColumnValuesRequestSerializer,
+        responses={200: ColumnValuesResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
-            dataset_id = request.data.get("dataset_id")
-            column_placeholders = request.data.get("column_placeholders")
+            data = request.validated_data
+            dataset_id = data.get("dataset_id")
+            column_placeholders = data.get("column_placeholders")
 
             # Ensure dataset_id and column_placeholders are provided
             if not dataset_id or not column_placeholders:

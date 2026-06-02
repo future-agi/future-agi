@@ -4,6 +4,7 @@ import StatusChip from "src/components/custom-status-chip/CustomStatusChip";
 import VersionCellRenderer from "src/sections/workbench/createPrompt/Metrics/CellRenderers/VersionCellRenderer";
 import LabelCellRenderer from "src/sections/workbench/createPrompt/Metrics/CellRenderers/LabelCellRenderer";
 import { interpolateColorTokenBasedOnScore } from "src/utils/utils";
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
 import { RENDERER_CONFIG, CELL_TYPES } from "./common";
 import {
   EvaluationCell,
@@ -19,7 +20,7 @@ import {
 import { useNavigationHandlers } from "./useNavigationHandlers";
 
 const CustomTraceRenderer = (params) => {
-  const column = params.colDef.col;
+  const column = params.colDef.context?.sourceColumn;
   const colId = column?.id;
   const value = params.value;
   const data = params.data;
@@ -38,9 +39,20 @@ const CustomTraceRenderer = (params) => {
     traceIdFromRow,
   );
 
-  // Get background color for evaluation cells
+  // Get background color for evaluation cells. LLM evals may pass {score, choice}
+  // (object or Python-repr string) — extract the numeric score before color lookup.
+  let evalNumericScore = NaN;
+  if (isEval) {
+    const normalized = normalizeEvalCellValue(value);
+    evalNumericScore =
+      normalized && typeof normalized === "object" && !Array.isArray(normalized)
+        ? typeof normalized.score === "number"
+          ? normalized.score
+          : NaN
+        : parseFloat(normalized);
+  }
   const { bgcolor: backgroundColor = "", color = "" } = isEval
-    ? interpolateColorTokenBasedOnScore(parseFloat(value), 100) || {}
+    ? interpolateColorTokenBasedOnScore(evalNumericScore, 100) || {}
     : {};
 
   // Special column renderers

@@ -21,7 +21,7 @@ import {
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import { enhanceCol, getStatusColor } from "../common";
-import { getLabel } from "../common";
+import { getLabel, normalizeEvalCellValue } from "../common";
 import DatapointCard from "src/sections/common/DatapointCard";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
@@ -261,7 +261,8 @@ const DatapointDrawerChild = () => {
 
   const { data: averageMetaData } = useQuery({
     queryKey: ["dataset-detail-average", dataset],
-    select: (d) => d.data?.result?.columnConfig,
+    select: (d) =>
+      d.data?.result?.column_config ?? d.data?.result?.columnConfig,
     enabled: false,
   });
 
@@ -444,13 +445,8 @@ const DatapointDrawerChild = () => {
   };
 
   const finalArray = useMemo(() => {
-    if (
-      evalOpen?.cellValue &&
-      evalOpen?.cellValue.startsWith("[") &&
-      evalOpen?.cellValue.endsWith("]")
-    ) {
-      return JSON.parse(evalOpen?.cellValue.replace(/'/g, '"'));
-    }
+    const v = normalizeEvalCellValue(evalOpen?.cellValue);
+    return Array.isArray(v) ? v : undefined;
   }, [evalOpen?.cellValue]);
 
   const onNavigate = async (direction) => {
@@ -516,9 +512,11 @@ const DatapointDrawerChild = () => {
         const mergedRows = [...rows];
         try {
           const nextIds = await getNextItemIds({
-            row_id: datapoint?.rowData?.rowId,
+            row_id: datapoint?.rowData?.row_id ?? datapoint?.rowData?.rowId,
           });
-          const newIds = nextIds?.data?.result?.next?.rowId;
+          const newIds =
+            nextIds?.data?.result?.next?.row_id ??
+            nextIds?.data?.result?.next?.rowId;
           if (newIds && newIds?.length > 0) {
             newIds.forEach((id) => {
               mergedRows.push({ rowData: null, id: id });
@@ -669,7 +667,8 @@ const DatapointDrawerChild = () => {
                 sources={[
                   {
                     sourceType: "dataset_row",
-                    sourceId: datapoint?.rowData?.rowId,
+                    sourceId:
+                      datapoint?.rowData?.row_id ?? datapoint?.rowData?.rowId,
                   },
                 ]}
                 onClose={() => setAnnotateOpen(false)}
@@ -804,7 +803,7 @@ const DatapointDrawerChild = () => {
                                 }}
                               />
                             </ShowComponent>
-                            <ShowComponent condition={finalArray?.length > 0}>
+                            <ShowComponent condition={(finalArray?.length ?? 0) > 0}>
                               {finalArray?.map((val) => (
                                 <Chip
                                   key={val}
@@ -982,7 +981,9 @@ const DatapointDrawerChild = () => {
                         [PropertyName.datasetId]: dataset,
                         [PropertyName.evalId]:
                           evalOpen?.evalMetricId || column?.headerName,
-                        [PropertyName.rowIdentifier]: datapoint?.rowData?.rowId,
+                        [PropertyName.rowIdentifier]:
+                          datapoint?.rowData?.row_id ??
+                          datapoint?.rowData?.rowId,
                       });
                     }}
                     sx={{
@@ -1218,7 +1219,9 @@ const DatapointDrawerChild = () => {
               {/* Existing annotations */}
               <ScoresListSection
                 sourceType="dataset_row"
-                sourceId={datapoint?.rowData?.rowId}
+                sourceId={
+                  datapoint?.rowData?.row_id ?? datapoint?.rowData?.rowId
+                }
               />
             </Box>
           </Box>

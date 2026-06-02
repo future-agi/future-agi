@@ -187,7 +187,9 @@ class TestCap:
             cap=4,
         )
         assert len(result.ids) == 4
-        assert result.total_matching == 10
+        # Capped resolvers return a cap+1 sentinel instead of a precise count
+        # so preview calls do not run an extra full COUNT(*) on large tables.
+        assert result.total_matching == 5
         assert result.truncated is True
 
     def test_cap_above_total_is_not_truncated(

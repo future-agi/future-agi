@@ -13,21 +13,22 @@ Supports:
 
 import gzip
 import json
-from io import BytesIO
-from typing import Optional, Tuple
 
 import structlog
 from django.http import HttpResponse
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from google.protobuf.json_format import MessageToDict, Parse
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
     ExportTraceServiceRequest,
     ExportTraceServiceResponse,
 )
-from rest_framework import status
+from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.views import APIView
 
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.payload_storage import PAYLOAD_DEFAULT_TTL, payload_storage
 from tracer.utils.trace_ingestion import bulk_create_observation_span_task
@@ -43,6 +44,28 @@ CONTENT_TYPE_JSON = "application/json"
 HEADER_CONTENT_TYPE = "Content-Type"
 HEADER_CONTENT_ENCODING = "Content-Encoding"
 
+OTLP_TRACE_REQUEST_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    description=(
+        "OpenTelemetry ExportTraceServiceRequest. JSON payloads use the OTLP "
+        "HTTP JSON mapping; protobuf payloads use application/x-protobuf."
+    ),
+)
+
+
+class OTLPPartialSuccessSerializer(serializers.Serializer):
+    rejected_spans = serializers.IntegerField(required=False)
+    error_message = serializers.CharField(required=False, allow_blank=True)
+
+
+class OTLPTraceResponseSerializer(serializers.Serializer):
+    partial_success = OTLPPartialSuccessSerializer(required=False)
+
+
+class OTLPHealthResponseSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=("healthy",))
+    service = serializers.CharField()
+
 
 class OTLPExportResult:
     """Result of OTLP export operation."""
@@ -51,7 +74,7 @@ class OTLPExportResult:
         self,
         accepted_spans: int = 0,
         rejected_spans: int = 0,
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ):
         self.accepted_spans = accepted_spans
         self.rejected_spans = rejected_spans
@@ -86,6 +109,19 @@ class OTLPTraceView(APIView):
     # Disable DRF parsers - we handle parsing ourselves for OTLP compliance
     parser_classes = []
 
+    @swagger_auto_schema(
+        request_body=OTLP_TRACE_REQUEST_SCHEMA,
+        # OTLP accepts JSON, gzip, and binary protobuf. Request validation is
+        # implemented by _parse_request instead of DRF serializer binding.
+        runtime_request_validation=True,
+        responses={
+            200: OTLPTraceResponseSerializer,
+            400: OTLPTraceResponseSerializer,
+            403: OTLPTraceResponseSerializer,
+            429: OTLPTraceResponseSerializer,
+            500: OTLPTraceResponseSerializer,
+        },
+    )
     def post(self, request: Request, *args, **kwargs) -> HttpResponse:
         """
         Handle OTLP trace export request.
@@ -124,7 +160,6 @@ class OTLPTraceView(APIView):
             workspace_id = str(workspace.id) if workspace else None
 
             # Parse the OTLP request
-            content_type = request.content_type or CONTENT_TYPE_PROTOBUF
             otlp_request, error = self._parse_request(request)
 
             if error:
@@ -170,7 +205,7 @@ class OTLPTraceView(APIView):
 
     def _parse_request(
         self, request: Request
-    ) -> Tuple[Optional[ExportTraceServiceRequest], Optional[str]]:
+    ) -> tuple[ExportTraceServiceRequest | None, str | None]:
         """
         Parse the OTLP request based on content type and encoding.
 
@@ -209,7 +244,7 @@ class OTLPTraceView(APIView):
 
     def _parse_protobuf(
         self, body: bytes
-    ) -> Tuple[Optional[ExportTraceServiceRequest], Optional[str]]:
+    ) -> tuple[ExportTraceServiceRequest | None, str | None]:
         """Parse binary protobuf request."""
         try:
             request_proto = ExportTraceServiceRequest()
@@ -220,7 +255,7 @@ class OTLPTraceView(APIView):
 
     def _parse_json(
         self, body: bytes
-    ) -> Tuple[Optional[ExportTraceServiceRequest], Optional[str]]:
+    ) -> tuple[ExportTraceServiceRequest | None, str | None]:
         """Parse JSON request into protobuf."""
         try:
             json_str = body.decode("utf-8")
@@ -317,6 +352,12 @@ class OTLPHealthView(APIView):
     permission_classes = []
     authentication_classes = []
 
+    @swagger_auto_schema(
+        responses={
+            200: OTLPHealthResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     def get(self, request: Request, *args, **kwargs) -> HttpResponse:
         """Health check - always returns OK."""
         return HttpResponse(

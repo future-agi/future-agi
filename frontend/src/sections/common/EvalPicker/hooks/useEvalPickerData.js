@@ -20,8 +20,9 @@ export function useEvalPickerData({
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [sorting, setSorting] = useState([{ id: "lastUpdated", desc: true }]);
-  const [filters, setFilters] = useState(null);
-
+  const [filters, setFilters] = useState(
+ null,
+  );
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
   const ownerFilter = filters?.owner || "all";
@@ -31,8 +32,10 @@ export function useEvalPickerData({
     if (filters?.output_type) f.output_type = filters.output_type;
     if (filters?.tags) f.tags = filters.tags;
     // Locked filters override and cannot be removed by the user.
-    if (lockedFilters?.eval_type) f.eval_type = lockedFilters.eval_type;
-    if (lockedFilters?.output_type) f.output_type = lockedFilters.output_type;
+    const lf  =lockedFilters;
+    if (lf?.eval_type) f.eval_type = lf.eval_type;
+    if (lf?.output_type) f.output_type = lf.output_type;
+    if (lf?.template_type) f.template_type = lf.template_type;
     return Object.keys(f).length > 0 ? f : null;
   }, [filters, lockedFilters]);
 
@@ -83,6 +86,16 @@ export function useEvalPickerData({
   const isLoading = isUsingOldEndpoint
     ? oldEndpointQuery.isLoading
     : newEndpointQuery.isLoading;
+  const isFetching = isUsingOldEndpoint
+    ? oldEndpointQuery.isFetching
+    : newEndpointQuery.isFetching;
+
+  // True while the user is typing (debounce window) or the server is fetching
+  // results. `isLoading` only flips during the initial load because the
+  // queries use keepPreviousData, so we expose this as the search-in-progress
+  // signal for the input adornment.
+  const isSearchPending = searchQuery.trim() !== debouncedSearch;
+  const isSearching = isSearchPending || isFetching;
 
   const items = useMemo(() => {
     if (!rawData) return [];
@@ -155,8 +168,10 @@ export function useEvalPickerData({
   const filteredItems = useMemo(() => {
     if (!isUsingOldEndpoint) return items;
     if (!filters && !lockedFilters) return items;
-    const evalTypes = lockedFilters?.eval_type || filters?.eval_type;
-    const outputTypes = lockedFilters?.output_type || filters?.output_type;
+    const lf = lockedFilters;
+    const evalTypes = lf?.eval_type || filters?.eval_type;
+    const outputTypes = lf?.output_type || filters?.output_type;
+    const templateTypes = lf?.template_type;
     const owner = filters?.owner;
     const templateType = filters?.template_type;
     const tags = filters?.tags;
@@ -166,6 +181,8 @@ export function useEvalPickerData({
       if (outputTypes?.length && !outputTypes.includes(it.outputType))
         return false;
       if (owner && owner !== "all" && it.owner !== owner) return false;
+      if (templateTypes?.length && !templateTypes.includes(it.templateType))
+        return false;
       if (templateType && it.templateType !== templateType) return false;
       if (tags?.length && !tags.some((t) => it.evalTemplateTags?.includes(t)))
         return false;
@@ -191,6 +208,7 @@ export function useEvalPickerData({
     items: paginatedItems,
     total,
     isLoading,
+    isSearching,
     searchQuery,
     setSearchQuery,
     page,

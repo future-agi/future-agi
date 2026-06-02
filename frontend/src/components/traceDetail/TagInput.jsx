@@ -120,6 +120,7 @@ const TagInput = ({
         />
         {value.trim() && (
           <Box
+            onMouseDown={(e) => e.preventDefault()}
             onClick={handleSubmit}
             sx={{
               cursor: "pointer",

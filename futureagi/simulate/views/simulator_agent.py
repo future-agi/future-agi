@@ -1,13 +1,25 @@
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from simulate.models import SimulatorAgent
-from simulate.serializers.simulator_agent import SimulatorAgentSerializer
+from simulate.serializers.simulator_agent import (
+    SimulatorAgentDeleteResponseSerializer,
+    SimulatorAgentListResponseSerializer,
+    SimulatorAgentSerializer,
+    SimulatorAgentValidationErrorResponseSerializer,
+)
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorWithDetailsResponseSerializer
 from tfc.utils.pagination import ExtendedPageNumberPagination
+
+
+def _serializer_error_response(errors):
+    return Response(errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class SimulatorAgentListView(APIView):
@@ -15,6 +27,13 @@ class SimulatorAgentListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: SimulatorAgentListResponseSerializer,
+            400: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def get(self, request):
         # Get query parameters
         search_query = request.GET.get("search", "").strip()
@@ -56,19 +75,22 @@ class CreateSimulatorAgentView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=SimulatorAgentSerializer,
+        responses={
+            201: SimulatorAgentSerializer,
+            400: SimulatorAgentValidationErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        serializer_context=lambda request: {"request": request},
+        validation_error_response=_serializer_error_response,
+    )
     def post(self, request):
-        serializer = SimulatorAgentSerializer(
-            data=request.data, context={"request": request}
+        simulator_agent = request.validated_serializer.save()
+        return Response(
+            SimulatorAgentSerializer(simulator_agent).data,
+            status=status.HTTP_201_CREATED,
         )
-
-        if serializer.is_valid():
-            simulator_agent = serializer.save()
-            return Response(
-                SimulatorAgentSerializer(simulator_agent).data,
-                status=status.HTTP_201_CREATED,
-            )
-
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 class SimulatorAgentDetailView(APIView):
@@ -76,6 +98,13 @@ class SimulatorAgentDetailView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: SimulatorAgentSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def get(self, request, agent_id):
         simulator_agent = get_object_or_404(
             SimulatorAgent,
@@ -94,6 +123,17 @@ class EditSimulatorAgentView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=SimulatorAgentSerializer,
+        responses={
+            200: SimulatorAgentSerializer,
+            400: SimulatorAgentValidationErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+        partial_request_validation=True,
+        serializer_context=lambda request: {"request": request},
+        validation_error_response=_serializer_error_response,
+    )
     def put(self, request, agent_id):
         simulator_agent = get_object_or_404(
             SimulatorAgent,
@@ -105,7 +145,7 @@ class EditSimulatorAgentView(APIView):
 
         serializer = SimulatorAgentSerializer(
             simulator_agent,
-            data=request.data,
+            data=request.validated_data,
             partial=True,
             context={"request": request},
         )
@@ -124,6 +164,13 @@ class DeleteSimulatorAgentView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: SimulatorAgentDeleteResponseSerializer,
+            404: ApiErrorWithDetailsResponseSerializer,
+            500: ApiErrorWithDetailsResponseSerializer,
+        }
+    )
     def delete(self, request, agent_id):
         simulator_agent = get_object_or_404(
             SimulatorAgent,

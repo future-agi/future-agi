@@ -34,7 +34,9 @@ import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useCreateEval } from "src/sections/evals/hooks/useCreateEval";
 import { useUpdateEval } from "src/sections/evals/hooks/useEvalDetail";
 import { useCreateCompositeEval } from "src/sections/evals/hooks/useCompositeEval";
-import ModelSelector, { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import ModelSelector, {
+  FAGI_MODEL_VALUES,
+} from "src/sections/evals/components/ModelSelector";
 import InstructionEditor from "src/sections/evals/components/InstructionEditor";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import LLMPromptEditor from "src/sections/evals/components/LLMPromptEditor";
@@ -48,6 +50,7 @@ import DatasetTestMode from "src/sections/evals/components/DatasetTestMode";
 import TracingTestMode from "src/sections/evals/components/TracingTestMode";
 import SimulationTestMode from "src/sections/evals/components/SimulationTestMode";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import { buildCompositeChildConfigs } from "src/sections/evals/Helpers/compositeRuntimeConfig";
 import {
   contextOptionsForRowType,
   extractCodeEvaluateParams,
@@ -147,9 +150,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     () => contextOptionsForRowType(sourceRowType) || ["variables_only"],
   );
 
-
   const handleSourceRowTypeChange = useCallback((rt) => {
-    const map =  TRACING_ROW_TYPE_TO_KEY;
+    const map = TRACING_ROW_TYPE_TO_KEY;
     const key = map[rt];
     const seeded = key ? contextOptionsForRowType(key) : null;
     if (seeded) setContextOptions(seeded);
@@ -180,6 +182,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         ? null
         : {
             child_template_ids: selectedChildren.map((c) => c.child_id),
+            child_configs: buildCompositeChildConfigs(selectedChildren),
             aggregation_enabled: aggregationEnabled,
             aggregation_function: aggregationFunction,
             composite_child_axis: compositeChildAxis || "",
@@ -259,7 +262,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       try {
         const data = await createEval.mutateAsync({
           is_draft: true,
-          eval_type: "agent",
+          // eval_type: "agent",
           output_type: "pass_fail",
           model: "turing_large",
           pass_threshold: 0.5,
@@ -274,6 +277,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   // Auto-save to draft
   const buildPayload = useCallback(
     () => ({
+      eval_type: evalType,
       instructions: evalType === "code" ? "" : instructions,
       code: evalType === "code" ? code : undefined,
       code_language: evalType === "code" ? codeLanguage : undefined,
@@ -376,6 +380,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       if (!code.trim()) next.instructions = "Code is required";
     } else if (!instructions.trim()) {
       next.instructions = "Instructions are required";
+    } else if (instructions.trim().length < 10) {
+      next.instructions = "Instructions must be at least 10 characters.";
     } else if (
       !hasDataInjection &&
       !/\{\{\s*[^{}]+?\s*\}\}/.test(instructions)
@@ -569,6 +575,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         name: name.trim(),
         description: description || null,
         child_template_ids: childIds,
+        child_configs: buildCompositeChildConfigs(selectedChildren),
         aggregation_enabled: aggregationEnabled,
         aggregation_function: aggregationFunction,
         composite_child_axis: compositeChildAxis,
@@ -844,23 +851,27 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 <Tabs
                   value={evalType}
                   onChange={(_, val) => setEvalType(val)}
+                  variant="standard"
                   TabIndicatorProps={{ style: { display: "none" } }}
                   sx={{
-                    minHeight: 28,
+                    width: "fit-content",
+                    minHeight: 32,
                     "& .MuiTab-root": {
+                      height: 28,
                       minHeight: 28,
+                      maxHeight: 28,
                       px: 1.5,
                       py: 0,
                       mr: "0px !important",
                       textTransform: "none",
                       fontSize: "13px",
+                      lineHeight: "28px",
                       borderRadius: "6px",
                     },
                     border: "1px solid",
                     borderColor: "divider",
                     p: "2px",
                     borderRadius: "8px",
-                    width: "fit-content",
                     bgcolor: (theme) =>
                       theme.palette.mode === "dark"
                         ? "rgba(255,255,255,0.04)"
@@ -948,6 +959,11 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     selectedDatasets={fewShotExamples}
                     onChange={setFewShotExamples}
                   />
+                  {errors.instructions && (
+                    <Typography variant="caption" color="error.main">
+                      {errors.instructions}
+                    </Typography>
+                  )}
                 </>
               )}
 
@@ -991,7 +1007,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     >
                       <Typography variant="caption">0</Typography>
                       <Slider
-                        value={passThreshold * 100}
+                        value={Math.round(passThreshold * 100)}
                         onChange={(_, val) =>
                           handlePassThresholdChange(val / 100)
                         }
@@ -1049,7 +1065,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-
             </Box>
           }
           rightPanel={
@@ -1157,6 +1172,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    onReadyChange={handleSourceReadyChange}
                     onRowTypeChange={handleSourceRowTypeChange}
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}
@@ -1171,6 +1187,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     variables={isComposite ? compositeUnionKeys : variables}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
+                    onReadyChange={handleSourceReadyChange}
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}
                   />
@@ -1262,9 +1279,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           </Typography>
         )}
 
-        <ShowComponent
-          condition={!hasDataInjection }
-        >
+        <ShowComponent condition={!hasDataInjection}>
           <Button
             variant="outlined"
             size="small"

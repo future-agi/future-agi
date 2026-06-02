@@ -437,7 +437,7 @@ def upload_demo_dataset(organization_id, user_id):
             exp_dataset = ExperimentDatasetTable.objects.create(
                 status=StatusType.COMPLETED.value,
                 name="Response Generation-Generate Answer-1-o1-mini",
-                prompt_config=exp_pr_config,
+                legacy_prompt_config=exp_pr_config,
             )
             experiment.experiments_datasets.add(exp_dataset)
 

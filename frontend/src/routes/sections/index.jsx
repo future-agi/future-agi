@@ -9,7 +9,10 @@ import { useAuthContext } from "src/auth/hooks";
 import { AuthGuard } from "src/auth/guard";
 import { SplashScreen } from "src/components/loading-screen";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
-import { useDeploymentMode, usePostLoginPath } from "src/hooks/useDeploymentMode";
+import {
+  useDeploymentMode,
+  usePostLoginPath,
+} from "src/hooks/useDeploymentMode";
 import SOSLoginPage from "src/pages/SOSLoginPage";
 
 const OAuthConsent = lazyWithRetry(() => import("src/pages/mcp/OAuthConsent"));
@@ -31,12 +34,7 @@ export default function Router() {
   const element = useRoutes([
     {
       path: "/",
-      element: (
-        <Navigate
-          to={postLoginPath}
-          replace
-        />
-      ),
+      element: <Navigate to={postLoginPath} replace />,
     },
     {
       path: "/sos",

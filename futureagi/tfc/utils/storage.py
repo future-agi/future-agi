@@ -441,7 +441,8 @@ def upload_document_to_s3(
                 except ImportError:
                     emit = None
 
-                emit(
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    emit(
                     UsageEvent(
                         org_id=str(org_id),
                         event_type=BillingEventType.OBSERVE_ADD,
@@ -563,7 +564,8 @@ def upload_image_to_s3(
             except ImportError:
                 emit = None
 
-            emit(
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                emit(
                 UsageEvent(
                     org_id=str(org_id),
                     event_type=BillingEventType.OBSERVE_ADD,
@@ -782,7 +784,8 @@ def upload_audio_to_s3_duration(
                 except ImportError:
                     emit = None
 
-                emit(
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    emit(
                     UsageEvent(
                         org_id=str(org_id),
                         event_type=BillingEventType.OBSERVE_ADD,
@@ -1145,7 +1148,8 @@ def upload_file_to_s3(
             except ImportError:
                 emit = None
 
-            emit(
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                emit(
                 UsageEvent(
                     org_id=str(org_id),
                     event_type=BillingEventType.KB_STORAGE,
@@ -1694,7 +1698,8 @@ def upload_audio_to_s3(
             except ImportError:
                 emit = None
 
-            emit(
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                emit(
                 UsageEvent(
                     org_id=str(org_id),
                     event_type=BillingEventType.OBSERVE_ADD,
@@ -1885,7 +1890,8 @@ def upload_video_to_s3(
                     except ImportError:
                         emit = None
 
-                    emit(
+                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
                         UsageEvent(
                             org_id=str(org_id),
                             event_type=BillingEventType.OBSERVE_ADD,
@@ -1912,7 +1918,8 @@ def upload_video_to_s3(
                     except ImportError:
                         emit = None
 
-                    emit(
+                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                        emit(
                         UsageEvent(
                             org_id=str(org_id),
                             event_type=BillingEventType.OBSERVE_ADD,
@@ -1936,7 +1943,8 @@ def upload_video_to_s3(
                 except ImportError:
                     emit = None
 
-                emit(
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    emit(
                     UsageEvent(
                         org_id=str(org_id),
                         event_type=BillingEventType.OBSERVE_ADD,

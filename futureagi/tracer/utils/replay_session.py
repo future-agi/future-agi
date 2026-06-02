@@ -207,19 +207,16 @@ def get_agent_suggestions(
         # Extract the original Vapi/Retell config from the trace
         original_config = _extract_voice_trace_original_config(trace_query)
 
-        # Extract system prompt from the already-loaded config to avoid a redundant span query
-        agent_description = (
-            _extract_voice_trace_system_prompt(trace_query, _config=original_config)
-            or ""
-        )
-
-        # Fallback: try the project's agent definition
-        if not agent_description:
-            agent_def_from_project = AgentDefinition.objects.filter(
-                observability_provider__project=project,
-            ).first()
-            if agent_def_from_project:
-                agent_description = agent_def_from_project.description or ""
+        # The voice system prompt lives on the external provider (Vapi/Retell)
+        # and is reachable via assistant_id on the AgentDefinition — don't
+        # duplicate it into agent_description. Reuse the existing project
+        # agent definition's description if one exists; otherwise leave blank.
+        agent_description = ""
+        agent_def_from_project = AgentDefinition.objects.filter(
+            observability_provider__project=project,
+        ).first()
+        if agent_def_from_project:
+            agent_description = agent_def_from_project.description or ""
 
         return (
             False,
@@ -234,18 +231,13 @@ def get_agent_suggestions(
             None,
         )
 
-    system_prompt = get_system_prompt(
-        project_id=str(project.id),
-        replay_type=replay_type,
-        ids=ids,
-        select_all=select_all,
-    )
-
+    # Text agent system prompt is captured on AgentVersion.configuration_snapshot
+    # at version-create time, so don't copy it into agent_description here.
     return (
         False,
         {
             "agent_name": agent_name,
-            "agent_description": system_prompt or "",
+            "agent_description": "",
             "agent_type": "text",
             "scenario_name": scenario_name,
             "version_name": None,

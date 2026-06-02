@@ -663,7 +663,7 @@ const AddExistingDataset = ({
 
 AddExistingDataset.propTypes = {
   handleclose: PropTypes.func,
-  selectedNode: PropTypes.number,
+  selectedNode: PropTypes.oneOfType([PropTypes.string, PropTypes.number]),
   availableDatasets: PropTypes.array,
   observationFields: PropTypes.array,
   selectedTraces: PropTypes.array,

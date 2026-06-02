@@ -5,18 +5,17 @@ import tempfile
 import traceback
 import uuid
 from io import BytesIO
-from typing import Any
 
 import pandas as pd
 import structlog
 from django.db import close_old_connections, transaction
-from django.db.utils import OperationalError
+from django.db.models import Q
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.generics import CreateAPIView
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from analytics.utils import (
     MixpanelEvents,
     MixpanelTypes,
@@ -32,10 +31,18 @@ from model_hub.models.choices import (
     determine_data_type,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
-from model_hub.serializers.develop_dataset import UploadFileForm
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    CreateDatasetFromLocalFileRequestSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetCreationProgressResponseSerializer,
+    LocalFileDatasetCreateStartedResponseSerializer,
+)
 from model_hub.utils.file_reader import FileProcessor
 from tfc.settings.settings import UPLOAD_BUCKET_NAME
 from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.storage import (
@@ -48,16 +55,49 @@ from tfc.utils.storage_client import (
     extract_object_key,
     get_storage_client,
 )
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
-try:
-    from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
+    from ee.usage.utils.usage_entries import (
+        ROW_LIMIT_REACHED_MESSAGE,
+        log_and_deduct_cost_for_resource_request,
+    )
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    workspace = getattr(request, "workspace", None)
+    if not workspace:
+        return Q()
+
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{field_name: workspace})
+            | Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization_id": workspace.organization_id,
+                }
+            )
+            | Q(**{f"{field_name}__isnull": True})
+        )
+
+    return Q(**{field_name: workspace})
+
+
+def _request_dataset_queryset(request):
+    return Dataset.objects.filter(
+        _request_workspace_filter(request),
+        organization=_request_organization(request),
+        deleted=False,
+    )
 
 
 def normalize_cell_value(value):
@@ -127,15 +167,16 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
                 except ImportError:
                     emit = None
 
-                emit(
-                    UsageEvent(
-                        org_id=str(org_id),
-                        event_type=BillingEventType.OBSERVE_ADD,
-                        amount=len(file_content),
-                        properties={"source": "dataset_file"},
+                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                    emit(
+                        UsageEvent(
+                            org_id=str(org_id),
+                            event_type=BillingEventType.OBSERVE_ADD,
+                            amount=len(file_content),
+                            properties={"source": "dataset_file"},
+                        )
                     )
-                )
-            except ImportError:
+            except (ImportError, TypeError):
                 pass
 
         url = get_object_url(bucket_name, object_key)
@@ -922,13 +963,24 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @validated_request(
+        request_serializer=CreateDatasetFromLocalFileRequestSerializer,
+        responses={
+            200: LocalFileDatasetCreateStartedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
-            form = UploadFileForm(request.POST, request.FILES)
-            file = form.files.get("file")
-            new_dataset_name = form.data.get("new_dataset_name")
-            model_type = form.data.get("model_type")
-            source = form.data.get("source", DatasetSourceChoices.BUILD.value)
+            validated_data = request.validated_data
+            file = validated_data["file"]
+            new_dataset_name = validated_data.get("new_dataset_name")
+            model_type = validated_data.get("model_type")
+            source = validated_data.get("source") or DatasetSourceChoices.BUILD.value
+
+            if not file:
+                return self._gm.bad_request(get_error_message("NO_FILE_UPLOADED"))
 
             # Enforce file size limit (aligned with UI: max 10 MB)
             if file:
@@ -939,78 +991,72 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                 except Exception as validation_err:
                     return self._gm.bad_request(str(validation_err.detail[0]))
 
-            # Check usage limits
-            call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row_entry is None
-                or call_log_row_entry.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-                and source != DatasetSourceChoices.SDK.value
-            ):
-                return self._gm.too_many_requests(
-                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                )
-            call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
-            call_log_row_entry.save()
-
-            # Validate inputs
-            from model_hub.validators.dataset_validators import (
-                validate_dataset_name_unique,
-            )
-
-            try:
-                validate_dataset_name_unique(
-                    new_dataset_name,
-                    getattr(request, "organization", None) or request.user.organization,
-                )
-            except Exception as validation_err:
-                return self._gm.bad_request(str(validation_err.detail[0]))
-
-            if not file:
-                return self._gm.bad_request(get_error_message("NO_FILE_UPLOADED"))
-
             # Quick file validation and row count check
             data, error = FileProcessor.process_file(file_obj=file)
             if error:
                 return self._gm.bad_request(error)
 
-            rows_in_dataset = data.shape[0]
-            call_log_row = log_and_deduct_cost_for_resource_request(
-                getattr(request, "organization", None) or request.user.organization,
-                api_call_type=APICallTypeChoices.ROW_ADD.value,
-                config={"total_rows": rows_in_dataset},
-                workspace=request.workspace,
+            organization = _request_organization(request)
+            new_dataset_name = new_dataset_name if new_dataset_name else file.name
+
+            from model_hub.validators.dataset_validators import (
+                validate_dataset_name_unique,
             )
-            if (
-                call_log_row is None
-                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
-                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
-            call_log_row.status = APICallStatusChoices.SUCCESS.value
-            call_log_row.save()
+
+            try:
+                validate_dataset_name_unique(new_dataset_name, organization)
+            except Exception as validation_err:
+                return self._gm.bad_request(str(validation_err.detail[0]))
+
+            rows_in_dataset = data.shape[0]
+
+            # Check usage limits after validation so failed requests do not consume quota.
+            if log_and_deduct_cost_for_resource_request is not None:
+                call_log_row_entry = log_and_deduct_cost_for_resource_request(
+                    organization=organization,
+                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                    sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row_entry is None
+                    or call_log_row_entry.status
+                    == APICallStatusChoices.RESOURCE_LIMIT.value
+                    and source != DatasetSourceChoices.SDK.value
+                ):
+                    return self._gm.too_many_requests(
+                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
+                    )
+                call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
+                call_log_row_entry.save()
+
+            if log_and_deduct_cost_for_resource_request is not None:
+                call_log_row = log_and_deduct_cost_for_resource_request(
+                    organization,
+                    api_call_type=APICallTypeChoices.ROW_ADD.value,
+                    config={"total_rows": rows_in_dataset},
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is None
+                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                ):
+                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                call_log_row.status = APICallStatusChoices.SUCCESS.value
+                call_log_row.save()
 
             # Upload file to Minio immediately
-            _org = getattr(request, "organization", None) or request.user.organization
+            _org = organization
             file_key = f"datasets/{_org.id}/{uuid.uuid4()}/{file.name}"
             file_url = upload_file_to_minio(file, file_key, org_id=str(_org.id))
             logger.info(f"File uploaded to Minio: {file_url}")
             logger.info(f"File key: {file_key}")
 
             # Create dataset with initial metadata
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-            new_dataset_name = new_dataset_name if new_dataset_name else file.name
-
             dataset = Dataset.objects.create(
                 name=new_dataset_name,
                 organization=organization,
+                workspace=getattr(request, "workspace", None),
                 model_type=model_type,
                 source=source,
                 dataset_config={
@@ -1070,15 +1116,16 @@ class DatasetCreationProgressView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (JSONParser,)
 
+    @swagger_auto_schema(
+        responses={
+            200: DatasetCreationProgressResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
             # Get dataset and validate ownership
-            dataset = Dataset.objects.filter(
-                id=dataset_id,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-                deleted=False,
-            ).first()
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
 
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))

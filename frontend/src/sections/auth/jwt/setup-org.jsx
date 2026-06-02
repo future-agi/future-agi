@@ -238,6 +238,12 @@ const SetupOrganization = ({ getStarted = false }) => {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeStep = parseInt(searchParams.get("step") || "0", 10);
+  // Where to land once org setup finishes — honor an internal `returnTo`
+  // persisted in localStorage over the default dashboard page.
+  const returnTo = (() => {
+    const rt = localStorage.getItem("redirectUrl");
+    return rt && rt.startsWith("/") && !rt.startsWith("//") ? rt : null;
+  })();
 
   const setActiveStep = useCallback(
     (newStep) => {
@@ -326,7 +332,11 @@ const SetupOrganization = ({ getStarted = false }) => {
       } else {
         // Non-owners (invited users) should go straight to dashboard
         // They're already part of an org, no need for additional onboarding
-        window.location.href = paths.dashboard.develop;
+        if (returnTo) {
+          localStorage.setItem("initial-render", "done");
+          localStorage.removeItem("redirectUrl");
+        }
+        window.location.href = returnTo || paths.dashboard.develop;
       }
     },
     onError: (error) => {
@@ -498,7 +508,11 @@ const SetupOrganization = ({ getStarted = false }) => {
 
       if (!getStarted) {
         // After creating org during onboarding, redirect to get-started
-        window.location.href = paths.dashboard.getstarted;
+        if (returnTo) {
+          localStorage.setItem("initial-render", "done");
+          localStorage.removeItem("redirectUrl");
+        }
+        window.location.href = returnTo || paths.dashboard.getstarted;
       }
     },
 

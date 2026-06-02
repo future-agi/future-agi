@@ -28,6 +28,82 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 
 
+class TestHuggingFaceLookupResponseContracts:
+    @patch("model_hub.views.develop_dataset.requests.get")
+    def test_dataset_list_returns_typed_result(self, mock_get, auth_client):
+        mock_response = MagicMock()
+        mock_response.status_code = status.HTTP_200_OK
+        mock_response.json.return_value = {
+            "numTotalItems": 1,
+            "datasets": [
+                {
+                    "id": "futureagi/example",
+                    "name": "futureagi/example",
+                    "downloads": 42,
+                    "likes": 7,
+                    "author": "futureagi",
+                }
+            ],
+        }
+        mock_get.return_value = mock_response
+
+        response = auth_client.post(
+            "/model-hub/datasets/huggingface/list/",
+            {"search_query": "futureagi", "filter_params": {}},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["message"] == "Datasets retrieved successfully"
+        assert result["total_datasets"] == 1
+        assert result["datasets"] == [
+            {
+                "id": "futureagi/example",
+                "name": "futureagi/example",
+                "downloads": 42,
+                "likes": 7,
+                "author": "futureagi",
+            }
+        ]
+
+    @patch("model_hub.views.develop_dataset.requests.get")
+    def test_dataset_detail_returns_typed_result(self, mock_get, auth_client):
+        mock_response = MagicMock()
+        mock_response.status_code = status.HTTP_200_OK
+        mock_response.json.return_value = [
+            {
+                "id": "futureagi/example",
+                "name": "futureagi/example",
+                "description": "Example dataset",
+                "downloads": 42,
+                "likes": 7,
+                "tags": ["text"],
+                "author": "futureagi",
+            }
+        ]
+        mock_get.return_value = mock_response
+
+        response = auth_client.post(
+            "/model-hub/datasets/huggingface/detail/",
+            {"dataset_id": "futureagi/example"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        result = response.json()["result"]
+        assert result["message"] == "Dataset details retrieved successfully"
+        assert result["dataset"] == {
+            "id": "futureagi/example",
+            "name": "futureagi/example",
+            "description": "Example dataset",
+            "downloads": 42,
+            "likes": 7,
+            "tags": ["text"],
+            "author": "futureagi",
+        }
+
+
 class TestProcessHuggingFaceColumnsJsonSerialization:
     """
     Test that process_huggingface_columns handles JSON-serialized dict keys.

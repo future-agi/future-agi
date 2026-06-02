@@ -1,0 +1,69 @@
+eval_id: 201
+name: dead_air_detection
+description: Detects dead air (silence) in conversation audio using RMS energy analysis. Fails if either the total dead-air percentage or the longest single silence gap exceeds the configured threshold.
+criteria: Check whether the conversation audio stays below the configured dead-air budget (total silence %) and the single-gap budget (longest continuous silence in ms). Return Passed if both budgets hold; otherwise return Failed.
+eval_tags:
+- Audio
+- Voice
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - input_audio
+  output: Pass/Fail
+  eval_type_id: CustomCodeEval
+  config: {}
+  function_params_schema:
+    dead_air_threshold:
+      type: number
+      default: 20.0
+      minimum: 0
+      maximum: 100
+    gap_threshold_ms:
+      type: number
+      default: 3000
+      minimum: 0
+    silence_threshold:
+      type: number
+      default: 0.01
+      minimum: 0
+      maximum: 1
+  config_params_desc:
+    input_audio: The conversation audio to analyse (URL, data URI, or file path)
+    dead_air_threshold: Maximum acceptable dead-air percentage (% of total audio duration)
+    gap_threshold_ms: Maximum acceptable single continuous silence gap (milliseconds)
+    silence_threshold: RMS energy below which a frame is treated as silent (0-1)
+  param_modalities:
+    input_audio:
+    - AUDIO
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        err = kwargs.get("_dead_air_error")
+        if err:
+            return {"score": 0.0, "reason": f"Dead air analysis unavailable: {err}"}
+        dead_air_pct = kwargs.get("_dead_air_percentage")
+        max_gap_ms = kwargs.get("_dead_air_max_gap_ms")
+        if dead_air_pct is None or max_gap_ms is None:
+            return {"score": 0.0, "reason": "Dead air analysis unavailable: preprocessing did not run"}
+        try:
+            dead_air_threshold = float(kwargs.get("dead_air_threshold", 20.0))
+        except (TypeError, ValueError):
+            dead_air_threshold = 20.0
+        try:
+            gap_threshold_ms = float(kwargs.get("gap_threshold_ms", 3000.0))
+        except (TypeError, ValueError):
+            gap_threshold_ms = 3000.0
+        dead_air_passed = dead_air_pct <= dead_air_threshold
+        gap_passed = max_gap_ms <= gap_threshold_ms
+        passed = dead_air_passed and gap_passed
+        reason = (
+            f"Dead air: {dead_air_pct:.1f}% "
+            f"({'pass' if dead_air_passed else 'fail'}, threshold {dead_air_threshold:.1f}%). "
+            f"Max silence gap: {max_gap_ms:.0f}ms "
+            f"({'pass' if gap_passed else 'fail'}, threshold {gap_threshold_ms:.0f}ms)."
+        )
+        return {"score": 1.0 if passed else 0.0, "reason": reason}

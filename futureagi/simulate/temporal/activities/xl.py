@@ -1257,10 +1257,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from simulate.models import AgentDefinition
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
-    try:
-        from ee.usage.models.usage import APICallStatusChoices
-    except ImportError:
-        APICallStatusChoices = None
+    from tfc.constants.api_calls import APICallStatusChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:

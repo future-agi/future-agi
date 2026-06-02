@@ -29,17 +29,19 @@ export const COMPOSITE_AXIS_OPTIONS = [
 /**
  * Maps a composite_child_axis value to the filters the eval picker
  * should apply so that only children of the matching shape are shown.
+ * Every axis also locks template_type to "single" — a composite cannot
+ * contain another composite.
  */
 export function axisToLockedFilters(axis) {
   switch (axis) {
     case "pass_fail":
-      return { output_type: ["pass_fail"] };
+      return { output_type: ["pass_fail"], template_type: ["single"] };
     case "percentage":
-      return { output_type: ["percentage"] };
+      return { output_type: ["percentage"], template_type: ["single"] };
     case "choices":
-      return { output_type: ["deterministic"] };
+      return { output_type: ["deterministic"], template_type: ["single"] };
     case "code":
-      return { eval_type: ["code"] };
+      return { eval_type: ["code"], template_type: ["single"] };
     default:
       return null;
   }

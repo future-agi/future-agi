@@ -112,7 +112,6 @@ const TestRunDetailGrid = () => {
       resizable: true,
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
-      suppressMultiSort: true,
       // flex: 1,
       cellStyle: {
         lineHeight: 1,

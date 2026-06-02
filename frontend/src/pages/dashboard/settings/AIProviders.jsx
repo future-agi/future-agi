@@ -18,6 +18,7 @@ import {
   buttonStyles,
   getFilterOptions,
   filterAndSortProviders,
+  normalizeProviderStatus,
   emptyStateContent,
 } from "src/components/custom-model-dropdown/KeysHelper";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
@@ -38,7 +39,8 @@ const ConfigureProviders = () => {
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["api-key-status"],
     queryFn: () => axios.get(endpoints.develop.apiKey.status),
-    select: (d) => d.data?.result?.providers,
+    select: (d) =>
+      (d.data?.result?.providers || []).map(normalizeProviderStatus),
   });
 
   const [selectedFilter, setSelectedFilter] = useState("all");
@@ -91,9 +93,7 @@ const ConfigureProviders = () => {
   );
 
   const filteredData = data?.filter((d) =>
-    (d.display_name ?? d.displayName ?? "")
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase()),
+    (d.display_name ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
   const containerStyles = useMemo(

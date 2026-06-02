@@ -459,10 +459,7 @@ class TestProcessSingleErrorLocalization:
         """Test successful error localization processing."""
         from model_hub.models.error_localizer_model import ErrorLocalizerStatus
         from model_hub.tasks.user_evaluation import process_single_error_localization
-        try:
-            from ee.usage.models.usage import APICallStatusChoices
-        except ImportError:
-            APICallStatusChoices = None
+        from tfc.constants.api_calls import APICallStatusChoices
 
         mock_check_usage.return_value = MagicMock(allowed=True)
 

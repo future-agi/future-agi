@@ -83,6 +83,29 @@ class TestProcessEvalTaskSpans:
         span_ids = {s.id for s in populated_observe_project["spans"]}
         assert {r.observation_span_id for r in rows} == span_ids
 
+    def test_span_id_filter_limits_dispatch_to_linked_span(
+        self,
+        populated_observe_project,
+        observe_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Linked-source span filters dispatch only the selected span."""
+        task = observe_eval_task["task"]
+        target_span = populated_observe_project["spans"][0]
+        task.filters = {
+            "project_id": str(populated_observe_project["project"].id),
+            "span_id": [target_span.id],
+        }
+        task.save(update_fields=["filters"])
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 1
+        assert rows.first().observation_span_id == target_span.id
+
     def test_respects_sampling_rate(
         self,
         populated_observe_project,
@@ -175,6 +198,96 @@ class TestProcessEvalTaskSpans:
         ).count()
         # 50% of 12 pending spans -> 6 sampled at dispatch
         assert count == 6
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Voice-call dispatch — literal alias of the spans pipeline. Any
+# observation_type narrowing is the caller's job via ``filters``.
+# ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def voice_call_eval_task(db, populated_observe_project, eval_template):
+    """Historical voiceCalls eval task on the shared 12-span fixture."""
+    from tracer.models.eval_task import RowType
+
+    project = populated_observe_project["project"]
+    config = CustomEvalConfig.objects.create(
+        project=project,
+        eval_template=eval_template,
+        name="Test Voice Eval",
+        config={"output": "Pass/Fail"},
+        mapping={"input": "input", "output": "output"},
+        model="turing_large",
+    )
+    task = EvalTask.objects.create(
+        project=project,
+        name="Test voice calls task",
+        filters={"project_id": str(project.id)},
+        sampling_rate=100.0,
+        run_type=RunType.HISTORICAL,
+        spans_limit=1000,
+        status=EvalTaskStatus.PENDING,
+        row_type=RowType.VOICE_CALLS,
+    )
+    task.evals.add(config)
+    return {"task": task, "config": config, "project": project}
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestProcessEvalTaskVoiceCalls:
+    """Dispatcher must route voiceCalls through the spans flow.
+
+    Regression net for the bug where ``row_type='voiceCalls'`` hit the
+    dispatcher's ``else`` branch (added in fb134ddf) and raised
+    ``ValueError`` — flipping every voiceCalls task in prod to FAILED.
+
+    Behaviour pin: voiceCalls is a literal alias of spans at dispatch.
+    Any observation_type narrowing (e.g. limiting to conversation roots)
+    is the caller's responsibility via ``EvalTask.filters``.
+    """
+
+    def test_dispatches_same_spans_as_spans_path(
+        self,
+        populated_observe_project,
+        voice_call_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """voiceCalls fan-out matches the spans path on the same project."""
+        task = voice_call_eval_task["task"]
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        # populated_observe_project has 2 sessions × 2 traces × 3 spans = 12
+        # spans × 1 eval -> 12 EvalLogger rows (no observation_type narrowing).
+        assert rows.count() == 12
+        expected_ids = {s.id for s in populated_observe_project["spans"]}
+        assert {r.observation_span_id for r in rows} == expected_ids
+
+    def test_status_transitions_match_spans_path(
+        self,
+        populated_observe_project,
+        voice_call_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """voiceCalls inherits the spans drain semantics: PENDING -> RUNNING -> COMPLETED."""
+        task = voice_call_eval_task["task"]
+        assert task.status == EvalTaskStatus.PENDING
+
+        process_eval_task._original_func(str(task.id))
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.RUNNING
+
+        process_eval_task._original_func(str(task.id))
+        task.refresh_from_db()
+        assert task.status == EvalTaskStatus.COMPLETED
 
 
 @pytest.mark.integration
@@ -370,6 +483,29 @@ class TestProcessEvalTaskTraces:
         assert all(r.trace_id is not None for r in rows)
         assert all(r.observation_span_id is not None for r in rows)
         assert all(r.trace_session_id is None for r in rows)
+
+    def test_trace_id_filter_limits_dispatch_to_linked_trace(
+        self,
+        populated_observe_project,
+        observe_trace_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Linked-source trace filters dispatch only the selected trace."""
+        task = observe_trace_task["task"]
+        target_trace = populated_observe_project["traces"][0]
+        task.filters = {
+            "project_id": str(populated_observe_project["project"].id),
+            "trace_id": [str(target_trace.id)],
+        }
+        task.save(update_fields=["filters"])
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 1
+        assert str(rows.first().trace_id) == str(target_trace.id)
 
     def test_anchors_to_root_span(
         self,
@@ -574,6 +710,29 @@ class TestProcessEvalTaskSessions:
             assert row.observation_span_id is None
             assert row.trace_id is None
             assert row.trace_session_id is not None
+
+    def test_session_id_filter_accepts_ui_list_shape(
+        self,
+        populated_observe_project,
+        observe_session_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """Task forms send session_id as a list; dispatcher honors that shape."""
+        task = observe_session_task["task"]
+        target_session = populated_observe_project["sessions"][0]
+        task.filters = {
+            "project_id": str(populated_observe_project["project"].id),
+            "session_id": [str(target_session.id)],
+        }
+        task.save(update_fields=["filters"])
+
+        process_eval_task._original_func(str(task.id))
+
+        rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
+        assert rows.count() == 1
+        assert str(rows.first().trace_session_id) == str(target_session.id)
 
     def test_dedup_on_second_tick(
         self,

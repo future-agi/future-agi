@@ -5,15 +5,29 @@ import traceback
 import structlog
 from django.db.models import F
 from django.db.models.functions import Lower
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from accounts.utils import get_request_organization
 from model_hub.models.api_key import ApiKey
 from model_hub.models.custom_models import CustomAIModel
 from model_hub.models.metric import Metric
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    CustomAIModelBaselineRequestSerializer,
+    CustomAIModelCreateRequestSerializer,
+    CustomAIModelCreateResponseSerializer,
+    CustomAIModelDefaultMetricRequestSerializer,
+    CustomAIModelDeleteRequestSerializer,
+    CustomAIModelEditRequestSerializer,
+    CustomAIModelEditResponseSerializer,
+    CustomAIModelUpdateRequestSerializer,
+    ModelHubPaginatedResponseSerializer,
+    ModelHubStatusMessageResponseSerializer,
+    ModelHubStringResultResponseSerializer,
+)
 from model_hub.serializers.custom_models import (
     CustomAIModelSerializer,
     CustomAIModelsListSerializer,
@@ -21,9 +35,13 @@ from model_hub.serializers.custom_models import (
 from model_hub.utils.azure_endpoints import normalize_azure_custom_model_config
 from model_hub.utils.clickhouse import get_model_volume
 from model_hub.utils.utils import validate_model_working
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+
+logger = structlog.get_logger(__name__)
 
 
 class CustomAIModelView(APIView):
@@ -33,6 +51,9 @@ class CustomAIModelView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: ModelHubPaginatedResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         # Get the organization of the logged-in user
         user_organization = get_request_organization(self.request)
@@ -95,9 +116,14 @@ class CustomAIModelCreateView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=CustomAIModelCreateRequestSerializer,
+        responses={200: CustomAIModelCreateResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
-            data = request.data
+            data = request.validated_data
             model_provider = data.get("model_provider")
             model_name = data.get("model_name")
             input_token_cost = data.get("input_token_cost")
@@ -230,6 +256,9 @@ class CustomAIModelDetailsView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: CustomAIModelSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, id, *args, **kwargs):
         """Return details regarding a particular model, given his id"""
         user_organization = get_request_organization(self.request)
@@ -237,17 +266,20 @@ class CustomAIModelDetailsView(APIView):
             organization=user_organization, id=id
         ).first()
         if not ai_model:
-            return Response(
-                {"status": "error", "message": "Custom AI model not found"}, status=404
-            )
+            return self._gm.not_found("Custom AI model not found")
         ai_model_serializer = CustomAIModelSerializer(ai_model)
         # meta_properties = get_model_details(ai_model, user_organization)
         return Response({**ai_model_serializer.data})
 
+    @validated_request(
+        request_serializer=CustomAIModelUpdateRequestSerializer,
+        responses={200: CustomAIModelSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, id, *args, **kwargs):
         """Update custom model details"""
         user_organization = get_request_organization(self.request)
-        data = request.data
+        data = request.validated_data
         input_token_cost = data.get("input_token_cost")
         output_token_cost = data.get("output_token_cost")
         try:
@@ -255,10 +287,7 @@ class CustomAIModelDetailsView(APIView):
                 organization=user_organization, id=id
             ).first()
             if not ai_model:
-                return Response(
-                    {"status": "error", "message": "Custom AI model not found"},
-                    status=404,
-                )
+                return self._gm.not_found("Custom AI model not found")
             new_model_name = data.get("model_name")
             if (
                 new_model_name
@@ -283,17 +312,25 @@ class CustomAIModelDetailsView(APIView):
             return Response({**ai_model_serializer.data}, status=200)
 
         except Exception as e:
-            return Response({"detail": str(e)}, status=400)
+            return Response(build_error_envelope(str(e), status_code=400), status=400)
 
 
 class UpdateMetricCustomAIModelView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=CustomAIModelDefaultMetricRequestSerializer,
+        responses={
+            200: ModelHubStatusMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, id, *args, **kwargs):
         """Update default metric of the model given model id in request and information of metric in the body"""
         user_organization = get_request_organization(self.request)
 
-        data = request.data
+        data = request.validated_data
         ai_model_id = id
         new_metrics_id = data.get("metric_id")
 
@@ -313,18 +350,24 @@ class UpdateMetricCustomAIModelView(APIView):
             )
 
         except CustomAIModel.DoesNotExist:
-            return Response(
-                {"status": "error", "message": "Custom AI model not found"}, status=404
-            )
+            return GeneralMethods().not_found("Custom AI model not found")
 
 
 class UpdateBaselineDatasetCustomAIModelView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=CustomAIModelBaselineRequestSerializer,
+        responses={
+            200: ModelHubStatusMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, id, *args, **kwargs):
         user_organization = get_request_organization(self.request)
 
-        data = request.data
+        data = request.validated_data
         ai_model_id = id
         environment = data.get("environment")
         version = data.get("model_version")
@@ -345,14 +388,15 @@ class UpdateBaselineDatasetCustomAIModelView(APIView):
             )
 
         except CustomAIModel.DoesNotExist:
-            return Response(
-                {"status": "error", "message": "AI model not found"}, status=404
-            )
+            return GeneralMethods().not_found("AI model not found")
 
 
 class CustomAIModelListView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: ModelHubPaginatedResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         user_organization = get_request_organization(self.request)
         search_query = request.query_params.get("search_query")
@@ -380,8 +424,16 @@ class DeleteCustomAIModelView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=CustomAIModelDeleteRequestSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def delete(self, request, *args, **kwargs):
-        ai_model_ids = request.data.get("ids", [])
+        ai_model_ids = request.validated_data.get("ids", [])
         user_organization = get_request_organization(request)
         try:
             for model_id in ai_model_ids:
@@ -403,6 +455,9 @@ class EditCustomModel(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={200: CustomAIModelEditResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, *args, **kwargs):
         model_id = request.query_params.get("id", None)
 
@@ -437,14 +492,22 @@ class EditCustomModel(APIView):
             traceback.print_exc()
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=CustomAIModelEditRequestSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def patch(self, request, *args, **kwargs):
-        model_id = request.data.get("id", None)
+        model_id = request.validated_data.get("id", None)
 
         if not model_id:
             return self._gm.bad_request("Model ID is required")
 
         try:
-            data = request.data
+            data = request.validated_data
             model_name = data.get("model_name", None)
             input_token_cost = data.get("input_token_cost", None)
             output_token_cost = data.get("output_token_cost", None)

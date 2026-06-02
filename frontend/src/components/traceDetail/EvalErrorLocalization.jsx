@@ -88,6 +88,8 @@ const EvalErrorLocalization = ({
     },
     enabled: traceFetchEnabled,
     refetchOnWindowFocus: false,
+    // Suppress global onError toast (app.jsx); inline empty state already rendered.
+    meta: { errorHandled: true },
   });
 
   useEffect(() => {

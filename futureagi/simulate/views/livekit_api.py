@@ -17,7 +17,9 @@ from datetime import UTC, datetime
 import structlog
 from asgiref.sync import async_to_sync
 from django.conf import settings
-from rest_framework import status
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
+from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -28,10 +30,113 @@ from simulate.repositories import (
     CallTranscriptRepository,
     PhoneNumberRepository,
 )
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observability_provider import ProviderChoices
 
 logger = structlog.get_logger(__name__)
+
+LIVEKIT_WEBHOOK_REQUEST = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    description="LiveKit webhook payload verified against the Authorization JWT.",
+)
+
+
+class LiveKitErrorResponseSerializer(ApiTextErrorResponseSerializer):
+    pass
+
+
+_gm = GeneralMethods()
+
+
+class LiveKitOkResponseSerializer(serializers.Serializer):
+    ok = serializers.BooleanField()
+
+
+class LiveKitTranscriptRowSerializer(serializers.Serializer):
+    role = serializers.CharField(required=False)
+    content = serializers.CharField(required=False)
+    start_time_ms = serializers.IntegerField(required=False)
+    end_time_ms = serializers.IntegerField(required=False, default=0)
+
+
+class LiveKitTranscriptsRequestSerializer(LiveKitTranscriptRowSerializer):
+    transcripts = LiveKitTranscriptRowSerializer(many=True, required=False)
+
+
+class LiveKitTranscriptCreatedResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField(required=False)
+    created = serializers.IntegerField(required=False)
+
+
+class LiveKitCallConfigResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    call_metadata = serializers.DictField(child=serializers.JSONField())
+    provider_call_data = serializers.DictField(child=serializers.JSONField())
+    status = serializers.CharField()
+    ended_reason = serializers.CharField(allow_blank=True)
+    duration_seconds = serializers.IntegerField(allow_null=True)
+
+
+class LiveKitPhoneResolutionResponseSerializer(serializers.Serializer):
+    call_id = serializers.UUIDField()
+    call_metadata = serializers.DictField(child=serializers.JSONField())
+    provider_call_data = serializers.DictField(child=serializers.JSONField())
+    status = serializers.CharField()
+
+
+class LiveKitCallExecutionUpdateRequestSerializer(serializers.Serializer):
+    provider_call_data = serializers.DictField(
+        child=serializers.JSONField(), required=False
+    )
+    started_at = serializers.DateTimeField(required=False)
+    completed_at = serializers.DateTimeField(required=False)
+    ended_at = serializers.DateTimeField(required=False)
+    duration_seconds = serializers.IntegerField(required=False, min_value=0)
+    ended_reason = serializers.CharField(required=False, allow_blank=True)
+    service_provider_call_id = serializers.CharField(required=False, allow_blank=True)
+
+
+class LiveKitTemporalSignalRequestSerializer(serializers.Serializer):
+    workflow_id = serializers.CharField(required=False, allow_blank=True)
+    call_id = serializers.UUIDField(required=False)
+    status = serializers.CharField(required=False, default="completed")
+    duration_seconds = serializers.IntegerField(required=False, min_value=0, default=0)
+    end_reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="agent_session_closed",
+    )
+
+
+class LiveKitListenerTokenResultSerializer(serializers.Serializer):
+    token = serializers.CharField()
+    url = serializers.CharField()
+    room_name = serializers.CharField()
+
+
+class LiveKitListenerTokenResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = LiveKitListenerTokenResultSerializer()
+
+
+class ValidateLiveKitCredentialsRequestSerializer(serializers.Serializer):
+    livekit_url = serializers.CharField()
+    api_key = serializers.CharField()
+    api_secret = serializers.CharField()
+    agent_name = serializers.CharField(required=False, allow_blank=True)
+    agent_definition_id = serializers.UUIDField(required=False)
+
+
+class ValidateLiveKitCredentialsResultSerializer(serializers.Serializer):
+    valid = serializers.BooleanField()
+    error = serializers.CharField(required=False, allow_blank=True)
+
+
+class ValidateLiveKitCredentialsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = ValidateLiveKitCredentialsResultSerializer()
 
 
 # ---------------------------------------------------------------------------
@@ -119,13 +224,16 @@ def _forbidden(detail: str):
 class CallConfigView(InternalAPIView):
     """Return call config for a given call execution."""
 
+    @swagger_auto_schema(
+        responses={
+            200: LiveKitCallConfigResponseSerializer,
+            404: LiveKitErrorResponseSerializer,
+        },
+    )
     async def get(self, request: Request, call_id: str) -> Response:
         config = await CallExecutionRepository.get_call_config(call_id)
         if config is None:
-            return Response(
-                {"error": "CallExecution not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _gm.not_found("CallExecution not found")
         return Response(config)
 
 
@@ -137,34 +245,34 @@ class CallConfigView(InternalAPIView):
 class TranscriptsView(InternalAPIView):
     """Create transcript row(s) for a call execution."""
 
+    @validated_request(
+        request_serializer=LiveKitTranscriptsRequestSerializer,
+        responses={
+            201: LiveKitTranscriptCreatedResponseSerializer,
+            400: LiveKitErrorResponseSerializer,
+            404: LiveKitErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     async def post(self, request: Request, call_id: str) -> Response:
-        data = request.data
+        data = request.validated_data
 
         # Bulk mode: {"transcripts": [{role, content, start_time_ms}, ...]}
         if "transcripts" in data:
             transcripts = data["transcripts"]
             if not isinstance(transcripts, list) or not transcripts:
-                return Response(
-                    {"error": "transcripts must be a non-empty list"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                return _gm.bad_request("transcripts must be a non-empty list")
             try:
                 count = await CallTranscriptRepository.bulk_create(call_id, transcripts)
             except Exception:
                 logger.exception("livekit_api_bulk_transcript_failed", call_id=call_id)
-                return Response(
-                    {"error": "CallExecution not found"},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+                return _gm.not_found("CallExecution not found")
             return Response({"created": count}, status=status.HTTP_201_CREATED)
 
         # Single mode: {role, content, start_time_ms}
         for field in ("role", "content", "start_time_ms"):
             if field not in data:
-                return Response(
-                    {"error": f"Missing required field: {field}"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                return _gm.bad_request(f"Missing required field: {field}")
         try:
             result = await CallTranscriptRepository.create(
                 call_id=call_id,
@@ -175,10 +283,7 @@ class TranscriptsView(InternalAPIView):
             )
         except Exception:
             logger.exception("livekit_api_transcript_failed", call_id=call_id)
-            return Response(
-                {"error": "CallExecution not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _gm.not_found("CallExecution not found")
         return Response(result, status=status.HTTP_201_CREATED)
 
 
@@ -190,13 +295,16 @@ class TranscriptsView(InternalAPIView):
 class PhoneResolutionView(InternalAPIView):
     """Resolve a phone number to its linked call config."""
 
+    @swagger_auto_schema(
+        responses={
+            200: LiveKitPhoneResolutionResponseSerializer,
+            404: LiveKitErrorResponseSerializer,
+        },
+    )
     async def get(self, request: Request, phone_number: str) -> Response:
         config = await PhoneNumberRepository.resolve_to_call_config(phone_number)
         if config is None:
-            return Response(
-                {"error": "No IN_USE phone number found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _gm.not_found("No IN_USE phone number found")
         return Response(config)
 
 
@@ -208,8 +316,17 @@ class PhoneResolutionView(InternalAPIView):
 class CallExecutionUpdateView(InternalAPIView):
     """Update lifecycle fields on a call execution."""
 
+    @validated_request(
+        request_serializer=LiveKitCallExecutionUpdateRequestSerializer,
+        responses={
+            200: LiveKitOkResponseSerializer,
+            400: LiveKitErrorResponseSerializer,
+            404: LiveKitErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     async def patch(self, request: Request, call_id: str) -> Response:
-        data = request.data
+        data = request.validated_data
         allowed_fields = {
             "provider_call_data",
             "started_at",
@@ -221,17 +338,11 @@ class CallExecutionUpdateView(InternalAPIView):
         }
         kwargs = {k: v for k, v in data.items() if k in allowed_fields}
         if not kwargs:
-            return Response(
-                {"error": "No valid fields provided"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+            return _gm.bad_request("No valid fields provided")
 
         updated = await CallExecutionRepository.update_lifecycle(call_id, **kwargs)
         if not updated:
-            return Response(
-                {"error": "CallExecution not found"},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+            return _gm.not_found("CallExecution not found")
         return Response({"ok": True})
 
 
@@ -243,8 +354,17 @@ class CallExecutionUpdateView(InternalAPIView):
 class TemporalSignalView(InternalAPIView):
     """Send a call_ended signal to a Temporal workflow."""
 
+    @validated_request(
+        request_serializer=LiveKitTemporalSignalRequestSerializer,
+        responses={
+            200: LiveKitOkResponseSerializer,
+            400: LiveKitErrorResponseSerializer,
+            502: LiveKitErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     async def post(self, request: Request) -> Response:
-        data = request.data
+        data = request.validated_data
         workflow_id = data.get("workflow_id", "")
         call_id = data.get("call_id", "")
         signal_status = data.get("status", "completed")
@@ -258,10 +378,7 @@ class TemporalSignalView(InternalAPIView):
             )
 
             if not call_id:
-                return Response(
-                    {"error": "workflow_id or call_id required"},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
+                return _gm.bad_request("workflow_id or call_id required")
             workflow_id = f"{CALL_EXECUTION_WORKFLOW_ID_PREFIX}-{call_id}"
             logger.warning(
                 "livekit_api_signal_fallback_workflow_id",
@@ -290,10 +407,7 @@ class TemporalSignalView(InternalAPIView):
                 call_id=call_id,
                 workflow_id=workflow_id,
             )
-            return Response(
-                {"error": str(e)},
-                status=status.HTTP_502_BAD_GATEWAY,
-            )
+            return _gm.custom_error_response(status.HTTP_502_BAD_GATEWAY, str(e))
 
 
 # ---------------------------------------------------------------------------
@@ -320,6 +434,14 @@ class LiveCallListenerTokenView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @swagger_auto_schema(
+        responses={
+            200: LiveKitListenerTokenResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        },
+    )
     def get(self, request: Request, call_id: str) -> Response:
         from livekit.api import AccessToken, VideoGrants
 
@@ -397,6 +519,14 @@ class ValidateLiveKitCredentialsView(APIView):
         super().__init__(**kwargs)
         self.gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=ValidateLiveKitCredentialsRequestSerializer,
+        responses={
+            200: ValidateLiveKitCredentialsResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request: Request) -> Response:
         from livekit.api import (
             CreateAgentDispatchRequest,
@@ -407,12 +537,15 @@ class ValidateLiveKitCredentialsView(APIView):
 
         from simulate.serializers.agent_definition import _is_masked
 
-        data = request.data
+        data = request.validated_data
         livekit_url = (data.get("livekit_url") or "").strip()
         api_key = (data.get("api_key") or "").strip()
         api_secret = (data.get("api_secret") or "").strip()
         agent_name = (data.get("agent_name") or "").strip()
-        agent_definition_id = (data.get("agent_definition_id") or "").strip()
+        agent_definition_id_value = data.get("agent_definition_id")
+        agent_definition_id = (
+            str(agent_definition_id_value) if agent_definition_id_value else ""
+        )
 
         # When validating an existing agent from the edit form, the api_key
         # and api_secret fields contain MASKED display values (the api_key
@@ -509,6 +642,14 @@ class LiveKitWebhookView(AsyncAPIView):
     authentication_classes = []
     permission_classes = []
 
+    @swagger_auto_schema(
+        request_body=LIVEKIT_WEBHOOK_REQUEST,
+        responses={
+            200: LiveKitOkResponseSerializer,
+            401: LiveKitErrorResponseSerializer,
+        },
+        runtime_request_validation=True,
+    )
     async def post(self, request: Request) -> Response:
         # Verify webhook signature
         auth_header = request.META.get("HTTP_AUTHORIZATION", "")
@@ -523,9 +664,10 @@ class LiveKitWebhookView(AsyncAPIView):
         elif auth_header:
             token = auth_header
         else:
-            return Response(
-                {"error": "Missing Authorization header"},
-                status=status.HTTP_401_UNAUTHORIZED,
+            return _gm.custom_error_response(
+                status.HTTP_401_UNAUTHORIZED,
+                "Missing Authorization header",
+                code="not_authenticated",
             )
 
         try:
@@ -546,9 +688,10 @@ class LiveKitWebhookView(AsyncAPIView):
                 error_type=type(exc).__name__,
                 error_msg=str(exc),
             )
-            return Response(
-                {"error": f"Webhook verification failed: {type(exc).__name__}: {exc}"},
-                status=status.HTTP_401_UNAUTHORIZED,
+            return _gm.custom_error_response(
+                status.HTTP_401_UNAUTHORIZED,
+                f"Webhook verification failed: {type(exc).__name__}: {exc}",
+                code="not_authenticated",
             )
 
         event_type = event.event

@@ -49,7 +49,8 @@ import {
 
 const SOURCE_TABS = ["Dataset", "Tracing", "Simulation", "Custom"];
 
-const camelizeKey = (key = "") => key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
+const camelizeKey = (key = "") =>
+  key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
 
 const formatParamLabel = (key) => camelCaseToTitleCase(camelizeKey(key));
 
@@ -629,6 +630,8 @@ const TestPlayground = React.forwardRef(
       templateFormat = "mustache",
       functionParamsSchema = null,
       configParamsDesc = null,
+      codeParams: controlledCodeParams = null,
+      onCodeParamsChange,
       code = "",
       codeLanguage = "python",
       isSystemEval = false,
@@ -760,7 +763,9 @@ const TestPlayground = React.forwardRef(
         } else {
           const liveParams = extractCodeEvaluateParams(code, codeLanguage);
           codeStdVars =
-            liveParams.length > 0 ? liveParams : ["input", "output", "expected"];
+            liveParams.length > 0
+              ? liveParams
+              : ["input", "output", "expected"];
         }
       }
 
@@ -798,15 +803,21 @@ const TestPlayground = React.forwardRef(
     }, []);
 
     // Schema-defined params for code evals (from function_params_schema)
-    const [codeParams, setCodeParams] = useState({});
+    const [internalCodeParams, setInternalCodeParams] = useState({});
+    const codeParams =
+      controlledCodeParams && typeof controlledCodeParams === "object"
+        ? controlledCodeParams
+        : internalCodeParams;
     const codeParamsRef = useRef(codeParams);
     useEffect(() => {
       codeParamsRef.current = codeParams;
     }, [codeParams]);
 
     const handleCodeParamChange = useCallback((key, value) => {
-      setCodeParams((prev) => ({ ...prev, [key]: value }));
-    }, []);
+      const next = { ...codeParamsRef.current, [key]: value };
+      setInternalCodeParams(next);
+      onCodeParamsChange?.(next);
+    }, [onCodeParamsChange]);
 
     const visibleFunctionParamEntries = React.useMemo(() => {
       if (!functionParamsSchema) return [];
@@ -1412,88 +1423,80 @@ const TestPlayground = React.forwardRef(
               {evalType === "code" &&
                 visibleFunctionParamEntries.length > 0 && (
                   <Box sx={{ mt: 2 }}>
-                    <Typography
-                      variant="body2"
-                      fontWeight={600}
-                      sx={{ mb: 1 }}
-                    >
+                    <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
                       Parameters
                     </Typography>
-                    {visibleFunctionParamEntries.map(
-                      ([key, schema]) => (
-                        <Box
-                          key={key}
-                          sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 1,
-                            mb: 0.75,
-                          }}
+                    {visibleFunctionParamEntries.map(([key, schema]) => (
+                      <Box
+                        key={key}
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 1,
+                          mb: 0.75,
+                        }}
+                      >
+                        <Tooltip
+                          title={
+                            configParamsDesc?.[key] || schema?.description || ""
+                          }
+                          placement="top"
                         >
-                          <Tooltip
-                            title={
-                              configParamsDesc?.[key] ||
-                              schema?.description ||
-                              ""
-                            }
-                            placement="top"
-                          >
-                            <Typography
-                              variant="caption"
-                              sx={{
-                                minWidth: 90,
-                                fontFamily: "monospace",
-                                color: "primary.main",
-                              }}
-                            >
-                              {formatParamLabel(key)}
-                            </Typography>
-                          </Tooltip>
-                          <Box
-                            component="input"
-                            type={
-                              schema?.type === "integer" ||
-                              schema?.type === "number"
-                                ? "number"
-                                : "text"
-                            }
-                            placeholder={
-                              schema?.nullable
-                                ? "optional"
-                                : String(schema?.default ?? "")
-                            }
-                            value={codeParams[key] ?? ""}
-                            onChange={(e) => {
-                              // BE's `type: number` schema rejects strings; coerce here.
-                              const raw = e.target.value;
-                              const isNumeric =
-                                schema?.type === "integer" ||
-                                schema?.type === "number";
-                              let next = raw;
-                              if (isNumeric && raw !== "") {
-                                const n = Number(raw);
-                                if (!Number.isNaN(n)) next = n;
-                              }
-                              handleCodeParamChange(key, next);
-                            }}
+                          <Typography
+                            variant="caption"
                             sx={{
-                              flex: 1,
-                              px: 1,
-                              py: 0.5,
-                              fontSize: "12px",
+                              minWidth: 90,
                               fontFamily: "monospace",
-                              border: "1px solid",
-                              borderColor: "divider",
-                              borderRadius: "6px",
-                              bgcolor: "background.paper",
-                              color: "text.primary",
-                              outline: "none",
-                              "&:focus": { borderColor: "primary.main" },
+                              color: "primary.main",
                             }}
-                          />
-                        </Box>
-                      ),
-                    )}
+                          >
+                            {formatParamLabel(key)}
+                          </Typography>
+                        </Tooltip>
+                        <Box
+                          component="input"
+                          type={
+                            schema?.type === "integer" ||
+                            schema?.type === "number"
+                              ? "number"
+                              : "text"
+                          }
+                          placeholder={
+                            schema?.nullable
+                              ? "optional"
+                              : String(schema?.default ?? "")
+                          }
+                          value={codeParams[key] ?? ""}
+                          onChange={(e) => {
+                            // BE's `type: number` schema rejects strings; coerce here.
+                            const raw = e.target.value;
+                            const isNumeric =
+                              schema?.type === "integer" ||
+                              schema?.type === "number";
+                            let next = raw;
+                            if (isNumeric && raw !== "") {
+                              const n = Number(raw);
+                              if (!Number.isNaN(n)) next = n;
+                            }
+                            handleCodeParamChange(key, next);
+                          }}
+                          sx={{
+                            flex: 1,
+                            px: 1,
+                            py: 0.5,
+                            fontSize: "12px",
+                            fontFamily: "monospace",
+                            border: "1px solid",
+                            borderColor: "divider",
+                            borderRadius: "6px",
+                            bgcolor: "background.paper",
+                            color: "text.primary",
+                            outline: "none",
+                            "&:focus": { borderColor: "primary.main" },
+                          }}
+                        />
+                      </Box>
+                    ))}
                   </Box>
                 )}
             </Box>
@@ -1625,7 +1628,7 @@ const TestPlayground = React.forwardRef(
                                 fontWeight: 600,
                                 fontFamily: "'IBM Plex Sans', sans-serif",
                                 color: isSelected
-                                  ? "common.white"
+                                  ? "primary.contrastText"
                                   : isDefault
                                     ? "info.main"
                                     : "text.primary",
@@ -1871,6 +1874,8 @@ TestPlayground.propTypes = {
   model: PropTypes.string,
   functionParamsSchema: PropTypes.object,
   configParamsDesc: PropTypes.object,
+  codeParams: PropTypes.object,
+  onCodeParamsChange: PropTypes.func,
   code: PropTypes.string,
   codeLanguage: PropTypes.string,
   onReadyChange: PropTypes.func,

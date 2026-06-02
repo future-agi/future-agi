@@ -69,6 +69,7 @@ const VoiceDetailDrawerV2 = ({
   // the VoiceDrawerHeader (close/nav/fullscreen bar) — and just render
   // the call body so it fits the host's layout.
   embedded = false,
+  hiddenActionIds = [],
   hideAnnotationTab = false,
 }) => {
   const queryClient = useQueryClient();
@@ -500,6 +501,7 @@ const VoiceDetailDrawerV2 = ({
                 data={data}
                 onCompareBaseline={onCompareBaseline}
                 onAction={handleVoiceAction}
+                hiddenActionIds={hiddenActionIds}
                 hideAnnotationTab={hideAnnotationTab}
               />
             </Box>
@@ -621,6 +623,7 @@ VoiceDetailDrawerV2.propTypes = {
   isLoading: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   embedded: PropTypes.bool,
+  hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
 };
 

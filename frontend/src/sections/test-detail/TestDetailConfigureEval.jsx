@@ -19,7 +19,7 @@ import { AGENT_TYPES } from "../agents/constants";
 import { SourceType } from "../scenarios/common";
 
 const TestDetailConfigureEval = () => {
-  const { testId } = useParams();
+  const { testId, executionId } = useParams();
   const queryClient = useQueryClient();
 
   const { configureEval, setConfigureEval } = useTestDetailStoreShallow(
@@ -95,8 +95,14 @@ const TestDetailConfigureEval = () => {
       try {
         await updateEvalAsync({
           evalConfigId: editingEvalItem.id,
-          payload,
+          payload: {
+            ...payload,
+            ...(executionId
+              ? { run: true, test_execution_id: executionId }
+              : {}),
+          },
         });
+
         enqueueSnackbar("Eval updated successfully", { variant: "success" });
         handleRefresh();
       } catch (error) {
@@ -106,7 +112,7 @@ const TestDetailConfigureEval = () => {
         throw error;
       }
     },
-    [testId, editingEvalItem, updateEvalAsync, handleRefresh],
+    [testId, executionId, editingEvalItem, updateEvalAsync, handleRefresh],
   );
 
   const onClose = useCallback(() => {

@@ -1026,12 +1026,15 @@ const FilterPanel = ({
       // Convert object-style filters to rows
       const initial = [];
       for (const [key, val] of Object.entries(currentFilters)) {
+        const isNeg = key.endsWith("_not");
+        const field = isNeg ? key.slice(0, -4) : key;
         if (Array.isArray(val)) {
+          const op = isNeg ? "is_not" : (fieldMap[field]?.type === "enum" ? "is" : "contains");
           val.forEach((v) =>
-            initial.push({ field: key, operator: "is", value: v }),
+            initial.push({ field, operator: op, value: v }),
           );
         } else if (val) {
-          initial.push({ field: key, operator: "contains", value: val });
+          initial.push({ field, operator: isNeg ? "not_equals" : "contains", value: val });
         }
       }
       if (initial.length > 0) setRows(initial);
@@ -1054,8 +1057,10 @@ const FilterPanel = ({
         const isEmpty = !val || (Array.isArray(val) && val.length === 0);
         if (isEmpty) continue;
         const values = Array.isArray(val) ? val : [val];
-        if (!result[row.field]) result[row.field] = [];
-        result[row.field].push(...values);
+        const isNeg = row.operator === "is_not" || row.operator === "not_equals";
+        const key = isNeg ? `${row.field}_not` : row.field;
+        if (!result[key]) result[key] = [];
+        result[key].push(...values);
       }
       onApply(Object.keys(result).length > 0 ? result : null);
     }, 400);
@@ -1286,7 +1291,10 @@ const FilterPanel = ({
               filterFields={filterFields}
               fieldMap={fieldMap}
               onApply={handleApplyFromNlp}
-              initialTokens={[]}
+              initialTokens={rows.filter((r) => {
+                if (Array.isArray(r?.value)) return r.value.length > 0;
+                return Boolean(r?.value);
+              })}
             />
             <Typography
               variant="caption"

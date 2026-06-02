@@ -185,6 +185,7 @@ const CreateNewAgentDefinitionView = () => {
           delete payload.livekit_api_secret;
           delete payload.livekit_agent_name;
           delete payload.livekit_config_json;
+          delete payload.livekit_max_concurrency;
         }
         delete payload.model;
         delete payload.model_details;
@@ -194,8 +195,15 @@ const CreateNewAgentDefinitionView = () => {
         payload["contact_number"] = ""; //dummy number
         delete payload.assistant_id;
         delete payload.observability_enabled;
-        // delete payload.authentication_method;
-        payload["api_key"] = "";
+        delete payload.provider;
+        delete payload.api_key;
+        delete payload.authentication_method;
+        delete payload.livekit_url;
+        delete payload.livekit_api_key;
+        delete payload.livekit_api_secret;
+        delete payload.livekit_agent_name;
+        delete payload.livekit_config_json;
+        delete payload.livekit_max_concurrency;
       }
 
       // Strip secrets and internal fields before analytics/submit

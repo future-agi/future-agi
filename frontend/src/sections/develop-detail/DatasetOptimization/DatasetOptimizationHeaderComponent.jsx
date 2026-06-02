@@ -112,7 +112,7 @@ const OPTIMIZER_DOCS_LINKS = {
 const getDocsLinkBasedOnOptimizer = (optimizerType) => {
   return (
     OPTIMIZER_DOCS_LINKS[optimizerType] ||
-    "https://docs.futureagi.com/docs/optimization/optimizers/overview"
+    "https://docs.futureagi.com/docs/optimization"
   );
 };
 

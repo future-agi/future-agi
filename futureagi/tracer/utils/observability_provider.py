@@ -1,3 +1,4 @@
+import json
 import uuid
 from datetime import datetime
 
@@ -26,6 +27,7 @@ from tracer.tasks.recordings_rehost import (
 from tracer.utils.eleven_labs import normalize_eleven_labs_data
 from tracer.utils.otel import ResourceLimitError, get_or_create_project
 from tracer.utils.retell import normalize_retell_data
+from tracer.utils.usage_emit import emit_span_ingestion_usage
 from tracer.utils.vapi import normalize_vapi_data
 
 
@@ -287,6 +289,9 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
 
     normalize_fn = normalization_functions[provider.provider]
 
+    created_count = 0
+    created_payload_bytes = 0
+
     for log in logs:
         normalized_data = normalize_fn(log)
         provider_log_id = normalized_data.get("id")
@@ -336,10 +341,12 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
 
                 if existing_span:
                     span = _update_observation_span(existing_span, normalized_data)
+                    was_created = False
                 else:
                     span = _create_observation_span(
                         project, provider, normalized_data, metadata
                     )
+                    was_created = True
 
                 _maybe_enqueue_recording_rehost(provider, span)
         except Exception as e:
@@ -347,6 +354,30 @@ def process_and_store_logs(logs: list, provider: ObservabilityProvider):
                 f"Error updating or creating observation span for {provider.provider}: {e}"
             )
             continue
+
+        if was_created:
+            created_count += 1
+            for piece in (
+                normalized_data.get("input"),
+                normalized_data.get("output"),
+                normalized_data.get("span_attributes"),
+                metadata,
+            ):
+                if piece is None:
+                    continue
+                try:
+                    created_payload_bytes += len(json.dumps(piece, default=str))
+                except (TypeError, ValueError):
+                    continue
+
+    if created_count:
+        emit_span_ingestion_usage(
+            organization_id=project.organization_id,
+            num_traces=created_count,
+            num_spans=created_count,
+            payload_bytes=created_payload_bytes,
+            source="voice_observability",
+        )
 
 
 def _maybe_enqueue_recording_rehost(

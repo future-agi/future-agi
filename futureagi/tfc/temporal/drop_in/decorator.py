@@ -48,8 +48,8 @@ class AsyncResult:
 def temporal_activity(
     time_limit: int = 3600,
     queue: str = "default",
-    max_retries: int = 0,
-    retry_delay: int = 300,
+    max_retries: Optional[int] = None,
+    retry_delay: Optional[int] = None,
     rate_limit: Optional[str] = None,
     name: Optional[str] = None,
 ):
@@ -59,8 +59,12 @@ def temporal_activity(
     Args:
         time_limit: Maximum execution time in seconds (maps to start_to_close_timeout)
         queue: Task queue name (maps to Temporal task queue)
-        max_retries: Maximum retry attempts
-        retry_delay: Delay between retries in seconds
+        max_retries: Maximum retry attempts. None (default) means use the
+            workflow-level DEFAULT_RETRY_POLICY. Set explicitly (e.g. 0) to
+            override per-activity.
+        retry_delay: Delay between retries in seconds. None (default) means
+            use the workflow-level default. Only consulted when
+            max_retries is set explicitly.
         rate_limit: Rate limit string (e.g., "100/s") - stored for reference
         name: Activity name (defaults to function name)
 
@@ -140,6 +144,9 @@ def temporal_activity(
                     args=args or (),
                     kwargs=kwargs or {},
                     queue=target_queue,
+                    task_id=options.get("task_id"),
+                    id_conflict_policy=options.get("id_conflict_policy"),
+                    start_delay=options.get("start_delay"),
                 )
                 log.info(
                     "apply_async_completed",

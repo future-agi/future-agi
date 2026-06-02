@@ -4,8 +4,10 @@ Serializers for Dataset Optimization
 Following the same patterns as simulate.serializers.agent_prompt_optimiser.
 """
 
+from django.db.models import Q
 from rest_framework import serializers
 
+from model_hub.models.ai_model import AIModel
 from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
 from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
 from model_hub.models.dataset_optimization_trial_item import (
@@ -13,6 +15,7 @@ from model_hub.models.dataset_optimization_trial_item import (
     DatasetOptimizationTrialItem,
 )
 from model_hub.models.develop_dataset import Column, Dataset
+from model_hub.models.evals_metric import UserEvalMetric
 from model_hub.models.optimize_dataset import OptimizeDataset
 
 COMMON_OPTIONAL_CONFIG_KEYS = {"task_description"}
@@ -32,6 +35,36 @@ OPTIMIZER_REQUIRED_CONFIG_KEYS = {
     "metaprompt": ["task_description", "num_rounds"],
     "promptwizard": ["mutate_rounds", "refine_iterations", "beam_size"],
 }
+
+
+def _request_org_workspace(serializer):
+    request = serializer.context.get("request") if serializer.context else None
+    organization = None
+    workspace = None
+    if request is not None:
+        organization = getattr(request, "organization", None)
+        workspace = getattr(request, "workspace", None)
+        if organization is None and getattr(request, "user", None):
+            organization = getattr(request.user, "organization", None)
+    return organization, workspace
+
+
+def _workspace_filter(workspace, field_name):
+    if workspace is None:
+        return Q()
+    if getattr(workspace, "is_default", False):
+        organization = getattr(workspace, "organization", None)
+        query = Q(**{field_name: workspace})
+        if organization is not None:
+            query |= Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization": organization,
+                }
+            )
+        query |= Q(**{f"{field_name}__isnull": True})
+        return query
+    return Q(**{field_name: workspace})
 
 
 class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
@@ -66,8 +99,59 @@ class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "created_at")
 
     def validate_column_id(self, value):
-        if not Column.objects.filter(id=value).exists():
+        if not self._scoped_column_queryset().filter(id=value).exists():
             raise serializers.ValidationError("Column with this ID does not exist.")
+        return value
+
+    def _scoped_column_queryset(self):
+        organization, workspace = _request_org_workspace(self)
+        queryset = Column.objects.select_related("dataset").filter(
+            deleted=False,
+            dataset__deleted=False,
+        )
+        if organization is not None:
+            queryset = queryset.filter(dataset__organization=organization)
+        queryset = queryset.filter(_workspace_filter(workspace, "dataset__workspace"))
+        return queryset
+
+    def _scoped_ai_model_queryset(self):
+        organization, workspace = _request_org_workspace(self)
+        queryset = AIModel.objects.filter(deleted=False)
+        if organization is not None:
+            queryset = queryset.filter(organization=organization)
+        queryset = queryset.filter(_workspace_filter(workspace, "workspace"))
+        return queryset
+
+    def _scoped_eval_metric_queryset(self, dataset):
+        organization, workspace = _request_org_workspace(self)
+        queryset = UserEvalMetric.no_workspace_objects.filter(
+            deleted=False,
+            dataset=dataset,
+        )
+        if organization is not None:
+            queryset = queryset.filter(organization=organization)
+        queryset = queryset.filter(_workspace_filter(workspace, "workspace"))
+        return queryset
+
+    def validate_user_eval_template_ids(self, value):
+        if not value:
+            return value
+        column_id = self.initial_data.get("column_id")
+        if not column_id:
+            return value
+        column = self._scoped_column_queryset().filter(id=column_id).first()
+        if column is None:
+            return value
+        found_ids = set(
+            self._scoped_eval_metric_queryset(column.dataset)
+            .filter(id__in=value)
+            .values_list("id", flat=True)
+        )
+        requested_ids = set(value)
+        if found_ids != requested_ids:
+            raise serializers.ValidationError(
+                "One or more eval metrics do not belong to this dataset/workspace."
+            )
         return value
 
     def validate_optimizer_config(self, value):
@@ -102,13 +186,9 @@ class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
         return value
 
     def create(self, validated_data):
-        from model_hub.models import AIModel
         from model_hub.models.develop import DevelopAI
-        from model_hub.models.evals_metric import UserEvalMetric
 
-        column = Column.objects.select_related("dataset").get(
-            id=validated_data.pop("column_id")
-        )
+        column = self._scoped_column_queryset().get(id=validated_data.pop("column_id"))
         dataset = column.dataset
 
         # Extract user_eval_template_ids for later (ManyToMany can't be set before save)
@@ -120,9 +200,11 @@ class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
             # Try to find an AIModel with this name, but don't fail if not found
             # The model name will be used directly by the optimizer
             try:
-                optimizer_model = AIModel.objects.filter(
-                    model_name__iexact=optimizer_model_name
-                ).first()
+                optimizer_model = (
+                    self._scoped_ai_model_queryset()
+                    .filter(user_model_id__iexact=optimizer_model_name)
+                    .first()
+                )
                 if optimizer_model:
                     validated_data["optimizer_model"] = optimizer_model
             except Exception:
@@ -156,7 +238,7 @@ class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
 
         # Set ManyToMany relationship for user eval templates
         if user_eval_template_ids:
-            eval_templates = UserEvalMetric.objects.filter(
+            eval_templates = self._scoped_eval_metric_queryset(dataset).filter(
                 id__in=user_eval_template_ids
             )
             instance.user_eval_template_ids.set(eval_templates)
@@ -166,6 +248,39 @@ class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
 
 class DatasetOptimizationSerializer(serializers.ModelSerializer):
     """Full serializer for dataset optimization run."""
+
+    def _scoped_column_queryset(self):
+        organization, workspace = _request_org_workspace(self)
+        queryset = Column.objects.select_related("dataset").filter(
+            deleted=False,
+            dataset__deleted=False,
+        )
+        if organization is not None:
+            queryset = queryset.filter(dataset__organization=organization)
+        queryset = queryset.filter(_workspace_filter(workspace, "dataset__workspace"))
+        return queryset
+
+    def _scoped_ai_model_queryset(self):
+        organization, workspace = _request_org_workspace(self)
+        queryset = AIModel.objects.filter(deleted=False)
+        if organization is not None:
+            queryset = queryset.filter(organization=organization)
+        queryset = queryset.filter(_workspace_filter(workspace, "workspace"))
+        return queryset
+
+    def validate_column(self, value):
+        if value is None:
+            return value
+        if not self._scoped_column_queryset().filter(id=value.id).exists():
+            raise serializers.ValidationError("Column with this ID does not exist.")
+        return value
+
+    def validate_optimizer_model(self, value):
+        if value is None:
+            return value
+        if not self._scoped_ai_model_queryset().filter(id=value.id).exists():
+            raise serializers.ValidationError("Optimizer model is not accessible.")
+        return value
 
     class Meta:
         model = OptimizeDataset
@@ -221,7 +336,7 @@ class DatasetOptimizationListSerializer(serializers.ModelSerializer):
     def get_optimizer_model_id(self, obj):
         # Return the model name which is what the frontend expects
         if obj.optimizer_model:
-            return obj.optimizer_model.model_name
+            return obj.optimizer_model.user_model_id
         return None
 
 

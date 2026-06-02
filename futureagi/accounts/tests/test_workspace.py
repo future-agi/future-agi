@@ -15,6 +15,12 @@ from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 
+
+def _assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert field_name in response.json()["details"]
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
@@ -314,6 +320,18 @@ class TestWorkspaceCreateAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_create_workspace_rejects_unknown_request_fields(self, auth_client):
+        """Workspace creation rejects camelCase aliases and stray body fields."""
+        response = auth_client.post(
+            "/accounts/workspaces/",
+            {
+                "name": "Unknown Field Workspace",
+                "displayName": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "displayName")
+
 
 # =============================================================================
 # WorkspaceManagementView Tests - PUT /accounts/workspaces/<id>/
@@ -393,6 +411,20 @@ class TestWorkspaceUpdateAPI:
         assert response.status_code == status.HTTP_200_OK
         # Name should remain unchanged
         assert response.json()["result"]["workspace"]["name"] == original_name
+
+    def test_update_workspace_rejects_unknown_request_fields(
+        self, auth_client, second_workspace
+    ):
+        """Workspace updates reject camelCase aliases and stray body fields."""
+        response = auth_client.put(
+            f"/accounts/workspaces/{second_workspace.id}/",
+            {
+                "display_name": "Updated Display Name",
+                "displayName": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "displayName")
 
 
 # =============================================================================
@@ -603,6 +635,15 @@ class TestWorkspaceMembersAddAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_add_member_rejects_unknown_request_fields(self, auth_client, workspace):
+        """Adding workspace members rejects camelCase aliases and stray fields."""
+        response = auth_client.post(
+            f"/accounts/workspaces/{workspace.id}/members/",
+            {"users": [], "workspaceUsers": []},
+            format="json",
+        )
+        _assert_unknown_field(response, "workspaceUsers")
 
     def test_add_existing_member_updates_role(
         self, auth_client, workspace, member_user

@@ -1,5 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { objectSnakeToCamel } from "src/utils/utils";
+
+// Mirrors `DeepAnalysisResponse.status` on the backend
+// (futureagi/tracer/types/feed_types.py:DeepAnalysisResponse).
+export const DEEP_ANALYSIS_STATUS = Object.freeze({
+  IDLE: "idle",
+  RUNNING: "running",
+  DONE: "done",
+  FAILED: "failed",
+});
 
 const KEYS = {
   list: (params) => ["errorFeed", "list", params],
@@ -15,7 +25,7 @@ const KEYS = {
     clusterId,
     traceId,
   ],
-  linearTeams: ["errorFeed", "linearTeams"],
+  linearTeams: (orgId) => ["errorFeed", "linearTeams", orgId ?? null],
   projects: ["errorFeed", "projects"],
 };
 
@@ -53,7 +63,7 @@ export const useErrorFeedList = (params, options = {}) => {
     ...options,
     queryKey: KEYS.list(params),
     queryFn: () => axios.get(endpoints.errorFeed.list, { params }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     staleTime: 30 * 1000,
     keepPreviousData: true,
   });
@@ -83,7 +93,7 @@ export const useErrorFeedDetail = (clusterId, options = {}) => {
     ...options,
     queryKey: KEYS.detail(clusterId),
     queryFn: () => axios.get(endpoints.errorFeed.detail(clusterId)),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
   });
 };
@@ -98,7 +108,7 @@ export const useErrorFeedOverview = (clusterId, options = {}) => {
     ...options,
     queryKey: KEYS.overview(clusterId),
     queryFn: () => axios.get(endpoints.errorFeed.overview(clusterId)),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
   });
 };
@@ -113,7 +123,7 @@ export const useErrorFeedTraces = (clusterId, params = {}, options = {}) => {
     ...options,
     queryKey: KEYS.traces(clusterId, params),
     queryFn: () => axios.get(endpoints.errorFeed.traces(clusterId), { params }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
     keepPreviousData: true,
   });
@@ -129,7 +139,7 @@ export const useErrorFeedTrends = (clusterId, params = {}, options = {}) => {
     ...options,
     queryKey: KEYS.trends(clusterId, params),
     queryFn: () => axios.get(endpoints.errorFeed.trends(clusterId), { params }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
   });
 };
@@ -152,7 +162,7 @@ export const useErrorFeedSidebar = (clusterId, traceId, options = {}) => {
       axios.get(endpoints.errorFeed.sidebar(clusterId), {
         params: traceId ? { trace_id: traceId } : undefined,
       }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
   });
 };
@@ -178,9 +188,15 @@ export const useErrorFeedDeepAnalysis = (clusterId, traceId, options = {}) => {
       axios.get(endpoints.errorFeed.rootCause(clusterId), {
         params: { trace_id: traceId },
       }),
-    select: (res) => res?.data?.result,
+    select: (res) => objectSnakeToCamel(res?.data?.result),
     enabled,
-    refetchInterval: (data) => (data?.status === "running" ? 5000 : false),
+    // React Query v5 passes the Query instance to this callback, not the
+    // selected data. Read the running flag off `query.state.data` (the raw
+    // axios response — `select` doesn't apply here).
+    refetchInterval: (query) =>
+      query.state.data?.data?.result?.status === DEEP_ANALYSIS_STATUS.RUNNING
+        ? 5000
+        : false,
     refetchIntervalInBackground: true,
   });
 };
@@ -205,7 +221,38 @@ export const useRunDeepAnalysis = () => {
         trace_id: traceId,
         force,
       }),
-    onSuccess: (_data, variables) => {
+    onSuccess: (res, variables) => {
+      const dispatched = res?.data?.result;
+      if (dispatched?.status) {
+        const key = KEYS.rootCause(variables.clusterId, variables.traceId);
+        const previous = queryClient.getQueryData(key);
+        const previousResult = previous?.data?.result;
+        const traceIdValue =
+          dispatched.trace_id ?? previousResult?.trace_id ?? null;
+        const wipeOnRunning =
+          dispatched.status === DEEP_ANALYSIS_STATUS.RUNNING
+            ? {
+                root_causes: [],
+                rootCauses: [],
+                recommendations: [],
+                immediate_fix: null,
+                immediateFix: null,
+              }
+            : {};
+        queryClient.setQueryData(key, {
+          ...(previous ?? {}),
+          data: {
+            ...(previous?.data ?? {}),
+            result: {
+              ...(previousResult ?? {}),
+              status: dispatched.status,
+              trace_id: traceIdValue,
+              traceId: traceIdValue,
+              ...wipeOnRunning,
+            },
+          },
+        });
+      }
       queryClient.invalidateQueries({
         queryKey: KEYS.rootCause(variables.clusterId, variables.traceId),
       });
@@ -216,13 +263,19 @@ export const useRunDeepAnalysis = () => {
 /**
  * Fetch Linear teams for the team picker dropdown.
  * Returns { connected, teams } — connected=false if no Linear integration.
+ *
+ * The query key is scoped by organization so switching workspaces doesn't
+ * serve the previous workspace's connection state. Connect/update/delete
+ * from the integrations page cross-invalidates this key — see
+ * `invalidateCrossFeatureIntegrationCaches` in `api/integrations`.
  */
-export const useLinearTeams = (options = {}) => {
+export const useLinearTeams = (orgId, options = {}) => {
   return useQuery({
     ...options,
-    queryKey: KEYS.linearTeams,
+    queryKey: KEYS.linearTeams(orgId),
     queryFn: () => axios.get(endpoints.errorFeed.linearTeams),
     select: (res) => res?.data?.result,
+    enabled: !!orgId && (options.enabled ?? true),
     staleTime: 30 * 1000,
   });
 };
@@ -235,9 +288,10 @@ export const useCreateLinearIssue = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ clusterId, teamId, title, description, priority }) =>
+    mutationFn: ({ clusterId, teamId, traceId, title, description, priority }) =>
       axios.post(endpoints.errorFeed.createLinearIssue(clusterId), {
         team_id: teamId,
+        ...(traceId && { trace_id: traceId }),
         ...(title && { title }),
         ...(description && { description }),
         ...(priority !== undefined && { priority }),

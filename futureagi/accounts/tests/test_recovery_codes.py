@@ -139,6 +139,17 @@ class TestRecoveryCodes:
             {},
         )
         assert response.status_code == 400
+        data = response.json()
+        assert data["status"] is False
+        assert data["type"] == "validation_error"
+        assert data["code"] == "invalid"
+        assert (
+            data["detail"]
+            == "Password is required to regenerate recovery codes."
+        )
+        assert data["message"] == data["detail"]
+        assert data["error"] == data["detail"]
+        assert data["result"] == data["detail"]
 
     def test_passkey_only_regenerate_wrong_password_rejected(self, auth_client, user):
         """Passkey-only user is rejected when wrong password is provided."""
@@ -149,3 +160,11 @@ class TestRecoveryCodes:
             {"password": "wrongpassword"},
         )
         assert response.status_code == 400
+        data = response.json()
+        assert data["status"] is False
+        assert data["type"] == "validation_error"
+        assert data["code"] == "invalid"
+        assert data["detail"] == "Invalid password."
+        assert data["message"] == data["detail"]
+        assert data["error"] == data["detail"]
+        assert data["result"] == data["detail"]

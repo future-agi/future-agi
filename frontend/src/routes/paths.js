@@ -82,7 +82,7 @@ export const paths = {
       simulatorAgent: `${ROOTS.DASHBOARD}/simulate/simulator-agent`,
       test: `${ROOTS.DASHBOARD}/simulate/test`,
     },
-    feed: `${ROOTS.DASHBOARD}/feed`,
+    feed: `${ROOTS.DASHBOARD}/error-feed`,
     errorFeed: {
       root: `${ROOTS.DASHBOARD}/error-feed`,
       detail: (id) => `${ROOTS.DASHBOARD}/error-feed/${id}`,

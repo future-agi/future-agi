@@ -60,7 +60,7 @@ const ScenarioDetailSelectionView = ({ dataset }) => {
       const selectedIds = toggledNodes;
 
       return axios.delete(endpoints.develop.deleteDatasetRow(dataset), {
-        data: { rowIds: selectedIds, selectedAllRows: selectAll },
+        data: { row_ids: selectedIds, selected_all_rows: selectAll },
       });
     },
     onSuccess: () => {

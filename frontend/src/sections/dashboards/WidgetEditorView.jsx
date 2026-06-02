@@ -56,6 +56,12 @@ import Iconify from "src/components/iconify";
 import { useSnackbar } from "src/components/snackbar";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import {
+  coerceFilterValue,
+  isAllowedFilterOperator,
+  normalizeColumnType,
+  normalizeFilterType,
+} from "src/api/contracts/filter-contract";
 
 import {
   DEFAULT_DECIMALS,
@@ -297,19 +303,39 @@ const NUMBER_FILTER_OPERATORS = [
   { label: "Less than or equal to", value: "less_than_or_equal" },
   { label: "Between", value: "between", range: true },
   { label: "Not between", value: "not_between", range: true },
-  { label: "Is numeric", value: "is_numeric", noValue: true },
-  { label: "Is not numeric", value: "is_not_numeric", noValue: true },
 ];
 
 const getFilterOperators = (dataType) =>
   dataType === "number" ? NUMBER_FILTER_OPERATORS : STRING_FILTER_OPERATORS;
 
-const NO_VALUE_OPERATORS = new Set([
-  "is_set",
-  "is_not_set",
-  "is_numeric",
-  "is_not_numeric",
-]);
+const NO_VALUE_OPERATORS = new Set(["is_set", "is_not_set"]);
+
+const DASHBOARD_FILTER_OP_TO_API = {
+  equal_to: "equals",
+  not_equal_to: "not_equals",
+  contains: "in",
+  not_contains: "not_in",
+  str_contains: "contains",
+  str_not_contains: "not_contains",
+  is_set: "is_not_null",
+  is_not_set: "is_null",
+};
+
+const DASHBOARD_TYPE_TO_COL_TYPE = {
+  system: "SYSTEM_METRIC",
+  eval_metric: "EVAL_METRIC",
+  annotation: "ANNOTATION",
+  custom_attribute: "SPAN_ATTRIBUTE",
+  custom_column: "CUSTOM_COLUMN",
+};
+
+const COL_TYPE_TO_DASHBOARD_TYPE = {
+  SYSTEM_METRIC: "system",
+  EVAL_METRIC: "eval_metric",
+  ANNOTATION: "annotation",
+  SPAN_ATTRIBUTE: "custom_attribute",
+  CUSTOM_COLUMN: "custom_column",
+};
 
 const METRIC_TYPE_ICONS = {
   system: "mdi:cog-outline",
@@ -466,14 +492,22 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
         <TextField
           select
           size="small"
-          value={UNIT_PRESETS.some((u) => u.value === config.unit) ? config.unit : "custom"}
+          value={
+            UNIT_PRESETS.some((u) => u.value === config.unit)
+              ? config.unit
+              : "custom"
+          }
           onChange={(e) =>
             onChange("unit", e.target.value === "custom" ? "" : e.target.value)
           }
           sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
         >
           {UNIT_PRESETS.map((opt) => (
-            <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: "13px" }}>
+            <MenuItem
+              key={opt.value}
+              value={opt.value}
+              sx={{ fontSize: "13px" }}
+            >
               {opt.label}
             </MenuItem>
           ))}
@@ -1347,14 +1381,7 @@ export default function WidgetEditorView() {
         }
         // Restore metrics with frontend type keys + source
         const savedMetrics = (qc.metrics || []).map((m) => {
-          const typeMap = {
-            system_metric: "system",
-            annotation_metric: "annotation",
-            custom_column: "custom_column",
-            custom_attribute: "custom_attribute",
-            eval_metric: "eval_metric",
-          };
-          const frontendType = typeMap[m.type] || m.type || "system";
+          const frontendType = toDashboardFilterType(m.type);
           // Infer source from old workflow field if metric lacks source
           const source =
             m.source ||
@@ -1364,31 +1391,9 @@ export default function WidgetEditorView() {
                 ? "datasets"
                 : "traces");
           // Restore per-metric filters from saved backend format
-          const restoredFilters = (m.filters || []).map((f) => {
-            const fTypeMap = {
-              system_metric: "system",
-              annotation_metric: "annotation",
-              custom_column: "custom_column",
-              custom_attribute: "custom_attribute",
-              eval_metric: "eval_metric",
-            };
-            return {
-              id: f.metric_name || f.metricName || f.id,
-              name: f.metric_name || f.metricName || f.name || f.id || "",
-              type:
-                fTypeMap[f.metric_type || f.metricType] || f.type || "system",
-              dataType: f.dataType || f.data_type || "string",
-              source:
-                f.source ||
-                (qc.workflow === "simulation"
-                  ? "simulation"
-                  : qc.workflow === "dataset"
-                    ? "datasets"
-                    : "traces"),
-              operator: f.operator || "contains",
-              value: f.value ?? [],
-            };
-          });
+          const restoredFilters = (m.filters || []).map((f) =>
+            restoreFilterPayload(f, source),
+          );
           return {
             ...m,
             id: m.name || m.id,
@@ -1399,7 +1404,18 @@ export default function WidgetEditorView() {
           };
         });
         setMetrics(savedMetrics);
-        setFilters(qc.filters || []);
+        setFilters(
+          (qc.filters || []).map((f) =>
+            restoreFilterPayload(
+              f,
+              qc.workflow === "simulation"
+                ? "simulation"
+                : qc.workflow === "dataset"
+                  ? "datasets"
+                  : "traces",
+            ),
+          ),
+        );
         // Restore breakdowns — saved format uses "name" as the key,
         // but the frontend picker/filter logic expects "id".
         const bdTypeMap = {
@@ -1570,6 +1586,117 @@ export default function WidgetEditorView() {
     return map[type] || type;
   };
 
+  const toDashboardFilterType = (backendType) => {
+    const map = {
+      system_metric: "system",
+      eval_metric: "eval_metric",
+      annotation_metric: "annotation",
+      custom_attribute: "custom_attribute",
+      custom_column: "custom_column",
+    };
+    return map[backendType] || backendType || "system";
+  };
+
+  const toApiFilterOperator = (operator) =>
+    DASHBOARD_FILTER_OP_TO_API[operator] || operator;
+
+  const toDashboardFilterOperator = (operator, filterType) => {
+    if (operator === "in") return "contains";
+    if (operator === "not_in") return "not_contains";
+    if (operator === "contains") return "str_contains";
+    if (operator === "not_contains") return "str_not_contains";
+    if (operator === "is_not_null") return "is_set";
+    if (operator === "is_null") return "is_not_set";
+    if (operator === "equals")
+      return filterType === "number" || filterType === "datetime"
+        ? "equal_to"
+        : "contains";
+    if (operator === "not_equals")
+      return filterType === "number" || filterType === "datetime"
+        ? "not_equal_to"
+        : "not_contains";
+    return operator;
+  };
+
+  const normalizeDashboardDataType = (dataType) => {
+    const filterType = normalizeFilterType(dataType || "string");
+    if (filterType === "datetime") return "date";
+    if (filterType === "categorical") return "string";
+    return filterType;
+  };
+
+  const buildFilterPayload = (f) => {
+    const filterType = normalizeFilterType(f.dataType || "string");
+    const filterOp = toApiFilterOperator(f.operator);
+    if (!isAllowedFilterOperator(filterType, filterOp)) return null;
+
+    const filterValue = coerceFilterValue(f.value, filterOp, filterType);
+    const colType = normalizeColumnType(DASHBOARD_TYPE_TO_COL_TYPE[f.type]);
+
+    return {
+      column_id: f.id,
+      ...(f.name && { display_name: f.name }),
+      ...(f.source && { source: f.source }),
+      ...(f.outputType && { output_type: f.outputType }),
+      filter_config: {
+        filter_type: filterType,
+        filter_op: filterOp,
+        filter_value: filterValue,
+        ...(colType && { col_type: colType }),
+      },
+    };
+  };
+
+  const restoreFilterPayload = (f, fallbackSource = "traces") => {
+    const config = f?.filter_config;
+    if (!config) {
+      const backendType =
+        f.metric_type || f.metricType || f.type || "system_metric";
+      return {
+        id: f.metric_name || f.metricName || f.id,
+        name: f.metric_name || f.metricName || f.name || f.id || "",
+        type: toDashboardFilterType(backendType),
+        dataType: normalizeDashboardDataType(
+          f.dataType || f.data_type || "string",
+        ),
+        source: f.source || fallbackSource,
+        outputType: f.output_type || f.outputType,
+        operator:
+          f.operator === "is_numeric"
+            ? "is_set"
+            : f.operator === "is_not_numeric"
+              ? "is_not_set"
+              : f.operator || "contains",
+        value: f.value ?? [],
+      };
+    }
+
+    const filterType = normalizeFilterType(config.filter_type || "string");
+    const colType = normalizeColumnType(config.col_type);
+    const dashboardType =
+      COL_TYPE_TO_DASHBOARD_TYPE[colType] || toDashboardFilterType(f.type);
+    const operator = toDashboardFilterOperator(config.filter_op, filterType);
+    const isMulti = operator === "contains" || operator === "not_contains";
+    const value = NO_VALUE_OPERATORS.has(operator)
+      ? ""
+      : isMulti
+        ? Array.isArray(config.filter_value)
+          ? config.filter_value
+          : [config.filter_value].filter((v) => v !== null && v !== undefined)
+        : config.filter_value ?? (filterType === "number" ? "" : []);
+
+    return {
+      id: f.column_id,
+      name: f.display_name || f.column_id,
+      type: dashboardType,
+      dataType: normalizeDashboardDataType(filterType),
+      source: f.source || fallbackSource,
+      outputType: f.output_type,
+      operator,
+      value,
+    };
+  };
+
   const buildMetricPayload = (m, i) => {
     const backendType = toBackendType(m.type);
     const aggregation =
@@ -1580,7 +1707,7 @@ export default function WidgetEditorView() {
     const base = {
       id: m.id || `m${i}`,
       name: m.id,
-      displayName: m.name || m.id,
+      display_name: m.name || m.id,
       type: backendType,
       source: m.source || "traces",
       aggregation,
@@ -1611,26 +1738,8 @@ export default function WidgetEditorView() {
                   ? f.value.length > 0
                   : f.value !== ""))),
         )
-        .map((f) => buildFilterPayload(f));
-    }
-    return base;
-  };
-
-  const buildFilterPayload = (f) => {
-    const backendType = toBackendType(f.type);
-    // f.id = backend key (e.g. "cost", UUID, span attr key)
-    const base = {
-      metric_type: backendType,
-      metric_name: f.id,
-      operator: f.operator,
-      value: f.value,
-      source: f.source || "traces",
-    };
-    if (backendType === "custom_attribute") {
-      base.attribute_type = "string";
-    }
-    if (backendType === "eval_metric" && f.outputType) {
-      base.output_type = f.outputType;
+        .map((f) => buildFilterPayload(f))
+        .filter(Boolean);
     }
     return base;
   };
@@ -1682,7 +1791,8 @@ export default function WidgetEditorView() {
                   ? f.value.length > 0
                   : f.value !== ""))),
         )
-        .map((f) => buildFilterPayload(f)),
+        .map((f) => buildFilterPayload(f))
+        .filter(Boolean),
       breakdowns: breakdowns
         .filter((b) => b.id)
         .map((b) => buildBreakdownPayload(b)),
@@ -1964,8 +2074,9 @@ export default function WidgetEditorView() {
           data: { ...data, width: 12, height: 320, position: 999 },
         });
         // Track created ID so subsequent saves update instead of creating again
-        if (result?.data?.id) {
-          setCreatedWidgetId(result.data.id);
+        const newWidgetId = result?.data?.result?.id || result?.data?.id;
+        if (newWidgetId) {
+          setCreatedWidgetId(newWidgetId);
         }
       }
       setSaveStatus("saved");
@@ -2055,7 +2166,10 @@ export default function WidgetEditorView() {
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
 
-  const autoDecimals = useMemo(() => getAutoDecimals(chartSeries), [chartSeries]);
+  const autoDecimals = useMemo(
+    () => getAutoDecimals(chartSeries),
+    [chartSeries],
+  );
   const suggestedLeftAxisUnit = useMemo(
     () => getSuggestedUnitConfig(metrics),
     [metrics],
@@ -2092,11 +2206,7 @@ export default function WidgetEditorView() {
       },
     }));
     setAutoAppliedLeftAxisUnit(suggested || null);
-  }, [
-    axisConfig.leftY.unit,
-    autoAppliedLeftAxisUnit,
-    suggestedLeftAxisUnit,
-  ]);
+  }, [axisConfig.leftY.unit, autoAppliedLeftAxisUnit, suggestedLeftAxisUnit]);
 
   // Colors that match chartSeries — preserves original color assignment even when series are filtered out
   const chartColors = useMemo(() => {
@@ -2656,7 +2766,9 @@ export default function WidgetEditorView() {
     });
     return {
       categories,
-      series: [{ name: "Value", data: values.map((item) => item.numericValue) }],
+      series: [
+        { name: "Value", data: values.map((item) => item.numericValue) },
+      ],
       rows: values,
     };
   }, [isHorizontal, chartSeries]);
@@ -3366,7 +3478,9 @@ export default function WidgetEditorView() {
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
                               const fmtVal =
-                                row.value == null ? "—" : formatValFn(row.value);
+                                row.value == null
+                                  ? "—"
+                                  : formatValFn(row.value);
                               return (
                                 <Box
                                   key={i}
@@ -3624,9 +3738,7 @@ export default function WidgetEditorView() {
                                   color: chartColors[i % chartColors.length],
                                 }}
                               >
-                                {avg == null
-                                  ? "—"
-                                  : formatValFn(avg)}
+                                {avg == null ? "—" : formatValFn(avg)}
                               </Typography>
                               <Typography
                                 variant="body2"
@@ -4357,9 +4469,7 @@ export default function WidgetEditorView() {
                                     borderLeft: `1px solid ${theme.palette.divider}`,
                                   }}
                                 >
-                                  {avg == null
-                                    ? "—"
-                                    : formatValFn(avg)}
+                                  {avg == null ? "—" : formatValFn(avg)}
                                 </td>
                                 {s.data.map((pt, ci) => {
                                   if (!displayIndicesSet.has(ci)) return null;

@@ -10,9 +10,15 @@ from uuid import UUID
 
 import structlog
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 from django.utils import timezone
 
-from agent_playground.models.choices import NodeType, PortDirection, PortMode
+from agent_playground.models.choices import (
+    GraphVersionStatus,
+    NodeType,
+    PortDirection,
+    PortMode,
+)
 from agent_playground.models.edge import Edge
 from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.node import Node
@@ -22,6 +28,7 @@ from agent_playground.models.port import Port
 from agent_playground.models.prompt_template_node import PromptTemplateNode
 from agent_playground.services.engine.utils.json_path import parse_variable
 from agent_playground.utils.graph import get_exposed_ports_for_versions
+from agent_playground.utils.graph_validation import would_create_graph_reference_cycle
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 
 logger = structlog.get_logger(__name__)
@@ -183,7 +190,9 @@ def create_node(
     elif node_type == NodeType.SUBGRAPH:
         ref_gv_id = data.get("ref_graph_version_id")
         if ref_gv_id:
-            ref_graph_version = _resolve_ref_graph_version(ref_gv_id)
+            ref_graph_version = _resolve_ref_graph_version(
+                ref_gv_id, version, organization, workspace
+            )
 
     # Create Node
     node = Node(
@@ -282,7 +291,9 @@ def update_node(
     if "ref_graph_version_id" in data:
         ref_gv_id = data["ref_graph_version_id"]
         if ref_gv_id:
-            node.ref_graph_version = _resolve_ref_graph_version(ref_gv_id)
+            node.ref_graph_version = _resolve_ref_graph_version(
+                ref_gv_id, node.graph_version, organization, workspace
+            )
         else:
             node.ref_graph_version = None
 
@@ -396,8 +407,51 @@ def _resolve_node_template(node_template_id: UUID) -> NodeTemplate:
     return NodeTemplate.no_workspace_objects.get(id=node_template_id)
 
 
-def _resolve_ref_graph_version(ref_graph_version_id: UUID) -> GraphVersion:
-    return GraphVersion.no_workspace_objects.get(id=ref_graph_version_id)
+def _resolve_ref_graph_version(
+    ref_graph_version_id: UUID,
+    owner_version: GraphVersion,
+    organization: Any,
+    workspace: Any,
+) -> GraphVersion:
+    organization_id = getattr(organization, "id", None)
+    workspace_id = getattr(workspace, "id", None)
+
+    queryset = GraphVersion.no_workspace_objects.select_related("graph").filter(
+        id=ref_graph_version_id
+    )
+    accessible_graphs = Q(graph__is_template=True)
+    if organization_id:
+        accessible_graphs |= Q(graph__organization_id=organization_id)
+    queryset = queryset.filter(accessible_graphs)
+    if workspace_id:
+        queryset = queryset.filter(
+            Q(graph__is_template=True) | Q(graph__workspace_id=workspace_id)
+        )
+
+    ref_version = queryset.get()
+    ref_graph = ref_version.graph
+
+    if ref_version.status not in (
+        GraphVersionStatus.ACTIVE,
+        GraphVersionStatus.INACTIVE,
+    ):
+        raise ValidationError(
+            "Subgraph nodes can only reference active or inactive versions. "
+            "Draft versions cannot be referenced."
+        )
+    if ref_graph.id == owner_version.graph_id:
+        raise ValidationError(
+            "Subgraph nodes cannot reference versions of the same graph"
+        )
+    if would_create_graph_reference_cycle(
+        source_graph_id=owner_version.graph_id,
+        target_graph_id=ref_graph.id,
+    ):
+        raise ValidationError(
+            "This reference would create a circular dependency between graphs"
+        )
+
+    return ref_version
 
 
 def _resolve_or_create_pt_ptv(

@@ -17,7 +17,7 @@ shape — but the numbers reflect session-level aggregation.
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
 
@@ -33,6 +33,13 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
+    SESSION_FILTER_MAP: Dict[str, str] = {
+        "duration": "session_duration",
+        "total_cost": "session_total_cost",
+        "total_tokens": "session_total_tokens",
+        "traces_count": "session_traces",
+        "total_traces_count": "session_traces",
+    }
 
     def __init__(
         self,
@@ -53,10 +60,13 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = self.end_date
 
         filter_builder = ClickHouseFilterBuilder(table=self.TABLE)
-        extra_where, extra_params = filter_builder.translate(self.filters)
+        span_filters = self._extract_span_filters()
+        extra_where, extra_params = filter_builder.translate(span_filters)
         self.params.update(extra_params)
+        having_clauses = self._build_having_clauses()
 
         where_clause = extra_where if extra_where else "1 = 1"
+        having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
         bucket_fn = self.time_bucket_expr(self.interval)
 
         # Two-level aggregation:
@@ -97,13 +107,59 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
               AND trace_session_id IS NOT NULL
+              AND trace_session_id != toUUID('{NIL_UUID}')
               AND {where_clause}
             GROUP BY trace_session_id
+            {having_fragment}
         )
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
         return query, self.params
+
+    def _extract_span_filters(self) -> List[Dict]:
+        """Return filters that apply before the session GROUP BY."""
+        span_filters: List[Dict] = []
+        for f in self.filters:
+            col_id = f.get("column_id") or f.get("columnId")
+            if col_id not in self.SESSION_FILTER_MAP:
+                span_filters.append(f)
+        return span_filters
+
+    def _build_having_clauses(self) -> str:
+        """Build predicates for session aggregate filters."""
+        conditions: List[str] = []
+        param_counter = 900
+
+        for f in self.filters:
+            col_id = f.get("column_id") or f.get("columnId")
+            if col_id not in self.SESSION_FILTER_MAP:
+                continue
+
+            config = f.get("filter_config") or f.get("filterConfig") or {}
+            filter_op = config.get("filter_op") or config.get("filterOp")
+            filter_value = config.get("filter_value", config.get("filterValue"))
+            ch_col = self.SESSION_FILTER_MAP[col_id]
+
+            op_map = {
+                "equals": "=",
+                "not_equals": "!=",
+                "greater_than": ">",
+                "less_than": "<",
+                "greater_than_or_equal": ">=",
+                "less_than_or_equal": "<=",
+            }
+            op = op_map.get(filter_op)
+            if op is None:
+                conditions.append("0 = 1")
+                continue
+
+            param_counter += 1
+            param_name = f"having_{param_counter}"
+            self.params[param_name] = filter_value
+            conditions.append(f"{ch_col} {op} %({param_name})s")
+
+        return " AND ".join(conditions)
 
     def format_result(
         self,

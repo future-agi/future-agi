@@ -38,10 +38,10 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useGetProjectById } from "src/api/project/evals-task";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import { objectCamelToSnake } from "src/utils/utils";
 import { red } from "src/theme/palette";
 import {
   extractAttributeFilters,
+  getTaskFilterApiKey,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
@@ -198,7 +198,7 @@ const EditTaskDrawerV2Content = ({
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: {
           project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
           task_id: selectedRow?.id,
         },
       }),
@@ -217,7 +217,7 @@ const EditTaskDrawerV2Content = ({
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
         },
       }),
     select: (d) => d.data?.result,
@@ -266,20 +266,24 @@ const EditTaskDrawerV2Content = ({
       const data = formValues;
       const attributeFilters = extractAttributeFilters(data?.filters);
 
-      // Generic system filter aggregation: every non-attribute filter
-      // row contributes its value to a BE key named after `f.property`.
-      // Mirrors the create-side getNewTaskFilters (validation.js) so
-      // span_kind, latency_ms, total_tokens, etc. all round-trip
-      // without each one being hard-coded.
+      // Task system filter aggregation. Keep the update payload aligned with
+      // the backend-supported task filter contract instead of saving fields
+      // that the dispatcher would ignore.
       const systemFilters = {};
       (data.filters || []).forEach((f) => {
         if (!f?.property || f.property === "attributes") return;
+        const apiKey = getTaskFilterApiKey(f.property);
         const v = f?.filterConfig?.filterValue;
-        if (v === undefined || v === null || v === "") return;
-        if (systemFilters[f.property]) {
-          systemFilters[f.property].push(v);
+        const values = Array.isArray(v)
+          ? v
+          : v !== undefined && v !== null && v !== ""
+            ? [v]
+            : [];
+        if (!values.length) return;
+        if (systemFilters[apiKey]) {
+          systemFilters[apiKey].push(...values);
         } else {
-          systemFilters[f.property] = [v];
+          systemFilters[apiKey] = [...values];
         }
       });
 
