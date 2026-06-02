@@ -6,7 +6,12 @@ from django.db import IntegrityError, transaction
 logger = structlog.get_logger(__name__)
 from model_hub.models.prompt_label import PromptLabel
 from model_hub.models.run_prompt import PromptVersion
-from tracer.models.observation_span import EndUser, ObservationSpan
+from tracer.models.observation_span import (
+    EndUser,
+    ObservationSpan,
+    UserIdType,
+    normalize_user_id_type as _norm_uid_type,
+)
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
@@ -46,7 +51,7 @@ def create_single_otel_span(data, organization_id, user_id, workspace_id=None):
 
     if parsed_data.get("end_user"):
         end_user_data = parsed_data["end_user"]
-        defaults_fields = ["user_id_type", "user_id_hash", "metadata"]
+        defaults_fields = ["user_id_hash", "metadata"]
         defaults = {key: end_user_data.get(key) for key in defaults_fields}
         defaults["metadata"] = defaults.get("metadata", {})
         if (
@@ -60,7 +65,7 @@ def create_single_otel_span(data, organization_id, user_id, workspace_id=None):
                         user_id=end_user_data["user_id"],
                         organization_id=organization_id,
                         project=trace.project,
-                        user_id_type=end_user_data.get("user_id_type"),
+                        user_id_type=_norm_uid_type(end_user_data.get("user_id_type")),
                         defaults=defaults,
                     )
             except IntegrityError:
@@ -69,7 +74,7 @@ def create_single_otel_span(data, organization_id, user_id, workspace_id=None):
                     user_id=end_user_data["user_id"],
                     organization_id=organization_id,
                     project=parsed_data["project"],
-                    user_id_type=end_user_data.get("user_id_type"),
+                    user_id_type=_norm_uid_type(end_user_data.get("user_id_type")),
                 )
 
             val["end_user"] = end_user
