@@ -39,6 +39,7 @@ _RUNTIME_ALLOWED_KEYS = {
         "choices",
         "choice_scores",
         "reverse_output",
+        "multi_choice",
     },
     "CustomPromptEvaluator": {
         "check_internet",
@@ -275,6 +276,7 @@ def prepare_eval_config(
         config["knowledge_bases"] = eval_template.config.get("knowledge_bases", [])
         config["data_injection"] = eval_template.config.get("data_injection", {})
         config["summary"] = eval_template.config.get("summary", {"type": "concise"})
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
         # Pass org/workspace context for tool resolution
         config["organization_id"] = (
             str(eval_template.organization.id) if eval_template.organization else None
@@ -333,6 +335,7 @@ def prepare_eval_config(
             else []
         )
         config["choice_scores"] = eval_template.choice_scores
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
 
     # FutureAGI evals (DeterministicEvaluator, RankingEvaluator)
     if is_futureagi:
