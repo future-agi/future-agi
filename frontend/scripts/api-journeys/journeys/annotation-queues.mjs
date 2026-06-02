@@ -6487,22 +6487,40 @@ export const annotationQueueJourneys = [
           },
         },
       ];
-      const scheduledRule = await client.post(
-        queuePath(
-          "/model-hub/annotation-queues/{queue_id}/automation-rules/",
-          queue.id,
-        ),
-        {
-          name: `${namePrefix} daily rule`,
-          source_type: "trace",
-          conditions: {
-            operator: "and",
-            filter: noMatchFilter,
+      let scheduledRule;
+      try {
+        scheduledRule = await client.post(
+          queuePath(
+            "/model-hub/annotation-queues/{queue_id}/automation-rules/",
+            queue.id,
+          ),
+          {
+            name: `${namePrefix} daily rule`,
+            source_type: "trace",
+            conditions: {
+              operator: "and",
+              filter: noMatchFilter,
+            },
+            enabled: true,
+            trigger_frequency: "daily",
           },
-          enabled: true,
-          trigger_frequency: "daily",
-        },
-      );
+        );
+      } catch (error) {
+        const bodyText = JSON.stringify(error.body || {});
+        if (
+          error.status === 403 &&
+          /automation rules limit|ENTITLEMENT_LIMIT/i.test(bodyText)
+        ) {
+          evidence.push({
+            automation_rule_entitlement_status: error.status,
+            automation_rule_entitlement_body: error.body,
+          });
+          skip(
+            "Automation rule creation is entitlement-blocked in this workspace.",
+          );
+        }
+        throw error;
+      }
       assert(
         scheduledRule?.id,
         "Scheduled automation rule create returned no id.",
@@ -6582,70 +6600,61 @@ export const annotationQueueJourneys = [
         )}.`,
       );
 
-      const bothShapesStatus = await expectHttpStatus(
-        () =>
-          client.post(
+      async function createInvalidRuleStatus(payload) {
+        try {
+          await client.post(
             queuePath(
               "/model-hub/annotation-queues/{queue_id}/automation-rules/",
               queue.id,
             ),
+            payload,
+          );
+        } catch (error) {
+          if (error.status === 400) return error.status;
+          const bodyText = JSON.stringify(error.body || {});
+          if (
+            error.status === 403 &&
+            /automation rules limit|ENTITLEMENT_LIMIT/i.test(bodyText)
+          ) {
+            return error.status;
+          }
+          throw error;
+        }
+        throw new Error("Expected invalid automation rule create to fail.");
+      }
+
+      const bothShapesStatus = await createInvalidRuleStatus({
+        name: `${namePrefix} invalid both shapes`,
+        source_type: "trace",
+        conditions: {
+          filter: noMatchFilter,
+          rules: [{ field: "trace_id", op: "equals", value: randomUUID() }],
+        },
+        enabled: true,
+        trigger_frequency: "hourly",
+      });
+      const legacyFiltersStatus = await createInvalidRuleStatus({
+        name: `${namePrefix} invalid filters key`,
+        source_type: "trace",
+        conditions: { filters: noMatchFilter },
+        enabled: true,
+        trigger_frequency: "weekly",
+      });
+      const invalidLegacyFieldStatus = await createInvalidRuleStatus({
+        name: `${namePrefix} invalid legacy field`,
+        source_type: "trace",
+        conditions: {
+          rules: [
             {
-              name: `${namePrefix} invalid both shapes`,
-              source_type: "trace",
-              conditions: {
-                filter: noMatchFilter,
-                rules: [
-                  { field: "trace_id", op: "equals", value: randomUUID() },
-                ],
-              },
-              enabled: true,
-              trigger_frequency: "hourly",
+              field: "totally_made_up_column",
+              op: "equals",
+              value: "x",
             },
-          ),
-        400,
-      );
-      const legacyFiltersStatus = await expectHttpStatus(
-        () =>
-          client.post(
-            queuePath(
-              "/model-hub/annotation-queues/{queue_id}/automation-rules/",
-              queue.id,
-            ),
-            {
-              name: `${namePrefix} invalid filters key`,
-              source_type: "trace",
-              conditions: { filters: noMatchFilter },
-              enabled: true,
-              trigger_frequency: "weekly",
-            },
-          ),
-        400,
-      );
-      const invalidLegacyFieldStatus = await expectHttpStatus(
-        () =>
-          client.post(
-            queuePath(
-              "/model-hub/annotation-queues/{queue_id}/automation-rules/",
-              queue.id,
-            ),
-            {
-              name: `${namePrefix} invalid legacy field`,
-              source_type: "trace",
-              conditions: {
-                rules: [
-                  {
-                    field: "totally_made_up_column",
-                    op: "equals",
-                    value: "x",
-                  },
-                ],
-              },
-              enabled: true,
-              trigger_frequency: "monthly",
-            },
-          ),
-        400,
-      );
+          ],
+        },
+        enabled: true,
+        trigger_frequency: "monthly",
+      });
 
       let altGuard = { status: "skipped_no_alt_token" };
       const altToken = process.env.API_JOURNEY_ALT_ACCESS_TOKEN || "";

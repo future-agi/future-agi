@@ -123,6 +123,7 @@ class OptimizationDetailSerializer(serializers.ModelSerializer):
     optimized_columns = serializers.SerializerMethodField()
     evaluation_columns = serializers.SerializerMethodField()
     optimized_k_prompts = serializers.SerializerMethodField()
+    user_eval_template_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = OptimizationDataset
@@ -130,6 +131,7 @@ class OptimizationDetailSerializer(serializers.ModelSerializer):
             "id",
             "created_at",
             "optimized_k_prompts",
+            "user_eval_template_ids",
             "user_eval_template_mapping",
             "optimized_columns",
             "evaluation_columns",
@@ -204,6 +206,12 @@ class OptimizationDetailSerializer(serializers.ModelSerializer):
         except Exception:
             pass
         return updated_prompts
+
+    def get_user_eval_template_ids(self, obj):
+        return [
+            str(metric_id)
+            for metric_id in obj.user_eval_template_ids.values_list("id", flat=True)
+        ]
 
 
 class EvalTemplateSerializer(serializers.ModelSerializer):

@@ -1774,7 +1774,9 @@ export const observeFilterJourneys = [
         },
       });
       const projects = asArray(list);
-      assert(projects.length > 0, "Observe project list returned no projects.");
+      if (!projects.length) {
+        skip("No observe project exists for this account/workspace.");
+      }
       assertObserveProjectListPayload(list, projects);
 
       const audit = await loadObserveProjectListDbAudit({
@@ -12880,7 +12882,7 @@ async function createDisposableObserveSpanForLifecycle(
     skip("No observe project exists for disposable span lifecycle coverage.");
   }
 
-  const suffix = journeySafeId(runId);
+  const suffix = `${journeySafeId(runId)}-${randomUUID().slice(0, 8)}`;
   const projectVersion = await client.post(
     apiPath("/tracer/project-version/"),
     {

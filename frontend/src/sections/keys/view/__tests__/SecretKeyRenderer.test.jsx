@@ -1,3 +1,4 @@
+import { describe, expect, it } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import SecretKeyRenderer from "../SecretKeyRenderer";
 

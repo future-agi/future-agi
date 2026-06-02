@@ -257,7 +257,9 @@ def test_prompt_label_assignment_default_and_lookup_lifecycle(
     assert template_labels_response.status_code == http_status.HTTP_200_OK
     template_label_rows = _result(template_labels_response)
     assert any(
-        row["version"] == "v1" and "Lifecycle label" in row["labels"]
+        row["version"] == "v1"
+        and "Lifecycle label" in row["labels"]
+        and "Production" in row["labels"]
         for row in template_label_rows
     )
 

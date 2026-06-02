@@ -40,6 +40,7 @@ export default function AlertsSheetView() {
     openSheetView,
     handleCloseSheetView,
     handleProjectChange,
+    handleStartCreatingAlerts,
     setCurrentTab,
     setOpenCreateAlerts,
     mainPage,

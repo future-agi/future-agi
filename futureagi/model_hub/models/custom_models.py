@@ -65,8 +65,11 @@ class CustomAIModel(BaseModel):
         # if self.key_config and not all(
         #     [v.startswith(b"gAAAAA".decode()) for v in self.key_config.values()]
         # ):
-        self._actual_json = self.key_config
-        self.key_config = ApiKey().encrypt_json(self.key_config)
+        if self.key_config:
+            self._actual_json = self.key_config
+            self.key_config = ApiKey().encrypt_json(self.key_config)
+        else:
+            self._actual_json = {}
         self.full_clean()
         super().save(*args, **kwargs)
 

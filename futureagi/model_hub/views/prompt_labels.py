@@ -394,10 +394,21 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             or request.user.organization,
             deleted=False,
         ).order_by("created_at")
+        allowed_label_filter = Q(
+            organization=getattr(request, "organization", None)
+            or request.user.organization,
+            workspace=request.workspace,
+        ) | Q(organization__isnull=True, type=LabelTypeChoices.SYSTEM.value)
         data = [
             {
                 "version": v.template_version,
-                "labels": list(v.labels.values_list("name", flat=True)),
+                "labels": list(
+                    PromptLabel.no_workspace_objects.filter(
+                        allowed_label_filter,
+                        prompt_versions=v,
+                        deleted=False,
+                    ).values_list("name", flat=True)
+                ),
                 "is_default": v.is_default,
                 "is_draft": v.is_draft,
             }

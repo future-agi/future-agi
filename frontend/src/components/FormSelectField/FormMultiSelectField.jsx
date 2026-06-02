@@ -259,6 +259,7 @@ const formMultiSelectFieldPropTypes = {
 };
 
 // @ts-ignore
+FormMultiSelectField.propTypes = formMultiSelectFieldPropTypes;
 export const EnhancedFormMultiSelectField =
   React.forwardRef(FormMultiSelectField);
 EnhancedFormMultiSelectField.propTypes = formMultiSelectFieldPropTypes;

@@ -286,15 +286,15 @@ def get_model_hourly_volume(org_id=None, model_ids=None, hours=24):
 
     where_sql = "\n                            AND ".join(where_clauses)
     query = f"""
-            WITH
-                arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours})) AS timeSeries
-
             SELECT
                 seriesTime,
                 COALESCE(SUM(recordsCount), 0) AS RecordCount
             FROM
                 (
-                    SELECT arrayJoin(timeSeries) AS seriesTime
+                    SELECT
+                        arrayJoin(
+                            arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours}))
+                        ) AS seriesTime
                 ) AS series
             LEFT JOIN
                 (
@@ -366,10 +366,6 @@ def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
 
     else:
         query = f"""
-            WITH
-                -- Generate a series of timestamps for the last 24 hours (every hour)
-                arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours})) AS timeSeries
-
             -- Select from the generated series
             SELECT
                 seriesTime,
@@ -378,7 +374,10 @@ def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
             FROM
                 (
                     -- Convert the generated numbers to timestamps
-                    SELECT arrayJoin(timeSeries) AS seriesTime
+                    SELECT
+                        arrayJoin(
+                            arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours}))
+                        ) AS seriesTime
                 ) AS series
             LEFT JOIN
                 (

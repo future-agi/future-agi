@@ -319,11 +319,20 @@ class WebhookHandlerView(APIView):
                     )
                     continue
 
-                # Create or update observation span
-                normalize_and_store_logs.delay(
-                    body=post_data,
-                    agent_definition_id=agent_definition.id,
-                )
+                try:
+                    normalize_and_store_logs.delay(
+                        body=post_data,
+                        agent_definition_id=agent_definition.id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "webhook_log_dispatch_failed_running_inline",
+                        agent_definition_id=str(agent_definition.id),
+                    )
+                    normalize_and_store_logs.run_sync(
+                        body=post_data,
+                        agent_definition_id=agent_definition.id,
+                    )
                 processed_count += 1
 
             if matched_count == 0:

@@ -255,6 +255,26 @@ def test_livekit_internal_routes_reject_missing_worker_bearer_before_work(
     assert "Missing Bearer token" in str(response.data)
 
 
+@override_settings(INTERNAL_API_SECRET="")
+def test_livekit_internal_routes_reject_missing_worker_bearer_before_secret_config():
+    factory = RequestFactory()
+    request = _django_json_request(
+        factory,
+        "get",
+        f"/simulate/api/livekit/call-config/{ANONYMOUS_LIVEKIT_CALL_ID}/",
+    )
+
+    response = _dispatch_view(
+        CallConfigView,
+        request,
+        call_id=ANONYMOUS_LIVEKIT_CALL_ID,
+    )
+
+    assert response.status_code == 401
+    assert "Missing Bearer token" in str(response.data)
+    assert "INTERNAL_API_SECRET not configured" not in str(response.data)
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ("method", "path", "body"),

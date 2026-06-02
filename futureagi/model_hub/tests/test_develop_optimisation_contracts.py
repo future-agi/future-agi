@@ -184,6 +184,7 @@ def test_optimisation_authenticated_lifecycle_scopes_dataset_rows(
     )
     assert details_response.status_code == status.HTTP_200_OK
     assert details_response.json()["id"] == str(optimization.id)
+    assert details_response.json()["user_eval_template_ids"] == [str(metric.id)]
 
     update_response = auth_client.put(
         f"/model-hub/optimisation/update/{optimization.id}/",
@@ -269,7 +270,9 @@ def test_optimisation_create_and_update_reject_columns_outside_selected_dataset(
 ):
     dataset, column = create_dataset_with_column(organization, workspace, user)
     metric = create_eval_metric(organization, workspace, dataset)
-    existing = create_optimization(dataset, column, metric, name="Existing Optimization")
+    existing = create_optimization(
+        dataset, column, metric, name="Existing Optimization"
+    )
 
     other_dataset, other_column = create_dataset_with_column(
         organization, workspace, user, name="Other Column Dataset"

@@ -378,6 +378,64 @@ def test_webhook_signed_retell_callback_dispatches_for_enabled_agent(
 
 
 @pytest.mark.django_db
+def test_webhook_signed_retell_callback_runs_inline_when_dispatch_unavailable(
+    api_client,
+    organization,
+    workspace,
+    monkeypatch,
+):
+    assistant_id = f"retell-assistant-{uuid.uuid4().hex[:8]}"
+    api_key = "retell-test-secret"
+    agent_definition = create_webhook_agent_fixture(
+        organization=organization,
+        workspace=workspace,
+        assistant_id=assistant_id,
+        api_key=api_key,
+    )
+    payload = {
+        "event": "call_analyzed",
+        "interaction_type": "voice",
+        "call": {
+            "agent_id": assistant_id,
+            "call_id": f"call-{uuid.uuid4().hex[:8]}",
+        },
+    }
+    calls = []
+    signature = retell_signature(payload, api_key)
+
+    def failing_delay(**kwargs):
+        calls.append(("delay", kwargs))
+        raise RuntimeError("temporal unavailable")
+
+    def fake_run_sync(**kwargs):
+        calls.append(("run_sync", kwargs))
+
+    monkeypatch.setattr(
+        "tracer.views.observability_provider.normalize_and_store_logs.delay",
+        failing_delay,
+    )
+    monkeypatch.setattr(
+        "tracer.views.observability_provider.normalize_and_store_logs.run_sync",
+        fake_run_sync,
+    )
+
+    response = api_client.post(
+        WEBHOOK_PATH,
+        payload,
+        format="json",
+        HTTP_X_RETELL_SIGNATURE=signature,
+    )
+
+    expected_kwargs = {
+        "body": payload,
+        "agent_definition_id": agent_definition.id,
+    }
+    assert response.status_code == status.HTTP_200_OK
+    assert "Processed: 1" in result(response)
+    assert calls == [("delay", expected_kwargs), ("run_sync", expected_kwargs)]
+
+
+@pytest.mark.django_db
 def test_webhook_invalid_signature_rejects_without_dispatch(
     api_client,
     organization,

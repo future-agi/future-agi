@@ -880,6 +880,31 @@ class TestCustomModelsDetailsView(CustomModelsAPITestCase):
         self.assertEqual(model.user_model_id, "original-name")  # unchanged
         self.assertEqual(model.output_token_cost, 0.02)  # unchanged
 
+    def test_update_model_details_with_null_key_config(self):
+        """Test updating a model whose optional key config is unset."""
+        model = CustomAIModel.objects.create(
+            user_model_id="null-key-config-model",
+            provider="openai",
+            input_token_cost=0.01,
+            output_token_cost=0.02,
+            organization=self.organization,
+            workspace=self.workspace,
+            user=self.user,
+            key_config=None,
+            deleted=False,
+        )
+
+        response = self.client.post(
+            f"{BASE_URL}/custom-models/{model.id}/",
+            {"model_name": "null-key-config-model-updated"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        model.refresh_from_db()
+        self.assertEqual(model.user_model_id, "null-key-config-model-updated")
+        self.assertIsNone(model.key_config)
+
     def test_update_model_details_duplicate_name(self):
         """Test cannot update to a name that already exists."""
         self.create_custom_model(user_model_id="existing-name")

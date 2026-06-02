@@ -7,22 +7,22 @@ import yaml
 from django.db.models import Q
 from rest_framework import serializers
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from model_hub.models.choices import ProviderLogoUrls
 from model_hub.models.prompt_folders import PromptFolder
-from model_hub.models.prompt_label import PromptLabel
 from model_hub.models.run_prompt import (
     PromptTemplate,
     PromptVersion,
     SchemaTypeChoices,
     UserResponseSchema,
 )
+from model_hub.utils.utils import get_model_mode
 from model_hub.utils.workspace_scope import (
     request_organization,
     request_workspace_filter,
 )
-from model_hub.utils.utils import get_model_mode
+
+logger = structlog.get_logger(__name__)
 
 
 class VersionDefaultSerializer(serializers.Serializer):
@@ -293,14 +293,15 @@ class PromptExecutionSerializer(serializers.ModelSerializer):
         Extract model and model_detail from prompt_config_snapshot.
         """
         if latest_execution:
-            if isinstance(latest_execution.prompt_config_snapshot, list):
-                config = latest_execution.prompt_config_snapshot[0].get(
-                    "configuration", {}
+            prompt_config_snapshot = latest_execution.prompt_config_snapshot or {}
+            if isinstance(prompt_config_snapshot, list):
+                prompt_config_snapshot = (
+                    prompt_config_snapshot[0] if prompt_config_snapshot else {}
                 )
+            if isinstance(prompt_config_snapshot, dict):
+                config = prompt_config_snapshot.get("configuration", {})
             else:
-                config = latest_execution.prompt_config_snapshot.get(
-                    "configuration", {}
-                )
+                config = {}
             return config.get("model"), config.get("model_detail")
         return None, None
 

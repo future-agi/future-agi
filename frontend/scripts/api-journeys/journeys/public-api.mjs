@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { apiPath, assert, requireMutations, skip } from "../lib/api-client.mjs";
 
 const execFileAsync = promisify(execFile);
+let publicApiRequestCounter = 0;
 
 export const publicApiJourneys = [
   {
@@ -6293,13 +6294,15 @@ export const publicApiJourneys = [
 ];
 
 async function request(apiBase, method, pathName, body, options = {}) {
+  const headers = {
+    "X-Forwarded-For": nextPublicApiClientIp(),
+    ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    ...(options.headers || {}),
+  };
   const response = await fetch(`${apiBase}${pathName}`, {
     method,
     redirect: options.redirect || "follow",
-    headers:
-      body === undefined
-        ? options.headers
-        : { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const responseText = await response.text();
@@ -6309,6 +6312,14 @@ async function request(apiBase, method, pathName, body, options = {}) {
     contentType: response.headers.get("content-type") || "",
     location: response.headers.get("location") || "",
   };
+}
+
+function nextPublicApiClientIp() {
+  publicApiRequestCounter += 1;
+  const secondOctet = 64 + (publicApiRequestCounter % 64);
+  const thirdOctet = Math.floor(publicApiRequestCounter / 64) % 256;
+  const fourthOctet = (publicApiRequestCounter % 253) + 1;
+  return `198.${secondOctet}.${thirdOctet}.${fourthOctet}`;
 }
 
 async function seedRetellWebhookFixture({ organizationId, workspaceId }) {

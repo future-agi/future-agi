@@ -157,9 +157,37 @@ def test_prompt_history_and_execution_scope_to_active_workspace(
     other_execution_version_detail = auth_client.get(
         f"/model-hub/prompt-history-executions/execution-details/{other_version.id}/"
     )
-    assert (
-        other_execution_version_detail.status_code == http_status.HTTP_404_NOT_FOUND
+    assert other_execution_version_detail.status_code == http_status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.django_db
+def test_prompt_execution_list_tolerates_empty_prompt_config_snapshot(
+    auth_client, organization, workspace, user
+):
+    template = PromptTemplate.no_workspace_objects.create(
+        name="Prompt library empty snapshot",
+        description="Prompt execution list should tolerate legacy empty snapshots",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
     )
+    PromptVersion.no_workspace_objects.create(
+        original_template=template,
+        template_version="v1",
+        prompt_config_snapshot=[],
+        is_default=True,
+    )
+
+    response = auth_client.get(
+        "/model-hub/prompt-executions/",
+        {"page_size": 25, "page": 1},
+    )
+
+    assert response.status_code == http_status.HTTP_200_OK
+    rows = _results(response)
+    created_row = next(row for row in rows if row["id"] == str(template.id))
+    assert created_row["model"] is None
+    assert created_row["model_detail"] is None
 
 
 @pytest.mark.django_db

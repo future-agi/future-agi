@@ -55,6 +55,7 @@ from model_hub.utils.optimize import (
     get_prompt_template_columns,
     get_right_answer_columns,
 )
+from model_hub.utils.utils import check_valid_metrics
 from model_hub.utils.workspace_scope import (
     request_organization,
     request_workspace,
@@ -62,15 +63,20 @@ from model_hub.utils.workspace_scope import (
     scoped_column_config_for_identifier,
     scoped_optimize_dataset_queryset,
 )
-from model_hub.utils.utils import check_valid_metrics
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.types import Environments
 
 logger = structlog.get_logger(__name__)
+
+
+def _clickhouse_environment_value(environment):
+    return Environments.convert_to_type(environment) or environment
+
 
 OPTIMIZE_DATASET_DYNAMIC_ROW_SCHEMA = openapi.Schema(
     type=openapi.TYPE_OBJECT,
@@ -221,7 +227,9 @@ class OptimizedDatasetView(APIView):
 
             metrics_list = Metric.objects.filter(model=model, id__in=metrics)
             if metrics_list.count() != len(set(metrics)):
-                return self._gm.bad_request("Metrics are not accessible for this model.")
+                return self._gm.bad_request(
+                    "Metrics are not accessible for this model."
+                )
 
             optim_dict = {
                 "name": name,
@@ -548,7 +556,7 @@ class RightAnswerResultsView(APIView):
         page = payload["page"]
         limit = payload["limit"]
         offset = (int(page) - 1) * limit
-        environment = optimization.environment
+        environment = _clickhouse_environment_value(optimization.environment)
         version = optimization.version
         start_date = optimization.start_date.strftime("%Y-%m-%d %H:%M:%S")
         end_date = optimization.end_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -820,7 +828,7 @@ class TemplateResultsView(APIView):
                 dynamic_query = self.construct_dynamic_query(
                     model_id,
                     optimization_id,
-                    optimization.environment,
+                    _clickhouse_environment_value(optimization.environment),
                     optimization.version,
                     metric.id,
                     num_templates,
@@ -1046,7 +1054,7 @@ class TemplateExploreView(APIView):
         page = payload["page"]
         limit = payload["limit"]
         offset = (int(page) - 1) * limit
-        environment = optimization.environment
+        environment = _clickhouse_environment_value(optimization.environment)
         version = optimization.version
         start_date = optimization.start_date.strftime("%Y-%m-%d %H:%M:%S")
         end_date = optimization.end_date.strftime("%Y-%m-%d %H:%M:%S")
