@@ -78,6 +78,18 @@ class TestTaxonomy:
         assert get_spec("pipecat").connector_key == "web_livekit_bridge"
         assert get_spec("pipecat").transport is Transport.WEBRTC_BRIDGE
 
+    @pytest.mark.unit
+    def test_livekit_bridge_credentials_path_predicate(self):
+        # voice_small.py routes any provider whose connector IS the LiveKit
+        # bridge through the bridge-credentials path. This pins exactly which
+        # providers that is (Phase 1 wires Pipecat onto it).
+        bridge_path = {
+            s.key
+            for s in PROVIDER_REGISTRY.values()
+            if s.connector_key == "web_livekit_bridge"
+        }
+        assert bridge_path == {"livekit_bridge", "pipecat"}
+
 
 class TestDerivations:
     @pytest.mark.unit
