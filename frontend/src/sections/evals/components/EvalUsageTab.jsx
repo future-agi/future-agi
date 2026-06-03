@@ -12,6 +12,7 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useMemo, useState, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import Editor from "@monaco-editor/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { DataTable, DataTablePagination } from "src/components/data-table";
@@ -24,56 +25,24 @@ import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback
 
 import PartialInputWarningDetails from "src/sections/common/EvalsTasks/PartialInputWarningDetails";
 
-import {
-  useEvalUsageChart,
-  useEvalUsageLogs,
-  useUpdateEvalUsageColumnConfig,
-} from "../hooks/useEvalUsage";
+import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
 import { isEditableElement } from "src/utils/keyboardUtils";
+import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import UsageChart from "./UsageChart";
 import SvgColor from "src/components/svg-color";
 import ColumnDropdown from "src/components/ColumnDropdown/ColumnDropdown";
 import {
+  COLUMN_CONFIG_URL_PARAM,
+  DATE_OPTION_TO_PERIOD,
   DEFAULT_COLUMN_CONFIG,
   ScoreCell,
+  StatPill,
+  columnConfigStorageKey,
+  decodeColumnConfig,
+  encodeColumnConfig,
   normalizeRow,
   useColumns,
-} from "./evalUsageColumns";
-
-// ── Inline stat ──
-const StatPill = ({ label, value, color }) => (
-  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-    <Typography
-      variant="caption"
-      color="text.secondary"
-      sx={{ fontSize: "11px" }}
-    >
-      {label}:
-    </Typography>
-    <Typography
-      variant="caption"
-      fontWeight={700}
-      color={color}
-      sx={{ fontSize: "12px" }}
-    >
-      {value}
-    </Typography>
-  </Box>
-);
-
-// ── Map date option to API period param ──
-const DATE_OPTION_TO_PERIOD = {
-  "30 mins": "30m",
-  "6 hrs": "6h",
-  Today: "1d",
-  Yesterday: "1d",
-  "7D": "7d",
-  "30D": "30d",
-  "3M": "90d",
-  "6M": "180d",
-  "12M": "365d",
-  Custom: "30d",
-};
+} from "../Helpers/evalUsageColumns";
 
 // ── Main ──
 const EvalUsageTab = ({
@@ -84,6 +53,7 @@ const EvalUsageTab = ({
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const [dateOption, setDateOption] = useState("30D");
   const [dateFilter, setDateFilter] = useState(null);
@@ -119,11 +89,22 @@ const EvalUsageTab = ({
     [logsData?.table],
   );
 
-  const currentColumnConfig = useMemo(
+  const baseColumnConfig = useMemo(
     () =>
       columnConfig && columnConfig.length ? columnConfig : DEFAULT_COLUMN_CONFIG,
     [columnConfig],
   );
+
+  const storageKey = columnConfigStorageKey(templateId);
+
+  const currentColumnConfig = useMemo(() => {
+    const fromUrl = searchParams.get(COLUMN_CONFIG_URL_PARAM);
+    const decodedUrl = decodeColumnConfig(fromUrl, baseColumnConfig);
+    if (decodedUrl) return decodedUrl;
+    const decodedStorage = decodeColumnConfig(getStorage(storageKey), baseColumnConfig);
+    if (decodedStorage) return decodedStorage;
+    return baseColumnConfig;
+  }, [searchParams, baseColumnConfig, storageKey]);
 
   const columnDropdownItems = useMemo(
     () =>
@@ -137,18 +118,20 @@ const EvalUsageTab = ({
     [currentColumnConfig],
   );
 
-  const { mutate: persistColumnConfig } =
-    useUpdateEvalUsageColumnConfig(templateId);
-
   const applyColumnConfig = useCallback(
     (nextColumns) => {
-      queryClient.setQueryData(
-        ["evals", "usage-logs", templateId, period, page, pageSize],
-        (old) => (old ? { ...old, columnConfig: nextColumns } : old),
+      const encoded = encodeColumnConfig(nextColumns);
+      setStorage(storageKey, encoded);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set(COLUMN_CONFIG_URL_PARAM, encoded);
+          return next;
+        },
+        { replace: true },
       );
-      persistColumnConfig(nextColumns);
     },
-    [queryClient, templateId, period, page, pageSize, persistColumnConfig],
+    [storageKey, setSearchParams],
   );
 
   const handleColumnVisibilityChange = useCallback(
@@ -189,7 +172,7 @@ const EvalUsageTab = ({
     );
   }, [logItems, debouncedSearch]);
 
-  const columns = useColumns(columnConfig);
+  const columns = useColumns(currentColumnConfig);
   const handleRowClick = useCallback(
     (row) => {
       const idx = filteredLogs.findIndex((l) => l.id === row.id);

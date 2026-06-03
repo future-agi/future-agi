@@ -60,6 +60,76 @@ export const DEFAULT_COLUMN_CONFIG = [
   { value: "created_at", label: "Ran at", enabled: true, is_visible: true, order_index: 6 },
 ];
 
+export const COLUMN_CONFIG_URL_PARAM = "cols";
+export const columnConfigStorageKey = (templateId) =>
+  `eval-usage-columns:${templateId}`;
+
+export const encodeColumnConfig = (cols) =>
+  [...cols]
+    .sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0))
+    .map((c) => (c.enabled && c.is_visible ? c.value : `~${c.value}`))
+    .join(",");
+
+
+export const decodeColumnConfig = (str, base) => {
+  if (!str) return null;
+  const byValue = new Map(base.map((c) => [c.value, c]));
+  const result = [];
+  str
+    .split(",")
+    .filter(Boolean)
+    .forEach((token) => {
+      const hidden = token.startsWith("~");
+      const value = hidden ? token.slice(1) : token;
+      const orig = byValue.get(value);
+      if (!orig) return;
+      byValue.delete(value);
+      result.push({
+        ...orig,
+        enabled: !hidden,
+        is_visible: !hidden,
+        order_index: result.length,
+      });
+    });
+  byValue.forEach((c) => result.push({ ...c, order_index: result.length }));
+  return result.length ? result : null;
+};
+
+
+export const StatPill = ({ label, value, color }) => (
+  <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+    <Typography
+      variant="caption"
+      color="text.secondary"
+      sx={{ fontSize: "11px" }}
+    >
+      {label}:
+    </Typography>
+    <Typography
+      variant="caption"
+      fontWeight={700}
+      color={color}
+      sx={{ fontSize: "12px" }}
+    >
+      {value}
+    </Typography>
+  </Box>
+);
+
+
+export const DATE_OPTION_TO_PERIOD = {
+  "30 mins": "30m",
+  "6 hrs": "6h",
+  Today: "1d",
+  Yesterday: "1d",
+  "7D": "7d",
+  "30D": "30d",
+  "3M": "90d",
+  "6M": "180d",
+  "12M": "365d",
+  Custom: "30d",
+};
+
 
 const indicatorColumn = {
   id: "indicator",
