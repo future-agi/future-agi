@@ -1054,11 +1054,17 @@ const EvalDetailPage = () => {
   // Duplicate
   const handleDuplicate = useCallback(async () => {
     try {
+      // Strip any prior "_copy_<timestamp>" so duplicating a copy stays flat
+      // (<original>_copy_<timestamp>) instead of stacking the suffix.
+      const baseName = (evalData?.name || "eval").replace(
+        /(_copy_\d{2}-\d{2}-\d{4}_\d{2}-\d{2}-\d{2})+$/,
+        "",
+      );
       const { data } = await axios.post(
         endpoints.develop.eval.duplicateEvalsTemplate,
         {
           eval_template_id: evalId,
-          name: `${evalData?.name}_copy_${format(new Date(), "dd-MM-yyyy_HH-mm-ss")}`,
+          name: `${baseName}_copy_${format(new Date(), "dd-MM-yyyy_HH-mm-ss")}`,
         },
       );
       enqueueSnackbar("Evaluation duplicated", { variant: "success" });
