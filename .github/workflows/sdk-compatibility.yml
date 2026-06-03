@@ -59,6 +59,7 @@ jobs:
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN || secrets.ORG_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
+      EE_BASE_REF: ${{ github.base_ref || github.ref_name || 'dev' }}
       SDK_REPO_READ_TOKEN: ${{ secrets.SDK_REPO_READ_TOKEN || secrets.EE_REPO_READ_TOKEN || secrets.ORG_READ_TOKEN }}
       SDK_REF_INPUT: ${{ github.event.inputs['sdk-ref'] || '' }}
       SDK_HEAD_REF: ${{ github.head_ref || github.ref_name }}
@@ -79,28 +80,28 @@ jobs:
           fi
 
       - name: Checkout EE package
-        uses: actions/checkout@v4
-        with:
-          repository: future-agi/ee
-          path: futureagi/ee
-          token: ${{ env.EE_REPO_READ_TOKEN }}
-          persist-credentials: true
-          fetch-depth: 1
-
-      - name: Use matching EE branch when available
-        working-directory: futureagi/ee
         run: |
-          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
-            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
-            git checkout --detach FETCH_HEAD
-            echo "Using EE branch ${EE_REPO_BRANCH}"
-          else
-            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
-          fi
-
-      - name: Drop EE checkout credentials
-        working-directory: futureagi/ee
-        run: git config --unset-all http.https://github.com/.extraheader || true
+          AUTH_HEADER="$(printf 'x-access-token:%s' "${EE_REPO_READ_TOKEN}" | base64 | tr -d '\n')"
+          EE_REPO_URL="https://github.com/future-agi/ee.git"
+          mkdir -p futureagi/ee
+          git init futureagi/ee
+          cd futureagi/ee
+          git remote add origin "${EE_REPO_URL}"
+          for candidate in "${EE_REPO_BRANCH}" "${EE_BASE_REF}" dev main; do
+            if [ -z "${candidate}" ]; then
+              continue
+            fi
+            if git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH_HEADER}" \
+              ls-remote --exit-code --heads origin "${candidate}" >/dev/null 2>&1; then
+              git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic ${AUTH_HEADER}" \
+                fetch --depth=1 origin "${candidate}"
+              git checkout --detach FETCH_HEAD
+              echo "Using EE branch ${candidate}"
+              exit 0
+            fi
+          done
+          echo "::error::Could not checkout future-agi/ee with the configured read token."
+          exit 1
 
       - name: Set up Python
         uses: actions/setup-python@v5
