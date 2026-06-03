@@ -24,6 +24,7 @@ import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGetSavedViews, SAVED_VIEWS_KEY } from "src/api/project/saved-views";
 import ReplayDrawer from "./ReplayDrawer/ReplayDrawer";
+import AddObserveEvalFeedbackDrawer from "./Observe/EvalFeedback/AddObserveEvalFeedbackDrawer";
 import {
   resetReplaySessionsStore,
   resetSessionsGridStore,
@@ -429,6 +430,8 @@ const ObservePage = React.memo(() => {
         currentTab={currentLegacyTab}
         projectDetail={projectDetail}
       />
+
+      <AddObserveEvalFeedbackDrawer />
 
       {/* View config modal (create / edit) */}
       <ViewConfigModal

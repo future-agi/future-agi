@@ -102,6 +102,8 @@ from tracer.serializers.observation_span import (
     SubmitFeedbackActionTypeSerializer,
     SubmitFeedbackResponseSerializer,
     SubmitFeedbackSerializer,
+    GetFeedbackQuerySerializer,
+    GetFeedbackResponseSerializer,
 )
 from tracer.serializers.trace import TraceSerializer
 from tracer.serializers.trace_session import TraceSessionFeedbackSerializer
@@ -1573,6 +1575,106 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error submitting feedback: {get_error_message('FAILED_TO_CREATE_FEEDBACK')}"
             )
 
+    @validated_request(
+        query_serializer=GetFeedbackQuerySerializer,
+        responses={200: GetFeedbackResponseSerializer, **ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
+    @action(detail=False, methods=["get"])
+    def get_feedback(self, request, *args, **kwargs):
+        """Return the most recent Observe Feedback row for (target, eval).
+
+        Used by the FE feedback drawer to pre-fill the entry stage when a
+        user reopens it on a target they've already given feedback on.
+        Returns all-null fields when no prior feedback exists.
+        """
+        try:
+            validated_data = request.validated_query_data
+            target_type = validated_data["target_type"]
+            observation_span_id = validated_data.get("observation_span_id") or None
+            trace_id = validated_data.get("trace_id")
+            trace_session_id = validated_data.get("trace_session_id")
+            custom_eval_config_id = validated_data["custom_eval_config_id"]
+
+            # Resolve the source_id the matching Feedback row was written with,
+            # mirroring submit_feedback's per-target_type anchor logic.
+            if target_type == EvalTargetType.SPAN:
+                try:
+                    observation_span = ObservationSpan.objects.get(
+                        _project_workspace_scope_q(request),
+                        id=observation_span_id,
+                        project__organization=_get_request_organization(request),
+                    )
+                except ObservationSpan.DoesNotExist:
+                    return self._gm.not_found("Observation span not found")
+                source_id = str(observation_span.id)
+
+            elif target_type == EvalTargetType.TRACE:
+                # submit_feedback anchors trace feedback on Trace.id directly,
+                # not the root span's id (see _trace_path above at :1502).
+                try:
+                    trace = Trace.objects.get(
+                        _project_workspace_scope_q(request),
+                        id=trace_id,
+                        project__organization=_get_request_organization(request),
+                    )
+                except Trace.DoesNotExist:
+                    return self._gm.not_found("Trace not found")
+                source_id = str(trace.id)
+
+            elif target_type == EvalTargetType.SESSION:
+                try:
+                    trace_session = TraceSession.objects.get(
+                        _project_workspace_scope_q(request),
+                        id=trace_session_id,
+                        project__organization=_get_request_organization(request),
+                    )
+                except TraceSession.DoesNotExist:
+                    return self._gm.not_found("Trace session not found")
+                source_id = str(trace_session.id)
+
+            else:
+                return self._gm.internal_server_error_response(
+                    f"Unhandled target_type={target_type!r}"
+                )
+
+            feedback = (
+                Feedback.objects.filter(
+                    source=FeedbackSourceChoices.OBSERVE.value,
+                    source_id=source_id,
+                    custom_eval_config_id=custom_eval_config_id,
+                    organization=_get_request_organization(request),
+                )
+                .order_by("-created_at")
+                .first()
+            )
+
+            if feedback is None:
+                return self._gm.success_response(
+                    {
+                        "feedback_id": None,
+                        "value": None,
+                        "explanation": None,
+                        "feedback_improvement": None,
+                        "action_type": None,
+                    }
+                )
+
+            return self._gm.success_response(
+                {
+                    "feedback_id": str(feedback.id),
+                    "value": feedback.value,
+                    "explanation": feedback.explanation,
+                    "feedback_improvement": feedback.feedback_improvement,
+                    "action_type": feedback.action_type,
+                }
+            )
+        except Exception as e:
+            logger.exception(f"Error fetching feedback: {str(e)}")
+            return self._gm.internal_server_error_response(
+                "Error fetching feedback"
+            )
+
     @action(detail=False, methods=["post"], url_path="update-tags")
     def update_tags(self, request, *args, **kwargs):
         """Update tags for an observation span."""
@@ -1618,6 +1720,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             action_type = validated_data.get("action_type")
             custom_eval_config_id = validated_data.get("custom_eval_config_id")
             feedback_id = validated_data.get("feedback_id")
+            # Optional — only present when the FE skipped stage 1 (existing
+            # feedback was found and the user edited value/explanation before
+            # clicking through to stage 2).
+            updated_feedback_value = validated_data.get("feedback_value")
+            updated_feedback_explanation = validated_data.get(
+                "feedback_explanation"
+            )
 
             if target_type == EvalTargetType.SPAN:
                 anchor_id = observation_span_id
@@ -1634,7 +1743,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     id=feedback_id, user=request.user, source_id=anchor_id
                 )
                 feedback.action_type = action_type
-                feedback.save(update_fields=["action_type"])
+                update_fields = ["action_type"]
+                if updated_feedback_value is not None:
+                    feedback.value = updated_feedback_value
+                    update_fields.append("value")
+                if updated_feedback_explanation is not None:
+                    feedback.explanation = updated_feedback_explanation
+                    update_fields.append("explanation")
+                feedback.save(update_fields=update_fields)
             except Feedback.DoesNotExist:
                 return self._gm.not_found("Feedback not found")
 

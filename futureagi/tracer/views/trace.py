@@ -1359,7 +1359,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 output_float,
                 output_bool,
                 output_str,
-                eval_explanation
+                eval_explanation,
+                target_type,
+                eval_task_id
             FROM tracer_eval_logger FINAL
             WHERE trace_id = %(trace_id)s
               AND _peerdb_is_deleted = 0
@@ -1428,6 +1430,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         "result": output_str
                         or (output_bool if output_bool is not None else None),
                         "explanation": explanation if explanation else None,
+                        # FE dispatches feedback against the correct anchor by
+                        # reading these on the eval row. A trace-level eval is
+                        # logged against its root span — without target_type
+                        # the FE would (incorrectly) submit feedback as a span
+                        # target and the BE would 404.
+                        "target_type": row.get("target_type"),
+                        "trace_id": str(trace_id),
+                        "eval_task_id": (
+                            str(row.get("eval_task_id"))
+                            if row.get("eval_task_id")
+                            else None
+                        ),
                     }
                 )
         except Exception as e:

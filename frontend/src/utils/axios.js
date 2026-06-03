@@ -1364,6 +1364,7 @@ export const endpoints = {
     applySubmitFeedback: apiPath(
       "/tracer/observation-span/submit_feedback_action_type/",
     ),
+    getObserveFeedback: apiPath("/tracer/observation-span/get_feedback/"),
     getEvalDetails: (observationSpanId, customEvalConfigId) =>
       `${apiPath("/tracer/observation-span/get_evaluation_details/")}?custom_eval_config_id=${customEvalConfigId}&observation_span_id=${observationSpanId}`,
     createEvalTask: () => apiPath("/tracer/eval-task/"),
