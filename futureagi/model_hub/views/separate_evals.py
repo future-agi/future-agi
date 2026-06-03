@@ -4996,11 +4996,18 @@ def _get_or_create_eval_usage_column_config(template, organization):
     """
     from model_hub.models.column_config import ColumnConfig
 
-    col_config_obj, created = ColumnConfig.objects.get_or_create(
+    lookup = dict(
         table_name=ColumnConfig.TableName.EVAL_USAGE,
         organization=organization,
         identifier=str(template.id),
     )
+    try:
+        col_config_obj, created = ColumnConfig.objects.get_or_create(**lookup)
+    except ColumnConfig.MultipleObjectsReturned:
+        dupes = ColumnConfig.objects.filter(**lookup).order_by("-updated_at")
+        col_config_obj = dupes.first()
+        dupes.exclude(pk=col_config_obj.pk).delete()
+        created = False
 
     if created:
         cols = [
@@ -5559,11 +5566,17 @@ class EvalUsageColumnConfigView(APIView):
             )
             EvalTemplate.no_workspace_objects.get(id=template_id, deleted=False)
 
-            column_config, _ = ColumnConfig.objects.get_or_create(
+            lookup = dict(
                 table_name=ColumnConfig.TableName.EVAL_USAGE,
                 organization=organization,
                 identifier=str(template_id),
             )
+            try:
+                column_config, _ = ColumnConfig.objects.get_or_create(**lookup)
+            except ColumnConfig.MultipleObjectsReturned:
+                dupes = ColumnConfig.objects.filter(**lookup).order_by("-updated_at")
+                column_config = dupes.first()
+                dupes.exclude(pk=column_config.pk).delete()
             column_config.columns = request.validated_data["columns"]
             column_config.save()
 
