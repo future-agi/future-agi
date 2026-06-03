@@ -491,8 +491,8 @@ const ErrorLocalizationSection = ({ result }) => {
         }}
       >
         <Typography
-          variant="caption"
-          fontWeight={600}
+      
+          typography="s3"
           color="text.secondary"
           sx={{ display: "block" }}
         >
@@ -532,8 +532,8 @@ const ErrorLocalizationSection = ({ result }) => {
         }}
       >
         <Typography
-          variant="caption"
-          fontWeight={600}
+          typography="s3"
+     
           color="error.main"
           sx={{ display: "block" }}
         >

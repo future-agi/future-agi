@@ -295,8 +295,12 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
   const imageData = useMemo(() => getImageUrlFromData(datapoint), [datapoint]);
   const isImage = imageData?.format === "image";
   const isText = imageData?.format === "text";
+  const selectedInputKey =
+    datapoint?.selected_input_key ??
+    datapoint?.cell_metadata?.selected_input_key;
   const renderedText =
-    datapoint?.input_data?.[datapoint?.selected_input_key] ??
+    datapoint?.input_data?.[selectedInputKey] ??
+    datapoint?.cell_metadata?.input_data?.[selectedInputKey] ??
     imageData?.dataFile ??
     "";
   const isLongText = renderedText.length > 150;
@@ -304,10 +308,6 @@ const ErrorLocalizeCard = ({ value, datapoint, column, sx = {} }) => {
   const showMoreCondition = isLongText && !expanded && !isImage;
 
   const showLessCondition = isLongText && expanded;
-
-  const selectedInputKey =
-    datapoint?.selected_input_key ??
-    datapoint?.cell_metadata?.selected_input_key;
 
   useEffect(() => {
     setExpanded(false);
