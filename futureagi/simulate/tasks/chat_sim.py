@@ -600,41 +600,12 @@ def run_single_prompt_chat(call_execution_id: str):
             max_turns=10,
         )
 
-        try:
-            call_execution.refresh_from_db()
-            from django.db.models import Sum
-
-            from simulate.models import ChatMessageModel
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-
-            total_tokens = (
-                ChatMessageModel.objects.filter(
-                    call_execution=call_execution
-                ).aggregate(total=Sum("tokens"))["total"]
-                or 0
-            )
-
-            emit(
-                UsageEvent(
-                    org_id=str(organization.id),
-                    event_type=BillingEventType.TEXT_CALL,
-                    amount=total_tokens,
-                    properties={
-                        "source": "simulate_prompt_chat",
-                        "source_id": str(call_execution.id),
-                        "total_tokens": total_tokens,
-                    },
-                )
-            )
-        except Exception:
-            pass  # Metering failure must not break the action
+        # Billing is emitted exactly once by the canonical path
+        # (TestExecutor._deduct_call_cost), which runs on BOTH terminal exits of
+        # run_prompt_based_conversation: the endCall exit (via
+        # store_chat_messages(chat_ended=True)) and the max-turns/empty exit (via
+        # finalize_chat_execution()). Emitting a second TEXT_CALL UsageEvent here
+        # for the same source_id double-billed every prompt-based chat — removed.
 
         logger.info(
             "prompt_chat_simulation_completed",

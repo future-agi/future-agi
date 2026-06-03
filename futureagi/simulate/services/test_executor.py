@@ -3644,36 +3644,47 @@ class TestExecutor:
                     f"Successfully deducted cost for chat call {call_execution.id}"
                 )
 
-                # Dual-write: emit usage event for text sim
+                # Dual-write: emit usage event for text sim. This is the SINGLE
+                # canonical TEXT_CALL emit — it is reached on every chat terminal
+                # path (interactive endCall, prompt-chat endCall via
+                # store_chat_messages, and prompt-chat max-turns via
+                # finalize_chat_execution). Do NOT emit TEXT_CALL anywhere else
+                # for the same source_id, or the call is double-billed.
                 try:
-                    try:
-                        from ee.usage.schemas.event_types import BillingEventType
-                    except ImportError:
-                        BillingEventType = None
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
+                    from ee.usage.schemas.event_types import BillingEventType
+                    from ee.usage.schemas.events import UsageEvent
+                    from ee.usage.services.emitter import emit
+                except ImportError:
+                    BillingEventType = UsageEvent = emit = None
 
-                    emit(
-                        UsageEvent(
-                            org_id=str(organization.id),
-                            event_type=BillingEventType.TEXT_CALL,
-                            amount=total_tokens,
-                            properties={
-                                "source": "simulate",
-                                "source_id": str(call_execution.id),
-                                "turns": no_of_fagi_agent_turns,
-                                "total_tokens": total_tokens,
-                            },
+                if emit and UsageEvent and BillingEventType:
+                    try:
+                        emit(
+                            UsageEvent(
+                                org_id=str(organization.id),
+                                event_type=BillingEventType.TEXT_CALL,
+                                # Floor at 1 so a token-tracking miss still bills a
+                                # non-zero TEXT_CALL (mirrors the voice
+                                # max(1, duration_minutes) floor) — never silent $0.
+                                amount=max(1, total_tokens),
+                                properties={
+                                    "source": "simulate",
+                                    "source_id": str(call_execution.id),
+                                    "turns": no_of_fagi_agent_turns,
+                                    "total_tokens": total_tokens,
+                                },
+                            )
                         )
+                    except Exception:
+                        logger.exception(
+                            "chat_usage_emit_failed",
+                            call_execution_id=str(call_execution.id),
+                        )
+                else:
+                    logger.error(
+                        "chat_usage_emit_unavailable",
+                        call_execution_id=str(call_execution.id),
                     )
-                except Exception:
-                    pass
 
                 return
 

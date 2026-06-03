@@ -1375,6 +1375,107 @@ class E2EPromptSimulationTestCase(TestCase):
         self.assertGreaterEqual(result_data.get("count", 0), 2)
         print(f"✓ Scenario pagination: 1 item per page, total >= 2")
 
+    # =========================================================================
+    # FLOW 16: Billing — exactly one TEXT_CALL emit (A9 double-bill regression)
+    # =========================================================================
+
+    def _make_text_call_execution(self, token_counts):
+        """Create a TEXT CallExecution with one ChatMessageModel per token count.
+
+        Roles alternate user/assistant starting with user, so the number of
+        user-role rows (the billed "turns") is deterministic.
+        """
+        from simulate.models.chat_message import ChatMessageModel
+
+        simulation = RunTest.objects.create(
+            name=f"A9 Billing Sim {uuid.uuid4()}",
+            source_type="prompt",
+            prompt_template=self.prompt_template,
+            prompt_version=self.prompt_version,
+            organization=self.org,
+            workspace=self.workspace,
+        )
+        test_execution = TestExecution.objects.create(
+            run_test=simulation, status="pending"
+        )
+        call_execution = CallExecution.objects.create(
+            test_execution=test_execution,
+            scenario=self.scenario,
+            status=CallExecution.CallStatus.ANALYZING,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+        )
+        for i, tok in enumerate(token_counts):
+            ChatMessageModel.objects.create(
+                call_execution=call_execution,
+                organization=self.org,
+                workspace=self.workspace,
+                role=(
+                    ChatMessageModel.RoleChoices.USER
+                    if i % 2 == 0
+                    else ChatMessageModel.RoleChoices.ASSISTANT
+                ),
+                content=[{"role": "user", "content": "hi"}],
+                tokens=tok,
+            )
+        return call_execution
+
+    def test_flow16a_deduct_call_cost_emits_single_floored_text_call(self):
+        """A9: the canonical _deduct_call_cost emits exactly ONE TEXT_CALL event."""
+        from ee.usage.schemas.event_types import BillingEventType
+        from simulate.services.test_executor import TestExecutor
+
+        call_execution = self._make_text_call_execution([100, 50])  # total 150
+
+        with patch("ee.usage.services.emitter.emit") as mock_emit, patch(
+            "simulate.services.test_executor.deduct_cost_for_request"
+        ):
+            TestExecutor._deduct_call_cost(call_execution)
+
+        self.assertEqual(mock_emit.call_count, 1)
+        event = mock_emit.call_args.args[0]
+        self.assertEqual(event.event_type, BillingEventType.TEXT_CALL)
+        self.assertEqual(event.amount, 150)
+        print("✓ A9: canonical emit fires exactly once, amount=150")
+
+    def test_flow16b_zero_token_text_call_floored_to_one(self):
+        """A9: a token-tracking miss (0 tokens) still bills a non-zero TEXT_CALL."""
+        from simulate.services.test_executor import TestExecutor
+
+        call_execution = self._make_text_call_execution([0, 0])  # total 0
+
+        with patch("ee.usage.services.emitter.emit") as mock_emit, patch(
+            "simulate.services.test_executor.deduct_cost_for_request"
+        ):
+            TestExecutor._deduct_call_cost(call_execution)
+
+        self.assertEqual(mock_emit.call_count, 1)
+        self.assertEqual(mock_emit.call_args.args[0].amount, 1)  # floored, never $0
+        print("✓ A9: 0-token chat floored to amount=1 (never silent $0)")
+
+    def test_flow16c_finalize_max_turns_emits_single_text_call(self):
+        """A9: the max-turns exit (finalize_chat_execution) bills exactly once.
+
+        Guards against the inverse bug: deleting the redundant task-level emit
+        must NOT zero-bill max-turns chats — finalize_chat_execution covers them
+        via the same canonical _deduct_call_cost.
+        """
+        from simulate.services.chat_sim import finalize_chat_execution
+
+        call_execution = self._make_text_call_execution([10, 20])  # total 30
+
+        with patch("ee.usage.services.emitter.emit") as mock_emit, patch(
+            "simulate.services.test_executor.deduct_cost_for_request"
+        ), patch("simulate.services.chat_sim.notify_simulation_update"), patch(
+            "simulate.services.test_executor._run_simulate_evaluations_task"
+        ), patch(
+            "simulate.utils.chat_simulation._aggregate_chat_metrics"
+        ):
+            finalize_chat_execution(call_execution)
+
+        self.assertEqual(mock_emit.call_count, 1)
+        self.assertEqual(mock_emit.call_args.args[0].amount, 30)
+        print("✓ A9: max-turns finalize emits exactly one TEXT_CALL (no zero-bill)")
+
 
 def run_comprehensive_e2e_test():
     """

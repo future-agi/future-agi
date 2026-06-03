@@ -171,6 +171,10 @@ class RunTestSerializer(serializers.ModelSerializer):
         # re-serializing the same queryset a third time.
         data["evals"] = data.get("evals_detail", [])
         try:
+            from simulate.serializers.response.agent_version import (
+                mask_snapshot_secrets,
+            )
+
             # Only set agent_version for agent_definition source type.
             # Check for soft-deleted agent definition first: FK traversal bypasses
             # BaseModelManager's deleted=False filter, so we check explicitly.
@@ -190,7 +194,7 @@ class RunTestSerializer(serializers.ModelSerializer):
                     data["agent_version"] = {
                         "id": instance.agent_version.id,
                         "name": instance.agent_version.version_name,
-                        "configuration_snapshot": snapshot,
+                        "configuration_snapshot": mask_snapshot_secrets(snapshot),
                     }
                 else:
                     # Try to use prefetched versions first to avoid N+1.
@@ -218,7 +222,7 @@ class RunTestSerializer(serializers.ModelSerializer):
                         data["agent_version"] = {
                             "id": latest_version.id,
                             "name": latest_version.version_name,
-                            "configuration_snapshot": snapshot,
+                            "configuration_snapshot": mask_snapshot_secrets(snapshot),
                         }
         except Exception as e:
             logger.exception(
