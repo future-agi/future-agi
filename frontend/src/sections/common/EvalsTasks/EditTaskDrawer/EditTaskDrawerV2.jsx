@@ -253,6 +253,7 @@ const EditTaskDrawerV2Content = ({
       queryClient.invalidateQueries({
         queryKey: ["taskDetails", taskDetails?.id],
       });
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar(data?.data?.result?.message || "Task updated", {
         variant: "success",
       });
