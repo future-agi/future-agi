@@ -225,7 +225,11 @@ const GroupRow = ({ group, onSelectSpan }) => {
   const [expanded, setExpanded] = useState(false);
   const canExpand = group.rows.length > 0;
   const notEvaluated = group.rows.filter(
-    (r) => r.score == null && r.score_label == null && !rowErrored(r),
+    (r) =>
+      r.score == null &&
+      r.score_label == null &&
+      !(Array.isArray(r.score_items) && r.score_items.length) &&
+      !rowErrored(r),
   ).length;
   return (
     <>
