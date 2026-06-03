@@ -1868,6 +1868,14 @@ const TraceFilterPanel = ({
     }
   }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
 
+  const handlePrimaryApply = useCallback(() => {
+    if (showAi && aiQuery.trim()) {
+      handleAiFilter();
+      return;
+    }
+    handleApply();
+  }, [showAi, aiQuery, handleAiFilter, handleApply]);
+
   return (
     <Popover
       open={open}
@@ -2035,7 +2043,8 @@ const TraceFilterPanel = ({
                 <Button
                   size="small"
                   variant="contained"
-                  onClick={handleApply}
+                  onClick={handlePrimaryApply}
+                  disabled={aiLoading}
                   sx={{
                     textTransform: "none",
                     fontSize: 12,
