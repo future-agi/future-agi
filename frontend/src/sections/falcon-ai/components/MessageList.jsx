@@ -120,18 +120,33 @@ export default function MessageList({ onQuickAction, onFeedback }) {
         px: 3,
       }}
     >
-      {messages.map((msg) => {
-        if (msg.role === "user") {
-          return <UserMessage key={msg.id} message={msg} />;
+      {(() => {
+        // De-emphasize older history so the CURRENT exchange (the latest
+        // question + its answer) reads as the focused, full-contrast one.
+        // Everything before the last user message is the "old chat" — given a
+        // subtle, static lower contrast (no interactivity, stays legible).
+        let lastUserIdx = -1;
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+          if (messages[i].role === "user") {
+            lastUserIdx = i;
+            break;
+          }
         }
-        return (
-          <AssistantMessage
-            key={msg.id}
-            message={msg}
-            onFeedback={onFeedback}
-          />
-        );
-      })}
+        return messages.map((msg, idx) => {
+          const dimmed = lastUserIdx > 0 && idx < lastUserIdx;
+          if (msg.role === "user") {
+            return <UserMessage key={msg.id} message={msg} dimmed={dimmed} />;
+          }
+          return (
+            <AssistantMessage
+              key={msg.id}
+              message={msg}
+              onFeedback={onFeedback}
+              dimmed={dimmed}
+            />
+          );
+        });
+      })()}
     </Box>
   );
 }

@@ -12,19 +12,29 @@ function StatusIcon({ status }) {
   if (status === "running") {
     return (
       <CircularProgress
-        size={14}
-        thickness={5}
+        size={12}
+        thickness={6}
         sx={{ color: "text.disabled" }}
       />
     );
   }
   if (status === "completed") {
     return (
-      <Iconify icon="mdi:check" width={14} sx={{ color: "success.main" }} />
+      <Iconify
+        icon="mdi:check"
+        width={13}
+        sx={{ color: "success.main", flexShrink: 0 }}
+      />
     );
   }
   if (status === "error") {
-    return <Iconify icon="mdi:close" width={14} sx={{ color: "error.main" }} />;
+    return (
+      <Iconify
+        icon="mdi:close"
+        width={13}
+        sx={{ color: "error.main", flexShrink: 0 }}
+      />
+    );
   }
   return null;
 }
@@ -33,154 +43,161 @@ StatusIcon.propTypes = {
   status: PropTypes.string.isRequired,
 };
 
+// One short, clean line from a (possibly markdown) result summary — used as the
+// inline hint on the collapsed row so the step reads in a single line instead
+// of spilling into a wide block.
+function firstLine(text) {
+  if (!text) return "";
+  const line =
+    text
+      .replace(/[#*`>|]/g, "")
+      .split("\n")
+      .map((s) => s.trim())
+      .find(Boolean) || "";
+  return line.length > 80 ? `${line.slice(0, 80)}…` : line;
+}
+
 export default function ToolCallCard({ toolCall }) {
   const theme = useTheme();
-  const [detailsExpanded, setDetailsExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const [paramsExpanded, setParamsExpanded] = useState(false);
   const isDark = theme.palette.mode === "dark";
 
   // Support both snake_case (WebSocket streaming) and camelCase (API history)
-  const call_id = toolCall.call_id;
   const tool_name = toolCall.tool_name;
   const tool_description = toolCall.tool_description;
   const params = toolCall.params;
   const status = toolCall.status;
   const result_summary = toolCall.result_summary;
   const result_full = toolCall.result_full;
-  const step = toolCall.step;
 
   const isRunning = status === "running";
   const isError = status === "error";
   const isCompleted = status === "completed";
+  const canExpand = isCompleted || isError;
+
+  // Keep the REAL tool name visible (just swap underscores for spaces) — the
+  // exact name is information users rely on.
+  const label = (tool_name || "tool").replace(/_/g, " ");
+  const hint = firstLine(result_summary);
+
+  const railColor = isDark
+    ? alpha(theme.palette.common.white, 0.1)
+    : alpha(theme.palette.common.black, 0.09);
 
   return (
     <Box
       sx={{
-        border: 1,
-        borderColor: isDark
-          ? alpha(theme.palette.common.white, 0.08)
-          : alpha(theme.palette.common.black, 0.08),
-        borderRadius: "10px",
-        overflow: "hidden",
-        mb: 1,
-        transition: "border-color 0.2s ease",
-        "&:hover": {
-          borderColor: isDark
-            ? alpha(theme.palette.common.white, 0.16)
-            : alpha(theme.palette.common.black, 0.16),
-        },
+        // A thin left rail makes consecutive tool steps read as one quiet
+        // "working" group, visually subordinate to the answer text.
+        borderLeft: "2px solid",
+        borderColor: isRunning ? "primary.main" : railColor,
+        ml: 0.25,
+        my: 0.25,
       }}
     >
-      {/* Header row */}
+      {/* Collapsed header — a single compact line */}
       <Box
+        onClick={() => canExpand && setExpanded((p) => !p)}
         sx={{
           display: "flex",
           alignItems: "center",
-          gap: 1,
-          px: 1.5,
-          py: 1,
-          cursor: isCompleted || isError ? "pointer" : "default",
+          gap: 0.75,
+          pl: 1.25,
+          pr: 0.75,
+          py: 0.5,
+          borderRadius: "0 6px 6px 0",
+          cursor: canExpand ? "pointer" : "default",
           userSelect: "none",
-        }}
-        onClick={() => {
-          if (isCompleted || isError) {
-            setDetailsExpanded((prev) => !prev);
-          }
+          transition: "background-color 0.15s ease",
+          "&:hover": canExpand
+            ? {
+                bgcolor: isDark
+                  ? alpha(theme.palette.common.white, 0.04)
+                  : alpha(theme.palette.common.black, 0.03),
+              }
+            : undefined,
         }}
       >
         <StatusIcon status={status} />
 
         <Typography
-          variant="body2"
+          component="span"
           sx={{
             fontFamily:
               "'SF Mono', 'Fira Code', 'Fira Mono', Menlo, Consolas, monospace",
             fontWeight: 500,
-            fontSize: 12.5,
-            flex: 1,
+            fontSize: 12,
             color: "text.secondary",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
           }}
         >
-          {tool_name}
+          {label}
         </Typography>
 
-        {isRunning && (
+        {/* Inline one-line result hint (or running state) — truncates, never wraps */}
+        {isRunning ? (
           <Typography
-            variant="caption"
-            sx={{
-              fontSize: 11,
-              color: "text.disabled",
-              fontStyle: "italic",
-            }}
+            component="span"
+            sx={{ fontSize: 11.5, color: "text.disabled", fontStyle: "italic" }}
           >
-            Running...
+            running…
           </Typography>
+        ) : (
+          hint && (
+            <Typography
+              component="span"
+              title={hint}
+              sx={{
+                fontSize: 11.5,
+                color: isError ? "error.main" : "text.disabled",
+                flex: 1,
+                minWidth: 0,
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+            >
+              {hint}
+            </Typography>
+          )
         )}
 
-        {(isCompleted || isError) && (
+        {canExpand && (
           <Iconify
-            icon={detailsExpanded ? "mdi:chevron-up" : "mdi:chevron-down"}
-            width={16}
-            sx={{ color: "text.disabled" }}
+            icon={expanded ? "mdi:chevron-up" : "mdi:chevron-down"}
+            width={15}
+            sx={{ color: "text.disabled", flexShrink: 0, ml: "auto" }}
           />
         )}
       </Box>
 
-      {/* Summary line */}
-      {(isCompleted || isError) && result_summary && !detailsExpanded && (
-        <Box sx={{ px: 1.5, pb: 1 }}>
-          <Typography
-            variant="caption"
-            sx={{
-              fontSize: 12,
-              color: isError ? "error.main" : "text.disabled",
-              lineHeight: 1.4,
-              wordBreak: "break-word",
-              overflowWrap: "break-word",
-            }}
-            component="div"
-          >
-            {result_summary}
-          </Typography>
-        </Box>
-      )}
-
-      {/* Expandable details */}
-      <Collapse in={detailsExpanded}>
-        <Box
-          sx={{
-            px: 1.5,
-            pb: 1.5,
-            borderTop: 1,
-            borderColor: isDark
-              ? alpha(theme.palette.common.white, 0.06)
-              : alpha(theme.palette.common.black, 0.06),
-          }}
-        >
-          {/* Tool description */}
+      {/* Expanded details — params + result, contained and scrollable */}
+      <Collapse in={expanded && canExpand} unmountOnExit>
+        <Box sx={{ pl: 1.25, pr: 0.75, pb: 1, pt: 0.25 }}>
           {tool_description && (
             <Typography
               variant="caption"
               sx={{
                 display: "block",
-                mt: 1,
                 mb: 1,
-                fontSize: 12,
+                fontSize: 11.5,
                 color: "text.disabled",
                 fontStyle: "italic",
+                lineHeight: 1.5,
               }}
             >
               {tool_description}
             </Typography>
           )}
 
-          {/* Params section */}
           {params && Object.keys(params).length > 0 && (
-            <Box sx={{ mt: 1 }}>
+            <Box sx={{ mb: 1 }}>
               <Box
                 onClick={(e) => {
                   e.stopPropagation();
-                  setParamsExpanded((prev) => !prev);
+                  setParamsExpanded((p) => !p);
                 }}
                 sx={{
                   display: "flex",
@@ -195,17 +212,16 @@ export default function ToolCallCard({ toolCall }) {
                   icon={
                     paramsExpanded ? "mdi:chevron-down" : "mdi:chevron-right"
                   }
-                  width={14}
+                  width={13}
                   sx={{ color: "text.disabled" }}
                 />
                 <Typography
-                  variant="caption"
                   sx={{
-                    fontSize: 11,
+                    fontSize: 10.5,
                     color: "text.disabled",
                     fontWeight: 600,
                     textTransform: "uppercase",
-                    letterSpacing: "0.05em",
+                    letterSpacing: "0.06em",
                   }}
                 >
                   Parameters
@@ -215,17 +231,17 @@ export default function ToolCallCard({ toolCall }) {
                 <Box
                   component="pre"
                   sx={{
-                    fontSize: 12,
+                    fontSize: 11.5,
                     fontFamily:
                       "'SF Mono', 'Fira Code', Menlo, Consolas, monospace",
                     bgcolor: isDark
                       ? alpha(theme.palette.common.white, 0.04)
                       : "grey.50",
                     color: "text.secondary",
-                    borderRadius: "8px",
-                    p: 1.5,
+                    borderRadius: "6px",
+                    p: 1.25,
                     overflow: "auto",
-                    maxHeight: 200,
+                    maxHeight: 180,
                     m: 0,
                     border: 1,
                     borderColor: isDark
@@ -239,72 +255,51 @@ export default function ToolCallCard({ toolCall }) {
             </Box>
           )}
 
-          {/* Result summary in expanded view */}
-          {result_summary && (
-            <Box sx={{ mt: 1 }}>
+          {(result_full || result_summary) && (
+            <Box>
               <Typography
-                variant="caption"
                 sx={{
-                  fontSize: 11,
+                  fontSize: 10.5,
                   color: "text.disabled",
                   fontWeight: 600,
                   textTransform: "uppercase",
-                  letterSpacing: "0.05em",
+                  letterSpacing: "0.06em",
                   display: "block",
                   mb: 0.5,
                 }}
               >
                 Result
               </Typography>
-              <Typography
-                variant="caption"
-                sx={{
-                  fontSize: 12,
-                  color: isError ? "error.main" : "text.secondary",
-                  lineHeight: 1.5,
-                  wordBreak: "break-word",
-                  overflowWrap: "break-word",
-                }}
-                component="div"
-              >
-                {result_summary}
-              </Typography>
-            </Box>
-          )}
-
-          {/* Full result */}
-          {result_full && (
-            <Box sx={{ mt: 1 }}>
-              <Typography
-                variant="caption"
-                sx={{
-                  fontSize: 11,
-                  color: "text.disabled",
-                  fontWeight: 600,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                  display: "block",
-                  mb: 0.5,
-                }}
-              >
-                Full output
-              </Typography>
               <Box
                 sx={{
-                  maxHeight: 300,
+                  maxHeight: 280,
                   overflow: "auto",
-                  borderRadius: "8px",
+                  borderRadius: "6px",
                   bgcolor: isDark
                     ? alpha(theme.palette.common.white, 0.04)
                     : "grey.50",
-                  p: 1.5,
+                  p: 1.25,
                   border: 1,
                   borderColor: isDark
                     ? alpha(theme.palette.common.white, 0.06)
                     : alpha(theme.palette.common.black, 0.06),
                 }}
               >
-                <TextBlock content={result_full} />
+                {result_full ? (
+                  <TextBlock content={result_full} />
+                ) : (
+                  <Typography
+                    sx={{
+                      fontSize: 12,
+                      color: isError ? "error.main" : "text.secondary",
+                      lineHeight: 1.5,
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {result_summary}
+                  </Typography>
+                )}
               </Box>
             </Box>
           )}

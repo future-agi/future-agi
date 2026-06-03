@@ -9,7 +9,7 @@ import TextBlock from "./TextBlock";
 import ToolCallCard from "./ToolCallCard";
 import CompletionCard from "./CompletionCard";
 
-export default function AssistantMessage({ message, onFeedback }) {
+export default function AssistantMessage({ message, onFeedback, dimmed }) {
   const [hovered, setHovered] = useState(false);
   const [feedback, setFeedback] = useState(message.feedback || null);
   const toolCalls = message.tool_calls || [];
@@ -29,6 +29,8 @@ export default function AssistantMessage({ message, onFeedback }) {
         maxWidth: 800,
         width: "100%",
         mx: "auto",
+        opacity: dimmed ? 0.62 : 1,
+        transition: "opacity 0.3s ease",
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -258,4 +260,5 @@ AssistantMessage.propTypes = {
     ),
   }).isRequired,
   onFeedback: PropTypes.func,
+  dimmed: PropTypes.bool,
 };
