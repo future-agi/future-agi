@@ -976,6 +976,194 @@ class TestObservationSpanSubmitFeedbackAPI:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestObservationSpanGetFeedbackAPI:
+    """Tests for GET /tracer/observation-span/get_feedback/.
+
+    The endpoint backs the FE drawer's "show me my last feedback on this row"
+    pre-fill — see frontend/src/sections/projects/Observe/EvalFeedback/.
+    """
+
+    GET_FEEDBACK_URL = "/tracer/observation-span/get_feedback/"
+
+    def _make_feedback(
+        self, *, source_id, custom_eval_config, user, organization, workspace,
+        value="passed", explanation="manual correction",
+        feedback_improvement="be stricter", action_type=None,
+    ):
+        return Feedback.objects.create(
+            source=FeedbackSourceChoices.OBSERVE.value,
+            source_id=source_id,
+            value=value,
+            explanation=explanation,
+            feedback_improvement=feedback_improvement,
+            action_type=action_type,
+            eval_template=custom_eval_config.eval_template,
+            custom_eval_config_id=custom_eval_config.id,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+
+    def test_unauthenticated(self, api_client, observation_span):
+        response = api_client.get(
+            self.GET_FEEDBACK_URL,
+            {
+                "target_type": "span",
+                "observation_span_id": str(observation_span.id),
+                "custom_eval_config_id": str(uuid.uuid4()),
+            },
+        )
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_rejects_missing_target_type(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        response = auth_client.get(
+            self.GET_FEEDBACK_URL,
+            {
+                "observation_span_id": str(observation_span.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+            },
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_rejects_unknown_field(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        response = auth_client.get(
+            self.GET_FEEDBACK_URL,
+            {
+                "target_type": "span",
+                "observation_span_id": str(observation_span.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+                "wat": "nope",
+            },
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_rejects_inconsistent_target_ids(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        # session target with span id is a contract violation handled in
+        # _validate_target_anchor_ids — same validator as submit_feedback.
+        response = auth_client.get(
+            self.GET_FEEDBACK_URL,
+            {
+                "target_type": "session",
+                "observation_span_id": str(observation_span.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+            },
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_span_returns_null_when_no_feedback(
+        self, auth_client, observation_span, custom_eval_config
+    ):
+        response = auth_client.get(
+            self.GET_FEEDBACK_URL,
+            {
+                "target_type": "span",
+                "observation_span_id": str(observation_span.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+            },
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result == {
+            "feedback_id": None,
+            "value": None,
+            "explanation": None,
+            "feedback_improvement": None,
+            "action_type": None,
+        }
+
+    def test_span_returns_existing_feedback(
+        self, auth_client, observation_span, custom_eval_config, user,
+        organization, workspace,
+    ):
+        fb = self._make_feedback(
+            source_id=str(observation_span.id),
+            custom_eval_config=custom_eval_config,
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        response = auth_client.get(
+            self.GET_FEEDBACK_URL,
+            {
+                "target_type": "span",
+                "observation_span_id": str(observation_span.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+            },
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["feedback_id"] == str(fb.id)
+        assert result["value"] == "passed"
+        assert result["explanation"] == "manual correction"
+        assert result["feedback_improvement"] == "be stricter"
+
+    def test_span_returns_most_recent_when_multiple(
+        self, auth_client, observation_span, custom_eval_config, user,
+        organization, workspace,
+    ):
+        # First feedback (older)
+        self._make_feedback(
+            source_id=str(observation_span.id),
+            custom_eval_config=custom_eval_config,
+            user=user,
+            organization=organization, workspace=workspace,
+            value="initial",
+        )
+        # Second feedback (newer)
+        fb_new = self._make_feedback(
+            source_id=str(observation_span.id),
+            custom_eval_config=custom_eval_config,
+            user=user,
+            organization=organization, workspace=workspace,
+            value="updated",
+        )
+        response = auth_client.get(
+            self.GET_FEEDBACK_URL,
+            {
+                "target_type": "span",
+                "observation_span_id": str(observation_span.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+            },
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["feedback_id"] == str(fb_new.id)
+        assert result["value"] == "updated"
+
+    def test_trace_anchors_on_trace_id(
+        self, auth_client, observation_span, custom_eval_config, user,
+        organization, workspace,
+    ):
+        # submit_feedback writes source_id=str(trace.id) for trace targets.
+        trace = observation_span.trace
+        self._make_feedback(
+            source_id=str(trace.id),
+            custom_eval_config=custom_eval_config,
+            user=user,
+            organization=organization, workspace=workspace,
+            value="trace-feedback",
+        )
+        response = auth_client.get(
+            self.GET_FEEDBACK_URL,
+            {
+                "target_type": "trace",
+                "trace_id": str(trace.id),
+                "custom_eval_config_id": str(custom_eval_config.id),
+            },
+        )
+        assert response.status_code == status.HTTP_200_OK
+        result = get_result(response)
+        assert result["value"] == "trace-feedback"
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestObservationSpanSubmitFeedbackActionTypeAPI:
     """Tests for POST /tracer/observation-span/submit_feedback_action_type/."""
 
@@ -1091,6 +1279,68 @@ class TestObservationSpanSubmitFeedbackActionTypeAPI:
         feedback.refresh_from_db()
         assert feedback.action_type == "retune"
         rerun_mock.assert_not_called()
+
+    def test_action_type_updates_feedback_value_and_explanation_when_provided(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+        mocker,
+    ):
+        # When the FE skipped stage 1 (existing feedback was found), it forwards
+        # the user's stage-1 edits as `feedback_value` + `feedback_explanation`
+        # on the action submit so they're not silently dropped.
+        feedback, _ = self._seed_feedback_and_logger(
+            user, organization, workspace, observation_span, custom_eval_config
+        )
+        mocker.patch("tracer.views.observation_span.rerun_single")
+
+        payload = self._valid_span_action_payload(
+            observation_span, custom_eval_config, feedback, "retune"
+        )
+        payload["feedback_value"] = "edited-value"
+        payload["feedback_explanation"] = "user updated the reasoning"
+
+        response = auth_client.post(self.ACTION_TYPE_URL, payload, format="json")
+
+        assert response.status_code == status.HTTP_200_OK
+        feedback.refresh_from_db()
+        assert feedback.value == "edited-value"
+        assert feedback.explanation == "user updated the reasoning"
+        assert feedback.action_type == "retune"
+
+    def test_action_type_leaves_feedback_value_unchanged_when_omitted(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        observation_span,
+        custom_eval_config,
+        mocker,
+    ):
+        # Stage-1-not-skipped path — entry POST already wrote value/explanation.
+        # The action POST omits them and must not overwrite with empties.
+        feedback, _ = self._seed_feedback_and_logger(
+            user, organization, workspace, observation_span, custom_eval_config
+        )
+        original_value = feedback.value
+        mocker.patch("tracer.views.observation_span.rerun_single")
+
+        response = auth_client.post(
+            self.ACTION_TYPE_URL,
+            self._valid_span_action_payload(
+                observation_span, custom_eval_config, feedback, "retune"
+            ),
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        feedback.refresh_from_db()
+        assert feedback.value == original_value
 
     def test_action_type_recalculate_span_dispatches_rerun(
         self,

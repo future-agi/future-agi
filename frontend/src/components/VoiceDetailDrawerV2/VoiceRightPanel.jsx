@@ -269,9 +269,36 @@ const VoiceRightPanel = ({
           inputTypes: e?.input_types || e?.inputTypes,
           input_types: e?.input_types || e?.inputTypes,
         },
+        // Observe-feedback identifiers — fall back to the parent span's id
+        // when the eval row doesn't carry its own (voice eval rows often
+        // don't, but the voice call IS the trace, so the root span is the
+        // right anchor). EvalsTabView's AddFeedbackChip needs both
+        // observation_span_id and custom_eval_config_id to render.
+        observation_span_id:
+          e?.observation_span_id ||
+          e?.observationSpanId ||
+          e?.span_id ||
+          e?.spanId ||
+          observationSpan?.id,
+        // The evals_metrics object is keyed by the eval config UUID, so the
+        // dict key (captured here as `id`) IS the custom_eval_config_id for
+        // observe-mode voice evals. Fall back to the eval row's own field
+        // only when the dict key isn't a UUID (simulate-mode arrays).
+        custom_eval_config_id:
+          e?.custom_eval_config_id ||
+          e?.customEvalConfigId ||
+          e?.eval_config_id ||
+          e?.evalConfigId ||
+          (typeof id === "string" && /^[0-9a-f-]{32,}$/i.test(id)
+            ? id
+            : undefined),
+        target_type: e?.target_type || "span",
+        trace_id: e?.trace_id || data?.trace_id || data?.id,
+        eval_task_id: e?.eval_task_id || e?.evalTaskId,
+        output_type: e?.output_type || e?.outputType,
       };
     });
-  }, [evalRows]);
+  }, [evalRows, observationSpan, data]);
 
   const traceId = data?.trace_id || data?.id;
   const annotationSources = useMemo(() => {

@@ -43,6 +43,7 @@ const LabeledRadioField = ({ control, fieldName, label, options, ...other }) => 
                 value={option.value}
                 control={<Radio />}
                 label={option.label}
+                disabled={Boolean(option.disabled)}
                 sx={radioOptionSx}
               />
             ))}
@@ -65,6 +66,7 @@ LabeledRadioField.propTypes = {
       value: PropTypes.oneOfType([PropTypes.string, PropTypes.number])
         .isRequired,
       label: PropTypes.node.isRequired,
+      disabled: PropTypes.bool,
     })
   ).isRequired,
 };

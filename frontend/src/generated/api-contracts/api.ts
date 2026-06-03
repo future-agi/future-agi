@@ -507,6 +507,7 @@ import type {
   GatewayToggleGuardrailRequestApi,
   GenerateScenarioApi,
   GetAnnotationLabelsResponseApi,
+  GetFeedbackResponseApi,
   GetTraceAnnotationApi,
   GetTraceAnnotationValuesResponseApi,
   GraphCreateApi,
@@ -1135,6 +1136,7 @@ import type {
   TracerObservationSpanGetEvalAttributesListParams,
   TracerObservationSpanGetEvaluationDetails200,
   TracerObservationSpanGetEvaluationDetailsParams,
+  TracerObservationSpanGetFeedbackParams,
   TracerObservationSpanGetObservationSpanFields200,
   TracerObservationSpanGetObservationSpanFieldsParams,
   TracerObservationSpanGetSpanAttributesListParams,
@@ -62955,6 +62957,60 @@ Query param: trace_ids (repeated, e.g. ?trace_ids=<id>&trace_ids=<id>)
 export const tracerObservationSpanRootSpans = async (params?: TracerObservationSpanRootSpansParams, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
 
   return apiMutator<tracerObservationSpanRootSpansResponse>(getTracerObservationSpanRootSpansUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type tracerObservationSpanGetFeedbackResponse200 = {
+  data: GetFeedbackResponseApi
+  status: 200
+}
+
+export type tracerObservationSpanGetFeedbackResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type tracerObservationSpanGetFeedbackResponseSuccess = (tracerObservationSpanGetFeedbackResponse200) & {
+  headers: Headers;
+};
+export type tracerObservationSpanGetFeedbackResponseError = (tracerObservationSpanGetFeedbackResponseDefault) & {
+  headers: Headers;
+};
+
+export type tracerObservationSpanGetFeedbackResponse = (tracerObservationSpanGetFeedbackResponseSuccess | tracerObservationSpanGetFeedbackResponseError)
+
+export const getTracerObservationSpanGetFeedbackUrl = (params: TracerObservationSpanGetFeedbackParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/tracer/observation-span/get_feedback/?${stringifiedParams}` : `/tracer/observation-span/get_feedback/`
+}
+
+/**
+ * Return the most recent Observe Feedback row for (target, eval).
+ */
+export const tracerObservationSpanGetFeedback = async (params: TracerObservationSpanGetFeedbackParams, options?: RequestInit): Promise<tracerObservationSpanGetFeedbackResponse> => {
+
+  return apiMutator<tracerObservationSpanGetFeedbackResponse>(getTracerObservationSpanGetFeedbackUrl(params),
   {
     ...options,
     method: 'GET'
