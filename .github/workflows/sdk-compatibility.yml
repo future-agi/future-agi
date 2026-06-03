@@ -57,9 +57,9 @@ jobs:
       PG_USER: postgres
       PG_PASSWORD: postgres
       TESTING: "false"
-      EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
+      EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN || secrets.ORG_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
-      SDK_REPO_READ_TOKEN: ${{ secrets.SDK_REPO_READ_TOKEN || secrets.EE_REPO_READ_TOKEN }}
+      SDK_REPO_READ_TOKEN: ${{ secrets.SDK_REPO_READ_TOKEN || secrets.EE_REPO_READ_TOKEN || secrets.ORG_READ_TOKEN }}
       SDK_REF_INPUT: ${{ github.event.inputs['sdk-ref'] || '' }}
       SDK_HEAD_REF: ${{ github.head_ref || github.ref_name }}
       SDK_BASE_REF: ${{ github.base_ref || github.ref_name }}
@@ -70,11 +70,11 @@ jobs:
       - name: Require private repository tokens
         run: |
           if [ -z "${EE_REPO_READ_TOKEN}" ]; then
-            echo "::error::EE_REPO_READ_TOKEN is required to generate the backend OpenAPI contract with Enterprise routes."
+            echo "::error::EE_REPO_READ_TOKEN or ORG_READ_TOKEN is required to generate the backend OpenAPI contract with Enterprise routes."
             exit 1
           fi
           if [ -z "${SDK_REPO_READ_TOKEN}" ]; then
-            echo "::error::SDK_REPO_READ_TOKEN is required to checkout future-agi/futureagi-sdk for compatibility tests."
+            echo "::error::SDK_REPO_READ_TOKEN, EE_REPO_READ_TOKEN, or ORG_READ_TOKEN is required to checkout SDK compatibility repositories."
             exit 1
           fi
 
