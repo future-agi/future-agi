@@ -291,8 +291,7 @@ const DatapointDrawerChild = () => {
     return evalMetaBySourceId[sourceId]?.evalType === "code";
   };
   const evalOpenIsCode = isCodeEvalColumn(column?.col);
-  // TODO(TH-5635): temporary — hide the error localizer for composite evals
-  // until composite EL is redesigned. Remove when TH-5635 ships.
+
   const isCompositeEval =
     evalMetaBySourceId[column?.col?.sourceId || column?.col?.source_id]
       ?.templateType === "composite";
@@ -905,10 +904,7 @@ const DatapointDrawerChild = () => {
                     )}
                   </Box>
                 </Box>
-                {/* Code evals don't produce model traces for the localizer
-                    to introspect — hide the section entirely.
-                    TODO(TH-5635): composite evals are hidden too until
-                    composite EL is redesigned. */}
+               
                 {!evalOpenIsCode && !isCompositeEval && (
                   <ErrorLocalizationCellSection
                     evalOpen={evalOpen}
