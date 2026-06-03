@@ -1179,31 +1179,34 @@ class EvaluationRunner:
 
             # Trigger error localization when enabled either on the dataset binding
             # (UserEvalMetric) or directly on the eval template.
-            should_run_error_localizer = bool(
+            # Per-binding EL opt-in. The "is this eval result bad enough to
+            # localize?" policy lives at the worker (see
+            # ``should_run_error_localizer`` in ``user_evaluation.py``) — we
+            # always create the task here when EL is enabled and let the
+            # worker decide whether to actually run the prompt chain.
+            el_enabled = bool(
                 self.user_eval_metric.error_localizer
                 or getattr(self.user_eval_metric.template, "error_localizer_enabled", False)
             )
-            if should_run_error_localizer:
+            if el_enabled:
                 from model_hub.tasks.user_evaluation import (
-                    _eval_passed,
                     trigger_error_localization_for_column,
                 )
 
-                if not _eval_passed(value):
-                    cell = Cell.objects.filter(
-                        column__id=self.replace_column_id, row=row, deleted=False
-                    ).first()
+                cell = Cell.objects.filter(
+                    column__id=self.replace_column_id, row=row, deleted=False
+                ).first()
 
-                    trigger_error_localization_for_column(
-                        eval_template=self.user_eval_metric.template,
-                        config=config_error,
-                        required_field=required_field_error,
-                        mapping=mapping_error,
-                        eval_result=value,
-                        response=response,
-                        cell=cell,
-                        log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
-                    )
+                trigger_error_localization_for_column(
+                    eval_template=self.user_eval_metric.template,
+                    config=config_error,
+                    required_field=required_field_error,
+                    mapping=mapping_error,
+                    eval_result=value,
+                    response=response,
+                    cell=cell,
+                    log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+                )
 
         except Exception as e:
             logger.exception(f"Error in evaluation of row: {str(e)}")

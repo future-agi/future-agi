@@ -1622,21 +1622,24 @@ def _execute_evaluation(
                 "observation_span__project__workspace",
             ).get(pk=eval_log.pk)
 
+        # Per-binding EL opt-in. Whether the eval result is actually bad
+        # enough to localize is a policy decision made centrally at the
+        # worker (``should_run_error_localizer`` in user_evaluation.py) —
+        # the trigger just creates the task row and lets the worker decide
+        # whether to run the chain.
         if custom_eval_config.error_localizer:
             from model_hub.tasks.user_evaluation import (
-                _eval_passed,
                 trigger_error_localization_for_span,
             )
 
-            if not _eval_passed(value):
-                trigger_error_localization_for_span(
-                    eval_template=eval_model,
-                    eval_logger=eval_log,
-                    mapping=raw_mapping,
-                    eval_explanation=logger_kwargs.get("eval_explanation", ""),
-                    value=value,
-                    log_id=str(log_id),
-                )
+            trigger_error_localization_for_span(
+                eval_template=eval_model,
+                eval_logger=eval_log,
+                mapping=raw_mapping,
+                eval_explanation=logger_kwargs.get("eval_explanation", ""),
+                value=value,
+                log_id=str(log_id),
+            )
 
         if type == EXPERIMENT:
             # updating project version config

@@ -651,28 +651,6 @@ def _get_input_type(input):
     return input_type
 
 
-def _eval_passed(value) -> bool:
-    """
-    Determine if an eval result represents a passing evaluation.
-    Returns True if the eval passed (error localizer should be skipped).
-    """
-    if value is None:
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value >= 0.8
-    if isinstance(value, str):
-        return value.lower() in ("passed", "pass", "true", "1")
-    if isinstance(value, list):
-        return all(_eval_passed(v) for v in value) if value else False
-    if isinstance(value, dict):
-        inner = value.get("result") or value.get("output")
-        if inner is not None:
-            return _eval_passed(inner)
-    return False
-
-
 def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
     """
     Validate required fields for error localization.
@@ -693,6 +671,263 @@ def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
         return ErrorLocalizerStatus.FAILED, error_msg
 
     return ErrorLocalizerStatus.PENDING, ""
+
+
+def _composite_children_fallback(eval_template):
+    """Last-resort rule_prompt for composite parents whose config / criteria /
+    description are all empty.
+
+    Composite parents normally describe the eval at the parent level; when an
+    operator forgets to set ``description`` the trigger functions fall through
+    the standard chain and hand the localizer an empty string. Returning a
+    synthesised summary of the bound children keeps validation alive and the
+    pipeline produces a (lower-fidelity) analysis rather than a hard failure.
+
+    Returns ``None`` for single templates so the caller can keep the normal
+    fallthrough; non-empty string for composites that have at least one child.
+    """
+    if not eval_template or getattr(eval_template, "template_type", "single") != "composite":
+        return None
+    try:
+        from model_hub.models.evals_metric import CompositeEvalChild
+
+        child_names = list(
+            CompositeEvalChild.objects
+                .filter(parent=eval_template, deleted=False)
+                .order_by("order")
+                .values_list("child__name", flat=True)
+        )
+    except Exception:
+        return None
+    child_names = [name for name in child_names if name]
+    if not child_names:
+        return None
+    return f"Composite evaluation combining: {', '.join(child_names)}"
+
+
+def _is_code_only_eval(eval_template):
+    """True when the localizer's prompt chain has no LLM rubric to reason about.
+
+    Code evaluators produce deterministic numeric / bool outputs from a
+    function — no rubric to reason against — so the chain just burns LLM
+    calls without surfacing real signal.
+
+    Returns True for:
+      - Single ``code`` templates.
+      - Composites where *every* bound child is a ``code`` template.
+
+    Cached on the template instance so a 1000-row dataset batch costs one
+    ORM query instead of N.
+    """
+    if not eval_template:
+        return False
+
+    # Single template — eval_type tells the whole story, no ORM needed.
+    if getattr(eval_template, "template_type", "single") != "composite":
+        return getattr(eval_template, "eval_type", "") == "code"
+
+    # Composite — per-instance cache so batch evals don't re-query per row.
+    cached = getattr(eval_template, "_el_code_only_cache", None)
+    if cached is not None:
+        return cached
+
+    try:
+        from model_hub.models.evals_metric import CompositeEvalChild
+
+        child_eval_types = list(
+            CompositeEvalChild.objects
+                .filter(parent=eval_template, deleted=False)
+                .values_list("child__eval_type", flat=True)
+        )
+    except Exception:
+        return False
+
+    result = bool(child_eval_types) and all((etype or "") == "code" for etype in child_eval_types)
+    try:
+        eval_template._el_code_only_cache = result
+    except Exception:
+        pass
+    return result
+
+
+# ── _eval_passed / threshold helpers ────────────────────────────────────────
+#
+# These power ``should_run_error_localizer`` — the single central decision
+# point for whether the localizer should fire. Every value shape is
+# normalised into a float in [0, 1], then compared against the template's
+# ``pass_threshold`` (default 0.5). See ``_reviews/el.md`` for the design
+# rationale and behaviour table.
+
+
+_PASS_LABELS = ("passed", "pass", "true", "1")
+_FAIL_LABELS = ("failed", "fail", "false", "0")
+
+
+def _resolve_pass_threshold(eval_template) -> float:
+    """Pull the per-template ``pass_threshold``; 0.5 if unset or missing."""
+    if eval_template is None:
+        return 0.5
+    pt = getattr(eval_template, "pass_threshold", None)
+    try:
+        return float(pt) if pt is not None else 0.5
+    except (ValueError, TypeError):
+        return 0.5
+
+
+def _is_pass_fail_output(eval_template) -> bool:
+    """True when the template's output_type is Pass/Fail."""
+    if eval_template is None:
+        return False
+    if getattr(eval_template, "output_type_normalized", None) == "pass_fail":
+        return True
+    cfg = getattr(eval_template, "config", None) or {}
+    return cfg.get("output") == "Pass/Fail"
+
+
+def _is_passed_label(value) -> bool:
+    """Decide whether a Pass/Fail-shaped value represents a pass."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in _PASS_LABELS
+    if isinstance(value, dict):
+        if isinstance(value.get("failure"), bool):
+            return not value["failure"]
+        for key in ("result", "output", "choice"):
+            inner = value.get(key)
+            if inner is not None:
+                return _is_passed_label(inner)
+    return False
+
+
+def _lookup_choice_score(choice_value, eval_template):
+    """Map a choice string to its [0, 1] score via ``template.choice_scores``.
+
+    Returns 0.5 (neutral) when the choice isn't in the map or no map is
+    configured — the safe default that doesn't trigger EL on unmapped
+    custom-choice templates (e.g. the ``tone`` template, which uses
+    custom labels but has no choice_scores configured).
+    """
+    if eval_template is None:
+        return 0.5
+    cs = getattr(eval_template, "choice_scores", None)
+    if not isinstance(cs, dict) or not cs:
+        return 0.5
+    target = str(choice_value).strip().lower()
+    for key, val in cs.items():
+        if str(key).strip().lower() == target:
+            try:
+                return max(0.0, min(1.0, float(val)))
+            except (ValueError, TypeError):
+                return 0.5
+    return 0.5
+
+
+def _normalize_to_score(value, eval_template):
+    """Map an eval result value into a float in [0, 1], or ``None`` when the
+    shape can't be normalised.
+
+    Recognised shapes:
+      - bool                                  → True = 1.0, False = 0.0
+      - int / float                           → clamped to [0, 1]
+      - "passed" / "pass" / "true" / "1"      → 1.0
+      - "failed" / "fail" / "false" / "0"     → 0.0
+      - custom choice string                  → looked up via
+                                                 ``template.choice_scores``,
+                                                 unmapped → 0.5 (neutral)
+      - list                                  → mean of per-element scores,
+                                                 unmapped elements count as 0.5
+                                                 (preserves "tone" template's
+                                                 neutral default; non-strict)
+      - dict {"failure": bool}                → trust the failure bit directly
+      - dict {"score": ...}                   → recurse on "score"
+      - dict {"result"|"output"|"choice": ...} → recurse on the first present
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+
+    if isinstance(value, (int, float)):
+        return max(0.0, min(1.0, float(value)))
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _PASS_LABELS:
+            return 1.0
+        if normalized in _FAIL_LABELS:
+            return 0.0
+        # Custom choice string — defaults to 0.5 (neutral) when no
+        # mapping is configured.
+        return _lookup_choice_score(value, eval_template)
+
+    if isinstance(value, list):
+        if not value:
+            return None
+        sub_scores = []
+        for v in value:
+            s = _normalize_to_score(v, eval_template)
+            sub_scores.append(s if s is not None else 0.5)
+        return sum(sub_scores) / len(sub_scores)
+
+    if isinstance(value, dict):
+        if isinstance(value.get("failure"), bool):
+            return 0.0 if value["failure"] else 1.0
+        for key in ("score", "result", "output", "choice"):
+            inner = value.get(key)
+            if inner is not None:
+                inner_score = _normalize_to_score(inner, eval_template)
+                if inner_score is not None:
+                    return inner_score
+        return None
+
+    return None
+
+
+def should_run_error_localizer(value, eval_template, *, manual=False):
+    """Single decision point for whether the error localizer should fire.
+
+    Returns ``(should_run: bool, reason: str)`` so the caller can log /
+    surface the reason to the FE without re-deriving it.
+
+    Called once at the worker (``process_single_error_localization``) —
+    no per-callsite checks. Both auto-trigger and manual-trigger paths
+    create the task row first and let the worker decide. This keeps the
+    policy in one place and prevents drift between trigger sites.
+
+    Decision tree:
+
+      no template?                  → (False, "no template context")
+      code-only template?           → (False, "code-only template — EL has no rubric")
+      Pass/Fail output_type:
+        passed                      → (False, "eval passed (Pass/Fail)")
+        failed                      → (True,  "eval failed (Pass/Fail)")
+      score-based path (score / choices / percentage):
+        normalize value → [0, 1]
+        unknown shape               → (False, "unrecognized result shape")
+        score >= pass_threshold     → (False, "eval passed: score≥threshold")
+        score <  pass_threshold     → (True,  "eval failed: score<threshold")
+    """
+    if eval_template is None:
+        return False, "no template context"
+
+    if _is_code_only_eval(eval_template):
+        return False, "code-only template — EL has no rubric"
+
+    if _is_pass_fail_output(eval_template):
+        if _is_passed_label(value):
+            return False, "eval passed (Pass/Fail)"
+        return True, "eval failed (Pass/Fail)"
+
+    score = _normalize_to_score(value, eval_template)
+    if score is None:
+        return False, "unrecognized result shape"
+
+    threshold = _resolve_pass_threshold(eval_template)
+    if score >= threshold:
+        return False, f"eval passed: score={score:.2f} ≥ threshold={threshold:.2f}"
+    return True, f"eval failed: score={score:.2f} < threshold={threshold:.2f}"
 
 
 def trigger_error_localization_for_column(
@@ -731,7 +966,10 @@ def trigger_error_localization_for_column(
     input_type_dict = _get_input_type(input_data_dict)
     input_keys = list(input_data_dict.keys())
     rule_prompt = (
-        config.get("rule_prompt") or eval_template.criteria or eval_template.description
+        config.get("rule_prompt")
+        or eval_template.criteria
+        or eval_template.description
+        or _composite_children_fallback(eval_template)
     )
 
     cell = Cell.objects.select_related(
@@ -813,6 +1051,7 @@ def trigger_error_localization_for_span(
             eval_template.config.get("rule_prompt")
             or eval_template.criteria
             or eval_template.description
+            or _composite_children_fallback(eval_template)
         )
 
         # Validate required fields before creating/updating task
@@ -871,12 +1110,6 @@ def _get_input_keys(input_data):
 
 def trigger_error_localization_for_standalone(evaluation: Evaluation):
     try:
-        if _eval_passed(evaluation.data):
-            logger.info(
-                f"Skipping error localization for passing eval {evaluation.id}"
-            )
-            return None
-
         input_keys = _get_input_keys(evaluation.input_data)
         input_types = _get_input_type(evaluation.input_data)
 
@@ -890,6 +1123,7 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
             evaluation.eval_template.config.get("rule_prompt")
             or evaluation.eval_template.criteria
             or evaluation.eval_template.description
+            or _composite_children_fallback(evaluation.eval_template)
         )
 
         # Validate required fields before creating task
@@ -944,6 +1178,7 @@ def trigger_error_localization_for_playground(
             eval_template.config.get("rule_prompt")
             or eval_template.criteria
             or eval_template.description
+            or _composite_children_fallback(eval_template)
         )
 
         # Validate required fields before creating/updating task
@@ -1032,6 +1267,7 @@ def trigger_error_localization_for_simulate(
             config.get("rule_prompt")
             or eval_template.criteria
             or eval_template.description
+            or _composite_children_fallback(eval_template)
         )
 
         # Validate required fields before creating task
@@ -1071,10 +1307,38 @@ def trigger_error_localization_for_simulate(
 def process_single_error_localization(task_id):
     """
     Process a single error localization task.
+
+    The single decision point for "should we actually run EL?" — every
+    auto-trigger and every manual-trigger surface eventually lands here,
+    so gating once at the worker keeps the policy consistent (no per-
+    callsite drift) and avoids paying for usage / cost-log / LLM calls
+    on tasks that should never have been billed.
     """
     try:
         close_old_connections()
         task = ErrorLocalizerTask.objects.get(id=task_id)
+
+        # Centralized gate. Both auto-created and manually-created tasks
+        # pass through here; the worker decides whether to run the chain
+        # based on the eval's result + template, not on a per-caller
+        # check. Short-circuits before any usage / cost / LLM work.
+        should_run, reason = should_run_error_localizer(
+            task.eval_result,
+            task.eval_template,
+        )
+        if not should_run:
+            logger.info(
+                "error_localizer_skipped",
+                task_id=str(task.id),
+                source=str(task.source),
+                source_id=str(task.source_id),
+                eval_template_id=(
+                    str(task.eval_template_id) if task.eval_template_id else None
+                ),
+                reason=reason,
+            )
+            task.mark_as_skipped(reason)
+            return
 
         # Make sure the task is marked as running
         if task.status != ErrorLocalizerStatus.RUNNING:

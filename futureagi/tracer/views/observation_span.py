@@ -3066,6 +3066,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # session rows don't and are served by /trace-session/:id/eval_logs/.
         query = """
             SELECT
+                toString(id) AS eval_logger_id,
                 output_float,
                 output_bool,
                 output_str_list,
@@ -3106,6 +3107,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         if row.get("error") or row.get("output_str") == "ERROR":
             return self._gm.success_response(
                 {
+                    "eval_logger_id": row.get("eval_logger_id"),
                     "error_analysis": output_metadata.get("error_analysis"),
                     "selected_input_key": output_metadata.get("selected_input_key"),
                     "input_data": output_metadata.get("input_data"),
@@ -3133,6 +3135,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
         return self._gm.success_response(
             {
+                "eval_logger_id": row.get("eval_logger_id"),
                 "error_analysis": output_metadata.get("error_analysis"),
                 "selected_input_key": output_metadata.get("selected_input_key"),
                 "input_data": output_metadata.get("input_data"),
@@ -3194,6 +3197,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if eval_logger.error or eval_logger.output_str == "ERROR":
                 return self._gm.success_response(
                     {
+                        "eval_logger_id": str(eval_logger.id),
                         "error_analysis": output_metadata.get("error_analysis"),
                         "selected_input_key": output_metadata.get("selected_input_key"),
                         "input_data": output_metadata.get("input_data"),
@@ -3220,6 +3224,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             result = {
+                "eval_logger_id": str(eval_logger.id),
                 "error_analysis": output_metadata.get("error_analysis", None),
                 "selected_input_key": output_metadata.get("selected_input_key", None),
                 "input_data": output_metadata.get("input_data", None),

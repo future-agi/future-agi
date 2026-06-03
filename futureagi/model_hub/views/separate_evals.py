@@ -649,6 +649,7 @@ class CellErrorLocalizerView(APIView):
             )
             from model_hub.models.evals_metric import UserEvalMetric
             from model_hub.tasks.user_evaluation import (
+                _composite_children_fallback,
                 _get_input_type,
                 _validate_error_localizer_fields,
             )
@@ -741,6 +742,7 @@ class CellErrorLocalizerView(APIView):
                 (template.config or {}).get("rule_prompt")
                 or template.criteria
                 or template.description
+                or _composite_children_fallback(template)
             )
 
             initial_status, error_message = _validate_error_localizer_fields(

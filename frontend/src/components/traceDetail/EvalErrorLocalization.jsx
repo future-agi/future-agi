@@ -88,6 +88,17 @@ const EvalErrorLocalization = ({
     },
     enabled: traceFetchEnabled,
     refetchOnWindowFocus: false,
+    // After the user kicks off a trace-mode localization, the analysis
+    // lands on EvalLogger.output_metadata.error_analysis a few seconds
+    // later. Poll so the drawer renders the result without a manual
+    // refresh — matches the cell-mode polling behaviour.
+    refetchInterval: (q) => {
+      if (!requested) return false;
+      const r = q?.state?.data;
+      const hasAnalysis = r?.errorAnalysis || r?.error_analysis;
+      if (hasAnalysis) return false;
+      return 3000;
+    },
     // Suppress global onError toast (app.jsx); inline empty state already rendered.
     meta: { errorHandled: true },
   });
@@ -113,6 +124,13 @@ const EvalErrorLocalization = ({
     traceData?.error_analysis ||
     null;
 
+  // Eval logger id surfaced by `get_evaluation_details` so the new
+  // tracer-side EL endpoint can target a specific EvalLogger row. The
+  // backend now returns both camelCase and snake_case in some places —
+  // pick whichever is present.
+  const evalLoggerId =
+    traceData?.evalLoggerId || traceData?.eval_logger_id || null;
+
   // ── Cell-mode trigger ───────────────────────────────────────────────────
   const cellTriggerMutation = useMutation({
     mutationFn: async () => {
@@ -130,10 +148,26 @@ const EvalErrorLocalization = ({
     },
   });
 
-  // ── Trace-mode trigger (re-runs the eval config, which recomputes
-  // error analysis on the next tick). ────────────────────────────────────
+  // ── Trace-mode trigger.
+  //
+  // Prefer the dedicated EL endpoint when we have an eval_logger_id from
+  // get_evaluation_details — that keys directly on the EvalLogger row,
+  // upserts an ErrorLocalizerTask, and lets the existing schedule pick it
+  // up. The eval itself is not re-run.
+  //
+  // Fall back to re-running the entire eval config when eval_logger_id
+  // isn't available (older response payloads or surfaces that haven't
+  // been updated yet). That path is heavier and recomputes the analysis
+  // as a side effect.
   const traceTriggerMutation = useMutation({
     mutationFn: async () => {
+      if (evalLoggerId) {
+        const { data } = await axios.post(
+          endpoints.project.runTracerEvalErrorLocalizer,
+          { eval_logger_id: evalLoggerId },
+        );
+        return data?.result;
+      }
       if (!projectVersionId) {
         throw new Error("project_version_id not available for this eval");
       }
@@ -148,9 +182,12 @@ const EvalErrorLocalization = ({
     },
     onSuccess: () => {
       enqueueSnackbar(
-        "Re-running evaluation — localization will appear when it finishes.",
+        evalLoggerId
+          ? "Error localization started — analysis will appear when it finishes."
+          : "Re-running evaluation — localization will appear when it finishes.",
         { variant: "info" },
       );
+      setRequested(true);
       // Invalidate so that when the user reopens the row the fresh results
       // get picked up.
       queryClient.invalidateQueries({

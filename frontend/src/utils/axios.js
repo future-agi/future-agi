@@ -1120,6 +1120,7 @@ export const endpoints = {
     addExistingDataset: `/tracer/dataset/add_to_existing_dataset/`,
     addNewDataset: `/tracer/dataset/add_to_new_dataset/`,
     reRunTracerEvalutation: `/tracer/custom-eval-config/run_evaluation/`,
+    runTracerEvalErrorLocalizer: `/tracer/eval-task/run-error-localizer/`,
     getCodeBlockTracer: `/tracer/project/project_sdk_code/`,
     getEvalGraph: `/tracer/charts/fetch_graph/`,
     getSystemMetricList: "/tracer/project/fetch_system_metrics/",

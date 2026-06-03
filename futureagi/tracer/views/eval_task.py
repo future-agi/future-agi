@@ -1663,3 +1663,177 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
         except Exception as e:
             traceback.print_exc()
             return self._gm.bad_request(f"Error fetching eval task details {str(e)}")
+
+    @action(detail=False, methods=["post"], url_path="run-error-localizer")
+    def run_error_localizer(self, request, *args, **kwargs):
+        """On-demand error localization for a single tracing-side eval result.
+
+        Mirrors the dataset surface's manual trigger (``CellErrorLocalizerView``)
+        but operates on an ``EvalLogger`` row instead of a ``Cell``. Use case:
+        an eval ran on a span/trace/session with ``error_localizer=False`` on
+        the bound ``CustomEvalConfig`` so the auto-trigger never fired. The
+        user clicks "Run error localization" in the eval drawer and we upsert
+        an ``ErrorLocalizerTask(source=OBSERVE, source_id=eval_logger.id,
+        status=PENDING)`` so the existing schedule picks it up and processes
+        it via ``process_single_error_localization``.
+
+        POST /tracer/eval-task/run-error-localizer/
+        Body: {"eval_logger_id": "<uuid>"}
+        Returns: {task_id, eval_logger_id, status, error_message}
+        """
+        try:
+            from accounts.models.workspace import Workspace
+            from model_hub.models.error_localizer_model import (
+                ErrorLocalizerSource,
+                ErrorLocalizerTask,
+            )
+            from model_hub.tasks.user_evaluation import (
+                _composite_children_fallback,
+                _get_input_type,
+                _validate_error_localizer_fields,
+            )
+            from tracer.utils.eval import _process_mapping
+
+            eval_logger_id = request.data.get("eval_logger_id")
+            if not eval_logger_id:
+                return self._gm.bad_request("eval_logger_id is required.")
+
+            org = getattr(request, "organization", None) or request.user.organization
+
+            try:
+                eval_logger = (
+                    EvalLogger.objects
+                    .select_related(
+                        "observation_span",
+                        "observation_span__project",
+                        "observation_span__project__organization",
+                        "observation_span__project__workspace",
+                        "custom_eval_config",
+                        "custom_eval_config__eval_template",
+                    )
+                    .get(id=eval_logger_id, deleted=False)
+                )
+            except EvalLogger.DoesNotExist:
+                return self._gm.not_found("EvalLogger not found.")
+
+            project = (
+                eval_logger.observation_span.project
+                if eval_logger.observation_span
+                else None
+            )
+            if not project or project.organization_id != org.id:
+                return self._gm.not_found("EvalLogger not found.")
+
+            custom_eval_config = eval_logger.custom_eval_config
+            if not custom_eval_config:
+                return self._gm.bad_request(
+                    "EvalLogger has no associated eval config."
+                )
+
+            template = custom_eval_config.eval_template
+            if not template:
+                return self._gm.bad_request(
+                    "The underlying eval template no longer exists."
+                )
+
+            # Resolve input_data the same way auto-trigger does — via the
+            # shared mapping helper. This keeps span / trace / session
+            # targets working with one code path.
+            run_params = _process_mapping(
+                custom_eval_config.mapping or {},
+                eval_logger.observation_span,
+                template.id,
+            )
+            input_data = run_params or {}
+            if not input_data:
+                return self._gm.bad_request(
+                    "Cannot run error localization — this eval has no input "
+                    "variable mapping. Add at least one mapping in the eval "
+                    "config and re-run the eval first."
+                )
+
+            # Eval verdict — EvalLogger stores typed values across three
+            # columns. Coalesce to the populated one.
+            eval_result = (
+                eval_logger.output_str
+                if eval_logger.output_str is not None
+                else (
+                    str(eval_logger.output_bool)
+                    if eval_logger.output_bool is not None
+                    else (
+                        str(eval_logger.output_float)
+                        if eval_logger.output_float is not None
+                        else ""
+                    )
+                )
+            )
+            eval_explanation = eval_logger.eval_explanation or ""
+
+            rule_prompt = (
+                (custom_eval_config.config or {}).get("rule_prompt")
+                or template.criteria
+                or template.description
+                or _composite_children_fallback(template)
+            )
+
+            input_keys = list(input_data.keys())
+            input_types = _get_input_type(input_data)
+
+            initial_status, error_message = _validate_error_localizer_fields(
+                rule_prompt, input_data, eval_result
+            )
+
+            workspace = project.workspace
+            if not workspace:
+                workspace = Workspace.objects.filter(
+                    organization=org, is_default=True, is_active=True
+                ).first()
+
+            # Upsert keyed on EvalLogger.id (same pattern as the dataset
+            # manual trigger keys on Cell.id). A previous failed task is
+            # reset to PENDING and the existing schedule re-processes it.
+            task = ErrorLocalizerTask.objects.filter(
+                source_id=eval_logger.id
+            ).first()
+            if task:
+                task.eval_template = template
+                task.eval_result = eval_result
+                task.eval_explanation = eval_explanation
+                task.input_data = input_data
+                task.input_keys = input_keys
+                task.input_types = input_types
+                task.rule_prompt = rule_prompt
+                task.status = initial_status
+                task.error_message = error_message
+                task.error_analysis = {}
+                task.selected_input_key = None
+                task.save()
+            else:
+                task = ErrorLocalizerTask.objects.create(
+                    eval_template=template,
+                    source=ErrorLocalizerSource.OBSERVE,
+                    source_id=eval_logger.id,
+                    input_data=input_data,
+                    input_keys=input_keys,
+                    input_types=input_types,
+                    eval_result=eval_result,
+                    eval_explanation=eval_explanation,
+                    rule_prompt=rule_prompt,
+                    organization=org,
+                    workspace=workspace,
+                    status=initial_status,
+                    error_message=error_message,
+                )
+
+            return self._gm.success_response(
+                {
+                    "task_id": str(task.id),
+                    "eval_logger_id": str(eval_logger.id),
+                    "status": task.status,
+                    "error_message": task.error_message,
+                }
+            )
+
+        except Exception as e:
+            traceback.print_exc()
+            return self._gm.bad_request(f"Error running error localization: {str(e)}")
