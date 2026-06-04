@@ -688,6 +688,33 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                 }
 
+        ce_id = getattr(obj, "id", None)
+        enabled_ids = [k for k, m in metrics.items() if m.get("error_localizer")]
+        if ce_id and enabled_ids:
+            from model_hub.models.error_localizer_model import (
+                ErrorLocalizerSource,
+                ErrorLocalizerTask,
+            )
+
+            el_tasks = ErrorLocalizerTask.objects.filter(
+                source=ErrorLocalizerSource.SIMULATE,
+                metadata__call_execution_id=str(ce_id),
+                metadata__eval_config_id__in=enabled_ids,
+            ).only(
+                "metadata",
+                "status",
+                "error_analysis",
+                "selected_input_key",
+            )
+            for task in el_tasks:
+                cfg_id = (task.metadata or {}).get("eval_config_id")
+                metric = metrics.get(cfg_id)
+                if not metric:
+                    continue
+                metric["error_analysis"] = task.error_analysis or None
+                metric["error_localizer_status"] = task.status
+                metric["selected_input_key"] = task.selected_input_key
+
         return metrics
 
     def get_scenario_columns(self, obj):
@@ -1290,10 +1317,9 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             if not obj_id:
                 return []
 
-            # Find error localizer tasks for this call execution
-            # The source_id format is "call_execution_id_eval_config_id"
             call_execution_tasks = ErrorLocalizerTask.objects.filter(
-                source=ErrorLocalizerSource.SIMULATE.value, source_id=str(obj_id)
+                source=ErrorLocalizerSource.SIMULATE.value,
+                metadata__call_execution_id=str(obj_id),
             )
 
             error_localizer_data = []

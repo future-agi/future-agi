@@ -673,6 +673,16 @@ def _validate_error_localizer_fields(rule_prompt, input_data, eval_result):
     return ErrorLocalizerStatus.PENDING, ""
 
 
+def _has_localized_segments(error_analysis):
+    if not error_analysis:
+        return False
+    if isinstance(error_analysis, dict):
+        return any(isinstance(v, list) and v for v in error_analysis.values())
+    if isinstance(error_analysis, list):
+        return bool(error_analysis)
+    return True
+
+
 def _extract_eval_value(value):
     if not isinstance(value, dict):
         return value
@@ -1053,10 +1063,14 @@ def trigger_error_localization_for_simulate(
             rule_prompt, input_data_dict, value
         )
 
+        source_id = uuid.uuid5(
+            uuid.NAMESPACE_OID,
+            f"simulate:{call_execution.id}:{eval_config.id}",
+        )
         task = ErrorLocalizerTask(
             eval_template=eval_template,
             source=ErrorLocalizerSource.SIMULATE,
-            source_id=call_execution.id,
+            source_id=source_id,
             input_data=input_data_dict,
             input_keys=input_keys,
             input_types=input_type_dict,
@@ -1066,7 +1080,7 @@ def trigger_error_localization_for_simulate(
             organization=call_execution.test_execution.run_test.organization,
             metadata={
                 "log_id": log_id,
-                # "call_execution_id": str(call_execution.id),
+                "call_execution_id": str(call_execution.id),
                 "eval_config_id": str(eval_config.id),
             },
             status=initial_status,
@@ -1196,6 +1210,11 @@ def process_single_error_localization(task_id):
 
         # Update the task with the results
         task.mark_as_completed(error_analysis, selected_input_key)
+        if not _has_localized_segments(error_analysis):
+            task.error_message = (
+                "No part of the input could be pinned as the cause of this failure."
+            )
+            task.save(update_fields=["error_message"])
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
         api_call_log_row.save(update_fields=["status"])
 

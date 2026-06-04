@@ -1084,6 +1084,32 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
+            if log_items:
+                from model_hub.models.error_localizer_model import (
+                    ErrorLocalizerSource,
+                    ErrorLocalizerTask,
+                )
+
+                el_by_logger = {
+                    str(t.source_id): t
+                    for t in ErrorLocalizerTask.objects.filter(
+                        source=ErrorLocalizerSource.OBSERVE,
+                        source_id__in=[item["id"] for item in log_items],
+                    ).only(
+                        "source_id",
+                        "status",
+                        "error_analysis",
+                        "selected_input_key",
+                    )
+                }
+                for item in log_items:
+                    task = el_by_logger.get(item["id"])
+                    if task is None:
+                        continue
+                    item["detail"]["error_analysis"] = task.error_analysis or None
+                    item["detail"]["error_localizer_status"] = task.status
+                    item["detail"]["selected_input_key"] = task.selected_input_key
+
             response = {
                 "eval_task_id": str(eval_task_id),
                 "stats": {

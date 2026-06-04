@@ -1729,7 +1729,9 @@ def _execute_evaluation(
                 "observation_span__project__workspace",
             ).get(pk=eval_log.pk)
 
-        if custom_eval_config.error_localizer:
+        if custom_eval_config.error_localizer or (
+            (custom_eval_config.config or {}).get("error_localizer_enabled")
+        ):
             from model_hub.tasks.user_evaluation import (
                 trigger_error_localization_for_span,
             )

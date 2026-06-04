@@ -4176,14 +4176,11 @@ class CallExecutionErrorLocalizerTasksView(APIView):
                 test_execution__run_test__deleted=False,
             )
 
-            # Find error localizer tasks for this call execution
-            # Filter by source_id (call_execution_id) and eval_config_id if provided
             query_filter = {
                 "source": ErrorLocalizerSource.SIMULATE,
-                "source_id": call_execution.id,
+                "metadata__call_execution_id": str(call_execution.id),
             }
 
-            # If eval_config_id is provided, filter by it in metadata
             if eval_config_id:
                 query_filter["metadata__eval_config_id"] = str(eval_config_id)
 

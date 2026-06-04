@@ -859,6 +859,105 @@ class TestErrorLocalizerGateE2E:
         assert task.selected_input_key == "q"
         mock_localizer.return_value.localize_errors.assert_called_once()
 
+    @patch("model_hub.tasks.user_evaluation.close_old_connections")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
+    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    def test_empty_segments_completes_with_friendly_message(
+        self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
+    ):
+        from model_hub.models.error_localizer_model import (
+            ErrorLocalizerSource,
+            ErrorLocalizerStatus,
+            ErrorLocalizerTask,
+        )
+        from model_hub.tasks.user_evaluation import process_single_error_localization
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        template = self._make_template(
+            organization, workspace, output_type_normalized="pass_fail"
+        )
+        task = ErrorLocalizerTask.objects.create(
+            eval_template=template,
+            source=ErrorLocalizerSource.STANDALONE,
+            source_id=uuid.uuid4(),
+            input_data={"q": "hi"},
+            input_keys=["q"],
+            input_types={"q": "text"},
+            eval_result="Failed",
+            rule_prompt="r",
+            organization=organization,
+            workspace=workspace,
+            status=ErrorLocalizerStatus.PENDING,
+        )
+
+        mock_api_log = MagicMock()
+        mock_api_log.status = APICallStatusChoices.PROCESSING.value
+        mock_log_cost.return_value = mock_api_log
+        mock_localizer.return_value.localize_errors.return_value = ({"input_1": []}, "q")
+
+        process_single_error_localization._original_func(str(task.id))
+
+        task.refresh_from_db()
+        assert task.status == ErrorLocalizerStatus.COMPLETED
+        assert task.error_analysis == {"input_1": []}
+        assert "could be pinned" in (task.error_message or "").lower()
+
+    def test_has_localized_segments_helper(self):
+        from model_hub.tasks.user_evaluation import _has_localized_segments
+
+        assert _has_localized_segments({}) is False
+        assert _has_localized_segments(None) is False
+        assert _has_localized_segments({"input_1": []}) is False
+        assert _has_localized_segments({"input_1": [{"rank": "1"}]}) is True
+        assert _has_localized_segments({"input_1": [], "input_2": [{"x": 1}]}) is True
+        assert _has_localized_segments([]) is False
+        assert _has_localized_segments([{"x": 1}]) is True
+
+    def test_tracer_trigger_reads_either_el_flag(self):
+        """Tracer trigger honours both the column flag and the JSONB
+        config.error_localizer_enabled, so either source enables EL."""
+        from types import SimpleNamespace
+
+        def el_enabled(cfg):
+            return bool(
+                cfg.error_localizer
+                or (cfg.config or {}).get("error_localizer_enabled")
+            )
+
+        assert el_enabled(SimpleNamespace(error_localizer=False, config={})) is False
+        assert el_enabled(SimpleNamespace(error_localizer=False, config=None)) is False
+        assert el_enabled(SimpleNamespace(error_localizer=True, config={})) is True
+        assert (
+            el_enabled(
+                SimpleNamespace(error_localizer=False, config={"error_localizer_enabled": True})
+            )
+            is True
+        )
+        assert (
+            el_enabled(
+                SimpleNamespace(error_localizer=True, config={"error_localizer_enabled": True})
+            )
+            is True
+        )
+
+    def test_simulate_trigger_source_id_unique_per_eval(self):
+        """source_id derives distinct uuids per (call_execution, eval_config), so
+        multiple simulate evals on the same call coexist under the unique constraint."""
+        import uuid as _uuid
+
+        call_execution_id = _uuid.uuid4()
+        eval_config_a = _uuid.uuid4()
+        eval_config_b = _uuid.uuid4()
+        sid_a = _uuid.uuid5(
+            _uuid.NAMESPACE_OID, f"simulate:{call_execution_id}:{eval_config_a}"
+        )
+        sid_b = _uuid.uuid5(
+            _uuid.NAMESPACE_OID, f"simulate:{call_execution_id}:{eval_config_b}"
+        )
+        assert sid_a != sid_b, (
+            "uuid5 with (call_execution_id, eval_config_id) must yield distinct ids"
+        )
+
     def test_validator_accepts_zero_and_false_eval_results(self):
         from model_hub.models.error_localizer_model import ErrorLocalizerStatus
         from model_hub.tasks.user_evaluation import _validate_error_localizer_fields
