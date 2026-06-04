@@ -23,6 +23,10 @@ export const extractAttributeFilters = (filters) => {
           columnId,
           op,
           filterType,
+          // Preserved per row so SYSTEM_METRIC / EVAL_METRIC / ANNOTATION
+          // filters keep their type on the wire. Default to SPAN_ATTRIBUTE
+          // for legacy form rows that never carried it.
+          apiColType: f?.apiColType || "SPAN_ATTRIBUTE",
           rangeValue: undefined,
           values: [],
         });
@@ -62,7 +66,7 @@ export const extractAttributeFilters = (filters) => {
       filterConfig: {
         filterType: entry.filterType,
         filterOp,
-        colType: "SPAN_ATTRIBUTE",
+        colType: entry.apiColType,
         ...(filterValue !== undefined && { filterValue }),
       },
     };
@@ -183,7 +187,7 @@ export const NewTaskValidationSchema = () =>
         filters: {
           ...filters,
           ...(attributeFilters && attributeFilters?.length > 0
-            ? { span_attributes_filters: attributeFilters }
+            ? { filters: attributeFilters }
             : {}),
         },
       };

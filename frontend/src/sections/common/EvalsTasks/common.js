@@ -40,8 +40,12 @@ export const getEvalsTaskColumnConfig = (observeId) => {
           );
         }
 
+        // Canonical key is `filters`; `span_attributes_filters` is the
+        // legacy form still present on un-migrated rows.
         const spanAttributes =
-          params?.data?.filters_applied?.span_attributes_filters ?? [];
+          params?.data?.filters_applied?.filters ??
+          params?.data?.filters_applied?.span_attributes_filters ??
+          [];
 
         if (spanAttributes.length > 0) {
           const customAttributeString = `Custom attribute is ${spanAttributes
@@ -198,6 +202,7 @@ const RESERVED_FILTER_KEYS = new Set([
   "date_range",
   "start_date",
   "end_date",
+  "filters",
   "span_attributes_filters",
 ]);
 
@@ -215,17 +220,24 @@ export const formatTaskFilters = (filters_applied) => {
   if (!filters_applied) return [];
 
   // Attribute filters carry a nested {columnId, filterConfig} shape on
-  // the BE — keep their dedicated converter.
-  const span_attributes_filters = (filters_applied.span_attributes_filters || [])
-    .map((i) => ({
-      property: "attributes",
-      propertyId: i?.columnId,
-      filterConfig: {
-        filterType: i?.filterConfig?.filterType,
-        filterOp: i?.filterConfig?.filterOp,
-        filterValue: i?.filterConfig?.filterValue,
-      },
-    }));
+  // the BE — keep their dedicated converter. Prefer the canonical
+  // `filters` key; fall back to the legacy `span_attributes_filters` so
+  // un-migrated rows still hydrate. `colType` is carried back into
+  // `apiColType` so TaskFilterBar.convertOldToNew can re-route the row
+  // to the right panel chip (annotator picker, eval-score input, ...).
+  const span_attributes_filters = (
+    filters_applied.filters || filters_applied.span_attributes_filters || []
+  ).map((i) => ({
+    property: "attributes",
+    propertyId: i?.columnId,
+    apiColType: i?.filterConfig?.colType,
+    filterConfig: {
+      filterType: i?.filterConfig?.filterType,
+      filterOp: i?.filterConfig?.filterOp,
+      filterValue: i?.filterConfig?.filterValue,
+      colType: i?.filterConfig?.colType,
+    },
+  }));
 
   // Every other top-level key is treated as a generic system filter:
   // one filter row per value. Round-trips arbitrary keys (span_kind,

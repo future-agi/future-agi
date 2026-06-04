@@ -155,7 +155,7 @@ const TaskDetailPage = () => {
             ? { observation_type: observationTypes }
             : {}),
           ...(attributeFilters?.length > 0
-            ? { span_attributes_filters: attributeFilters }
+            ? { filters: attributeFilters }
             : {}),
         },
         project_id: data.project,

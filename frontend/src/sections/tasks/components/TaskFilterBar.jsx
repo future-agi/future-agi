@@ -21,6 +21,17 @@ const RANGE_OPS = new Set(["between", "not_between"]);
 const LIST_OPS = new Set(["in", "not_in"]);
 const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
 
+// TraceFilterPanel emits `apiColType` directly on each row. When it's
+// missing (legacy rows / hand-built filters), derive from `fieldCategory`.
+const PANEL_CAT_TO_COL_TYPE = {
+  attribute: "SPAN_ATTRIBUTE",
+  system: "SYSTEM_METRIC",
+  eval: "EVAL_METRIC",
+  annotation: "ANNOTATION",
+};
+const resolveApiColType = (apiColType, fieldCategory) =>
+  apiColType || PANEL_CAT_TO_COL_TYPE[fieldCategory] || "SPAN_ATTRIBUTE";
+
 // Legacy string ops persisted before TH-4924 land in form state as
 // `equals`/`not_equals`. Rewrite to `in`/`not_in` on read so the new
 // panel renders the row under the multi-value picker.
@@ -101,6 +112,7 @@ function convertNewToOld(newFilters) {
       fieldCategory: f.fieldCategory || "system",
       // Panel rows expose the display name as `fieldName`; fall back for legacy callers.
       fieldLabel: f.fieldName || f.fieldLabel || f.field,
+      apiColType: resolveApiColType(f.apiColType, f.fieldCategory),
     };
 
     if (NO_VALUE_OPS.has(op)) {
@@ -191,6 +203,12 @@ function convertOldToNew(oldFilters) {
         fieldLabel: f.fieldLabel || field,
         fieldType,
         fieldCategory: category,
+        // Preserved across the round-trip so the panel re-renders the right
+        // chip (annotator picker, eval-score input, ...) on edit-open.
+        apiColType: resolveApiColType(
+          f.apiColType || f?.filterConfig?.colType,
+          category,
+        ),
         operator: op,
         value: [],
       });

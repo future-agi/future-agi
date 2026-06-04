@@ -293,7 +293,7 @@ const EditTaskDrawerV2Content = ({
           ],
           ...systemFilters,
           ...(attributeFilters?.length > 0
-            ? { span_attributes_filters: attributeFilters }
+            ? { filters: attributeFilters }
             : {}),
         },
         project_id: data.project,
