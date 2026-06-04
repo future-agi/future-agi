@@ -9,7 +9,8 @@ Provides centralized error parsing and formatting to ensure:
 import json
 import re
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, Optional
+from dataclasses import asdict, dataclass, is_dataclass
+from typing import Any, Callable, Dict, Iterator, Optional, Union
 
 import structlog
 from litellm import (
@@ -35,6 +36,45 @@ from litellm import (
 from tfc.utils.error_codes import get_error_message
 
 _logger = structlog.get_logger(__name__)
+
+
+@dataclass
+class ErrorContext:
+    """Structured request/user context attached to error logs.
+
+    Replaces the loosely-typed dict that used to be threaded through the error
+    pipeline so callers get field-name checking. Every field is optional; only
+    the ones a given call site can populate are set, and unset (``None``) fields
+    are dropped before logging.
+    """
+
+    model: Optional[str] = None
+    temperature: Optional[float] = None
+    max_tokens: Optional[int] = None
+    message_count: Optional[int] = None
+    output_format: Optional[str] = None
+    frequency_penalty: Optional[float] = None
+    presence_penalty: Optional[float] = None
+    top_p: Optional[float] = None
+    provider: Optional[str] = None
+    organization_id: Optional[Any] = None
+    workspace_id: Optional[Any] = None
+    template_id: Optional[Any] = None
+
+
+def _as_context_dict(
+    context: Optional[Union[Dict[str, Any], "ErrorContext"]],
+) -> Dict[str, Any]:
+    """Coerce an ``ErrorContext`` (or legacy dict) into a logging dict.
+
+    ``ErrorContext`` fields left at their ``None`` default are omitted so the
+    log output matches the old "only include populated keys" behaviour.
+    """
+    if context is None:
+        return {}
+    if is_dataclass(context) and not isinstance(context, type):
+        return {k: v for k, v in asdict(context).items() if v is not None}
+    return context
 
 LITELLM_EXCEPTION_ERROR_CODES = {
     BadRequestError: "LITELLM_BAD_REQUEST",
@@ -69,58 +109,240 @@ def litellm_try_except(
     try:
         yield
     except tuple(LITELLM_EXCEPTION_ERROR_CODES.keys()) as exc:
-        error_message = str(exc)
+        root_exc = _find_root_api_error(exc)
+        error_message = format_concise_error(parse_api_error(root_exc))
         if len(error_message) > 500:
             error_message = error_message[:500] + "..."
-        _logger.error(f"{exc.__class__.__name__}: {exc}")
+        _logger.error(f"{root_exc.__class__.__name__}: {root_exc}")
         if on_error:
             on_error(error_message)
-        raise Exception(error_message)
+        raise Exception(error_message) from root_exc
     except Exception as exc:
-        _logger.error(f"Exception: {exc}")
-        error_message = get_error_message("FAILED_TO_PROCESS_ROW")
+        root_exc = _find_root_api_error(exc)
+        if root_exc is not exc:
+            error_message = format_concise_error(parse_api_error(root_exc))
+        else:
+            error_message = get_error_message("FAILED_TO_PROCESS_ROW")
+        _logger.error(f"Exception: {root_exc}")
         if default:
             default()
-        raise Exception(error_message)
+        raise Exception(error_message) from root_exc
 
 
-# Exception messages produced by instrumentation bugs (e.g. traceai_litellm
-# calling context-manager __exit__ with swapped arguments) that carry no
-# useful information for the end user.
-_UNINFORMATIVE_MESSAGES = frozenset(
-    {
-        "instance exception may not have a separate value",
-    }
+_API_ERROR_MESSAGE_PATTERNS = (
+    "api key",
+    "authentication",
+    "unauthorized",
+    "forbidden",
+    "rate limit",
+    "quota",
+    "billing",
+    "bad request",
+    "invalid request",
+    "not found",
+    "context window",
+    "timeout",
+    "timed out",
+    "service unavailable",
+    "unprocessable",
+    "content policy",
+    "openai",
+    "anthropic",
+    "gemini",
+    "litellm",
 )
+
+
+def _iter_exception_chain(exception: Exception) -> Iterator[Exception]:
+    seen = set()
+    stack = [exception]
+
+    while stack and len(seen) < 20:
+        exc = stack.pop(0)
+        if exc is None or id(exc) in seen:
+            continue
+
+        seen.add(id(exc))
+        yield exc
+
+        cause = getattr(exc, "__cause__", None)
+        context = getattr(exc, "__context__", None)
+        if cause is not None:
+            stack.append(cause)
+        if context is not None and context is not cause:
+            stack.append(context)
+
+
+def _api_error_score(exception: Exception) -> int:
+    message = str(exception).strip()
+    lower_message = message.lower()
+    class_name = exception.__class__.__name__.lower()
+    score = 0
+
+    if isinstance(exception, tuple(LITELLM_EXCEPTION_ERROR_CODES.keys())):
+        score += 100
+
+    if any(pattern in lower_message for pattern in _API_ERROR_MESSAGE_PATTERNS):
+        score += 40
+
+    if any(
+        pattern.replace(" ", "") in class_name
+        for pattern in _API_ERROR_MESSAGE_PATTERNS
+    ):
+        score += 25
+
+    if re.search(r"\b(?:4\d{2}|5\d{2})\b", message):
+        score += 20
+
+    if message:
+        score += min(len(message), 200) // 40
+    else:
+        score -= 50
+
+    if type(exception) is Exception and not any(
+        pattern in lower_message for pattern in _API_ERROR_MESSAGE_PATTERNS
+    ):
+        score -= 10
+
+    if isinstance(exception, (TypeError, ValueError)) and not any(
+        pattern in lower_message for pattern in _API_ERROR_MESSAGE_PATTERNS
+    ):
+        score -= 20
+
+    return score
 
 
 def _find_root_api_error(exception: Exception) -> Exception:
     """
     Walk the exception chain to find the most meaningful API error.
 
-    When instrumentation libraries (e.g. traceai_litellm) have bugs in their
-    error handling, they can raise secondary exceptions (like TypeError) that
-    mask the original API error.  This function detects known uninformative
-    wrappers and traverses ``__cause__`` / ``__context__`` to recover the
-    real error.
+    Instrumentation and wrapper layers can raise secondary exceptions that mask
+    the provider error. Prefer chained exceptions with clear API-error signal,
+    but keep the original exception when the chain does not contain anything
+    more useful.
     """
-    current_msg = str(exception).strip().lower()
-    if current_msg not in _UNINFORMATIVE_MESSAGES:
+    candidates = list(_iter_exception_chain(exception))
+    if not candidates:
         return exception
 
-    seen = {id(exception)}
-    for attr in ("__cause__", "__context__"):
-        exc = getattr(exception, attr, None)
-        depth = 0
-        while exc is not None and id(exc) not in seen and depth < 10:
-            seen.add(id(exc))
-            depth += 1
-            exc_msg = str(exc).strip().lower()
-            if exc_msg not in _UNINFORMATIVE_MESSAGES and exc_msg:
-                return exc
-            exc = getattr(exc, attr, None)
+    return max(
+        enumerate(candidates),
+        key=lambda item: (_api_error_score(item[1]), -item[0]),
+    )[1]
 
-    return exception
+
+def _extract_message_from_mapping(payload: Dict[str, Any]) -> Optional[str]:
+    for key in ("message", "error_message"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+
+    error = payload.get("error")
+    if isinstance(error, dict):
+        message = _extract_message_from_mapping(error)
+        if message:
+            return message
+    elif isinstance(error, str) and error.strip():
+        return error
+
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        message = _extract_message_from_mapping(detail)
+        if message:
+            return message
+    elif isinstance(detail, str) and detail.strip():
+        return detail
+
+    return None
+
+
+def _extract_error_type_from_mapping(payload: Dict[str, Any]) -> Optional[str]:
+    nested_error_type = None
+    error = payload.get("error")
+    if isinstance(error, dict):
+        nested_error_type = _extract_error_type_from_mapping(error)
+        if nested_error_type and nested_error_type not in {"error", "errors"}:
+            return nested_error_type
+
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        detail_error_type = _extract_error_type_from_mapping(detail)
+        if detail_error_type and detail_error_type not in {"error", "errors"}:
+            return detail_error_type
+
+    for key in ("type", "status", "code"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+
+    if nested_error_type:
+        return nested_error_type
+
+    return None
+
+
+def _extract_status_code_from_mapping(payload: Dict[str, Any]) -> Optional[int]:
+    for key in ("code", "status_code", "status"):
+        value = payload.get(key)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+
+    error = payload.get("error")
+    if isinstance(error, dict):
+        status_code = _extract_status_code_from_mapping(error)
+        if status_code:
+            return status_code
+
+    detail = payload.get("detail")
+    if isinstance(detail, dict):
+        status_code = _extract_status_code_from_mapping(detail)
+        if status_code:
+            return status_code
+
+    return None
+
+
+def _strip_litellm_prefixes(message: str) -> str:
+    message = message.strip()
+    while True:
+        stripped = re.sub(r"^(?:litellm\.)?\w+Error:\s*", "", message).strip()
+        if stripped == message:
+            return message
+        message = stripped
+
+
+def _extract_embedded_json_message(message: str) -> Optional[str]:
+    json_match = re.search(r"\{.*\}", message, re.DOTALL)
+    if not json_match:
+        return None
+
+    try:
+        payload = json.loads(json_match.group(0))
+    except json.JSONDecodeError:
+        return None
+
+    if isinstance(payload, dict):
+        return _extract_message_from_mapping(payload)
+    return None
+
+
+def _normalize_provider_message(parsed_error: Dict[str, Any]) -> str:
+    message = str(parsed_error["message"]).strip()
+    error_type = str(parsed_error.get("error_type") or "").lower()
+    status_code = parsed_error.get("status_code")
+
+    is_not_found = status_code == 404 or "not_found" in error_type
+    model_match = re.fullmatch(r"model\s*:\s*(.+)", message, flags=re.IGNORECASE)
+    if is_not_found and model_match:
+        model_name = model_match.group(1).strip()
+        return (
+            f"Model not found: {model_name}. Select a model available for the "
+            "configured provider/account, or update the model/provider configuration."
+        )
+
+    return message
 
 
 def parse_api_error(exception: Exception) -> Dict[str, Any]:
@@ -141,19 +363,41 @@ def parse_api_error(exception: Exception) -> Dict[str, Any]:
         Dictionary with parsed error components
     """
     error_str = str(exception)
+    status_code = getattr(exception, "status_code", None)
+    provider = getattr(exception, "llm_provider", None)
+    body = getattr(exception, "body", None)
+    message = getattr(exception, "message", None) or error_str
 
     parsed = {
         "error_type": type(exception).__name__,
-        "status_code": None,
-        "message": error_str,
-        "provider": "Unknown",
+        "status_code": status_code if isinstance(status_code, int) else None,
+        "message": message,
+        "provider": provider or "Unknown",
         "raw_error": error_str,
     }
+
+    if isinstance(body, dict):
+        body_message = _extract_message_from_mapping(body)
+        if body_message:
+            parsed["message"] = body_message
+
+        body_error_type = _extract_error_type_from_mapping(body)
+        if body_error_type:
+            parsed["error_type"] = body_error_type
+
+        if parsed["status_code"] is None:
+            parsed["status_code"] = _extract_status_code_from_mapping(body)
+
+    embedded_message = _extract_embedded_json_message(str(parsed["message"]))
+    if embedded_message:
+        parsed["message"] = embedded_message
+    else:
+        parsed["message"] = _strip_litellm_prefixes(str(parsed["message"]))
 
     # Try to extract status code from various formats
     # Format 1: "Error code: 429 - ..." or "status: 429 -"
     status_match = re.search(r"(?:Error code:|status:)?\s*(\d{3})\s*-", error_str)
-    if status_match:
+    if parsed["status_code"] is None and status_match:
         parsed["status_code"] = int(status_match.group(1))
 
     # Format 2: "status_code: 404" or "status_code=404" (httpx/SDK format)
@@ -169,30 +413,16 @@ def parse_api_error(exception: Exception) -> Dict[str, Any]:
         try:
             error_json = json.loads(json_match.group(0))
 
-            if "error" in error_json:
-                error_obj = error_json["error"]
+            message = _extract_message_from_mapping(error_json)
+            if message:
+                parsed["message"] = message
 
-                if isinstance(error_obj, dict):
-                    if "type" in error_obj:
-                        parsed["error_type"] = error_obj["type"]
+            error_type = _extract_error_type_from_mapping(error_json)
+            if error_type:
+                parsed["error_type"] = error_type
 
-                    if "message" in error_obj:
-                        parsed["message"] = error_obj["message"]
-
-                    if parsed["status_code"] is None and "code" in error_obj:
-                        if isinstance(error_obj["code"], int):
-                            parsed["status_code"] = error_obj["code"]
-
-            # Handle nested detail format: body: {'detail': {'message': '...'}}
-            if "detail" in error_json:
-                detail = error_json["detail"]
-                if isinstance(detail, dict):
-                    if "message" in detail:
-                        parsed["message"] = detail["message"]
-                    if "status" in detail:
-                        parsed["error_type"] = detail["status"]
-                elif isinstance(detail, str):
-                    parsed["message"] = detail
+            if parsed["status_code"] is None:
+                parsed["status_code"] = _extract_status_code_from_mapping(error_json)
 
         except json.JSONDecodeError:
             pass
@@ -212,9 +442,10 @@ def parse_api_error(exception: Exception) -> Dict[str, Any]:
         if status_match:
             parsed["error_type"] = status_match.group(1)
 
-    # Detect provider from error message
-    error_lower = error_str.lower()
-    parsed["provider"] = ""
+    if parsed["provider"] == "Unknown":
+        parsed["provider"] = ""
+
+    parsed["message"] = _normalize_provider_message(parsed)
 
     return parsed
 
@@ -293,7 +524,9 @@ def log_verbose_error(
 
 
 def handle_api_error(
-    exception: Exception, logger, context: Optional[Dict[str, Any]] = None
+    exception: Exception,
+    logger,
+    context: Optional[Union[Dict[str, Any], "ErrorContext"]] = None,
 ) -> str:
     """
     Complete error handling pipeline: parse, log, and format.
@@ -311,8 +544,7 @@ def handle_api_error(
     Returns:
         Concise error string suitable for cell values
     """
-    if context is None:
-        context = {}
+    context = _as_context_dict(context)
 
     # Recover the real API error if the exception was masked by an
     # instrumentation bug (e.g. traceai_litellm __exit__ arg-order issue).

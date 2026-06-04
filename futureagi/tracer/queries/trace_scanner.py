@@ -32,7 +32,7 @@ def get_scan_config(project_id: str) -> Optional[ScanConfig]:
     """
     config, _ = TraceScanConfig.objects.get_or_create(
         project_id=project_id,
-        defaults={"sampling_rate": 0.1, "enabled": True},
+        defaults={"sampling_rate": 0, "enabled": True},
     )
     if not config.enabled:
         return None

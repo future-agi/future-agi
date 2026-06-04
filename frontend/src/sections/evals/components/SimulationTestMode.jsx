@@ -1197,7 +1197,7 @@ const SimulationTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600} color="text.secondary">
               This simulation has no data
             </Typography>
-            <Typography variant="caption" color="text.disabled">
+            <Typography variant="caption" color="text.secondary">
               Run the simulation first to generate call data for testing
             </Typography>
           </Box>
@@ -1228,7 +1228,7 @@ const SimulationTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600} color="text.secondary">
               No calls in this simulation
             </Typography>
-            <Typography variant="caption" color="text.disabled">
+            <Typography variant="caption" color="text.secondary">
               Add calls to the simulation before running a test
             </Typography>
           </Box>

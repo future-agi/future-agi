@@ -84,7 +84,7 @@ const PersonaConversationSetting = ({
                     <Typography
                       typography="s1"
                       fontWeight="fontWeightRegular"
-                      color="text.disabled"
+                      color="text.secondary"
                     >
                       To test how your agent interprets and responds in
                       real-world conditions

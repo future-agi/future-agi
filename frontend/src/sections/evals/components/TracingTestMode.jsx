@@ -2,13 +2,10 @@
 import {
   Autocomplete,
   Box,
-  Button,
   Chip,
   CircularProgress,
   IconButton,
   InputAdornment,
-  MenuItem,
-  Select,
   Tab,
   Tabs,
   TextField,
@@ -47,15 +44,18 @@ import {
   isRecordingObjectKey,
 } from "src/components/inline-audio/audio-detection";
 import { useForm, useWatch } from "react-hook-form";
-import CustomTooltip from "src/components/tooltip/CustomTooltip";
+import CustomTooltip from "src/components/tooltip";
 import TaskFilterBar from "src/sections/tasks/components/TaskFilterBar";
 import { buildApiFilterArray } from "src/sections/tasks/components/TaskLivePreview";
 import { JsonValueTree } from "./DatasetTestMode";
-import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import EvalResultDisplay from "./EvalResultDisplay";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
-import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
+import {
+  buildFlatValueMap,
+  executeEvalForRow,
+} from "../utils/evalExecution";
+
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -222,6 +222,8 @@ const TracingTestMode = React.forwardRef(
       // Signals to EvalPickerConfigFull that all variables are mapped so
       // it can enable the Test Evaluation / Add Evaluation buttons.
       onReadyChange,
+      // When true, runtime context comes from data injection — no sample row needed.
+      hasDataInjection = false,
       // Optional: pre-select project + row type and hide the project picker
       // and the row type toggle. Used by the task flow's Add Evaluation
       // drawer so the user sees the exact same data their task will run on.
@@ -388,7 +390,6 @@ const TracingTestMode = React.forwardRef(
     // Async error localization poll — see DatasetTestMode for rationale.
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
-    const executeCompositeAdhoc = useExecuteCompositeEvalAdhoc();
 
     // ── Fetch project list (skip when project is pre-selected/locked) ──
     useEffect(() => {
@@ -852,7 +853,9 @@ const TracingTestMode = React.forwardRef(
         (rowType === "Session" || rowType === "Trace");
       if (usePrecomputed) {
         return pickerSourceColumns
-          .map((c) => (typeof c === "string" ? c : c?.field || c?.name || c?.headerName))
+          .map((c) =>
+            typeof c === "string" ? c : c?.field || c?.name || c?.headerName,
+          )
           .filter(Boolean);
       }
       return walkedFromDetail || rowFields.map((f) => f?.colId || f?.key);
@@ -908,20 +911,16 @@ const TracingTestMode = React.forwardRef(
       });
     }, [variables, fieldNames]);
 
-    // Signal ready state to parent: ready when every template variable
-    // has a non-empty mapped field AND we have a current row to test
-    // against. This enables the Test Evaluation / Add Evaluation buttons
-    // in EvalPickerConfigFull.
+    // Mapping is always required; a sample row only when not using data injection.
     useEffect(() => {
       if (!onReadyChange) return;
-      // Evals with zero variables (e.g. some code evals) are always ready
-      // as long as we have a loaded row to run against.
       const allMapped =
         variables.length === 0 ||
         variables.every((v) => mapping[v] && String(mapping[v]).length > 0);
       const hasRow = !!currentRow;
-      onReadyChange(allMapped && hasRow, mapping);
-    }, [variables, mapping, currentRow, onReadyChange]);
+      const ready = hasDataInjection ? allMapped : allMapped && hasRow;
+      onReadyChange(ready, mapping);
+    }, [variables, mapping, currentRow, hasDataInjection, onReadyChange]);
 
     // ── Run test ──
     const handleRunTest = useCallback(async () => {
@@ -951,190 +950,45 @@ const TracingTestMode = React.forwardRef(
         return;
       }
 
-      try {
-        // Build a flat fieldName→value lookup by walking spanDetail with
-        // the same logic used to populate the fieldNames dropdown. This
-        // ensures that a field name selected from the dropdown (e.g.
-        // "input.value" — which may have been soft-flattened from
-        // "span_attributes.input.value") always resolves to the correct
-        // value, even when the top-level key shadows a deeper path.
-        // Limits match the dropdown walker so every path offered in the UI
-        // also resolves — otherwise deep paths (e.g. gen_ai.* under a big
-        // span_attributes dict) would be selectable but unresolvable.
-        const ARRAY_PEEK = 500;
-        const DICT_LIMIT = 5000;
-        const valueMap = {};
-        const walkValues = (node, prefix) => {
-          if (Array.isArray(node)) {
-            node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
-              const path = prefix ? `${prefix}.${idx}` : String(idx);
-              valueMap[path] = item;
-              if (item && typeof item === "object") {
-                walkValues(item, path);
-              }
-            });
-            return;
-          }
-          // canonicalEntries drops the camelCase aliases the axios
-          // interceptor layers on — otherwise valueMap gets both
-          // `span_attributes.*` and `spanAttributes.*` branches of the
-          // same data, and only the snake side is stripped by the
-          // soft-flatten below.
-          for (const [k, v] of canonicalEntries(node)) {
-            if (k.startsWith("_")) continue;
-            const path = prefix ? `${prefix}.${k}` : k;
-            valueMap[path] = v;
-            if (v && typeof v === "object") {
-              if (
-                Array.isArray(v) ||
-                Object.keys(v).length < DICT_LIMIT
-              ) {
-                walkValues(v, path);
-              }
+      const flatValueMap = buildFlatValueMap(spanDetail);
+      const evalItem = {
+        template_id: tid,
+        template_type: isComposite ? "composite" : undefined,
+        model,
+      };
+      const result = await executeEvalForRow({
+        evalItem,
+        rowType,
+        currentRow,
+        spanDetail,
+        mapping,
+        flatValueMap,
+        rowFields,
+        codeParams,
+        errorLocalizerEnabled,
+        compositeAdhocConfig,
+      });
+
+      if (result.ok) {
+        // EvalResultDisplay reads `compositeResult` for composite, or the
+        // legacy `output`/`reason`/`score` keys for single.
+        const nextResult = result.isComposite
+          ? {
+              output: result.output,
+              reason: result.reason,
+              compositeResult: result.compositeResult,
             }
-          }
-        };
-        walkValues(spanDetail, "");
-
-        // Build the soft-flattened lookup via `stripAttributePathPrefix`
-        // — the same util the `fieldNames` walker uses, so the dropdown
-        // and resolution keys stay in lockstep. The util strips any
-        // `span_attributes.` segment (anchored or nested under
-        // `spans.<n>.` / `traces.<i>.spans.<j>.`), which the previous
-        // anchored-only strip got wrong for trace/session row types
-        // (their detail nests `span_attributes.` mid-path).
-        const flatValueMap = {};
-        for (const [path, val] of Object.entries(valueMap)) {
-          const short = stripAttributePathPrefix(path);
-          // Top-level (unstripped) paths win — only fall back to a
-          // stripped path when no top-level entry exists for that short
-          // form.
-          if (!(short in flatValueMap) || short === path) {
-            flatValueMap[short] = val;
-          }
+          : result.raw;
+        setResult(nextResult);
+        onTestResult?.(true, nextResult);
+        if (!result.isComposite && errorLocalizerEnabled && result.logId) {
+          startErrorLocalizerPoll(result.logId);
         }
-
-        const evalMapping = {};
-        for (const variable of variables) {
-          const mappedField = mapping[variable];
-          if (!mappedField) continue;
-
-          // 1. Try the flat value map (same resolution as the dropdown)
-          let val = flatValueMap[mappedField];
-
-          // 2. Fallback: rowFields by key or colId
-          if (val === undefined) {
-            const rf = rowFields.find(
-              (f) => f.key === mappedField || f.colId === mappedField,
-            );
-            if (rf?.raw !== undefined && rf.raw !== null) {
-              val = rf.raw;
-            }
-          }
-
-          if (val !== undefined) {
-            evalMapping[variable] =
-              typeof val === "object"
-                ? JSON.stringify(val)
-                : String(val ?? "");
-          }
-        }
-
-        // Single-eval playground resolves {{span}} / {{trace}} /
-        // {{session}} server-side from IDs. Composite execution expects
-        // the concrete context objects directly.
-        const autoCtx = {};
-        const _spanId = currentRow?.span_id || currentRow?.spanId;
-        const _traceId = currentRow?.trace_id || currentRow?.traceId;
-        const _sessionId = currentRow?.session_id || currentRow?.sessionId;
-        if (rowType === "Span" && _spanId) autoCtx.span_id = _spanId;
-        if ((rowType === "Span" || rowType === "Trace") && _traceId)
-          autoCtx.trace_id = _traceId;
-        if (rowType === "Session" && _sessionId)
-          autoCtx.session_id = _sessionId;
-        if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
-
-        const compositeCtx = {};
-        if (rowType === "Span" && spanDetail) compositeCtx.span_context = spanDetail;
-        if (rowType === "Trace" && currentRow)
-          compositeCtx.trace_context = currentRow;
-        if (rowType === "Session" && currentRow)
-          compositeCtx.session_context = currentRow;
-        if (rowType === "VoiceCall" && currentRow)
-          compositeCtx.trace_context = currentRow;
-
-        const compositeConfig = buildCompositeRuntimeConfig({
-          codeParams,
-        });
-
-        const { data } = isComposite
-          ? compositeAdhocConfig
-            ? {
-                data: {
-                  status: true,
-                  result: await executeCompositeAdhoc.mutateAsync({
-                    ...compositeAdhocConfig,
-                    mapping: evalMapping,
-                    model,
-                    error_localizer: errorLocalizerEnabled,
-                    config: compositeConfig,
-                    ...compositeCtx,
-                  }),
-                },
-              }
-            : await axios.post(endpoints.develop.eval.executeCompositeEval(tid), {
-                mapping: evalMapping,
-                model,
-                error_localizer: errorLocalizerEnabled,
-                config: compositeConfig,
-                ...compositeCtx,
-              })
-          : await axios.post(endpoints.develop.eval.evalPlayground, {
-              template_id: tid,
-              model,
-              error_localizer: errorLocalizerEnabled,
-              config: {
-                mapping: evalMapping,
-                ...(Object.keys(codeParams || {}).length > 0
-                  ? { params: codeParams }
-                  : {}),
-              },
-              ...autoCtx,
-            });
-
-        if (data?.status) {
-          const nextResult = isComposite
-            ? {
-                output:
-                  data.result?.aggregation_enabled &&
-                  data.result?.aggregate_score != null
-                    ? data.result.aggregate_score
-                    : null,
-                reason: data.result?.summary || "",
-                compositeResult: data.result,
-              }
-            : data.result;
-          setResult(nextResult);
-          onTestResult?.(true, nextResult);
-          if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
-            startErrorLocalizerPoll(data.result.log_id);
-          }
-        } else {
-          const errMsg = data?.result || "Evaluation failed";
-          setError(errMsg);
-          onTestResult?.(false, errMsg);
-        }
-      } catch (err) {
-        const errMsg =
-          err?.result ||
-          err?.detail ||
-          err?.message ||
-          "Failed to run evaluation";
-        setError(errMsg);
-        onTestResult?.(false, errMsg);
-      } finally {
-        setIsRunning(false);
+      } else {
+        setError(result.errorMessage);
+        onTestResult?.(false, result.errorMessage);
       }
+      setIsRunning(false);
     }, [
       templateId,
       variables,
@@ -1150,7 +1004,6 @@ const TracingTestMode = React.forwardRef(
       startErrorLocalizerPoll,
       codeParams,
       model,
-      executeCompositeAdhoc,
     ]);
 
     useImperativeHandle(
@@ -1181,14 +1034,10 @@ const TracingTestMode = React.forwardRef(
               getOptionLabel={(opt) => opt?.name || opt?.id || ""}
               value={projects.find((p) => p.id === selectedProjectId) || null}
               onChange={(_, val) => {
-
-                setSelectedProjectId(val?.id || "")
+                setSelectedProjectId(val?.id || "");
                 setMapping({});
                 setColumns([]);
-
-              }
-
-              }
+              }}
               loading={loadingProjects}
               openOnFocus
               renderInput={(params) => (
@@ -1373,66 +1222,66 @@ const TracingTestMode = React.forwardRef(
           (rows?.length ?? 0) > 0 &&
           !loading &&
           !isPendingNewFetch && (
-          <Box
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 1,
-            }}
-          >
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{ fontSize: "11px" }}
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+              }}
             >
-              Row {Math.min(currentRowIndex + 1, rows?.length ?? 0)} of{" "}
-              {rows?.length ?? 0}
-              {(totalRows ?? 0) > (rows?.length ?? 0) && (
-                <Typography
-                  component="span"
-                  sx={{
-                    fontSize: "11px",
-                    color: "text.disabled",
-                    ml: 0.5,
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ fontSize: "11px" }}
+              >
+                Row {Math.min(currentRowIndex + 1, rows?.length ?? 0)} of{" "}
+                {rows?.length ?? 0}
+                {(totalRows ?? 0) > (rows?.length ?? 0) && (
+                  <Typography
+                    component="span"
+                    sx={{
+                      fontSize: "11px",
+                      color: "text.disabled",
+                      ml: 0.5,
+                    }}
+                  >
+                    ({totalRows} matching total)
+                  </Typography>
+                )}
+              </Typography>
+              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+                <IconButton
+                  size="small"
+                  disabled={currentRowIndex === 0}
+                  onClick={() => {
+                    setCurrentRowIndex((i) => Math.max(0, i - 1));
+                    setResult(null);
+                    setError(null);
+                    onClearResult?.();
                   }}
+                  sx={{ width: 24, height: 24 }}
                 >
-                  ({totalRows} matching total)
-                </Typography>
-              )}
-            </Typography>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-              <IconButton
-                size="small"
-                disabled={currentRowIndex === 0}
-                onClick={() => {
-                  setCurrentRowIndex((i) => Math.max(0, i - 1));
-                  setResult(null);
-                  setError(null);
-                  onClearResult?.();
-                }}
-                sx={{ width: 24, height: 24 }}
-              >
-                <Iconify icon="mdi:chevron-left" width={16} />
-              </IconButton>
-              <IconButton
-                size="small"
-                disabled={currentRowIndex >= (rows?.length ?? 0) - 1}
-                onClick={() => {
-                  setCurrentRowIndex((i) =>
-                    Math.min((rows?.length ?? 0) - 1, i + 1),
-                  );
-                  setResult(null);
-                  setError(null);
-                  onClearResult?.();
-                }}
-                sx={{ width: 24, height: 24 }}
-              >
-                <Iconify icon="mdi:chevron-right" width={16} />
-              </IconButton>
+                  <Iconify icon="mdi:chevron-left" width={16} />
+                </IconButton>
+                <IconButton
+                  size="small"
+                  disabled={currentRowIndex >= (rows?.length ?? 0) - 1}
+                  onClick={() => {
+                    setCurrentRowIndex((i) =>
+                      Math.min((rows?.length ?? 0) - 1, i + 1),
+                    );
+                    setResult(null);
+                    setError(null);
+                    onClearResult?.();
+                  }}
+                  sx={{ width: 24, height: 24 }}
+                >
+                  <Iconify icon="mdi:chevron-right" width={16} />
+                </IconButton>
+              </Box>
             </Box>
-          </Box>
-        )}
+          )}
 
         {/* Span/Trace detail — table format like DatasetTestMode */}
         {loadingDetail && (
@@ -1576,11 +1425,13 @@ const TracingTestMode = React.forwardRef(
                         "&:hover": { backgroundColor: "action.hover" },
                       }}
                     >
-                      <Tooltip
+                      <CustomTooltip
+                        show
                         title={key}
                         placement="top-start"
                         enterDelay={300}
                         arrow
+                        size="small"
                       >
                         <Typography
                           variant="caption"
@@ -1594,7 +1445,7 @@ const TracingTestMode = React.forwardRef(
                         >
                           {key}
                         </Typography>
-                      </Tooltip>
+                      </CustomTooltip>
                       <DraggableColResizer
                         getCurrentWidth={() => keyColWidthRef.current}
                         onResize={setKeyColWidth}
@@ -1719,183 +1570,186 @@ const TracingTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600} color="text.secondary">
               No {rowType.toLowerCase()} data found
             </Typography>
-            <Typography variant="caption" color="text.disabled">
+            <Typography variant="caption" color="text.secondary">
               Add {rowType.toLowerCase()} to this project before running a test
             </Typography>
           </Box>
         )}
 
         {/* Variable mapping */}
-        {variables.length > 0 && (() => {
-          const isFetchingColumns =
-            !!selectedProjectId &&
-            (loading || isPendingNewFetch || loadingDetail);
-          const mappingDisabledTooltip = isFetchingColumns
-            ? "Columns are being fetched"
-            : "";
-          return (
-            <Box>
-              <Typography
-                variant="caption"
-                fontWeight={600}
-                sx={{ mb: 0.5, display: "block" }}
-              >
-                Variable Mapping
-              </Typography>
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
-                {variables.map((variable) => {
-                  const autocomplete = (
-                    <Autocomplete
-                      size="small"
-                      freeSolo={allowCustomFieldPath}
-                      disabled={isFetchingColumns}
-                      options={
-                        mapping[variable] &&
+        {variables.length > 0 &&
+          (() => {
+            const isFetchingColumns =
+              !!selectedProjectId &&
+              (loading || isPendingNewFetch || loadingDetail);
+            const mappingDisabledTooltip = isFetchingColumns
+              ? "Columns are being fetched"
+              : "";
+            return (
+              <Box>
+                <Typography
+                  variant="caption"
+                  fontWeight={600}
+                  sx={{ mb: 0.5, display: "block" }}
+                >
+                  Variable Mapping
+                </Typography>
+                <Box
+                  sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}
+                >
+                  {variables.map((variable) => {
+                    const autocomplete = (
+                      <Autocomplete
+                        size="small"
+                        freeSolo={allowCustomFieldPath}
+                        disabled={isFetchingColumns}
+                        options={
+                          mapping[variable] &&
                           !fieldNames.includes(mapping[variable])
-                          ? [mapping[variable], ...fieldNames]
-                          : fieldNames
-                      }
-                      value={mapping[variable] || null}
-                      onChange={(_, val) =>
-                        setMapping((prev) => ({
-                          ...prev,
-                          [variable]: val || "",
-                        }))
-                      }
-                      {...(allowCustomFieldPath
-                        ? {
-                          inputValue: mapping[variable] || "",
-                          onInputChange: (_, val, reason) => {
-                            if (reason === "reset") return;
-                            setMapping((prev) => ({
-                              ...prev,
-                              [variable]: val || "",
-                            }));
-                          },
+                            ? [mapping[variable], ...fieldNames]
+                            : fieldNames
                         }
-                        : {})}
-                      openOnFocus
-                      autoHighlight
-                      selectOnFocus
-                      handleHomeEndKeys
-                      isOptionEqualToValue={(opt, val) => opt === val}
-                      sx={{ flex: 1 }}
-                      ListboxProps={{ style: { maxHeight: 260 } }}
-                      renderInput={(params) => (
-                        <TextField
-                          {...params}
-                          placeholder={
-                            isFetchingColumns
-                              ? "Loading columns..."
-                              : allowCustomFieldPath
-                                ? "Search or type a path (e.g. attributes.input.value)"
-                                : "Search column..."
-                          }
-                          InputProps={{
-                            ...params.InputProps,
-                            sx: {
-                              ...params.InputProps.sx,
-                              fontSize: "12px",
-                              fontFamily: "monospace",
-                              height: 28,
-                              py: 0,
-                            },
-                            endAdornment: isFetchingColumns ? (
-                              <InputAdornment position="end">
-                                <CircularProgress size={14} />
-                              </InputAdornment>
-                            ) : (
-                              params.InputProps.endAdornment
-                            ),
-                          }}
-                        />
-                      )}
-                      renderOption={(props, col) => {
-                        const { key, ...rest } = props;
-                        return (
-                          <Box
-                            component="li"
-                            key={key}
-                            {...rest}
-                            title={col}
-                            sx={{
-                              ...rest.sx,
-                              fontSize: "12px",
-                              fontFamily: "monospace",
-                              pl: col.includes(".")
-                                ? `${12 + (col.split(".").length - 1) * 12}px`
-                                : undefined,
-                              color: col.includes(".")
-                                ? "primary.main"
-                                : "text.primary",
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
+                        value={mapping[variable] || null}
+                        onChange={(_, val) =>
+                          setMapping((prev) => ({
+                            ...prev,
+                            [variable]: val || "",
+                          }))
+                        }
+                        {...(allowCustomFieldPath
+                          ? {
+                              inputValue: mapping[variable] || "",
+                              onInputChange: (_, val, reason) => {
+                                if (reason === "reset") return;
+                                setMapping((prev) => ({
+                                  ...prev,
+                                  [variable]: val || "",
+                                }));
+                              },
+                            }
+                          : {})}
+                        openOnFocus
+                        autoHighlight
+                        selectOnFocus
+                        handleHomeEndKeys
+                        isOptionEqualToValue={(opt, val) => opt === val}
+                        sx={{ flex: 1 }}
+                        ListboxProps={{ style: { maxHeight: 260 } }}
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            placeholder={
+                              isFetchingColumns
+                                ? "Loading columns..."
+                                : allowCustomFieldPath
+                                  ? "Search or type a path (e.g. attributes.input.value)"
+                                  : "Search column..."
+                            }
+                            InputProps={{
+                              ...params.InputProps,
+                              sx: {
+                                ...params.InputProps.sx,
+                                fontSize: "12px",
+                                fontFamily: "monospace",
+                                height: 28,
+                                py: 0,
+                              },
+                              endAdornment: isFetchingColumns ? (
+                                <InputAdornment position="end">
+                                  <CircularProgress size={14} />
+                                </InputAdornment>
+                              ) : (
+                                params.InputProps.endAdornment
+                              ),
                             }}
-                          >
-                            {col}
-                          </Box>
-                        );
-                      }}
-                    />
-                  );
-                  return (
-                    <Box
-                      key={variable}
-                      sx={{ display: "flex", alignItems: "center", gap: 1 }}
-                    >
-                      <Box
-                        sx={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 0.5,
-                          px: 1,
-                          py: 0.25,
-                          borderRadius: "4px",
-                          border: "1px solid",
-                          borderColor: "divider",
-                          minWidth: 120,
+                          />
+                        )}
+                        renderOption={(props, col) => {
+                          const { key, ...rest } = props;
+                          return (
+                            <Box
+                              component="li"
+                              key={key}
+                              {...rest}
+                              title={col}
+                              sx={{
+                                ...rest.sx,
+                                fontSize: "12px",
+                                fontFamily: "monospace",
+                                pl: col.includes(".")
+                                  ? `${12 + (col.split(".").length - 1) * 12}px`
+                                  : undefined,
+                                color: col.includes(".")
+                                  ? "primary.main"
+                                  : "text.primary",
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {col}
+                            </Box>
+                          );
                         }}
-                      >
-                        <Iconify
-                          icon="mdi:code-braces"
-                          width={14}
-                          sx={{ color: "text.secondary" }}
-                        />
-                        <Typography
-                          variant="caption"
-                          fontWeight={600}
-                          sx={{ fontSize: "12px" }}
-                        >
-                          {variable}
-                        </Typography>
-                      </Box>
-                      <Iconify
-                        icon="mdi:arrow-right"
-                        width={14}
-                        sx={{ color: "text.disabled" }}
                       />
-                      {isFetchingColumns ? (
-                        <CustomTooltip
-                          show
-                          type="black"
-                          size="small"
-                          title={mappingDisabledTooltip}
-                          placement="top"
-                          arrow
+                    );
+                    return (
+                      <Box
+                        key={variable}
+                        sx={{ display: "flex", alignItems: "center", gap: 1 }}
+                      >
+                        <Box
+                          sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 0.5,
+                            px: 1,
+                            py: 0.25,
+                            borderRadius: "4px",
+                            border: "1px solid",
+                            borderColor: "divider",
+                            minWidth: 120,
+                          }}
                         >
-                          <Box sx={{ flex: 1 }}>{autocomplete}</Box>
-                        </CustomTooltip>
-                      ) : (
-                        autocomplete
-                      )}
-                    </Box>
-                  );
-                })}
+                          <Iconify
+                            icon="mdi:code-braces"
+                            width={14}
+                            sx={{ color: "text.secondary" }}
+                          />
+                          <Typography
+                            variant="caption"
+                            fontWeight={600}
+                            sx={{ fontSize: "12px" }}
+                          >
+                            {variable}
+                          </Typography>
+                        </Box>
+                        <Iconify
+                          icon="mdi:arrow-right"
+                          width={14}
+                          sx={{ color: "text.disabled" }}
+                        />
+                        {isFetchingColumns ? (
+                          <CustomTooltip
+                            show
+                            type="black"
+                            size="small"
+                            title={mappingDisabledTooltip}
+                            placement="top"
+                            arrow
+                          >
+                            <Box sx={{ flex: 1 }}>{autocomplete}</Box>
+                          </CustomTooltip>
+                        ) : (
+                          autocomplete
+                        )}
+                      </Box>
+                    );
+                  })}
+                </Box>
               </Box>
-            </Box>
-          );
-        })()}
+            );
+          })()}
 
         {/* Result */}
         {result && (
@@ -1953,6 +1807,7 @@ TracingTestMode.propTypes = {
   onColumnsLoaded: PropTypes.func,
   onClearResult: PropTypes.func,
   onReadyChange: PropTypes.func,
+  hasDataInjection: PropTypes.bool,
   initialProjectId: PropTypes.string,
   initialRowType: PropTypes.string,
   initialMapping: PropTypes.object,

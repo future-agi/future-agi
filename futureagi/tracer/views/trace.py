@@ -3795,6 +3795,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     "output_type": output_type,
                     "reason": log.eval_explanation,
                     "error": log.error,
+                    "skipped": log.skipped_reason is not None,
                 }
                 if log.output_str_list:
                     # Legacy categorical eval — pre-agent-evaluator path
@@ -4894,41 +4895,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # col_type that the CH filter builder handles specially.
         if org is None:
             org = getattr(request, "organization", None) or request.user.organization
-        _resolved: List[Dict] = []
-        for _f in filters:
-            _col, _cfg = FilterEngine._normalize_filter_params(_f)
-            _col_type = _cfg.get("col_type", "NORMAL")
-            if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value")
-                _vals = _val if isinstance(_val, list) else [_val]
-                _vals = [v for v in _vals if v]
-                if not _vals:
-                    _resolved.append(_f)
-                    continue
-                _eu_qs = EndUser.objects.filter(
-                    user_id__in=_vals,
-                    organization=org,
-                    deleted=False,
-                )
-                if not org_scope and project_id:
-                    _eu_qs = _eu_qs.filter(project_id=project_id)
-                _ids = [str(u) for u in _eu_qs.values_list("id", flat=True)]
-                if not _ids:
-                    _ids = ["00000000-0000-0000-0000-000000000000"]
-                _resolved.append(
-                    {
-                        "column_id": "end_user_id",
-                        "filter_config": {
-                            "col_type": "TRACE_END_USER",
-                            "filter_type": "text",
-                            "filter_op": "in",
-                            "filter_value": _ids,
-                        },
-                    }
-                )
-                continue
-            _resolved.append(_f)
-        filters = _resolved
 
         # Get eval config IDs. Project mode uses a CH dict-lookup (fast);
         # org mode uses a PG scan because the CH dict-lookup takes a single
@@ -5014,18 +4980,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             row["metadata_map"] = content.get("metadata_map", {})
             row["trace_tags"] = content.get("trace_tags", [])
 
-        # Resolve user_id for this page of traces via PG
-        user_id_map = {}
-        if trace_ids:
-            _eu_rows = (
-                ObservationSpan.objects.filter(
-                    trace_id__in=trace_ids, end_user__isnull=False
-                )
-                .order_by("trace_id", "start_time")
-                .distinct("trace_id")
-                .values_list("trace_id", "end_user__user_id")
-            )
-            user_id_map = {str(tid): uid for tid, uid in _eu_rows}
+        user_id_map = builder.resolve_user_ids(trace_ids, analytics)
 
         # Phase 2: Eval scores
         eval_map = {}
@@ -5592,18 +5547,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             trace_ids, annotation_label_ids, label_types
         )
 
-        # Resolve user_id for this page of traces via PG
-        user_id_map = {}
-        if trace_ids:
-            _eu_rows = (
-                ObservationSpan.objects.filter(
-                    trace_id__in=trace_ids, end_user__isnull=False
-                )
-                .order_by("trace_id", "start_time")
-                .distinct("trace_id")
-                .values_list("trace_id", "end_user__user_id")
-            )
-            user_id_map = {str(tid): uid for tid, uid in _eu_rows}
+        user_id_map = builder.resolve_user_ids(trace_ids, analytics)
 
         # Build column config
         column_config = get_default_trace_config()

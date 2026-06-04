@@ -24,13 +24,19 @@ import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { useSessionsGridStoreShallow } from "./ReplaySessions/store";
 import { APP_CONSTANTS } from "src/utils/constants";
 
-const SESSION_GRID_THEME_PARAMS = {
+const getSessionGridThemeParams = (theme) => ({
   columnBorder: false,
   rowVerticalPaddingScale: 2.6,
-  headerColumnBorder: { width: 0 },
+  headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
-};
+  rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+  headerFontSize: "13px",
+  headerFontWeight: theme.typography.fontWeightMedium,
+  headerBackgroundColor: "transparent",
+  headerTextColor: theme.palette.text.primary,
+  rowHoverColor: "rgba(120,87,252,0.04)",
+});
 
 const DATASET_ROWS_LIMIT = 30;
 
@@ -68,7 +74,7 @@ const SessionGrid = React.forwardRef(
     const [open, setOpen] = useState(false);
     const [currentRowData, setCurrentRowData] = useState(null);
     const theme = useTheme();
-    const agTheme = useAgThemeWith(SESSION_GRID_THEME_PARAMS);
+    const agTheme = useAgThemeWith(getSessionGridThemeParams(theme));
     const handleDrawerClose = () => {
       setOpen(false);
     };

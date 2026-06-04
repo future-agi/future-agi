@@ -364,6 +364,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "id": str(eval_task["id"]),
                     "name": eval_task["name"],
                     "status": eval_task["status"],
+                    "run_type": eval_task.get("run_type"),
                     "filters_applied": eval_task["filters"],
                     "created_at": eval_task["created_at"],
                     "evals_applied": eval_names,
@@ -434,7 +435,13 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # Pass/fail counts — cheap aggregate, two indexed COUNTs.
             counts = EvalLogger.objects.filter(eval_task_id=eval_task_id).aggregate(
                 errors_count=Count("id", filter=Q(error=True)),
-                success_count=Count("id", filter=Q(error=False)),
+                success_count=Count(
+                    "id", filter=Q(error=False, skipped_reason__isnull=True)
+                ),
+                # Skipped: the eval never ran (e.g. a mapped span attribute
+                # was absent). Counted separately so it stays out of the
+                # success and failure tallies.
+                skipped_count=Count("id", filter=Q(skipped_reason__isnull=False)),
                 # Partial-input warnings live in
                 # output_metadata.warnings as a JSON array. has_key on
                 # the JSONField gives us a cheap "any warnings?" filter
@@ -534,13 +541,18 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 reverse=True,
             )[: self._WARNING_GROUPS_LIMIT]
 
-            total_count = counts["errors_count"] + counts["success_count"]
+            total_count = (
+                counts["errors_count"]
+                + counts["success_count"]
+                + counts["skipped_count"]
+            )
 
             result = {
                 "start_time": eval_task.start_time,
                 "end_time": eval_task.end_time,
                 "errors_count": counts["errors_count"],
                 "success_count": counts["success_count"],
+                "skipped_count": counts["skipped_count"],
                 "warnings_count": counts["warnings_count"],
                 "total_count": total_count,
                 "error_groups": error_groups,
@@ -1168,6 +1180,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "name": eval_task.name,
                     "project_name": eval_task.project.name,
                     "status": eval_task.status,
+                    "run_type": eval_task.run_type,
                     "filters_applied": eval_task.filters,
                     "created_at": eval_task.created_at,
                     "evals_applied": [eval.name for eval in eval_task.evals.all()],

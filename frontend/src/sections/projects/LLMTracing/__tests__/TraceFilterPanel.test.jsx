@@ -93,7 +93,7 @@ describe("normalizeFilterRowOperator", () => {
         operator: "contains",
         value: "abc",
       }).operator,
-    ).toBe("is");
+    ).toBe("in");
   });
 
   it("maps legacy annotation equality operators to the restricted annotator operator", () => {

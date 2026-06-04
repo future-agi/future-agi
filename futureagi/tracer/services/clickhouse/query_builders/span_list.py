@@ -127,6 +127,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             latency_ms,
             cost,
             total_tokens,
+            prompt_tokens,
+            completion_tokens,
             model,
             provider,
             end_user_id,

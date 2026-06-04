@@ -1523,6 +1523,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 {
                     "column_id": "end_user_id",
                     "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
                         "filter_type": "text",
                         "filter_op": "in",
                         "filter_value": _ids,

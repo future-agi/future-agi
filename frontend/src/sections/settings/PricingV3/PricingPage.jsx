@@ -39,10 +39,12 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
+import ConfirmDowngrade from "src/pages/dashboard/settings/ConfirmDowngrade";
 
 import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import { fCurrency } from "src/utils/format-number";
+import { canonicalEntries } from "src/utils/utils";
 import {
   FEATURE_LABELS,
   ADDON_ICONS,
@@ -321,7 +323,8 @@ AddonCard.propTypes = {
 
 function BooleanFeatureList({ features, isRemove }) {
   // Show boolean features that are true + numeric features that are > 0
-  const displayFeatures = Object.entries(features || {})
+  const seenLabels = new Set();
+  const displayFeatures = canonicalEntries(features)
     .filter(([key, v]) => {
       if (SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p))) return false;
       if (typeof v === "boolean") return v === true;
@@ -337,7 +340,12 @@ function BooleanFeatureList({ features, isRemove }) {
             ? "Unlimited"
             : formatCompact(v)
           : null,
-    }));
+    }))
+    .filter(({ label }) => {
+      if (seenLabels.has(label)) return false;
+      seenLabels.add(label);
+      return true;
+    });
 
   if (!displayFeatures.length) return null;
 
@@ -434,8 +442,8 @@ function FeatureMatrix({ plansData }) {
         </TableHead>
         <TableBody>
           {FEATURE_GROUPS.map((group) => (
-            <>
-              <TableRow key={group.name}>
+            <React.Fragment key={group.name}>
+              <TableRow>
                 <TableCell
                   colSpan={6}
                   sx={{
@@ -519,7 +527,7 @@ function FeatureMatrix({ plansData }) {
                   })}
                 </TableRow>
               ))}
-            </>
+            </React.Fragment>
           ))}
         </TableBody>
       </Table>
@@ -540,6 +548,7 @@ export default function PricingPage() {
     plan: null,
     action: null,
   });
+  const [downgradeOpen, setDowngradeOpen] = useState(false);
   const queryClient = useQueryClient();
 
   // Handle Stripe Checkout redirect (upgrade=success&session_id=...)
@@ -658,12 +667,17 @@ export default function PricingPage() {
     if (plan === "payg") {
       upgradeMutation.mutate();
     } else if (plan === "free") {
-      if (currentPlan !== "free" && currentPlan !== "payg") {
-        removeMutation.mutate(currentPlan);
-      } else if (currentPlan === "payg") {
-        downgradeMutation.mutate();
-      }
+      setDowngradeOpen(true);
     }
+  };
+
+  const handleDowngradeConfirm = () => {
+    if (currentPlan !== "free" && currentPlan !== "payg") {
+      removeMutation.mutate(currentPlan);
+    } else if (currentPlan === "payg") {
+      downgradeMutation.mutate();
+    }
+    setDowngradeOpen(false);
   };
 
   const handleAddAddon = useCallback((plan) => {
@@ -782,7 +796,7 @@ export default function PricingPage() {
               >
                 <Table size="small">
                   <TableBody>
-                    {Object.entries(data.custom_details.features)
+                    {canonicalEntries(data.custom_details.features)
                       .filter(
                         ([key]) =>
                           !SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p)),
@@ -865,7 +879,7 @@ export default function PricingPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {Object.entries(data.custom_details.pricing).flatMap(
+                      {canonicalEntries(data.custom_details.pricing).flatMap(
                         ([dimKey, dim]) =>
                           dim.tiers.map((tier, idx) => (
                             <TableRow key={`${dimKey}-${idx}`}>
@@ -1110,7 +1124,7 @@ export default function PricingPage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {Object.entries(data.pricing).map(([dimKey, pricing]) => {
+                  {canonicalEntries(data.pricing).map(([dimKey, pricing]) => {
                     const isSingleTier = pricing.tiers.length === 1;
                     return pricing.tiers.map((tier, i) => (
                       <TableRow key={`${dimKey}-${i}`}>
@@ -1256,6 +1270,13 @@ export default function PricingPage() {
           )}
         </DialogContent>
       </CustomDialog>
+
+      <ConfirmDowngrade
+        open={downgradeOpen}
+        onClose={() => setDowngradeOpen(false)}
+        onConfirm={handleDowngradeConfirm}
+        isLoading={removeMutation.isPending || downgradeMutation.isPending}
+      />
     </Box>
   );
 }

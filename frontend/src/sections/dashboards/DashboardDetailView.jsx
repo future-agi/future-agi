@@ -1215,7 +1215,7 @@ export default function DashboardDetailView() {
             <Typography variant="h6" color="text.secondary">
               No widgets yet
             </Typography>
-            <Typography variant="body2" color="text.disabled">
+            <Typography variant="body2" color="text.secondary">
               Add your first widget to start visualizing data
             </Typography>
             <Button

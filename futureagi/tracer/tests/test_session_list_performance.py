@@ -34,6 +34,7 @@ class TestSessionListQueryPerformance:
                 {
                     "column_id": f"custom_attr_{i}",
                     "filter_config": {
+                        "col_type": "SPAN_ATTRIBUTE",
                         "filter_type": "text",
                         "filter_op": "equals",
                         "filter_value": f"value_{i}",
@@ -46,6 +47,8 @@ class TestSessionListQueryPerformance:
                 {
                     "column_id": col,
                     "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "number",
                         "filter_op": "greater_than",
                         "filter_value": i * 10,
                     },

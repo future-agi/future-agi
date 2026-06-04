@@ -1566,7 +1566,7 @@ export default function AnnotateWorkspaceView() {
               <Typography variant="subtitle1" color="text.secondary">
                 Assigned to {assignedToName || "another annotator"}
               </Typography>
-              <Typography variant="body2" color="text.disabled">
+              <Typography variant="body2" color="text.secondary">
                 This item is assigned to someone else. You cannot annotate it.
               </Typography>
               <Button

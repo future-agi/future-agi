@@ -1627,6 +1627,9 @@ class EvaluationRunner:
         self.eval_class = get_eval_class(eval_type_id)
 
     def update_config_list_values(self, config, row=None):
+        # Prompt-template fields hold {{var}} placeholders resolved later by
+        # the evaluator via the user's mapping — not column UUIDs/names.
+        PROMPT_KEYS = {"rule_prompt", "criteria", "instructions"}
         if config:
             config = config.copy()
             for key, value in config.items():
@@ -1634,7 +1637,7 @@ class EvaluationRunner:
                 if (
                     isinstance(value, str)
                     and "," in value
-                    and key not in ["rule_prompt", "criteria"]
+                    and key not in PROMPT_KEYS
                 ):
                     # Split the string by commas and update the value as a list
                     config[key] = value.split(",")
@@ -1646,7 +1649,7 @@ class EvaluationRunner:
                     config[key] = comparator_class()  # Instantiate comparator
                 # Handle both string and list values for dynamic ID replacement
                 if isinstance(value, str):
-                    if key != "rule_prompt":
+                    if key not in PROMPT_KEYS:
                         config[key] = self._replace_dynamic_ids(value, row)
                 elif isinstance(value, list):
                     # Process each item in the list

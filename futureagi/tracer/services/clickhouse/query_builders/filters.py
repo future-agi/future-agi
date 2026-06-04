@@ -15,6 +15,7 @@ from tracer.utils.constants import (
     NO_VALUE_OPS,
     RANGE_OPS,
     SPAN_ATTR_ALLOWED_OPS,
+    FilterType,
 )
 
 from tracer.utils.filter_operators import normalize_filter_op
@@ -39,9 +40,9 @@ def _coerce_strict_bool(v: Any) -> int:
 
 
 _SPAN_ATTR_TYPE_META: Dict[str, Tuple[str, Callable[[Any], Any]]] = {
-    "text":    ("span_attr_str",  lambda v: v if isinstance(v, str) else str(v)),
-    "number":  ("span_attr_num",  lambda v: float(v)),
-    "boolean": ("span_attr_bool", _coerce_strict_bool),
+    FilterType.TEXT.value:    ("span_attr_str",  lambda v: v if isinstance(v, str) else str(v)),
+    FilterType.NUMBER.value:  ("span_attr_num",  lambda v: float(v)),
+    FilterType.BOOLEAN.value: ("span_attr_bool", _coerce_strict_bool),
 }
 
 class ClickHouseFilterBuilder:
@@ -105,18 +106,8 @@ class ClickHouseFilterBuilder:
         "name",  # trace name = root span name; restrict to root spans to avoid child-span false positives
     }
 
-    # System metric column mappings (frontend name -> ClickHouse column)
-    #
-    # The frontend may send either the simple column name (e.g.
-    # ``total_tokens``) or the underlying OTel / openinference attribute
-    # key (e.g. ``gen_ai.usage.total_tokens``, ``llm.token_count.total``).
-    # Both refer to the same data — the ingest writer denormalises the
-    # attribute into a top-level Int32 column. Aliasing here routes both
-    # forms through ``_build_column_condition`` (which honours
-    # ``ROOT_ONLY_SYSTEM_METRICS``) instead of falling through to
-    # ``_build_span_attr_condition`` and matching any-span (TH-4044).
+
     SYSTEM_METRIC_MAP: Dict[str, str] = {
-        "avg_latency": "latency_ms",
         "latency": "latency_ms",
         "latency_ms": "latency_ms",
         "avg_cost": "cost",
@@ -144,7 +135,8 @@ class ClickHouseFilterBuilder:
         "span_kind": "observation_type",
         "node_type": "observation_type",
         "span_id": "id",
-        "user": "end_user_id",
+        "trace_id": "trace_id",
+        "session": "trace_session_id",
         "name": "name",
         "span_name": "name",
         "trace_name": "trace_name",
@@ -498,192 +490,157 @@ class ClickHouseFilterBuilder:
         filter_value: Any,
     ) -> Optional[str]:
         """Dispatch to the appropriate condition builder based on column type."""
+    
+        # TODO: run migrations to normalize filter_op to canonical form , then remove this handling .
         if col_type != self.SPAN_ATTRIBUTE:
             filter_op = normalize_filter_op(filter_op)
-
-        # The dashboard/metrics + get_span_attributes_list endpoints can
-        # surface the same logical metric (e.g. ``gen_ai.usage.total_tokens``)
-        # under both ``system_metric`` and ``custom_attribute`` categories,
-        # so the frontend may tag the same filter as either SYSTEM_METRIC
-        # or SPAN_ATTRIBUTE depending on which list the user picked it
-        # from. When the col_id is a known SYSTEM_METRIC alias, route it
-        # through the SYSTEM_METRIC path regardless of the tag — that's
-        # where the denormalised column lives and the root-only
-        # restriction is enforced (TH-4044).
-        if col_id in self.SYSTEM_METRIC_MAP and col_type != self.SYSTEM_METRIC:
-            col_type = self.SYSTEM_METRIC
-
-        # ``user`` filters on ``end_user_id`` which is only set on the
-        # user-facing child span (not on root spans, not on LLM spans).
-        # Route through the TRACE_END_USER handler so it wraps in a
-        # ``trace_id IN (...)`` subquery — matches all spans/traces where
-        # any span belongs to the given user.
-        if col_id == "user" and col_type == self.SYSTEM_METRIC:
-            col_type = self.TRACE_END_USER
-
-        # ``user_id`` is a structural filter injected by the cross-project
-        # user-detail page (LLMTracingView ``userScopeFilter`` in user
-        # mode). The value is the ``tracer_enduser.user_id`` **string**
-        # (e.g. "9281" or "user-11771490488.8493178"), not the end_user
-        # UUID — so we cannot reuse the ``TRACE_END_USER`` handler as-is
-        # (it expects UUIDs on ``end_user_id``). Resolve the string to
-        # end-user UUIDs via a subquery on ``tracer_enduser`` and wrap
-        # the trace-id IN (...) filter around it. (TH-4436)
-        #
-        # NOTE: we match on ``col_id`` alone, not on ``col_type``, because
-        # the frontend's ``userScopeFilter`` omits ``col_type`` so it
-        # arrives as NORMAL — falling through to ``_build_column_condition``
-        # and trying to resolve ``user_id`` as a literal column on ``spans``,
-        # which doesn't exist. There is no legitimate other reading of
-        # ``col_id == "user_id"`` on these tables; always route it here.
-        if col_id == "user_id":
-            if filter_value is None or filter_value == "":
-                return None
-            values = filter_value if isinstance(filter_value, list) else [filter_value]
-            values = [str(v) for v in values if v not in (None, "")]
-            if not values:
-                return None
-            # ``user_id`` is an exact identifier, so only membership ops
-            # are meaningful. ``equals``/``in`` → traces owned by the
-            # listed users; ``not_equals``/``not_in`` → traces NOT owned
-            # by them. Other ops (``contains``, ``starts_with``, …) fall
-            # back to equals-style membership, which matches how the
-            # frontend ``userScopeFilter`` always sends ``equals``.
-            negate = filter_op in ("not_equals", "not_in", "!=")
-            outer_op = "NOT IN" if negate else "IN"
-            param = self._next_param("uid_s")
-            self._params[param] = tuple(values)
-            return (
-                f"trace_id {outer_op} ("
-                f"SELECT trace_id FROM {self.table} "
-                f"WHERE end_user_id IN ("
-                f"SELECT id FROM tracer_enduser FINAL "
-                f"WHERE user_id IN %({param})s "
-                f"AND _peerdb_is_deleted = 0"
-                f") AND _peerdb_is_deleted = 0)"
-            )
-
-        # Inverse safety: frontend may tag an eval_template_id as
-        # SYSTEM_METRIC (stale filter state, or picker category
-        # mismatch). If the col_id is a UUID that matches an eval
-        # template in the current project, route to EVAL_METRIC.
-        if col_type == self.SYSTEM_METRIC and col_id not in self.SYSTEM_METRIC_MAP:
-            try:
-                import uuid as _uuid
-
-                _uuid.UUID(str(col_id))
-                from model_hub.models.evals_metric import EvalTemplate
-
-                if EvalTemplate.no_workspace_objects.filter(
-                    id=col_id, deleted=False
-                ).exists():
-                    col_type = self.EVAL_METRIC
-            except (ValueError, AttributeError, Exception):
-                pass
-
-        if col_type == self.TRACE_END_USER:
-            # `end_user_id` is only set on the user-facing child span, not
-            # the root span. Wrap the equality in a subquery so the trace
-            # matches if ANY of its spans points at one of the end-users.
-            if filter_value is None:
-                return None
-            ids = filter_value if isinstance(filter_value, list) else [filter_value]
-            ids = [str(v) for v in ids if v]
-            if not ids:
-                return None
-            param = self._next_param("eu")
-            self._params[param] = tuple(ids)
-            return (
-                f"trace_id IN ("
-                f"SELECT trace_id FROM {self.table} "
-                f"WHERE end_user_id IN %({param})s "
-                f"AND _peerdb_is_deleted = 0)"
-            )
 
         if col_type == self.SPAN_ATTRIBUTE:
             return self._build_span_attr_condition(
                 col_id, filter_type, filter_op, filter_value
             )
-
-        if col_type == self.SYSTEM_METRIC:
-            # project_id is a root-span column — filter it directly on the
-            # outer query instead of wrapping in a trace_id subquery (which
-            # the generic SYSTEM_METRIC path below does for child-span
-            # columns like `model` or `cost`). Wrapping is unnecessary here
-            # and also breaks in org-scoped mode where the builder params
-            # use `project_ids`, not `project_id`.
-            if col_id == "project_id":
-                return self._build_column_condition(
-                    "project_id", filter_type, filter_op, filter_value
-                )
-
-            if col_id in self.VOICE_SYSTEM_METRIC_EXPRS:
-                expr = self.VOICE_SYSTEM_METRIC_EXPRS[col_id]
-                inner = self._build_expr_condition(expr, filter_op, filter_value)
-            elif col_id in self.VOICE_SYSTEM_METRIC_STR_MAP:
-                # String voice metrics stored in span_attr_str
-                attr_key = self.VOICE_SYSTEM_METRIC_STR_MAP[col_id]
-                return self._build_span_attr_condition(
-                    attr_key, "text", filter_op, filter_value
-                )
-            elif col_id in self.VOICE_SYSTEM_METRIC_STR_EXPRS:
-                expr = self.VOICE_SYSTEM_METRIC_STR_EXPRS[col_id]
-                inner = self._build_expr_condition(expr, filter_op, filter_value)
-            elif col_id in self.SYSTEM_METRIC_MAP:
-                ch_col = self.SYSTEM_METRIC_MAP[col_id]
-                inner = self._build_column_condition(
-                    ch_col, filter_type, filter_op, filter_value
-                )
-            else:
-                # Unknown system metric — treat as span attribute
-                return self._build_span_attr_condition(
-                    col_id, filter_type, filter_op, filter_value
-                )
-            if not inner:
-                return None
-            # In span-list mode the caller wants the filter to apply to
-            # each span row directly — no trace-level expansion.
-            if self.query_mode == self.QUERY_MODE_SPAN:
-                return inner
-            # Trace-list mode: wrap in trace_id subquery so filters on
-            # child-span columns (model, etc.) match the parent trace.
-            # For numeric metrics that the trace list renders from the
-            # root span (tokens / cost / latency), restrict the subquery
-            # to root spans so the filter result matches the displayed
-            # value — see ROOT_ONLY_SYSTEM_METRICS for context (TH-4044).
-            # Check both the original col_id and the mapped ClickHouse
-            # column so OTel attribute aliases (e.g.
-            # ``gen_ai.usage.total_tokens``) are caught.
-            mapped_col = self.SYSTEM_METRIC_MAP.get(col_id)
-            is_root_only = col_id in self.ROOT_ONLY_SYSTEM_METRICS or (
-                col_id != "span_name"
-                and mapped_col is not None
-                and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS
+        elif col_type == self.SYSTEM_METRIC:
+            return self._build_system_metric_condition(
+                col_id, filter_type, filter_op, filter_value
             )
-            root_clause = (
-                "AND (parent_span_id IS NULL OR parent_span_id = '') "
-                if is_root_only
-                else ""
-            )
-            return (
-                f"trace_id IN ("
-                f"SELECT trace_id FROM {self.table} "
-                f"WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0 "
-                f"{root_clause}"
-                f"AND {inner})"
-            )
-
-        if col_type == self.EVAL_METRIC:
+        elif col_type == self.EVAL_METRIC:
             return self._build_eval_condition(col_id, filter_op, filter_value)
-
-        if col_type == self.ANNOTATION:
+        elif col_type == self.ANNOTATION:
             return self._build_annotation_condition(
                 col_id, filter_type, filter_op, filter_value
             )
+        else:
+            raise ValueError(f"Unsupported col_type: {col_type!r}")
 
-        # Default: NORMAL column -- direct column reference
-        return self._build_column_condition(
-            col_id, filter_type, filter_op, filter_value
+
+    _ENDUSER_STRING_COLUMNS = {
+        "user_id": "user_id",
+        "user": "user_id",
+        "user_id_type": "user_id_type",
+    }
+
+    def _build_enduser_string_subquery(
+        self,
+        enduser_column: str,
+        filter_op: Optional[str],
+        filter_value: Any,
+    ) -> Optional[str]:
+        """Resolve an end-user string field (user_id / user_id_type) on
+        tracer_enduser, then map to end_user_id on spans."""
+
+        if filter_op in NO_VALUE_OPS:
+            comparison_op = "=" if filter_op == "is_null" else "!="
+            return (
+                f"trace_id IN ("
+                f"SELECT trace_id FROM {self.table} "
+                f"WHERE end_user_id {comparison_op} toUUID('00000000-0000-0000-0000-000000000000') "
+                f"AND _peerdb_is_deleted = 0)"
+            )
+
+        if filter_value is None or filter_value == "":
+            return None
+        values = filter_value if isinstance(filter_value, list) else [filter_value]
+        values = [str(v) for v in values if v not in (None, "")]
+        if not values:
+            return None
+
+        NEGATE_TO_POSITIVE = {
+            "not_equals": "equals",
+            "!=": "equals",
+            "not_in": "in",
+            "not_contains": "contains",
+        }
+        negate = filter_op in NEGATE_TO_POSITIVE
+        inner_op = NEGATE_TO_POSITIVE.get(filter_op, filter_op)
+        outer_op = "NOT IN" if negate else "IN"
+
+        inner_value = values if inner_op == "in" else values[0]
+        inner = self._build_column_condition(
+            enduser_column, "text", inner_op, inner_value
+        )
+        if not inner:
+            return None
+
+        return (
+            f"trace_id {outer_op} ("
+            f"SELECT trace_id FROM {self.table} "
+            f"WHERE end_user_id IN ("
+            f"SELECT id FROM tracer_enduser FINAL "
+            f"WHERE {inner} "
+            f"AND _peerdb_is_deleted = 0 AND deleted = 0"
+            f") AND _peerdb_is_deleted = 0)"
+        )
+
+    def _build_system_metric_condition(
+        self,
+        col_id: str,
+        filter_type: Optional[str],
+        filter_op: Optional[str],
+        filter_value: Any,
+    ) -> Optional[str]:
+        """SYSTEM_METRIC dispatch: voice metrics, denormalised columns, and
+        the ``trace_id IN (...)`` wrap for trace-list mode.
+        """
+
+        if col_id in self._ENDUSER_STRING_COLUMNS:
+            return self._build_enduser_string_subquery(
+                self._ENDUSER_STRING_COLUMNS[col_id], filter_op, filter_value
+            )
+
+        if col_id in self.VOICE_SYSTEM_METRIC_EXPRS:
+            expr = self.VOICE_SYSTEM_METRIC_EXPRS[col_id]
+            inner = self._build_expr_condition(expr, filter_op, filter_value)
+        elif col_id in self.VOICE_SYSTEM_METRIC_STR_MAP:
+            # String voice metrics stored in span_attr_str
+            attr_key = self.VOICE_SYSTEM_METRIC_STR_MAP[col_id]
+            return self._build_span_attr_condition(
+                attr_key, "text", filter_op, filter_value
+            )
+        elif col_id in self.VOICE_SYSTEM_METRIC_STR_EXPRS:
+            expr = self.VOICE_SYSTEM_METRIC_STR_EXPRS[col_id]
+            inner = self._build_expr_condition(expr, filter_op, filter_value)
+        elif col_id in self.SYSTEM_METRIC_MAP:
+            ch_col = self.SYSTEM_METRIC_MAP[col_id]
+            inner = self._build_column_condition(
+                ch_col, filter_type, filter_op, filter_value
+            )
+        else:
+            # Unknown system metric — treat as span attribute
+            return self._build_span_attr_condition(
+                col_id, filter_type, filter_op, filter_value
+            )
+        if not inner:
+            return None
+
+        if self.query_mode == self.QUERY_MODE_SPAN:
+            return inner
+        # Trace-list mode: wrap in trace_id subquery so filters on
+        # child-span columns (model, etc.) match the parent trace. For
+        # numeric metrics that the trace list renders from the root span
+        # (tokens / cost / latency), restrict the subquery to root spans
+        # so the filter result matches the displayed value — see
+        # ROOT_ONLY_SYSTEM_METRICS for context (TH-4044). Check both the
+        # original col_id and the mapped ClickHouse column so OTel
+        # attribute aliases (e.g. ``gen_ai.usage.total_tokens``) are caught.
+        mapped_col = self.SYSTEM_METRIC_MAP.get(col_id)
+        is_root_only = col_id in self.ROOT_ONLY_SYSTEM_METRICS or (
+            col_id != "span_name"
+            and mapped_col is not None
+            and mapped_col in self.ROOT_ONLY_SYSTEM_METRICS
+        )
+
+        # TODO: make sure parent_span_id is not empty string in the data and remove the `OR parent_span_id = ''` check
+        root_clause = (
+            "AND (parent_span_id IS NULL OR parent_span_id = '') "
+            if is_root_only
+            else ""
+        )
+        return (
+            f"trace_id IN ("
+            f"SELECT trace_id FROM {self.table} "
+            f"WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0 "
+            f"{root_clause}"
+            f"AND {inner})"
         )
 
     def _build_span_attr_condition(
@@ -714,6 +671,7 @@ class ClickHouseFilterBuilder:
             exists_predicate,
             filter_op,
             normalized_value,
+            case_insensitive=(normalized_filter_type == FilterType.TEXT.value),
         )
         if not inner_predicate:
             return None
@@ -788,9 +746,24 @@ class ClickHouseFilterBuilder:
         exists_predicate: str,
         filter_op: str,
         normalized_value: Any,
+        case_insensitive: bool = False,
     ) -> Optional[str]:
-        """Emit the row-level predicate; negation ops require key present."""
+        """Emit the row-level predicate; negation ops require key present.
+
+        ``case_insensitive`` is set for text-typed span attributes:
+        equality/in collapse both sides via ``lower(...)``; LIKE-family ops
+        switch to ``ILIKE``.
+        """
         column_access = f"{map_column}['{attribute_key}']"
+        eq_lhs = f"lower({column_access})" if case_insensitive else column_access
+        like_op = "ILIKE" if case_insensitive else "LIKE"
+        not_like_op = "NOT ILIKE" if case_insensitive else "NOT LIKE"
+
+        def fold_case(value: Any) -> Any:
+            """Lowercase string values when the column is case-insensitive."""
+            if not case_insensitive:
+                return value
+            return value.lower() if isinstance(value, str) else value
 
         if filter_op == "is_null":
             return f"NOT {exists_predicate}"
@@ -799,38 +772,38 @@ class ClickHouseFilterBuilder:
 
         if filter_op == "equals":
             param = self._next_param("attr")
-            self._params[param] = normalized_value
-            return f"{exists_predicate} AND {column_access} = %({param})s"
+            self._params[param] = fold_case(normalized_value)
+            return f"{exists_predicate} AND {eq_lhs} = %({param})s"
         if filter_op == "not_equals":
             param = self._next_param("attr")
-            self._params[param] = normalized_value
-            return f"{exists_predicate} AND {column_access} != %({param})s"
+            self._params[param] = fold_case(normalized_value)
+            return f"{exists_predicate} AND {eq_lhs} != %({param})s"
 
         if filter_op == "in":
             param = self._next_param("attr")
-            self._params[param] = tuple(normalized_value)
-            return f"{exists_predicate} AND {column_access} IN %({param})s"
+            self._params[param] = tuple(fold_case(v) for v in normalized_value)
+            return f"{exists_predicate} AND {eq_lhs} IN %({param})s"
         if filter_op == "not_in":
             param = self._next_param("attr")
-            self._params[param] = tuple(normalized_value)
-            return f"{exists_predicate} AND {column_access} NOT IN %({param})s"
+            self._params[param] = tuple(fold_case(v) for v in normalized_value)
+            return f"{exists_predicate} AND {eq_lhs} NOT IN %({param})s"
 
         if filter_op == "contains":
             param = self._next_param("attr")
             self._params[param] = f"%{normalized_value}%"
-            return f"{exists_predicate} AND {column_access} LIKE %({param})s"
+            return f"{exists_predicate} AND {column_access} {like_op} %({param})s"
         if filter_op == "not_contains":
             param = self._next_param("attr")
             self._params[param] = f"%{normalized_value}%"
-            return f"{exists_predicate} AND {column_access} NOT LIKE %({param})s"
+            return f"{exists_predicate} AND {column_access} {not_like_op} %({param})s"
         if filter_op == "starts_with":
             param = self._next_param("attr")
             self._params[param] = f"{normalized_value}%"
-            return f"{exists_predicate} AND {column_access} LIKE %({param})s"
+            return f"{exists_predicate} AND {column_access} {like_op} %({param})s"
         if filter_op == "ends_with":
             param = self._next_param("attr")
             self._params[param] = f"%{normalized_value}"
-            return f"{exists_predicate} AND {column_access} LIKE %({param})s"
+            return f"{exists_predicate} AND {column_access} {like_op} %({param})s"
 
         if filter_op == "between":
             param_lo = self._next_param("lo")
@@ -868,11 +841,21 @@ class ClickHouseFilterBuilder:
 
         raise ValueError(f"Unhandled filter_op {filter_op!r}")
 
-    # Columns whose stored values vary in case across ingest paths — OTel
-    # writes lowercase ('ok'/'error'/'unset'), older provider integrations
-    # wrote uppercase, and the TraceFilterPanel's static enum choices send
-    # uppercase labels. Matches must be case-insensitive on both sides.
-    _CASE_INSENSITIVE_COLUMNS = {"status", "observation_type"}
+
+    _CASE_INSENSITIVE_COLUMNS = {
+        "status",
+        "observation_type",
+        "name",
+        "trace_name",
+        "model",
+        "provider",
+    }
+
+    _NULLABLE_UUID_COLUMNS = frozenset({
+        "end_user_id",
+        "session_id",
+        "trace_session_id",
+    })
 
     def _build_column_condition(
         self,
@@ -883,24 +866,32 @@ class ClickHouseFilterBuilder:
     ) -> Optional[str]:
         """Build a condition for a direct column reference."""
         param = self._next_param("col")
-        ci = column in self._CASE_INSENSITIVE_COLUMNS
+        case_insensitive = column in self._CASE_INSENSITIVE_COLUMNS
 
         if filter_op == "is_null":
+            if column in self._NULLABLE_UUID_COLUMNS:
+                return f"{column} IS NULL"
             return f"({column} IS NULL OR {column} = '')"
         elif filter_op == "is_not_null":
+            if column in self._NULLABLE_UUID_COLUMNS:
+                return f"{column} IS NOT NULL"
             return f"({column} IS NOT NULL AND {column} != '')"
         elif filter_op == "contains":
             self._params[param] = f"%{filter_value}%"
-            return f"{column} LIKE %({param})s"
+            like_op = "ILIKE" if case_insensitive else "LIKE"
+            return f"{column} {like_op} %({param})s"
         elif filter_op == "not_contains":
             self._params[param] = f"%{filter_value}%"
-            return f"{column} NOT LIKE %({param})s"
+            like_op = "NOT ILIKE" if case_insensitive else "NOT LIKE"
+            return f"{column} {like_op} %({param})s"
         elif filter_op == "starts_with":
             self._params[param] = f"{filter_value}%"
-            return f"{column} LIKE %({param})s"
+            like_op = "ILIKE" if case_insensitive else "LIKE"
+            return f"{column} {like_op} %({param})s"
         elif filter_op == "ends_with":
             self._params[param] = f"%{filter_value}"
-            return f"{column} LIKE %({param})s"
+            like_op = "ILIKE" if case_insensitive else "LIKE"
+            return f"{column} {like_op} %({param})s"
         elif filter_op == "between" and isinstance(filter_value, list):
             p_lo = self._next_param("lo")
             p_hi = self._next_param("hi")
@@ -921,7 +912,7 @@ class ClickHouseFilterBuilder:
             # value IN [] matches nothing.
             if not values:
                 return "0 = 1"
-            if ci:
+            if case_insensitive:
                 values = [str(v).lower() for v in values]
                 self._params[param] = tuple(values)
                 return f"lower({column}) IN %({param})s"
@@ -934,7 +925,7 @@ class ClickHouseFilterBuilder:
             # value NOT IN [] should not restrict results.
             if not values:
                 return "1 = 1"
-            if ci:
+            if case_insensitive:
                 values = [str(v).lower() for v in values]
                 self._params[param] = tuple(values)
                 return f"lower({column}) NOT IN %({param})s"
@@ -944,7 +935,11 @@ class ClickHouseFilterBuilder:
             op = self._sql_op(filter_op)
             if op is None:
                 return "0 = 1"
-            if ci and op in ("=", "!=") and isinstance(filter_value, str):
+            if (
+                case_insensitive
+                and op in ("=", "!=")
+                and isinstance(filter_value, str)
+            ):
                 self._params[param] = filter_value.lower()
                 return f"lower({column}) {op} %({param})s"
             self._params[param] = filter_value

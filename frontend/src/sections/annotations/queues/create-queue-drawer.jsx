@@ -384,7 +384,7 @@ export default function CreateQueueDrawer({
                           >
                             Auto-assign items to all annotators
                           </Typography>
-                          <Typography variant="caption" color="text.disabled">
+                          <Typography variant="caption" color="text.secondary">
                             When on, all annotators are assigned to every item
                             and anyone can annotate any item
                           </Typography>
@@ -491,7 +491,7 @@ export default function CreateQueueDrawer({
                 {!advancedOpen && (
                   <Typography
                     variant="caption"
-                    color="text.disabled"
+                    color="text.secondary"
                     sx={{ ml: 0.5 }}
                   >
                     Assignment strategy, reservation timeout, review

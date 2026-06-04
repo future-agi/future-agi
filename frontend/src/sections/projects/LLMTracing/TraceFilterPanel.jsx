@@ -49,7 +49,6 @@ import { ID_ONLY_FIELDS } from "./idFields";
 // ---------------------------------------------------------------------------
 const BASE_TRACE_FILTER_FIELDS = [
   { value: "name", label: "Trace Name", type: "string" },
-  { value: "span_name", label: "Span Name", type: "string" },
   {
     value: "status",
     label: "Status",
@@ -71,10 +70,8 @@ const BASE_TRACE_FILTER_FIELDS = [
       "embedding",
     ],
   },
-  { value: "user_id", label: "User ID", type: "string" },
-  { value: "service_name", label: "Service / Trace Name", type: "string" },
+  { value: "service_name", label: "Service Name", type: "string" },
   { value: "provider", label: "Provider", type: "string" },
-  { value: "span_kind", label: "Span Kind", type: "string" },
   { value: "tag", label: "Tag", type: "string" },
 ];
 
@@ -174,7 +171,13 @@ const THUMBS_OPS = [
 
 const ANNOTATOR_OPS = [{ value: "is", label: "is" }];
 
-const ID_ONLY_OPS = [{ value: "is", label: "is" }];
+// Direct ID columns on `spans`. UUIDs don't need substring/null ops —
+// restrict to equality (canonical IN / NOT IN, multi-select on the value
+// picker).
+const ID_ONLY_OPS = [
+  { value: "in", label: "equals" },
+  { value: "not_in", label: "not equals" },
+];
 
 const ARRAY_OPS = [
   { value: "contains", label: "contains" },
@@ -313,6 +316,9 @@ const DEFAULT_OP_FOR_TYPE = {
 // Legacy string-field ops in saved views — rewrite on hydration so the menu renders.
 const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
+// Categorical / thumbs ops in saved views — reverse the save-side LEGACY_OP_ALIAS so the menu renders.
+const HYDRATE_CATEGORICAL_OP = { equals: "is", not_equals: "is_not" };
+
 const NO_VALUE_OPS = new Set([
   "is_empty",
   "is_not_empty",
@@ -331,7 +337,7 @@ const SINGLE_VALUE_OPS = new Set([
 ]);
 
 // List ops — multi-select picker.
-const LIST_VALUE_OPS = new Set(["in", "not_in"]);
+const LIST_VALUE_OPS = new Set(["in", "not_in", "is", "is_not"]);
 
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
@@ -350,6 +356,8 @@ const EXCLUDED_METRICS = new Set([
   "eval_source",
   "row_count",
   "cell_error_rate",
+  // duplicate of node_type — both map to observation_type
+  "span_kind",
 ]);
 const PROPERTY_PICKER_RENDER_LIMIT = 250;
 
@@ -463,6 +471,11 @@ function useTraceFilterProperties(
     queryFn: async () => {
       const params = {};
       if (projectId) params.project_ids = projectId;
+      // Observe filter dropdown wants per-CustomEvalConfig eval entries (so
+      // the dropdown matches the per-config columns in the trace/span list
+      // table). Default behaviour at /tracer/dashboard/metrics/ is still
+      // template-level — used by dashboards, PrimaryGraph, widget pickers.
+      params.per_eval_config = true;
       const { data } = await axios.get(endpoints.dashboard.metrics, { params });
       return data?.result?.metrics || [];
     },
@@ -1238,7 +1251,10 @@ function FilterRow({
         prop.type === "annotator"
           ? prop.type
           : normalizeFieldType(prop.type);
-      const defaultOp = DEFAULT_OP_FOR_TYPE[nt] || "equals";
+      // ID-only fields only support "is"; fallback would render blank.
+      const defaultOp = ID_ONLY_FIELDS.has(prop.id)
+        ? "is"
+        : DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
@@ -1494,10 +1510,7 @@ function FilterRow({
         source={source}
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={
-          ID_ONLY_FIELDS.has(filter.field) ||
-          SINGLE_VALUE_OPS.has(safeOperator)
-        }
+        singleSelect={SINGLE_VALUE_OPS.has(safeOperator)}
         onChange={(newVal) => updateRow({ value: newVal })}
       />
     );
@@ -1646,9 +1659,7 @@ const TraceFilterPanel = ({
       return {
         id: f.value,
         name: f.label,
-        // trace_id / span_id are direct column filters — omit category so
-        // col_type is not injected (the backend handles them without it).
-        ...(!ID_ONLY_FIELDS.has(f.value) && { category: "system" }),
+        category: "system",
         type: f.type === "enum" ? "string" : f.type,
         ...(f.choices ? { choices: f.choices } : {}),
       };
@@ -1745,16 +1756,17 @@ const TraceFilterPanel = ({
         const enriched = currentFilters.map((f) => {
           const prop = propertyById[f.field];
           const fieldType = f.fieldType || prop?.type || "string";
-          // ID-only fields (trace_id / span_id) bypass the string-op
-          // rewrite — ID_ONLY_OPS = [{ value: "is" }] so anything other
-          // than "is" renders blank in the operator Select.
+          // Translate wire ops to the picker's MenuItem values, per fieldType.
           const hydratedOp = ID_ONLY_FIELDS.has(f.field)
             ? "is"
-            : (fieldType === "string" || fieldType === "text") &&
-                HYDRATE_STRING_OP[f.operator]
-              ? HYDRATE_STRING_OP[f.operator]
-              : f.operator;
-          // Scalar legacy `equals` value → array for the multi-select picker.
+            : (fieldType === "categorical" || fieldType === "thumbs") &&
+                HYDRATE_CATEGORICAL_OP[f.operator]
+              ? HYDRATE_CATEGORICAL_OP[f.operator]
+              : (fieldType === "string" || fieldType === "text") &&
+                  HYDRATE_STRING_OP[f.operator]
+                ? HYDRATE_STRING_OP[f.operator]
+                : f.operator;
+          // Scalar value → array when rewritten op uses a multi-select picker.
           let value = f.value;
           if (
             hydratedOp !== f.operator &&

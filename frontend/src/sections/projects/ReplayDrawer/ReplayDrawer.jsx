@@ -12,9 +12,7 @@ import { useReplaySessionsStoreShallow } from "../SessionsView/ReplaySessions/st
 import { OBSERVE_TABS } from "../common";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
 
-export default function ReplayDrawer({ currentTab, projectDetail, gridApi }) {
-  const observeTabId = currentTab?.id;
-
+export default function ReplayDrawer({ activeRoute, projectDetail, gridApi }) {
   const {
     openCreateScenarios,
     setOpenCreateScenarios,
@@ -36,7 +34,7 @@ export default function ReplayDrawer({ currentTab, projectDetail, gridApi }) {
   const handleCreateScenario = (scenarioId) => {
     setOpenCreateScenarios(false);
     const module =
-      observeTabId === OBSERVE_TABS.LLM_TRACING
+      activeRoute === OBSERVE_TABS.LLM_TRACING
         ? REPLAY_MODULES?.TRACES
         : REPLAY_MODULES?.SESSIONS;
     setReplayType(scenarioId);
@@ -88,9 +86,7 @@ export default function ReplayDrawer({ currentTab, projectDetail, gridApi }) {
 }
 
 ReplayDrawer.propTypes = {
-  currentTab: {
-    id: PropTypes.string.isRequired,
-  },
+  activeRoute: PropTypes.string,
   projectDetail: PropTypes.object.isRequired,
   gridApi: PropTypes.object.isRequired,
 };

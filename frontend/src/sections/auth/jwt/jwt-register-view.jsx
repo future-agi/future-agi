@@ -22,20 +22,18 @@ import { trackTwitterSignup } from "src/utils/twitterAds";
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
 import "./register.css";
-import { useGoogleReCaptcha } from "react-google-recaptcha-v3";
+import { getRecaptchaToken } from "src/utils/recaptchaService";
 import PasswordSentView from "./password-sent-view";
 import { useBoolean } from "src/hooks/use-boolean";
 import logger from "src/utils/logger";
 import SvgColor from "src/components/svg-color";
 import { RouterLink } from "src/routes/components";
 import RegionSelect from "src/components/RegionSelect";
-import { GOOGLE_SITE_KEY } from "src/config-global";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
-  const { executeRecaptcha } = useGoogleReCaptcha();
   const [errorMsg, setErrorMsg] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
   const password = useBoolean();
@@ -121,7 +119,16 @@ export default function JwtRegisterView() {
 
   const handleSignup = async (data) => {
     persistReturnTo();
-    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("signup") : "";
+    let token;
+    try {
+      token = await getRecaptchaToken("signup");
+    } catch (err) {
+      enqueueSnackbar({
+        message: "reCAPTCHA not ready. Please try again",
+        variant: "error",
+      });
+      return;
+    }
     setErrorMsg("");
     try {
       setLoading(true);
@@ -193,7 +200,16 @@ export default function JwtRegisterView() {
 
   const handleLogin = async (data) => {
     persistReturnTo();
-    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
+    let token;
+    try {
+      token = await getRecaptchaToken("login");
+    } catch (err) {
+      enqueueSnackbar({
+        message: "reCAPTCHA not ready. Please try again",
+        variant: "error",
+      });
+      return;
+    }
 
     trackEvent(Events.loginClicked, {
       [PropertyName.status]: true,
@@ -238,13 +254,7 @@ export default function JwtRegisterView() {
   };
 
   const onSubmit = handleSubmit(async (data) => {
-    if (GOOGLE_SITE_KEY && !executeRecaptcha) {
-      enqueueSnackbar({
-        message: "reCAPTCHA not ready. Please try again",
-        variant: "error",
-      });
-      return;
-    }
+   
     (await registerSuccess) ? handleLogin(data) : handleSignup(data);
   });
 

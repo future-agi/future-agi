@@ -52,7 +52,7 @@ export default function Thread({ data = [], sx }) {
               {item?.subtitle ? (
                 <Typography
                   typography={"s2"}
-                  color={"text.disabled"}
+                  color={"text.secondary"}
                   fontWeight={"fontWeightRegular"}
                 >
                   {item?.subtitle}

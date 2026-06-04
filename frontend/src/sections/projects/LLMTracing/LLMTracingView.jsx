@@ -956,6 +956,12 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const projectSource = isUserMode
     ? PROJECT_SOURCE.OBSERVE
     : projectDetail?.source;
+
+  const effectiveViewMode =
+    projectSource === PROJECT_SOURCE.SIMULATOR && viewMode !== "graph"
+      ? "graph"
+      : viewMode;
+
   const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
 
   const [isPrimaryFilterOpen, setIsPrimaryFilterOpen] = useUrlState(
@@ -1111,6 +1117,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             {
               columnId: "user_id",
               filterConfig: {
+                colType: "SYSTEM_METRIC",
                 filterType: "text",
                 filterOp: "equals",
                 filterValue: userIdForUserMode,
@@ -1173,7 +1180,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       : primarySpanValidatedFilters,
     {
       enabled:
-        !isUserMode && (viewMode === "agentGraph" || viewMode === "agentPath"),
+        !isUserMode &&
+        (effectiveViewMode === "agentGraph" ||
+          effectiveViewMode === "agentPath"),
     },
   );
 
@@ -1191,7 +1200,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       enabled:
         !isUserMode &&
         showCompare &&
-        (viewMode === "agentGraph" || viewMode === "agentPath"),
+        (effectiveViewMode === "agentGraph" ||
+          effectiveViewMode === "agentPath"),
     },
   );
 
@@ -3143,7 +3153,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         >
           {/* Primary Graph — dual-axis bars + line. Hidden in user mode
               (PrimaryGraph requires observeId for its query). */}
-          {viewMode === "graph" && !isUserMode && (
+          {effectiveViewMode === "graph" && !isUserMode && (
             <>
               <PrimaryGraph
                 filters={
@@ -3216,7 +3226,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           )}
 
           {/* Agent Graph — DAG visualization */}
-          {viewMode === "agentGraph" && (
+          {effectiveViewMode === "agentGraph" && (
             <>
               <Box sx={{ mx: 2, my: 1 }}>
                 {showCompare && (
@@ -3296,7 +3306,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
           )}
 
           {/* Agent Path — sequential flow */}
-          {viewMode === "agentPath" && (
+          {effectiveViewMode === "agentPath" && (
             <>
               <Box>
                 {showCompare && (
@@ -3495,7 +3505,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onAddCustomColumn={() => setOpenCustomColumn(true)}
               cellHeight={cellHeight}
               setCellHeight={setCellHeight}
-              viewMode={viewMode}
+              viewMode={effectiveViewMode}
               onViewModeChange={setViewMode}
               hasEvalFilter={hasEvalFilter}
               onToggleEvalFilter={() => setHasEvalFilter(!hasEvalFilter)}

@@ -20,6 +20,9 @@ from typing import Any, Dict, List, Optional, Tuple
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
+#TODO: switch this to "start_time" once we create an index on that column .
+TIME_FILTER_COLUMN = "created_at"  # Options: "created_at" | "start_time"
+
 
 class TraceListQueryBuilder(BaseQueryBuilder):
     """Build queries for the paginated trace list view.
@@ -209,8 +212,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND created_at >= %(start_date)s - INTERVAL 1 DAY
-          AND start_time >= %(start_date)s
-          AND start_time < %(end_date)s
+          AND {TIME_FILTER_COLUMN} >= %(start_date)s
+          AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
           {search_fragment}
           {filter_fragment}
@@ -311,14 +314,15 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # prunes old partitions. Drops 7d count from 716ms/3.5M rows to
         # 255ms/306K rows on a 3.5M-span project, without dropping any
         # rows that legitimately match the user's `start_time` window.
+
         query = f"""
         SELECT uniq(trace_id) AS total
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND created_at >= %(start_date)s - INTERVAL 1 DAY
-          AND start_time >= %(start_date)s
-          AND start_time < %(end_date)s
+          AND {TIME_FILTER_COLUMN} >= %(start_date)s
+          AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
           {search_fragment}
           {filter_fragment}
@@ -493,6 +497,79 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         GROUP BY trace_id, label_id
         """
         return query, params
+
+    def build_user_id_query(
+        self, trace_ids: List[str]
+    ) -> Tuple[str, Dict[str, Any]]:
+        """Fetch user_id strings from ClickHouse for a page of trace IDs.
+
+        Uses enduser_dict to resolve end_user_id UUIDs to user_id strings
+        in a single query. Returns one user_id per trace (uses `any()`
+        aggregation to pick the first non-null value across all spans).
+        """
+        if not trace_ids:
+            return "", {}
+
+        params: Dict[str, Any] = {
+            **self.params,
+            "user_trace_ids": tuple(trace_ids),
+        }
+
+        query = f"""
+        SELECT
+            trace_id,
+            dictGetOrDefault('enduser_dict', 'user_id', end_user_id, '') AS user_id
+        FROM (
+            SELECT
+                trace_id,
+                any(end_user_id) AS end_user_id
+            FROM {self.TABLE}
+            PREWHERE trace_id IN %(user_trace_ids)s
+            WHERE {self.project_filter_sql()}
+              AND _peerdb_is_deleted = 0
+              AND end_user_id IS NOT NULL
+              AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000')
+            GROUP BY trace_id
+        )
+        WHERE user_id != ''
+        """
+        return query, params
+
+    def resolve_user_ids(
+        self, trace_ids: List[str], analytics
+    ) -> Dict[str, str]:
+        """Resolve user_id strings for a page of trace IDs.
+
+        Single-query lookup using ClickHouse enduser_dict:
+        - Queries ClickHouse for user_id strings via dictionary lookup (~50-100ms)
+        - No PostgreSQL round-trip needed
+
+        Args:
+            trace_ids: List of trace ID strings to resolve users for.
+            analytics: Analytics service instance for executing CH queries.
+
+        Returns:
+            Dict mapping trace_id → user_id string.
+        """
+        if not trace_ids:
+            return {}
+
+        user_query, user_params = self.build_user_id_query(trace_ids)
+        if not user_query:
+            return {}
+
+        result = analytics.execute_ch_query(
+            user_query, user_params, timeout_ms=10000
+        )
+
+        # Build trace_id → user_id mapping
+        user_id_map = {
+            str(row.get("trace_id", "")): row.get("user_id")
+            for row in result.data
+            if row.get("user_id")
+        }
+
+        return user_id_map
 
     @staticmethod
     def pivot_annotation_results(

@@ -1997,46 +1997,6 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             except EndUser.DoesNotExist:
                 raise Exception("User not found for the given user_id")
 
-        # Resolve in-filter user_id (string) → end_user_id UUIDs. Spans table
-        # keys end-users by UUID; a raw `user_id = 'customer_001'` clause
-        # references a non-existent CH column and crashes the query. Rewrite
-        # the filter to `end_user_id` scoped to this project + organization.
-        _resolved: List[Dict] = []
-        for _f in filters:
-            _col, _cfg = FilterEngine._normalize_filter_params(_f)
-            _col_type = _cfg.get("col_type", "NORMAL")
-            if _col == "user_id" and _col_type == "NORMAL":
-                _val = _cfg.get("filter_value")
-                _vals = _val if isinstance(_val, list) else [_val]
-                _vals = [v for v in _vals if v]
-                if not _vals:
-                    _resolved.append(_f)
-                    continue
-                _ids = [
-                    str(u)
-                    for u in EndUser.objects.filter(
-                        user_id__in=_vals,
-                        organization=request.user.organization,
-                        project_id=project_id,
-                        deleted=False,
-                    ).values_list("id", flat=True)
-                ]
-                if not _ids:
-                    _ids = ["00000000-0000-0000-0000-000000000000"]
-                _resolved.append(
-                    {
-                        "column_id": "end_user_id",
-                        "filter_config": {
-                            "col_type": "NORMAL",
-                            "filter_type": "text",
-                            "filter_op": "in",
-                            "filter_value": _ids,
-                        },
-                    }
-                )
-                continue
-            _resolved.append(_f)
-        filters = _resolved
 
         # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
         eval_config_ids = []
@@ -2226,6 +2186,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 "status": row.get("status"),
                 "latency_ms": row.get("latency_ms"),
                 "total_tokens": row.get("total_tokens"),
+                "prompt_tokens": row.get("prompt_tokens"),
+                "completion_tokens": row.get("completion_tokens"),
+                "model": row.get("model"),
+                "provider": row.get("provider"),
                 "cost": round(cost, 6) if cost else 0,
             }
 
