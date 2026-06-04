@@ -1555,14 +1555,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             user_id = request.query_params.get("user_id") or request.query_params.get(
                 "userId"
             )
-            if not project_id:
-                raise Exception("Project id is required")
-
-            project = Project.objects.get(
-                id=project_id,
-                organization=getattr(self.request, "organization", None)
-                or self.request.user.organization,
-            )
+            
+            organization = getattr(self.request, "organization", None) or self.request.user.organization
+            
+            project = None
+            if project_id:
+                project = Project.objects.get(
+                    id=project_id,
+                    organization=organization,
+                )
 
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
@@ -1605,10 +1606,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
             # Base query with annotations
             base_query = ObservationSpan.objects.filter(
-                project_id=project_id,
-                project__organization=getattr(request, "organization", None)
-                or request.user.organization,
+                project__organization=organization,
             ).select_related("trace")
+            if project_id:
+                base_query = base_query.filter(project_id=project_id)
 
             if end_user_id:
                 base_query = base_query.filter(end_user_id=end_user_id)
