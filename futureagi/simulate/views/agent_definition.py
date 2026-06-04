@@ -258,17 +258,19 @@ class CreateAgentDefinitionView(APIView):
             replay_session_id = validated.get("replay_session_id")
             observability_provider = None
 
+            _api_fetch_providers = [
+                ProviderChoices.VAPI,
+                ProviderChoices.RETELL,
+                ProviderChoices.OTHERS,
+            ]
             if (
                 enable_observability
                 and assistant_id != ""
                 and api_key != ""
-                and provider
-                in [
-                    ProviderChoices.VAPI,
-                    ProviderChoices.RETELL,
-                    ProviderChoices.OTHERS,
-                ]
+                and provider in _api_fetch_providers
             ):
+                # API-fetch observability (Vapi/Retell pull logs via their API):
+                # needs creds to fetch.
                 observability_provider = create_observability_provider(
                     enabled=True,
                     user_id=user_id,
@@ -277,6 +279,27 @@ class CreateAgentDefinitionView(APIView):
                     project_name=project_name,
                     provider=provider,
                 )
+            elif enable_observability and provider not in _api_fetch_providers:
+                # Trace-AI / push-based voice observability (e.g. LiveKit,
+                # ElevenLabs): the customer's agent is instrumented with the
+                # traceai-* SDK and PUSHES spans, so we only need to wire the
+                # agent-def -> ObservabilityProvider -> Project link (no fetch
+                # creds required). The ProviderSpec registry maps the client
+                # provider string (e.g. "livekit_bridge") to its canonical
+                # observability provider ("livekit") (TH-5642).
+                from simulate.providers import get_spec
+
+                _spec = get_spec(provider)
+                _obs_key = _spec.observability_key if _spec else None
+                if _obs_key:
+                    observability_provider = create_observability_provider(
+                        enabled=True,
+                        user_id=user_id,
+                        organization=organization,
+                        workspace=workspace,
+                        project_name=project_name,
+                        provider=_obs_key,
+                    )
 
             # Create agent definition — livekit_* fields are NOT model
             # columns, they're routed to ProviderCredentials below.

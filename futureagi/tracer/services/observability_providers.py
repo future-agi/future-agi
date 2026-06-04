@@ -82,6 +82,13 @@ class ObservabilityService:
             return ObservabilityService._fetch_eleven_labs_logs(
                 provider, start_time, end_time
             )
+        elif provider.provider == ProviderChoices.LIVEKIT:
+            # LiveKit observability is PUSH-based: the customer's agent is
+            # instrumented with the traceai-livekit SDK and pushes spans
+            # directly to the project, so there is nothing to PULL here. Skip
+            # gracefully instead of raising (which would log a fetch failure
+            # every poll cycle for a LiveKit agent definition). (TH-5642)
+            return []
         else:
             raise NotImplementedError(f"Provider {provider.provider} not implemented.")
 
