@@ -63,6 +63,11 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "traces_count": "traces_count",
     }
 
+    # Columns that require a session-scoped subquery because they are
+    # set on child spans, not root spans. The main query restricts to
+    # root spans only, so filtering these directly would miss matches.
+    SUBQUERY_FILTER_COLS = {"end_user_id"}
+
     def __init__(
         self,
         project_id: str | None = None,
@@ -80,8 +85,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.filters = filters or []
         self.sort_params = sort_params or []
         self.user_id = user_id
-        self.start_date: datetime | None = None
-        self.end_date: datetime | None = None
+        self.start_date: Optional[datetime] = None
+        self.end_date: Optional[datetime] = None
+        # Populated by _extract_end_user_ids() during build
+        self._end_user_ids: Optional[List[str]] = None
 
     def build(self) -> tuple[str, dict[str, Any]]:
         """Build the session list query.
@@ -93,7 +100,12 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
-        # Translate span-level filters (exclude session-level aggregate filters)
+        # Extract end_user_id filters — these need a subquery because
+        # end_user_id is set on child spans, not root spans.
+        self._end_user_ids = self._extract_end_user_ids()
+
+        # Translate span-level filters (exclude session-level aggregate
+        # filters AND end_user_id filters handled via subquery)
         span_filters = self._extract_span_filters()
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
@@ -118,8 +130,15 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.params["limit"] = self.page_size + 1  # +1 for has_more
         self.params["offset"] = offset
 
+        # Optional user filter (legacy path via self.user_id kwarg)
+        user_clause = ""
+        if self.user_id:
+            self.params["user_id"] = self.user_id
+            user_clause = "AND end_user_id = %(user_id)s"
+
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
+        end_user_clause = self._build_end_user_subquery()
 
         # P3b step1.5 (DESIGN §3 / id_remap_sql): `_session_from_where` ALWAYS
         # resolves `trace_session_id` new→old (and `end_user_id` too when a user
@@ -234,6 +253,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         params.update(extra_params)
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
+        end_user_clause = self._build_end_user_subquery()
 
         # P3b step1.5: same id-remap-resolved scan as build() (trace_session_id
         # always, end_user_id when filtered) so `count(DISTINCT trace_session_id)`
@@ -269,6 +289,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
+        end_user_clause = self._build_end_user_subquery()
 
         # P3b step1.5: same id-remap-resolved scan as build()/simple-count so the
         # HAVING-filtered session count unifies a straddler identically (group on

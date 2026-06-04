@@ -72,10 +72,10 @@ class TestRehostExternalRecordings:
         )
 
         async def _fake_convert(call_id, url, url_type):
-            return f"https://fagi.s3.amazonaws.com/{call_id}/{url_type}.mp3"
+            return f"https://fagi.s3.amazonaws.com/{call_id}/{url_type}.mp3", 1024
 
         with patch(
-            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async",
+            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async_with_size",
             new=AsyncMock(side_effect=_fake_convert),
         ):
             rehost_external_recordings(span_id=str(span.id))
@@ -104,10 +104,10 @@ class TestRehostExternalRecordings:
         )
 
         async def _fake_convert(call_id, url, url_type):
-            return f"https://fagi.s3.amazonaws.com/{call_id}/{url_type}.mp3"
+            return f"https://fagi.s3.amazonaws.com/{call_id}/{url_type}.mp3", 1024
 
         with patch(
-            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async",
+            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async_with_size",
             new=AsyncMock(side_effect=_fake_convert),
         ):
             rehost_external_recordings(span_id=str(span.id))
@@ -136,7 +136,7 @@ class TestRehostExternalRecordings:
         )
 
         with patch(
-            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async",
+            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async_with_size",
             new=AsyncMock(),
         ) as mock_convert:
             rehost_external_recordings(span_id=str(span.id))
@@ -162,11 +162,11 @@ class TestRehostExternalRecordings:
         async def _flaky_convert(call_id, url, url_type):
             # Combined succeeds, stereo fails (helper returns input on failure).
             if url_type == "stereo":
-                return url
-            return f"https://fagi.s3.amazonaws.com/{call_id}/{url_type}.mp3"
+                return url, 0
+            return f"https://fagi.s3.amazonaws.com/{call_id}/{url_type}.mp3", 1024
 
         with patch(
-            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async",
+            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async_with_size",
             new=AsyncMock(side_effect=_flaky_convert),
         ):
             rehost_external_recordings(span_id=str(span.id))
@@ -187,7 +187,7 @@ class TestRehostExternalRecordings:
         )
 
         with patch(
-            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async",
+            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async_with_size",
             new=AsyncMock(),
         ) as mock_convert:
             rehost_external_recordings(span_id=str(span.id))
@@ -204,7 +204,7 @@ class TestRehostExternalRecordings:
         )
 
         with patch(
-            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async",
+            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async_with_size",
             new=AsyncMock(),
         ) as mock_convert:
             rehost_external_recordings(span_id=str(span.id))
@@ -213,7 +213,7 @@ class TestRehostExternalRecordings:
 
     def test_missing_span_logs_and_returns(self):
         with patch(
-            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async",
+            "tracer.tasks.recordings_rehost.convert_audio_url_to_s3_async_with_size",
             new=AsyncMock(),
         ) as mock_convert:
             rehost_external_recordings(span_id=str(uuid.uuid4()))

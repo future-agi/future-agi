@@ -125,6 +125,10 @@ async def improve_prompt_async(
                 from ee.usage.services.emitter import emit
             except ImportError:
                 emit = None
+            try:
+                from ee.usage.utils.event_properties import llm_usage_properties
+            except ImportError:
+                llm_usage_properties = lambda obj: {}
 
             actual_cost = 0
             if hasattr(prompt_generator, "llm") and prompt_generator.llm:
@@ -147,6 +151,7 @@ async def improve_prompt_async(
                         "source": "run_prompt_improve",
                         "source_id": str(improve_id),
                         "raw_cost_usd": str(actual_cost),
+                        **llm_usage_properties(prompt_generator),
                     },
                 )
             )

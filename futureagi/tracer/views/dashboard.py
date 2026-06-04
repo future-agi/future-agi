@@ -2345,7 +2345,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 result = analytics.execute_ch_query(
                     sql,
                     {"project_ids": project_ids, "attr_key": metric_name},
-                    timeout_ms=5000,
+                    timeout_ms=15000,
                 )
                 values = [
                     {"value": row["val"], "label": row["val"]} for row in result.data

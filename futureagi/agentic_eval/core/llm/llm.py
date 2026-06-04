@@ -537,11 +537,17 @@ class LLM:
                 )
 
     def _update_cost(self, response: Any = None) -> None:
-        """Update cost statistics. Prioritizes response-level cost from litellm,
-        falls back to calculate_total_cost from token counts."""
+        """
+        Update cost statistics.
+        """
+        catalog = calculate_total_cost(self.model_name, self.token_usage)
+
+        if catalog.get("pricing_source") != "default":
+            self.cost.update(catalog)
+            return
+
         response_cost = 0.0
         if response is not None:
-            # litellm ModelResponse stores cost in _hidden_params
             hidden = getattr(response, "_hidden_params", None)
             if hidden and isinstance(hidden, dict):
                 response_cost = hidden.get("response_cost", 0) or 0
@@ -549,7 +555,7 @@ class LLM:
         if response_cost > 0:
             self.cost["total_cost"] = self.cost.get("total_cost", 0) + response_cost
         else:
-            self.cost.update(calculate_total_cost(self.model_name, self.token_usage))
+            self.cost.update(catalog)
 
     def _set_last_finish_reason_from_response(self, response: Any) -> None:
         self.last_finish_reason = None
