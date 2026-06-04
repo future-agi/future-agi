@@ -44,7 +44,7 @@ from tracer.services.clickhouse.query_builders.monitor_metrics import (
     MonitorMetricsQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
-from tracer.utils.eval_tasks import parsing_evaltask_filters
+from tracer.utils.eval_tasks import parsing_monitor_filters
 
 
 def _build_monitor_ch_builder(monitor):
@@ -268,7 +268,7 @@ def _get_metric_value(monitor, start_time, end_time):
             )
 
     # --- PostgreSQL fallback ---
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
     base_queryset = ObservationSpan.objects.filter(
         project=monitor.project, created_at__range=(start_time, end_time)
     )
@@ -395,7 +395,7 @@ def _get_evaluation_metric_stats(monitor, start_time, end_time):
         _mute_monitor(monitor)
         return None, None
 
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
 
     eval_results = EvalLogger.objects.filter(
         custom_eval_config=custom_eval_config,
@@ -465,7 +465,7 @@ def _get_time_series_data_for_time_aggregated_metrics(
     Groups spans in certain intervals and returns a dictionary of {timestamp: value}.
     `interval_kind` must be one of 'minute', 'hour', 'day', 'week', 'month', 'year'.
     """
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
     base_queryset = ObservationSpan.objects.filter(project=monitor.project).filter(
         filters
     )
@@ -556,7 +556,7 @@ def _get_historical_stats(monitor, start_time, end_time):
             )
 
     # --- PostgreSQL fallback ---
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
     base_queryset = ObservationSpan.objects.filter(
         project=monitor.project, created_at__range=(start_time, end_time)
     ).filter(filters)
@@ -724,7 +724,7 @@ def _get_time_series_df_for_other_metrics(monitor, now):
     For non-aggregated metrics, fetches individual data points and returns a
     Prophet-ready DataFrame, averaging values for duplicate timestamps.
     """
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
     base_queryset = ObservationSpan.objects.filter(
         project=monitor.project, created_at__lte=now
     ).filter(filters)
