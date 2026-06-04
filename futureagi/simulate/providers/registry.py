@@ -125,10 +125,17 @@ _SPECS: tuple[ProviderSpec, ...] = (
         transport=Transport.DIRECT_WS, connector_key="web_deepgram",
         credential_shape=CredentialShape.AGENT_ID, status=Status.PLANNED,
     ),
+    # Agora Conversational AI Engine exposes its agents over SIP/PSTN via an
+    # Elastic SIP Trunk (import a number, assign to the agent for inbound/outbound)
+    # — so we reach it through the SAME provider-neutral SIP path as Bland/Twilio,
+    # with NO Agora RTC SDK. Native Agora-RTC (Transport.AGORA_RTC, the unbuilt
+    # web_agora connector) is only the optional WebRTC alternative and stays
+    # SDK-gated (DESIGN.md §5.4). Modeling SIP as the primary transport matches the
+    # only path achievable on our infra today.
     ProviderSpec(
         "agora", "Agora Conversational AI",
         roles=frozenset({Role.AGENT_PLATFORM}),
-        transport=Transport.AGORA_RTC, connector_key="web_agora",
+        transport=Transport.SIP,
         credential_shape=CredentialShape.API_KEY_ASSISTANT, status=Status.PLANNED,
     ),
     # Pipecat-on-LiveKit reuses the existing LiveKit bridge connector (DESIGN.md §5.5).

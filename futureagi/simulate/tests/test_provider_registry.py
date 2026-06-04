@@ -74,6 +74,18 @@ class TestTaxonomy:
         assert get_spec("deepgram").status is Status.PLANNED
 
     @pytest.mark.unit
+    def test_agora_rides_sip_path_like_bland_no_rtc_sdk(self):
+        # Agora Conversational AI exposes agents over SIP/PSTN (Elastic SIP Trunk),
+        # so it is reachable via the provider-neutral SIP path with NO Agora RTC SDK
+        # — modeled like Bland/Twilio, not via a (SDK-gated) web_agora connector.
+        agora = get_spec("agora")
+        assert agora.transport is Transport.SIP
+        assert agora.connector_key is None  # no WebRTC bridge connector needed
+        assert agora.is_agent_platform
+        # Parity with the other SIP-reachable agent platform.
+        assert get_spec("bland").transport is Transport.SIP
+
+    @pytest.mark.unit
     def test_pipecat_reuses_livekit_bridge_connector(self):
         assert get_spec("pipecat").connector_key == "web_livekit_bridge"
         assert get_spec("pipecat").transport is Transport.WEBRTC_BRIDGE
