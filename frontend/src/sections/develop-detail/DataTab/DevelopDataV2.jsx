@@ -300,8 +300,8 @@ const getDataSource = (
           if (!isLastPage) {
             const totalPages = totalRows
               ? Math.ceil(totalRows / DATASET_ROWS_LIMIT)
-              : Infinity;
-              
+              : pageNumber + 1;
+
             [pageNumber + 1, pageNumber + 2]
               .filter((page) => page < totalPages)
               .forEach((page) => {
@@ -925,6 +925,27 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     const search = useDevelopSearchStore.getState().search;
     const validFilters = filters.filter(validateFilter).map(transformFilter);
 
+    const maxActivePage = activePages.length
+      ? Math.max(...activePages)
+      : currentPage;
+    const totalRowCount =
+      gridApiRef?.current?.api?.getGridOption("context")?.totalRowCount;
+    const lastPage = totalRowCount
+      ? Math.ceil(totalRowCount / DATASET_ROWS_LIMIT) - 1
+      : maxActivePage;
+    const endPage = Math.min(maxActivePage + 2, lastPage);
+    for (let p = Math.max(0, currentPage - 1); p <= endPage; p++) {
+      const { queryKey } = getDatasetQueryOptions(
+        dataset,
+        p,
+        validFilters,
+        sort,
+        search,
+        {},
+      );
+      queryClient.invalidateQueries({ queryKey });
+    }
+
     // Process pages in batches of 3 to avoid overwhelming the server
     const totalPages = pagesToRefresh.length;
 
@@ -1217,6 +1238,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                   pagination={false}
                   cacheBlockSize={DATASET_ROWS_LIMIT}
                   rowBuffer={10}
+                  maxBlocksInCache={50}
                   suppressServerSideFullWidthLoadingRow={true}
                   serverSideInitialRowCount={DATASET_ROWS_LIMIT}
                   statusBar={statusBar}
@@ -1312,7 +1334,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                     gridApiRef,
                     updateProcessingSyntheticData,
                   }}
-                  blockLoadDebounceMillis={100}
+                  blockLoadDebounceMillis={300}
                 />
               </>
             ) : (
