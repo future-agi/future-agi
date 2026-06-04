@@ -475,7 +475,17 @@ def _serializer_to_pydantic(serializer_cls, include_fields=None, exclude_fields=
 
         pydantic_kwargs = {"description": description}
 
-        if hasattr(field_obj, "choices") and field_obj.choices:
+        # Relational fields (PrimaryKeyRelatedField / ManyRelatedField / model-
+        # backed ModelChoiceField) build `.choices` by materializing their ENTIRE
+        # related queryset into memory — for a FK to a large table that loads
+        # millions of rows (OOM) and runs a DB query at import/registration time
+        # (which also breaks whenever the live schema differs). They're already
+        # mapped to `str`, so never enumerate them; only enumerate static
+        # ChoiceField enums, which carry no `queryset`/`child_relation`.
+        _is_relational = hasattr(field_obj, "queryset") or hasattr(
+            field_obj, "child_relation"
+        )
+        if not _is_relational and hasattr(field_obj, "choices") and field_obj.choices:
             raw_choices = field_obj.choices
             if isinstance(raw_choices, dict):
                 choices = list(raw_choices.keys())
