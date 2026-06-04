@@ -705,6 +705,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 "status",
                 "error_analysis",
                 "selected_input_key",
+                "input_data",
+                "input_types",
             )
             for task in el_tasks:
                 cfg_id = (task.metadata or {}).get("eval_config_id")
@@ -714,6 +716,8 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 metric["error_analysis"] = task.error_analysis or None
                 metric["error_localizer_status"] = task.status
                 metric["selected_input_key"] = task.selected_input_key
+                metric["input_data"] = task.input_data
+                metric["input_types"] = task.input_types
 
         return metrics
 
