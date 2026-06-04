@@ -124,6 +124,9 @@ class RcaSummary:
     evidence_trace_ids: list = field(default_factory=list)
     analyzed_at: datetime | None = None
     failures_at_run: int | None = None
+    # The agent's investigation trail (reasoning + step events + synthesis) so
+    # the Analyze tab can replay the full run, not just the synthesis.
+    trace: list = field(default_factory=list)
 
 
 @dataclass

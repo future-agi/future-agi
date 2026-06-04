@@ -525,6 +525,7 @@ def get_cluster_detail(
         evidence_trace_ids=cluster.rca_evidence_trace_ids or [],
         analyzed_at=cluster.rca_at,
         failures_at_run=cluster.rca_failures_at_run,
+        trace=cluster.rca_trace or [],
     )
 
     return FeedDetailCore(

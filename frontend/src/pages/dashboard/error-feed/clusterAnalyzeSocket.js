@@ -168,6 +168,107 @@ function summarizeResult(tool, result) {
 
 const CONF_CATEGORY = { H: "high confidence", M: "medium confidence", L: "low confidence" };
 
+// ── Replay a persisted trail → thread messages ───────────────────────────────
+
+// Rebuild the final thread messages from the agent's persisted rca_trace
+// (reasoning / step_start / step_result / synthesis), using the same shaping as
+// the live stream. Everything lands "done" — this is a replay, not a stream.
+function buildMessagesFromFrames(frames, clusterId) {
+  const messages = [];
+  const stepIdxByCall = new Map();
+  let seq = 0;
+  for (const f of frames || []) {
+    if (!f || !f.type) continue;
+    if (f.type === "reasoning") {
+      if (f.text) {
+        messages.push({
+          id: `h-rsn-${clusterId}-${seq}`,
+          type: "reasoning",
+          text: f.text,
+          instant: true, // replayed from cache — no typewriter
+        });
+        seq += 1;
+      }
+    } else if (f.type === "step_start") {
+      stepIdxByCall.set(f.call_id, messages.length);
+      messages.push({
+        id: `h-step-${clusterId}-${f.call_id}`,
+        type: "step",
+        status: "done",
+        title: humanizeStepTitle(f.tool, f.args),
+        detail: "",
+        chips: [],
+        details: [
+          { kind: "tool", name: f.tool, input: truncate(f.args, 120), output: null },
+        ],
+      });
+    } else if (f.type === "step_result") {
+      const idx = stepIdxByCall.get(f.call_id);
+      if (idx != null) {
+        const { detail, chips } = summarizeResult(f.tool, f.result);
+        const m = messages[idx];
+        messages[idx] = {
+          ...m,
+          detail,
+          chips,
+          details: m.details.map((d) =>
+            d.kind === "tool" && d.output == null
+              ? { ...d, output: truncate(f.result, 200) }
+              : d,
+          ),
+        };
+      }
+    } else if (f.type === "synthesis") {
+      messages.push({
+        id: `h-synth-${clusterId}`,
+        type: "synthesis",
+        headline: f.synthesis,
+        fix: f.fix,
+        confidence: f.confidence ?? "M",
+        category: "",
+        instant: true, // replayed from cache — no typewriter
+      });
+    }
+  }
+  return messages;
+}
+
+// ── Hydrate from cache ───────────────────────────────────────────────────────
+
+// Seed the thread from the persisted synthesis (rca_*) so an already-analyzed
+// cluster shows its result on a fresh load instead of "No analysis yet". Only
+// the synthesis is persisted — the reasoning/step trail is live-only, so the
+// hydrated thread is marked cachedOnly (no conversationId → no follow-ups until
+// a re-run). A live or already-seeded thread always wins.
+export function hydrateFromCache({ clusterId, rca }) {
+  if (!clusterId || !rca?.synthesis) return;
+  const store = useErrorFeedStore.getState();
+  if (store.analyzeThreadsByCluster[clusterId]) return;
+  const analyzedAtIso = rca.analyzed_at ?? rca.analyzedAt;
+  // Replay the full trail if persisted; else fall back to synthesis-only.
+  const trail = Array.isArray(rca.trace) ? rca.trace : [];
+  const messages = trail.length
+    ? buildMessagesFromFrames(trail, clusterId)
+    : [
+        {
+          id: `synth-cached-${clusterId}`,
+          type: "synthesis",
+          headline: rca.synthesis,
+          fix: rca.fix,
+          confidence: rca.confidence ?? "M",
+          category: "",
+          instant: true,
+        },
+      ];
+  store.setAnalyzeThread(clusterId, {
+    conversationId: null,
+    runState: "done",
+    cachedOnly: true,
+    startedAt: analyzedAtIso ? new Date(analyzedAtIso).getTime() : null,
+    messages,
+  });
+}
+
 // ── Main run ─────────────────────────────────────────────────────────────────
 
 export async function startRun({ clusterId, projectId, token, workspaceId }) {
@@ -191,22 +292,14 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
     minute: "2-digit",
   });
 
-  // Re-run gets a fresh conversation so the BE first-turn guard re-fires.
-  let conversation;
-  try {
-    conversation = await createConversation(`Cluster ${clusterId} analysis`, "error-feed");
-  } catch {
-    patchThread(clusterId, (t) => ({ ...t, runState: "idle" }));
-    return;
-  }
-  // Create endpoint wraps the row: { status, result: { id, ... } }.
-  const conversationId = conversation?.result?.id ?? conversation?.id;
-
+  // Flip to streaming IMMEDIATELY (before the conversation-create round-trip +
+  // socket connect) so the button/empty-state react the instant it's clicked,
+  // instead of sitting idle until the first frame arrives.
   patchThread(clusterId, (t) => ({
     ...t,
-    conversationId,
     runState: "streaming",
     startedAt: Date.now(),
+    conversationId: null,
     messages: isRerun
       ? [
           ...t.messages,
@@ -220,34 +313,73 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
       : [],
   }));
 
+  // Re-run gets a fresh conversation so the BE first-turn guard re-fires.
+  let conversation;
+  try {
+    conversation = await createConversation(`Cluster ${clusterId} analysis`, "error-feed");
+  } catch {
+    patchThread(clusterId, (t) => ({ ...t, runState: "idle" }));
+    return;
+  }
+  // Create endpoint wraps the row: { status, result: { id, ... } }.
+  const conversationId = conversation?.result?.id ?? conversation?.id;
+  if (!conversationId) {
+    // No id → the WS chat would go out without conversation_id and the run
+    // would hang in the loader. Fail visibly instead.
+    patchThread(clusterId, (t) => ({
+      ...t,
+      runState: "done",
+      messages: [
+        ...t.messages,
+        {
+          id: `err-${Date.now()}`,
+          type: "synthesis",
+          headline: "Couldn't start the analysis — the server didn't return a conversation id.",
+          fix: "",
+          confidence: "L",
+          category: "error",
+        },
+      ],
+    }));
+    return;
+  }
+  patchThread(clusterId, (t) => ({ ...t, conversationId }));
+
   // Per-run scratch state held in the handler closure.
-  let pendingReasoning = null; // {kind:'reasoning', text} awaiting its step
   const openStepByCall = new Map(); // call_id → step message id
+  let reasoningSeq = 0;
 
   const handler = (parsed) => {
     const { type, data } = parsed;
     if (!data) return;
 
     if (type === "rca_reasoning") {
+      // The agent's native thinking — render it as its own streaming block in
+      // the thread (not buried in a step's collapsed details, where fast
+      // tool calls would flash past it and trailing reasoning would be lost).
       const text = data.reasoning || data.content;
-      if (text) pendingReasoning = { kind: "reasoning", text };
+      if (text) {
+        const id = `rsn-${conversationId}-${reasoningSeq}`;
+        reasoningSeq += 1;
+        patchThread(clusterId, (t) => ({
+          ...t,
+          messages: [...t.messages, { id, type: "reasoning", text }],
+        }));
+      }
       return;
     }
 
     if (type === "rca_step_start") {
       const stepId = `step-${data.call_id}`;
       openStepByCall.set(data.call_id, stepId);
-      const details = [];
-      if (pendingReasoning) {
-        details.push(pendingReasoning);
-        pendingReasoning = null;
-      }
-      details.push({
-        kind: "tool",
-        name: data.tool,
-        input: truncate(data.args, 120),
-        output: null,
-      });
+      const details = [
+        {
+          kind: "tool",
+          name: data.tool,
+          input: truncate(data.args, 120),
+          output: null,
+        },
+      ];
       patchThread(clusterId, (t) => ({
         ...t,
         messages: [

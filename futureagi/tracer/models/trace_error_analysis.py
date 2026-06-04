@@ -303,6 +303,17 @@ class TraceErrorGroup(BaseModel):
         blank=True,
         help_text="error_count snapshot at run time — drives the stale-result nudge",
     )
+    rca_trace = models.JSONField(
+        null=True,
+        blank=True,
+        default=None,
+        help_text=(
+            "The agent's investigation trail (reasoning + tool steps + synthesis) "
+            "from the last run, so the Analyze tab can replay it on reload. Null "
+            "until analyzed. The Falcon follow-up conversation is NOT persisted — "
+            "only the agent's own run."
+        ),
+    )
 
     class Meta:
         db_table = "tracer_trace_error_group"

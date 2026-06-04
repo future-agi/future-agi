@@ -646,17 +646,71 @@ function StepCard({ step }) {
 }
 StepCard.propTypes = { step: PropTypes.object.isRequired };
 
+// The agent's native thinking, streamed inline as its own block (Claude-Code
+// style) — a dim, rule-bordered "Thinking" passage between steps. Streaming is
+// keyed off the message id so tabbing away and back doesn't replay it.
+function ReasoningBlock({ id, text, instant }) {
+  return (
+    <Stack direction="row" gap={1} sx={{ pl: 0.5 }}>
+      <Iconify
+        icon="mdi:brain"
+        width={13}
+        sx={{ color: "text.disabled", mt: "3px", flexShrink: 0 }}
+      />
+      <Box
+        sx={{
+          flex: 1,
+          minWidth: 0,
+          borderLeft: "2px solid",
+          borderColor: "divider",
+          pl: 1.25,
+        }}
+      >
+        <Typography
+          fontSize="9.5px"
+          fontWeight={700}
+          color="text.disabled"
+          sx={{ textTransform: "uppercase", letterSpacing: "0.07em", mb: 0.3 }}
+        >
+          Thinking
+        </Typography>
+        <StreamingPlainText
+          text={text}
+          instant={instant}
+          identityKey={`${id}-reasoning`}
+          fontSize="11.5px"
+          color="text.secondary"
+          sx={{
+            lineHeight: 1.6,
+            whiteSpace: "pre-wrap",
+            fontStyle: "italic",
+            opacity: 0.85,
+          }}
+        />
+      </Box>
+    </Stack>
+  );
+}
+ReasoningBlock.propTypes = {
+  id: PropTypes.string,
+  text: PropTypes.string,
+  instant: PropTypes.bool,
+};
+
 function SynthesisCard({ synthesis }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   // Stream the headline first; once it finishes, stream the fix below it.
   // identityKey is keyed off the synthesis message id so a re-mount (user
   // tabbed away and came back) skips the animation if both already streamed.
+  // `instant` (replayed-from-cache synthesis) skips the typewriter entirely.
   const head = useStreamingText(synthesis.headline, {
+    instant: synthesis.instant,
     identityKey: `${synthesis.id}-head`,
   });
   const headDone = !head.isStreaming;
   const fix = useStreamingText(headDone ? synthesis.fix : "", {
+    instant: synthesis.instant,
     identityKey: `${synthesis.id}-fix`,
   });
   return (
@@ -1375,7 +1429,7 @@ export default function AnalyzeTab({ error }) {
         }}
       >
         <Stack gap={1.25} sx={{ p: 1.5 }}>
-          {messages.length === 0 ? (
+          {messages.length === 0 && !isStreaming ? (
             <Stack
               alignItems="center"
               justifyContent="center"
@@ -1434,9 +1488,40 @@ export default function AnalyzeTab({ error }) {
                 Analyze this cluster
               </Button>
             </Stack>
+          ) : messages.length === 0 && isStreaming ? (
+            <Stack
+              alignItems="center"
+              justifyContent="center"
+              gap={1.5}
+              sx={{ py: 6, px: 2, textAlign: "center", maxWidth: 460, mx: "auto" }}
+            >
+              <Box
+                sx={{
+                  width: 22,
+                  height: 22,
+                  borderRadius: "50%",
+                  border: "2px solid",
+                  borderColor: alpha(ACCENT, 0.25),
+                  borderTopColor: ACCENT,
+                  animation: "spin 0.8s linear infinite",
+                  "@keyframes spin": { to: { transform: "rotate(360deg)" } },
+                }}
+              />
+              <Typography fontSize="13px" fontWeight={600} color="text.primary">
+                Spinning up sub-agents…
+              </Typography>
+              <Typography fontSize="11.5px" color="text.secondary">
+                Sampling representative calls and reading the telemetry. The
+                investigation will stream in here as it goes.
+              </Typography>
+            </Stack>
           ) : (
             messages.map((m) => {
               const render = (() => {
+                if (m.type === "reasoning")
+                  return (
+                    <ReasoningBlock id={m.id} text={m.text} instant={m.instant} />
+                  );
                 if (m.type === "step") return <StepCard step={m} />;
                 if (m.type === "synthesis") return <SynthesisCard synthesis={m} />;
                 if (m.type === "run_header")
@@ -1462,7 +1547,7 @@ export default function AnalyzeTab({ error }) {
           synthesis; chips seed with curated examples until the user asks
           their first follow-up, then track the latest sub-agent's
           "Try asking" set. */}
-      {mainRunDone && (
+      {mainRunDone && thread?.conversationId ? (
         <ComposeArea
           suggestions={composeSuggestions}
           suggestionsHeader={composeHeader}
@@ -1474,7 +1559,18 @@ export default function AnalyzeTab({ error }) {
           }
           onSubmit={runFollowUp}
         />
-      )}
+      ) : mainRunDone && thread?.cachedOnly ? (
+        // Cached result from a prior session — the live conversation (and its
+        // reasoning trail) isn't persisted yet, so re-run to chat / watch it.
+        <Typography
+          fontSize="11.5px"
+          color="text.disabled"
+          sx={{ textAlign: "center", flexShrink: 0, py: 0.5 }}
+        >
+          Showing the last analysis · Re-run to watch the full investigation and
+          ask follow-ups
+        </Typography>
+      ) : null}
     </Stack>
   );
 }

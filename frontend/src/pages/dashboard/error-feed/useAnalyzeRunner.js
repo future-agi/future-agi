@@ -2,7 +2,11 @@ import { useCallback, useEffect } from "react";
 import { useAuthContext } from "src/auth/hooks";
 import { useWorkspace } from "src/contexts/WorkspaceContext";
 import { useErrorFeedStore } from "./store";
-import { runFollowUp as engineRunFollowUp, startRun as engineStartRun } from "./clusterAnalyzeSocket";
+import {
+  hydrateFromCache,
+  runFollowUp as engineRunFollowUp,
+  startRun as engineStartRun,
+} from "./clusterAnalyzeSocket";
 
 // The Analyze tab is a Falcon conversation embedded in the cluster view. A run
 // activates the `/cluster-rca` skill on a fresh Falcon conversation; the
@@ -23,6 +27,16 @@ export function useAnalyzeRunner(clusterId, error) {
   const pendingStart = useErrorFeedStore(
     (s) => !!s.analyzePendingStartByCluster[clusterId],
   );
+  const hasThread = useErrorFeedStore(
+    (s) => !!s.analyzeThreadsByCluster[clusterId],
+  );
+
+  // Already-analyzed cluster, fresh load (no live thread) → seed from the
+  // cached synthesis so the tab shows the result instead of "No analysis yet".
+  useEffect(() => {
+    if (!clusterId || hasThread) return;
+    hydrateFromCache({ clusterId, rca: error?.rca });
+  }, [clusterId, hasThread, error?.rca]);
 
   const startRun = useCallback(() => {
     if (!clusterId) return;

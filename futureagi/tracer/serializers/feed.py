@@ -159,6 +159,7 @@ class RcaSummarySerializer(serializers.Serializer):
     )
     analyzed_at = serializers.DateTimeField(allow_null=True, required=False)
     failures_at_run = serializers.IntegerField(allow_null=True, required=False)
+    trace = serializers.JSONField(required=False)
 
 
 class FeedDetailCoreSerializer(serializers.Serializer):
