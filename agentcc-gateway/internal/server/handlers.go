@@ -1181,7 +1181,10 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 				rc.Provider = action.Provider
 				rc.Metadata["routing_rule"] = action.Name
 				if action.ModelOverride != "" {
-					rc.Request.Model = action.ModelOverride
+					rc.Model = action.ModelOverride
+					if rc.Request != nil {
+						rc.Request.Model = action.ModelOverride
+					}
 				}
 				return p, nil
 			}
@@ -1204,7 +1207,10 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 			rc.Metadata["routing_strategy"] = result.StrategyName
 		}
 		if result.ModelOverride != "" {
-			rc.Request.Model = result.ModelOverride
+			rc.Model = result.ModelOverride
+			if rc.Request != nil {
+				rc.Request.Model = result.ModelOverride
+			}
 		}
 		return result.Provider, nil
 	}
@@ -1222,7 +1228,10 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 			fbResult, fbErr := h.registry.ResolveWithRouting(fbModel)
 			if fbErr == nil {
 				rc.Provider = fbResult.Provider.ID()
-				rc.Request.Model = fbModel
+				rc.Model = fbModel
+				if rc.Request != nil {
+					rc.Request.Model = fbModel
+				}
 				rc.Flags.FallbackUsed = true
 				rc.Metadata["original_model"] = model
 				rc.Metadata["fallback_model"] = fbModel
@@ -1230,7 +1239,10 @@ func (h *Handlers) resolveProvider(ctx context.Context, rc *models.RequestContex
 					rc.Metadata["routing_strategy"] = fbResult.StrategyName
 				}
 				if fbResult.ModelOverride != "" {
-					rc.Request.Model = fbResult.ModelOverride
+					rc.Model = fbResult.ModelOverride
+					if rc.Request != nil {
+						rc.Request.Model = fbResult.ModelOverride
+					}
 				}
 				return fbResult.Provider, nil
 			}
