@@ -239,8 +239,51 @@ def _process_monitor(monitor, now):
     _check_thresholds_and_alert(monitor, metric_value, time_window_start, now)
 
 
+_SIM_METRIC_TYPES = frozenset(
+    {
+        MonitorMetricTypeChoices.SIM_EVAL_SCORE,
+        MonitorMetricTypeChoices.SIM_FAILURE_RATE,
+    }
+)
+
+
+def _get_sim_metric_value(monitor, start_time, end_time):
+    """Compute a simulation metric over completed sims in the window for the
+    monitor's org (TH-5642). Sim data lives in CallExecution, not CH traces, so this
+    reads the ORM directly — lets users alert on sim quality regressions / failure
+    spikes the way Cekura/Coval do."""
+    from django.db.models import Avg, Count, Q
+
+    from simulate.models import CallExecution
+
+    org_id = getattr(monitor.project, "organization_id", None) or getattr(
+        monitor, "organization_id", None
+    )
+    if not org_id:
+        return None
+    qs = CallExecution.objects.filter(
+        test_execution__run_test__organization_id=org_id,
+        created_at__range=(start_time, end_time),
+    )
+    if monitor.metric_type == MonitorMetricTypeChoices.SIM_EVAL_SCORE:
+        return qs.exclude(overall_score__isnull=True).aggregate(
+            v=Avg("overall_score")
+        )["v"]
+    if monitor.metric_type == MonitorMetricTypeChoices.SIM_FAILURE_RATE:
+        agg = qs.aggregate(
+            total=Count("id"),
+            failed=Count("id", filter=Q(status=CallExecution.CallStatus.FAILED)),
+        )
+        return (agg["failed"] / agg["total"]) if agg["total"] else None
+    return None
+
+
 def _get_metric_value(monitor, start_time, end_time):
     """Calculates the value of the metric for the given time window."""
+
+    # Simulation metrics read CallExecution data, not CH traces (TH-5642).
+    if monitor.metric_type in _SIM_METRIC_TYPES:
+        return _get_sim_metric_value(monitor, start_time, end_time)
 
     # --- ClickHouse dispatch ---
     analytics = AnalyticsQueryService()

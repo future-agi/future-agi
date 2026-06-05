@@ -50,6 +50,11 @@ class MonitorMetricTypeChoices(models.TextChoices):
     EVALUATION_METRICS = "evaluation_metrics", "Evaluation metrics"
     # RATE_LIMIT_ALERT = "rate_limit_alert", "Rate limit alert" # we don't have this data in the db yet, removed for now
 
+    # Simulation metrics (TH-5642) — read from CallExecution, not CH traces. Lets
+    # users alert on sim quality regressions / failure spikes like Cekura/Coval do.
+    SIM_EVAL_SCORE = "sim_eval_score", "Simulation eval score (avg)"
+    SIM_FAILURE_RATE = "sim_failure_rate", "Simulation failure rate"
+
 
 class ThresholdCalculationMethodChoices(models.TextChoices):
     """Choices for how threshold values are calculated or determined."""
