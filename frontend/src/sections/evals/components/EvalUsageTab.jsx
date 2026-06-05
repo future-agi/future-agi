@@ -81,7 +81,6 @@ const EvalUsageTab = ({
 
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
-  const columnConfig = logsData?.columnConfig;
   const totalLogs = logsData?.pagination?.total || 0;
 
   const logItems = useMemo(
@@ -89,11 +88,27 @@ const EvalUsageTab = ({
     [logsData?.table],
   );
 
-  const baseColumnConfig = useMemo(
-    () =>
-      columnConfig && columnConfig.length ? columnConfig : DEFAULT_COLUMN_CONFIG,
-    [columnConfig],
-  );
+  const baseColumnConfig = useMemo(() => {
+    const base = DEFAULT_COLUMN_CONFIG;
+    // Discover input_var_* columns from the row data
+    const seen = new Set(base.map((c) => c.value));
+    const extra = [];
+    (logsData?.table || []).forEach((row) => {
+      Object.keys(row).forEach((k) => {
+        if (k.startsWith("input_var_") && !seen.has(k)) {
+          seen.add(k);
+          extra.push({
+            value: k,
+            label: k.replace("input_var_", ""),
+            enabled: false,
+            is_visible: false,
+            order_index: base.length + extra.length,
+          });
+        }
+      });
+    });
+    return extra.length ? [...base, ...extra] : base;
+  }, [logsData?.table]);
 
   const storageKey = columnConfigStorageKey(templateId);
 
