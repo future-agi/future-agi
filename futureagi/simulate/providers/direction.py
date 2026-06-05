@@ -22,6 +22,26 @@ class UnsupportedCallDirectionError(ValueError):
     """A call_direction is malformed, or not wired for the chosen provider."""
 
 
+# Who speaks first, from the SIMULATOR's perspective (LiveKit first_message_mode).
+FIRST_MESSAGE_MODE_SPEAKS_FIRST = "assistant-speaks-first"
+FIRST_MESSAGE_MODE_WAITS = "assistant-waits-for-user"
+
+
+def first_message_mode_for(is_outbound: bool) -> str:
+    """The simulator's speaking order for a call direction.
+
+    Inbound (FutureAGI calls the agent → agent receives) → the simulator (our
+    caller) speaks first. Outbound (the agent calls us) → the simulator waits; the
+    agent speaks first. Previously this was set ONLY inside the LiveKit-bridge
+    branch, so DIRECT_WS (ElevenLabs/Deepgram) and SIP providers silently produced a
+    simulator-speaks-first transcript on outbound (audit gap). This resolver is
+    applied to every transport.
+    """
+    return (
+        FIRST_MESSAGE_MODE_WAITS if is_outbound else FIRST_MESSAGE_MODE_SPEAKS_FIRST
+    )
+
+
 def resolve_call_direction(
     call_direction: str | None,
     provider: str | None = None,

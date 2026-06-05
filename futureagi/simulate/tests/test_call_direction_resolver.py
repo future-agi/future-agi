@@ -7,7 +7,10 @@ an outbound request on a provider that hasn't wired outbound.
 import pytest
 
 from simulate.providers.direction import (
+    FIRST_MESSAGE_MODE_SPEAKS_FIRST,
+    FIRST_MESSAGE_MODE_WAITS,
     UnsupportedCallDirectionError,
+    first_message_mode_for,
     resolve_call_direction,
     resolve_is_outbound,
 )
@@ -60,6 +63,17 @@ def test_vapi_outbound_is_allowed():
 def test_unknown_provider_skips_implemented_check():
     # Custom / free-form providers are not in the registry → don't break them.
     assert resolve_call_direction("outbound", "my_custom_provider") is Direction.OUTBOUND
+
+
+@pytest.mark.unit
+def test_first_message_mode_is_direction_keyed():
+    # Outbound (agent calls us) → simulator waits; inbound → simulator speaks first.
+    assert first_message_mode_for(True) == FIRST_MESSAGE_MODE_WAITS
+    assert first_message_mode_for(False) == FIRST_MESSAGE_MODE_SPEAKS_FIRST
+    # Matches the existing LiveKit-bridge values so lifting it to all transports is
+    # behaviour-preserving for the bridge.
+    assert FIRST_MESSAGE_MODE_WAITS == "assistant-waits-for-user"
+    assert FIRST_MESSAGE_MODE_SPEAKS_FIRST == "assistant-speaks-first"
 
 
 @pytest.mark.unit
