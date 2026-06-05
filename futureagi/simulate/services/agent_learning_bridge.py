@@ -66,16 +66,28 @@ def is_available() -> bool:
         return False
 
 
-def _redteam_module() -> Any:
+def _kit_submodule(attr: str) -> Any:
     try:
         import agent_learning
 
-        return agent_learning.redteam
+        return getattr(agent_learning, attr)
     except Exception as exc:  # pragma: no cover - exercised via is_available() in tests
         raise AgentLearningUnavailable(
-            "agent-learning-kit is not installed; install it to run red-team campaigns "
+            "agent-learning-kit is not installed; install it to run agent-learning flows "
             "(pip install -e <agent-learning-kit> --no-deps)."
         ) from exc
+
+
+def _redteam_module() -> Any:
+    return _kit_submodule("redteam")
+
+
+def _simulate_module() -> Any:
+    return _kit_submodule("simulate")
+
+
+def _optimize_module() -> Any:
+    return _kit_submodule("optimize")
 
 
 def _attacks_for_categories(categories: Sequence[str]) -> list[str]:
@@ -231,3 +243,157 @@ def run_redteam_for_agent(
     )
     rt = _redteam_module()
     return _run_async(rt.redteam_manifest(manifest, dry_run=dry_run))
+
+
+# --------------------------------------------------------------------------- #
+# Simulation — drive an agent through a task/scenario via the kit             #
+# --------------------------------------------------------------------------- #
+def build_simulation_manifest_for_agent(
+    *,
+    name: str,
+    task_description: str,
+    success_criteria: Sequence[str] = (),
+    channel: str = "chat",
+    instructions: str | None = None,
+    scripted_responses: Sequence[str] | None = None,
+    agent_spec: Mapping[str, Any] | None = None,
+    scenario: Mapping[str, Any] | None = None,
+    persona: Mapping[str, Any] | None = None,
+    evaluation_config: Mapping[str, Any] | None = None,
+    threshold: float = 0.7,
+    min_turns: int = 1,
+    max_turns: int = 1,
+) -> dict[str, Any]:
+    """Build a kit simulation manifest for an agent. Pure (no I/O).
+
+    ``channel`` maps to the kit's ``modality`` (chat/voice); the agent-under-test is
+    resolved with the same precedence as red-team (spec > scripted > llm).
+    """
+    if not name:
+        raise ValueError("name is required")
+    sim = _simulate_module()
+    return sim.build_task_run_manifest(
+        name=name,
+        agent=_agent_mapping(
+            instructions=instructions,
+            scripted_responses=scripted_responses,
+            agent_spec=agent_spec,
+        ),
+        task_description=task_description,
+        success_criteria=list(success_criteria),
+        scenario=dict(scenario) if scenario is not None else None,
+        persona=dict(persona) if persona is not None else None,
+        evaluation_config=dict(evaluation_config)
+        if evaluation_config is not None
+        else None,
+        modality=channel,
+        threshold=threshold,
+        min_turns=min_turns,
+        max_turns=max_turns,
+    )
+
+
+def run_simulation_for_agent(
+    *,
+    name: str,
+    task_description: str,
+    success_criteria: Sequence[str] = (),
+    channel: str = "chat",
+    instructions: str | None = None,
+    scripted_responses: Sequence[str] | None = None,
+    agent_spec: Mapping[str, Any] | None = None,
+    scenario: Mapping[str, Any] | None = None,
+    persona: Mapping[str, Any] | None = None,
+    evaluation_config: Mapping[str, Any] | None = None,
+    threshold: float = 0.7,
+    min_turns: int = 1,
+    max_turns: int = 1,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Build and execute a simulation for an agent via the kit.
+
+    Returns the kit's public run payload (``status``/``summary``/...). ``dry_run=True``
+    is the credential-free path verified in CI.
+    """
+    manifest = build_simulation_manifest_for_agent(
+        name=name,
+        task_description=task_description,
+        success_criteria=success_criteria,
+        channel=channel,
+        instructions=instructions,
+        scripted_responses=scripted_responses,
+        agent_spec=agent_spec,
+        scenario=scenario,
+        persona=persona,
+        evaluation_config=evaluation_config,
+        threshold=threshold,
+        min_turns=min_turns,
+        max_turns=max_turns,
+    )
+    sim = _simulate_module()
+    return _run_async(sim.run_manifest(manifest, dry_run=dry_run))
+
+
+# --------------------------------------------------------------------------- #
+# Optimization — search candidates and surface the winning fix                #
+# --------------------------------------------------------------------------- #
+def build_optimization_manifest_for_agent(
+    *,
+    name: str,
+    agent_candidates: Sequence[Mapping[str, Any]],
+    evaluation_config: Mapping[str, Any],
+    scenario: Mapping[str, Any] | None = None,
+    threshold: float = 0.9,
+    min_turns: int = 1,
+    max_turns: int | None = None,
+) -> dict[str, Any]:
+    """Build a kit optimization manifest. Pure (no I/O).
+
+    ``agent_candidates`` are the variants to search over; the kit scores each against
+    ``evaluation_config`` and surfaces the best.
+    """
+    if not name:
+        raise ValueError("name is required")
+    if not agent_candidates:
+        raise ValueError("agent_candidates must contain at least one candidate")
+    opt = _optimize_module()
+    return opt.build_task_optimization_manifest(
+        name=name,
+        agent_candidates=[dict(c) for c in agent_candidates],
+        evaluation_config=dict(evaluation_config),
+        scenario=dict(scenario) if scenario is not None else None,
+        threshold=threshold,
+        min_turns=min_turns,
+        max_turns=max_turns,
+    )
+
+
+def optimize_and_apply_for_agent(
+    *,
+    name: str,
+    agent_candidates: Sequence[Mapping[str, Any]],
+    evaluation_config: Mapping[str, Any],
+    scenario: Mapping[str, Any] | None = None,
+    threshold: float = 0.9,
+    min_turns: int = 1,
+    max_turns: int | None = None,
+    dry_run: bool = True,
+) -> dict[str, Any]:
+    """Run optimization over agent candidates via the kit and return the result.
+
+    The user's intent is "in optimization we directly apply the fix": the kit selects the
+    best-scoring candidate; the returned payload (``status``/``summary``/...) carries the
+    winning configuration for the platform to apply back onto the agent. ``dry_run=True``
+    is the credential-free path verified in CI; ``optimize_manifest`` is synchronous.
+    """
+    manifest = build_optimization_manifest_for_agent(
+        name=name,
+        agent_candidates=agent_candidates,
+        evaluation_config=evaluation_config,
+        scenario=scenario,
+        threshold=threshold,
+        min_turns=min_turns,
+        max_turns=max_turns,
+    )
+    opt = _optimize_module()
+    return opt.optimize_manifest(manifest, dry_run=dry_run)

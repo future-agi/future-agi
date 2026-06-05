@@ -118,6 +118,64 @@ def test_run_in_event_loop_raises(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# Simulate + optimize mapping (kit mocked)                                     #
+# --------------------------------------------------------------------------- #
+class _FakeSim:
+    def __init__(self):
+        self.calls = []
+
+    def build_task_run_manifest(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"version": "run/v1", **kwargs}
+
+
+class _FakeOpt:
+    def __init__(self):
+        self.calls = []
+
+    def build_task_optimization_manifest(self, **kwargs):
+        self.calls.append(kwargs)
+        return {"version": "opt/v1", **kwargs}
+
+
+@pytest.mark.unit
+def test_simulation_maps_channel_to_modality(monkeypatch):
+    fake = _FakeSim()
+    monkeypatch.setattr(bridge, "_simulate_module", lambda: fake)
+    bridge.build_simulation_manifest_for_agent(
+        name="sim", task_description="greet", success_criteria=["greets"],
+        channel="voice", scripted_responses=["Hi there!"],
+    )
+    call = fake.calls[0]
+    assert call["modality"] == "voice"
+    assert call["agent"]["type"] == "scripted"
+    assert call["success_criteria"] == ["greets"]
+
+
+@pytest.mark.unit
+def test_optimization_requires_candidates(monkeypatch):
+    fake = _FakeOpt()
+    monkeypatch.setattr(bridge, "_optimize_module", lambda: fake)
+    with pytest.raises(ValueError):
+        bridge.build_optimization_manifest_for_agent(
+            name="opt", agent_candidates=[], evaluation_config={"metrics": []},
+        )
+
+
+@pytest.mark.unit
+def test_optimization_passes_candidates(monkeypatch):
+    fake = _FakeOpt()
+    monkeypatch.setattr(bridge, "_optimize_module", lambda: fake)
+    bridge.build_optimization_manifest_for_agent(
+        name="opt",
+        agent_candidates=[{"type": "scripted", "responses": [{"content": "a"}]},
+                          {"type": "scripted", "responses": [{"content": "b"}]}],
+        evaluation_config={"metrics": [{"name": "task_completion"}]},
+    )
+    assert len(fake.calls[0]["agent_candidates"]) == 2
+
+
+# --------------------------------------------------------------------------- #
 # Real kit, end-to-end (skips cleanly if the kit is not installed)            #
 # --------------------------------------------------------------------------- #
 @pytest.mark.integration
@@ -137,4 +195,37 @@ def test_real_redteam_dry_run_end_to_end():
     assert result["status"] in {"passed", "failed"}
     assert result["name"] == "acme-support-redteam"
     assert "redteam" in result
+    assert result.get("dry_run") is True
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not bridge.is_available(), reason="agent-learning-kit not installed")
+def test_real_simulation_dry_run_end_to_end():
+    result = bridge.run_simulation_for_agent(
+        name="sim-smoke",
+        task_description="Greet and offer order help",
+        success_criteria=["greets the user", "offers help"],
+        channel="chat",
+        scripted_responses=["Hello! How can I help with your order?"],
+        dry_run=True,
+    )
+    assert result["status"] in {"passed", "failed"}
+    assert result["name"] == "sim-smoke"
+    assert result.get("dry_run") is True
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not bridge.is_available(), reason="agent-learning-kit not installed")
+def test_real_optimization_dry_run_end_to_end():
+    result = bridge.optimize_and_apply_for_agent(
+        name="opt-smoke",
+        agent_candidates=[
+            {"type": "scripted", "responses": [{"content": "v1"}]},
+            {"type": "scripted", "responses": [{"content": "v2 better"}]},
+        ],
+        evaluation_config={"metrics": [{"name": "task_completion"}]},
+        dry_run=True,
+    )
+    assert result["status"] in {"passed", "failed"}
+    assert result["name"] == "opt-smoke"
     assert result.get("dry_run") is True
