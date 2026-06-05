@@ -1386,7 +1386,9 @@ export default function WidgetEditorView() {
                     ? "datasets"
                     : "traces"),
               operator: f.operator || "contains",
-              value: f.value ?? [],
+              value: ["str_contains", "str_not_contains"].includes(f.operator)
+                ? (typeof f.value === "string" ? f.value : "")
+                : (f.value ?? []),
             };
           });
           return {
@@ -4951,7 +4953,7 @@ export default function WidgetEditorView() {
                                 type={
                                   mf.dataType === "number" ? "number" : "text"
                                 }
-                                value={mf.value || ""}
+                                value={Array.isArray(mf.value) ? "" : (mf.value || "")}
                                 onChange={(e) =>
                                   handleUpdateMetricFilter(i, fi, {
                                     value: e.target.value,
@@ -5425,7 +5427,7 @@ export default function WidgetEditorView() {
                                 type={
                                   f.dataType === "number" ? "number" : "text"
                                 }
-                                value={f.value || ""}
+                                value={Array.isArray(f.value) ? "" : (f.value || "")}
                                 onChange={(e) => {
                                   const updated = [...filters];
                                   updated[i] = {
