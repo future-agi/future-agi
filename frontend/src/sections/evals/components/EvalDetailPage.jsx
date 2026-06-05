@@ -54,6 +54,7 @@ import EvalFeedbackTab from "./EvalFeedbackTab";
 import EvalGroundTruthTab from "./EvalGroundTruthTab";
 import EvalUsageTab from "./EvalUsageTab";
 import VersionBadge from "./VersionBadge";
+import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
@@ -167,6 +168,16 @@ const EvalDetailPage = () => {
   const [testError, setTestError] = useState(null);
   const [isTesting, setIsTesting] = useState(false);
   const [isPlaygroundReady, setIsPlaygroundReady] = useState(false);
+  // Variable→column mapping from the active test-panel tab. Used by the
+  // InstructionEditor / LLMPromptEditor to highlight mapped variables in
+  // green instead of leaving them red after the user binds them.
+  const [playgroundMapping, setPlaygroundMapping] = useState({});
+  const handlePlaygroundReadyChange = useCallback((ready, mapping) => {
+    setIsPlaygroundReady(!!ready);
+    if (mapping && typeof mapping === "object") {
+      setPlaygroundMapping(mapping);
+    }
+  }, []);
 
   // Auto-dismiss test error after 6 seconds
   useEffect(() => {
@@ -276,8 +287,9 @@ const EvalDetailPage = () => {
         setViewingVersion(null);
         setSearchParams(
           (prev) => {
-            prev.delete("v");
-            return prev;
+            const next = new URLSearchParams(prev);
+            next.delete("v");
+            return next;
           },
           { replace: true },
         );
@@ -368,7 +380,16 @@ const EvalDetailPage = () => {
       isPopulatingRef.current = true;
       setViewingVersion(versionToLoad);
       setSearchParams(
-        { v: versionToLoad.version_number ?? versionToLoad.versionNumber },
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set(
+            "v",
+            String(
+              versionToLoad.version_number ?? versionToLoad.versionNumber,
+            ),
+          );
+          return next;
+        },
         { replace: true },
       );
       const config =
@@ -475,6 +496,8 @@ const EvalDetailPage = () => {
 
   // Three-dot menu
   const [menuAnchor, setMenuAnchor] = useState(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
 
   // Warn on page leave with unsaved changes
   useEffect(() => {
@@ -492,6 +515,30 @@ const EvalDetailPage = () => {
   const initialLoadDone = useRef(false);
   useEffect(() => {
     if (evalData && !viewingVersion) {
+
+      const isCustom = evalData.owner !== "system";
+      const urlVersion = searchParams.get("v");
+      if (urlVersion && !initialLoadDone.current) {
+        if (!versionsData) return;
+        const match = (versionsData?.versions || []).find(
+          (ver) =>
+            String(ver.version_number ?? ver.versionNumber) ===
+            String(urlVersion),
+        );
+        if (match) {
+          initialLoadDone.current = true;
+          handleVersionSelect(match);
+          return;
+        }
+      }
+      if (isCustom && !urlVersion && !initialLoadDone.current) {
+        if (!versionsData) return;
+        if (defaultVersion) {
+          initialLoadDone.current = true;
+          handleVersionSelect(defaultVersion);
+          return;
+        }
+      }
       // On initial load, always populate. On subsequent refetches, only populate
       // if the user hasn't made edits (isDirty).
       if (!initialLoadDone.current || !isDirty) {
@@ -596,7 +643,7 @@ const EvalDetailPage = () => {
         }, 100);
       }
     }
-  }, [evalData]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [evalData, versionsData, defaultVersion]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const evalType = evalData?.eval_type || "llm";
   const isSystemEval = evalData?.owner === "system";
@@ -776,7 +823,14 @@ const EvalDetailPage = () => {
       if (newVersion?.version_number ?? newVersion?.versionNumber) {
         setViewingVersion({ ...newVersion, config_snapshot: configSnapshot });
         setSearchParams(
-          { v: newVersion.version_number ?? newVersion.versionNumber },
+          (prev) => {
+            const next = new URLSearchParams(prev);
+            next.set(
+              "v",
+              String(newVersion.version_number ?? newVersion.versionNumber),
+            );
+            return next;
+          },
           { replace: true },
         );
         // Switch to versions tab and highlight the new version
@@ -979,7 +1033,19 @@ const EvalDetailPage = () => {
   ]);
 
   // Delete
-  const handleDelete = useCallback(async () => {
+  const handleDeleteClick = useCallback(() => {
+    setMenuAnchor(null);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const handleDeleteCancel = useCallback(() => {
+    if (!deleteLoading) {
+      setDeleteDialogOpen(false);
+    }
+  }, [deleteLoading]);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    setDeleteLoading(true);
     try {
       await axios.post(endpoints.develop.eval.deleteEvalsTemplate, {
         eval_template_id: evalId,
@@ -988,8 +1054,8 @@ const EvalDetailPage = () => {
       navigate("/dashboard/evaluations");
     } catch {
       enqueueSnackbar("Failed to delete evaluation", { variant: "error" });
+      setDeleteLoading(false);
     }
-    setMenuAnchor(null);
   }, [evalId, enqueueSnackbar, navigate]);
 
   // Duplicate
@@ -1166,7 +1232,10 @@ const EvalDetailPage = () => {
               Duplicate
             </MenuItem>
             {!isSystemEval && (
-              <MenuItem onClick={handleDelete} sx={{ color: "error.main" }}>
+              <MenuItem
+                onClick={handleDeleteClick}
+                sx={{ color: "error.main" }}
+              >
                 <Iconify
                   icon="solar:trash-bin-trash-bold"
                   width={16}
@@ -1178,6 +1247,14 @@ const EvalDetailPage = () => {
           </Menu>
         </Box>
       </Box>
+
+      <BulkDeleteDialog
+        open={deleteDialogOpen}
+        count={1}
+        onConfirm={handleDeleteConfirm}
+        onCancel={handleDeleteCancel}
+        isLoading={deleteLoading}
+      />
 
       {/* Top Tabs */}
       <Tabs
@@ -1408,6 +1485,7 @@ const EvalDetailPage = () => {
                     onTemplateFormatChange={setTemplateFormat}
                     datasetColumns={datasetColumns}
                     datasetJsonSchemas={datasetJsonSchemas}
+                    mappedVariables={playgroundMapping}
                     disabled={isSystemEval}
                     modelSelectorDisabled={false}
                     mode={agentMode}
@@ -1794,7 +1872,7 @@ const EvalDetailPage = () => {
                       setTestError(null);
                       setTestPassed(false);
                     }}
-                    onReadyChange={setIsPlaygroundReady}
+                    onReadyChange={handlePlaygroundReadyChange}
                   />
                 </Box>
 

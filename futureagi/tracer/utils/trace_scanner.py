@@ -129,6 +129,10 @@ def _emit_scanner_billing(
             from ee.usage.services.emitter import emit
         except ImportError:
             emit = None
+        try:
+            from ee.usage.utils.event_properties import token_usage_properties
+        except ImportError:
+            token_usage_properties = lambda token_usage: {}
 
         project = Project.objects.select_related("organization").filter(
             id=project_id
@@ -149,6 +153,7 @@ def _emit_scanner_billing(
                     "issues_found": sum(len(r.issues) for r in results),
                     "raw_cost_usd": str(cost_usd),
                     "model": scanner.model_config.model_name,
+                    **token_usage_properties(getattr(scanner, "token_usage", {})),
                 },
             )
         )

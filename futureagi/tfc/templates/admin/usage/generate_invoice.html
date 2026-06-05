@@ -37,6 +37,9 @@
 
 <div class="gi-container">
   <h2>Generate Invoice</h2>
+  <div style="font-size:0.85em; color:var(--body-quiet-color,#666); margin-bottom:16px; line-height:1.5">
+    Works for any paid plan (PAYG / Boost / Scale / Enterprise / Custom). Free-plan orgs cannot be invoiced. The invoice bundles the platform fee for the selected period (advance, prorated if the plan started mid-month) with the prior period's usage (arrears) — matching how Stripe issues its monthly invoice.
+  </div>
   <div id="gi-message"></div>
   <div id="gi-loading">Processing...</div>
 
@@ -254,7 +257,9 @@ function renderPreview(data) {
 
   // Summary
   const summary = document.getElementById("preview-summary");
+  const planLabel = data.plan ? data.plan.charAt(0).toUpperCase() + data.plan.slice(1) : "-";
   summary.innerHTML = `
+    <div><strong>Plan:</strong> ${planLabel}</div>
     <div><strong>Usage Total:</strong> $${parseFloat(data.usage_total).toFixed(2)}</div>
     <div><strong>Platform Fee:</strong> $${parseFloat(data.platform_fee).toFixed(2)}</div>
     <div><strong>Credits Applied:</strong> -$${parseFloat(data.credits_applied).toFixed(2)}</div>

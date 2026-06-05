@@ -1226,17 +1226,17 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         """
                         SELECT key, argMax(type, cnt) AS type FROM (
                             SELECT key, 'text' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_str) AS key
+                            FROM spans ARRAY JOIN mapKeys(attrs_string) AS key
                             WHERE project_id IN %(project_ids)s AND is_deleted = 0
                             GROUP BY key
                             UNION ALL
                             SELECT key, 'number' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_num) AS key
+                            FROM spans ARRAY JOIN mapKeys(attrs_number) AS key
                             WHERE project_id IN %(project_ids)s AND is_deleted = 0
                             GROUP BY key
                             UNION ALL
                             SELECT key, 'boolean' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(span_attr_bool) AS key
+                            FROM spans ARRAY JOIN mapKeys(attrs_bool) AS key
                             WHERE project_id IN %(project_ids)s AND is_deleted = 0
                             GROUP BY key
                         )
@@ -2325,7 +2325,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     values = []
 
             elif metric_type == "custom_attribute":
-                # Use mapContains() so the `idx_span_attr_str_keys` bloom
+                # Use mapContains() so the `idx_attrs_string_keys` bloom
                 # filter index prunes granules that don't have the key.
                 # Without this, wide-attribute projects can blow past
                 # ClickHouse's `max_bytes_to_read` limit (code 307) and
@@ -2333,19 +2333,19 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 # conversation.recording.mono.assistant / ended_reason for
                 # heavy voice projects.
                 sql = (
-                    "SELECT DISTINCT span_attr_str[%(attr_key)s] AS val "
+                    "SELECT DISTINCT attrs_string[%(attr_key)s] AS val "
                     "FROM spans "
                     "WHERE project_id IN %(project_ids)s "
                     "AND is_deleted = 0 "
-                    "AND mapContains(span_attr_str, %(attr_key)s) "
-                    "AND span_attr_str[%(attr_key)s] != '' "
+                    "AND mapContains(attrs_string, %(attr_key)s) "
+                    "AND attrs_string[%(attr_key)s] != '' "
                     "ORDER BY val "
                     "LIMIT 500"
                 )
                 result = analytics.execute_ch_query(
                     sql,
                     {"project_ids": project_ids, "attr_key": metric_name},
-                    timeout_ms=5000,
+                    timeout_ms=15000,
                 )
                 values = [
                     {"value": row["val"], "label": row["val"]} for row in result.data

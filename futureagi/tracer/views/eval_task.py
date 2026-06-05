@@ -240,8 +240,8 @@ def _compute_span_aggregation(base_qs):
 
 
 logger = structlog.get_logger(__name__)
-from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.api_contracts import validated_request
+from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.custom_eval_config import CustomEvalConfig
@@ -350,8 +350,8 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 Project.objects.all()
             )
         if "evals" in fields:
-            fields["evals"].queryset = (
-                self._scope_custom_eval_config_queryset(CustomEvalConfig.objects.all())
+            fields["evals"].queryset = self._scope_custom_eval_config_queryset(
+                CustomEvalConfig.objects.all()
             )
         return serializer
 
@@ -394,9 +394,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             data["status"] = EvalTaskStatus.PENDING
             filters = data.get("filters", {})
             project_id = data.get("project")
-            if project_id and not self._scope_project_queryset(
-                Project.objects.all()
-            ).filter(id=project_id).exists():
+            if (
+                project_id
+                and not self._scope_project_queryset(Project.objects.all())
+                .filter(id=project_id)
+                .exists()
+            ):
                 return self._gm.bad_request("Project not found")
             if project_id:
                 filters["project_id"] = project_id
@@ -411,8 +414,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             )
             if invalid_eval_ids:
                 return self._gm.bad_request(
-                    "Eval configs not found for project: "
-                    + ", ".join(invalid_eval_ids)
+                    "Eval configs not found for project: " + ", ".join(invalid_eval_ids)
                 )
             eval_task = serializer.save()
 
@@ -711,6 +713,14 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             # Soft-deleted rows are excluded (intentional departure from the
             # legacy path) so rollups reflect the user's current view of
             # the data. ``period`` is not applied — these are task-wide.
+            #
+            # Spans-only semantics: session-target rows (``observation_span_id
+            # IS NULL``) are excluded from both aggregations so the row set
+            # is consistent whether or not a date range is supplied.
+            #
+            # Optional ``start_date`` / ``end_date`` (ISO-8601) scope the
+            # rollup to spans whose ``observation_span.created_at`` falls
+            # in the range.
             eval_aggregation = _truthy(
                 self.request.query_params.get("eval_aggregation")
             )
@@ -721,10 +731,26 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 agg_base_qs = EvalLogger.objects.filter(
                     eval_task_id=str(eval_task_id),
                     deleted=False,
+                    observation_span_id__isnull=False,
                 )
                 if eval_id_filter:
                     agg_base_qs = agg_base_qs.filter(
                         custom_eval_config_id=eval_id_filter
+                    )
+
+                start_date_str = self.request.query_params.get("start_date")
+                end_date_str = self.request.query_params.get("end_date")
+                if start_date_str:
+                    agg_base_qs = agg_base_qs.filter(
+                        observation_span__created_at__gte=datetime.fromisoformat(
+                            start_date_str
+                        )
+                    )
+                if end_date_str:
+                    agg_base_qs = agg_base_qs.filter(
+                        observation_span__created_at__lte=datetime.fromisoformat(
+                            end_date_str
+                        )
                     )
 
                 agg_response = {"eval_task_id": str(eval_task_id)}
@@ -1718,11 +1744,9 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             if not eval_id:
                 return self._gm.bad_request("eval_id is required")
 
-            queryset = (
-                self._scope_eval_task_queryset(
-                    EvalTask.objects.select_related("project").prefetch_related("evals")
-                ).get(id=eval_id)
-            )
+            queryset = self._scope_eval_task_queryset(
+                EvalTask.objects.select_related("project").prefetch_related("evals")
+            ).get(id=eval_id)
 
             # Build rich eval objects so the frontend can render eval cards
             # with name, mapping, model, template info — not just bare UUIDs.

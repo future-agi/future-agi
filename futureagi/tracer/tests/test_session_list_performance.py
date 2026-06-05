@@ -78,9 +78,9 @@ class TestSessionListQueryPerformance:
             builder._build_simple_count_query()
         elapsed = time.monotonic() - start
 
-        assert elapsed < 0.5, (
-            f"Simple count query too slow: {elapsed:.2f}s for 100 iter"
-        )
+        assert (
+            elapsed < 0.5
+        ), f"Simple count query too slow: {elapsed:.2f}s for 100 iter"
 
     def test_count_query_generation_speed_aggregated_path(self):
         """Aggregated count query (with HAVING) should be fast to generate."""

@@ -21,7 +21,11 @@ from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.expressions import (
     annotation_numeric_value_expr,
 )
-from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+# CH-direct: use the v2 filter builder (rewrites span_attr_* -> attrs_*) since
+# this graph reads the v2 `spans` table. Aliased to keep the call sites unchanged.
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2 as ClickHouseFilterBuilder,
+)
 
 
 class AnnotationGraphQueryBuilder(BaseQueryBuilder):

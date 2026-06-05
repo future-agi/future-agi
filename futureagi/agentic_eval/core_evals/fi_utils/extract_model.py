@@ -106,11 +106,10 @@ def _extract_model_name(
                 return llm.model_name
 
             if isinstance(llm, AzureOpenAI):
-                return (
-                    kwargs.get("invocation_params").get("model")
-                    + "-"
-                    + llm.serialized["kwargs"]["model_version"]
-                )
+                invocation_params = kwargs.get("invocation_params") or {}
+                model = invocation_params.get("model")
+                if model:
+                    return model + "-" + llm.serialized["kwargs"]["model_version"]
 
             if isinstance(llm, ChatBaichuan):
                 return llm.model
@@ -258,12 +257,14 @@ def _extract_model_name(
         return model
 
     if serialized.get("id")[-1] == "AzureChatOpenAI":
-        if kwargs.get("invocation_params").get("model"):
-            return kwargs.get("invocation_params").get("model")
+        invocation_params = kwargs.get("invocation_params") or {}
+        if invocation_params.get("model"):
+            return invocation_params.get("model")
 
     if serialized.get("id")[-1] == "AzureOpenAI":
-        if kwargs.get("invocation_params").get("model_name"):
-            return kwargs.get("invocation_params").get("model_name")
+        invocation_params = kwargs.get("invocation_params") or {}
+        if invocation_params.get("model_name"):
+            return invocation_params.get("model_name")
 
         deployment_name = None
         if serialized.get("kwargs").get("openai_api_version"):

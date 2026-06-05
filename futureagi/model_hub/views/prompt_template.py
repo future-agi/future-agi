@@ -169,7 +169,10 @@ def _safe_background_task(func, *args, **kwargs):
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
-    from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
 except ImportError:
     count_text_tokens = None
     log_and_deduct_cost_for_api_request = None
@@ -276,7 +279,10 @@ def handle_media(item: dict, model_name: str):
 
 
 def replace_variables(
-    messages: list[dict], variable_names: dict, model_name: str, template_format: str = None
+    messages: list[dict],
+    variable_names: dict,
+    model_name: str,
+    template_format: str = None,
 ) -> list[dict]:
     """
     Replace variables in message content with their corresponding values.
@@ -679,19 +685,32 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             # Prioritize draft versions — they contain the latest unsaved edits
             # (e.g. template_format changes) that haven't been committed yet.
-            org = getattr(self.request, "organization", None) or self.request.user.organization
+            org = (
+                getattr(self.request, "organization", None)
+                or self.request.user.organization
+            )
             base_qs = PromptVersion.objects.filter(
                 original_template=instance,
                 original_template__organization=org,
                 deleted=False,
             )
-            draft_execution = base_qs.filter(is_draft=True).order_by("-created_at").first()
+            draft_execution = (
+                base_qs.filter(is_draft=True).order_by("-created_at").first()
+            )
             if draft_execution:
                 execution = draft_execution
             elif base_qs.filter(is_default=True).exists():
-                execution = base_qs.filter(is_default=True).order_by("-is_default", "-created_at").first()
+                execution = (
+                    base_qs.filter(is_default=True)
+                    .order_by("-is_default", "-created_at")
+                    .first()
+                )
             elif base_qs.filter(is_draft=False).exists():
-                execution = base_qs.filter(is_draft=False).order_by("-is_default", "-created_at").first()
+                execution = (
+                    base_qs.filter(is_draft=False)
+                    .order_by("-is_default", "-created_at")
+                    .first()
+                )
             elif base_qs.exists():
                 execution = base_qs.order_by("-is_default", "-created_at").first()
             else:
@@ -1867,7 +1886,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         prompt_messages,
                         variable_combination,
                         config.get("configuration", {}).get("model"),
-                        template_format=config.get("configuration", {}).get("template_format"),
+                        template_format=config.get("configuration", {}).get(
+                            "template_format"
+                        ),
                     )
                     messages_with_replacement = remove_empty_text_from_messages(
                         messages_with_replacement
@@ -1928,12 +1949,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         if organization:
                             if log_and_deduct_cost_for_api_request is not None:
                                 log_and_deduct_cost_for_api_request(
-                                organization,
-                                APICallTypeChoices.PROMPT_BENCH.value,
-                                config=token_config,
-                                source="run_prompt_gen",
-                                workspace=workspace,
-                            )
+                                    organization,
+                                    APICallTypeChoices.PROMPT_BENCH.value,
+                                    config=token_config,
+                                    source="run_prompt_gen",
+                                    workspace=workspace,
+                                )
                             # log_and_deduct_cost_for_api_request_async = sync_to_async(log_and_deduct_cost_for_api_request)
                             # async_to_sync(log_and_deduct_cost_for_api_request_async)(organization, APICallTypeChoices.PROMPT_BENCH.value, config=token_config, source="run_prompt_gen")
 
@@ -1948,19 +1969,22 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                                 except ImportError:
                                     emit = None
 
-                                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
+                                if (
+                                    emit is not None
+                                    and UsageEvent is not None
+                                    and BillingEventType is not None
+                                ):
 
                                     emit(
-                                    UsageEvent(
-                                        org_id=str(organization.id),
-                                        event_type=APICallTypeChoices.PROMPT_BENCH.value,
-                                        properties={
-                                            "source": "run_prompt_gen",
-                                            "source_id": str(template.id),
-                                        },
+                                        UsageEvent(
+                                            org_id=str(organization.id),
+                                            event_type=APICallTypeChoices.PROMPT_BENCH.value,
+                                            properties={
+                                                "source": "run_prompt_gen",
+                                                "source_id": str(template.id),
+                                            },
+                                        )
                                     )
-                                )
                             except Exception:
                                 pass  # Metering failure must not break the action
 
@@ -2695,20 +2719,28 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
 
                     emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type=BillingEventType.EVAL_EXPLANATION,
-                        properties={
-                            "source": "prompt_template",
-                            "source_id": str(eval_template.id),
-                        },
+                        UsageEvent(
+                            org_id=str(org.id),
+                            event_type=BillingEventType.EVAL_EXPLANATION,
+                            properties={
+                                "source": "prompt_template",
+                                "source_id": str(eval_template.id),
+                                **token_usage_properties(metadata.get("usage", {})),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -3301,7 +3333,11 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             if not statement:
                 return self._gm.bad_request(get_error_message("MISSING_STATEMENT"))
 
-            config = {"input_tokens": (count_text_tokens(statement) if count_text_tokens else 0)}
+            config = {
+                "input_tokens": (
+                    count_text_tokens(statement) if count_text_tokens else 0
+                )
+            }
             call_log_row = None
             if log_and_deduct_cost_for_api_request is not None:
                 call_log_row = log_and_deduct_cost_for_api_request(
@@ -3315,7 +3351,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     call_log_row is None
                     or call_log_row.status != APICallStatusChoices.PROCESSING.value
                 ):
-                    return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
+                    return self._gm.bad_request(
+                        get_error_message("INSUFFICIENT_CREDITS")
+                    )
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -3331,22 +3369,31 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
 
                     emit(
-                    UsageEvent(
-                        org_id=str(_org.id),
-                        event_type=BillingEventType.AI_PROMPT_CREATION,
-                        properties={
-                            "source": "run_prompt_gen",
-                            "source_id": str(call_log_row.log_id),
-                        },
+                        UsageEvent(
+                            org_id=str(_org.id),
+                            event_type=BillingEventType.AI_PROMPT_CREATION,
+                            properties={
+                                "source": "run_prompt_gen",
+                                "source_id": str(call_log_row.log_id),
+                                **token_usage_properties(config),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -3424,9 +3471,11 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 )
 
             config = {
-                "input_tokens": (count_text_tokens(
-                    existing_prompt + improvement_requirements
-                ) if count_text_tokens else 0)
+                "input_tokens": (
+                    count_text_tokens(existing_prompt + improvement_requirements)
+                    if count_text_tokens
+                    else 0
+                )
             }
             call_log_row = None
             if log_and_deduct_cost_for_api_request is not None:
@@ -3441,7 +3490,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     call_log_row is None
                     or call_log_row.status != APICallStatusChoices.PROCESSING.value
                 ):
-                    return self._gm.bad_request(get_error_message("INSUFFICIENT_CREDITS"))
+                    return self._gm.bad_request(
+                        get_error_message("INSUFFICIENT_CREDITS")
+                    )
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -3457,22 +3508,31 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     from ee.usage.services.emitter import emit
                 except ImportError:
                     emit = None
+                try:
+                    from ee.usage.utils.event_properties import token_usage_properties
+                except ImportError:
+                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                if (
+                    emit is not None
+                    and UsageEvent is not None
+                    and BillingEventType is not None
+                ):
 
                     emit(
-                    UsageEvent(
-                        org_id=str(_org.id),
-                        event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
-                        properties={
-                            "source": "run_prompt_improve",
-                            "source_id": str(call_log_row.log_id),
-                        },
+                        UsageEvent(
+                            org_id=str(_org.id),
+                            event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
+                            properties={
+                                "source": "run_prompt_improve",
+                                "source_id": str(call_log_row.log_id),
+                                **token_usage_properties(config),
+                            },
+                        )
                     )
-                )
             except Exception:
                 pass  # Metering failure must not break the action
 
