@@ -73,6 +73,7 @@ class Direction(StrEnum):
 
 _BOTH = frozenset({Direction.INBOUND, Direction.OUTBOUND})
 _IN = frozenset({Direction.INBOUND})
+_OUT = frozenset({Direction.OUTBOUND})
 _NONE: frozenset[Direction] = frozenset()
 
 
@@ -127,8 +128,10 @@ _SPECS: tuple[ProviderSpec, ...] = (
         transport=Transport.WEBRTC_BRIDGE, connector_key="web_retell",
         credential_shape=CredentialShape.API_KEY_ASSISTANT, chat=True,
         observability_key="retell", status=Status.GA,
-        # Retell supports both; only inbound (we dial the agent) is wired today.
-        supported_directions=_BOTH, implemented_directions=_IN,
+        # Inbound via the web_retell bridge; outbound now wired via the
+        # RetellOutboundDialer (/v2/create-phone-call). "implemented" = wired, not
+        # yet live-verified e2e (a real outbound call needs a Retell number + stack).
+        supported_directions=_BOTH, implemented_directions=_BOTH,
     ),
     # The customer's own LiveKit agent (distinct from the SYSTEM 'livekit' engine).
     ProviderSpec(
@@ -197,8 +200,9 @@ _SPECS: tuple[ProviderSpec, ...] = (
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.SIP, credential_shape=CredentialShape.API_KEY_ASSISTANT,
         status=Status.PLANNED,
-        # Bland send-call (outbound) + inbound numbers, both via SIP; nothing wired.
-        supported_directions=_BOTH, implemented_directions=_NONE,
+        # Bland is outbound-first: outbound now wired via BlandOutboundDialer
+        # (/v1/calls). Inbound (receiving on a Bland number) is not wired yet.
+        supported_directions=_BOTH, implemented_directions=_OUT,
     ),
     # --- Non-agent-platform roles ---
     ProviderSpec(

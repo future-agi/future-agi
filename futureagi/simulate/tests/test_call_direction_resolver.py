@@ -44,12 +44,12 @@ def test_typo_raises_instead_of_silent_inbound():
 
 @pytest.mark.unit
 def test_unimplemented_outbound_raises_for_known_provider():
-    # Retell supports outbound but hasn't wired it → loud refusal, not a silent
-    # inbound run.
+    # Deepgram supports outbound but hasn't wired it → loud refusal, not a silent
+    # inbound run. (Retell/Vapi DO wire outbound via the dialer registry.)
     with pytest.raises(UnsupportedCallDirectionError):
-        resolve_call_direction("outbound", "retell")
-    # Inbound is implemented for retell → fine.
-    assert resolve_call_direction("inbound", "retell") is Direction.INBOUND
+        resolve_call_direction("outbound", "deepgram")
+    # Inbound is implemented for deepgram → fine.
+    assert resolve_call_direction("inbound", "deepgram") is Direction.INBOUND
 
 
 @pytest.mark.unit

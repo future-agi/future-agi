@@ -195,15 +195,15 @@ class TestCallDirection:
         IN, OUT = Direction.INBOUND, Direction.OUTBOUND
         # (key, supported, implemented) — from the direction audit (TH-5642).
         expected = {
-            "vapi": ({IN, OUT}, {IN, OUT}),       # only fully-wired outbound provider
-            "retell": ({IN, OUT}, {IN}),
+            "vapi": ({IN, OUT}, {IN, OUT}),
+            "retell": ({IN, OUT}, {IN, OUT}),     # outbound wired via RetellOutboundDialer
             "livekit_bridge": ({IN, OUT}, {IN}),
             "others": ({IN, OUT}, {IN, OUT}),
             "elevenlabs": ({IN, OUT}, {IN}),
             "deepgram": ({IN, OUT}, {IN}),
             "agora": ({IN, OUT}, set()),
             "pipecat": ({IN, OUT}, {IN}),
-            "bland": ({IN, OUT}, set()),
+            "bland": ({IN, OUT}, {OUT}),          # outbound-first; BlandOutboundDialer
             "twilio": (set(), set()),             # transport-only, direction n/a
             "futureagi": (set(), set()),          # internal chat
         }
@@ -214,13 +214,14 @@ class TestCallDirection:
 
     @pytest.mark.unit
     def test_supports_and_implements_helpers(self):
-        # Retell supports outbound but has not wired it — the distinction that lets
+        # Deepgram supports outbound but has not wired it — the distinction that lets
         # dispatch fail loudly instead of silently running inbound.
-        assert supports_direction("retell", Direction.OUTBOUND)
-        assert not implements_direction("retell", Direction.OUTBOUND)
-        assert implements_direction("retell", Direction.INBOUND)
-        # Vapi: both supported and implemented.
+        assert supports_direction("deepgram", Direction.OUTBOUND)
+        assert not implements_direction("deepgram", Direction.OUTBOUND)
+        assert implements_direction("deepgram", Direction.INBOUND)
+        # Vapi and Retell: outbound both supported and wired (dialer registry).
         assert implements_direction("vapi", Direction.OUTBOUND)
+        assert implements_direction("retell", Direction.OUTBOUND)
         # Unknown provider / transport-only.
         assert not supports_direction("nonsense", Direction.INBOUND)
         assert not supports_direction("twilio", Direction.INBOUND)
