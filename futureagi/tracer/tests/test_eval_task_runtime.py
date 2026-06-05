@@ -25,7 +25,8 @@ import model_hub.tasks  # noqa: F401, E402
 
 from tracer.models.custom_eval_config import CustomEvalConfig  # noqa: E402
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RunType  # noqa: E402
-from tracer.models.observation_span import EvalLogger  # noqa: E402
+from tracer.models.observation_span import EvalLogger, ObservationSpan  # noqa: E402
+from tracer.models.trace import Trace  # noqa: E402
 from tracer.utils.eval_tasks import process_eval_task  # noqa: E402
 
 
@@ -178,17 +179,84 @@ class TestProcessEvalTaskSpans:
 
 
 # ────────────────────────────────────────────────────────────────────────
-# Voice-call dispatch — literal alias of the spans pipeline. Any
-# observation_type narrowing is the caller's job via ``filters``.
+# Voice-call dispatch — root conversation spans only, windowed by
+# ``start_time``. Mirrors ``list_voice_calls`` so the eval covers exactly
+# the population the user sees in the voice-call list view.
 # ────────────────────────────────────────────────────────────────────────
 
 
 @pytest.fixture
-def voice_call_eval_task(db, populated_observe_project, eval_template):
-    """Historical voiceCalls eval task on the shared 12-span fixture."""
+def populated_voice_project(db, observe_project):
+    """Build a small voice-call graph for dispatcher tests.
+
+    Two traces:
+
+    * Trace A: ``conv_root`` (conversation, root) + ``conv_child``
+      (conversation, child of conv_root). Only conv_root qualifies.
+    * Trace B: ``llm_root`` (llm, root). Non-conversation; excluded.
+
+    Returns each span by name so tests can assert on ids without
+    re-querying. ``start_time`` is anchored so date-range tests can
+    bracket it.
+    """
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    anchor = timezone.now().replace(microsecond=0)
+    out = {"project": observe_project, "anchor": anchor}
+
+    trace_a = Trace.objects.create(
+        project=observe_project,
+        name="Trace A (conversation)",
+        input={"prompt": "a"},
+        output={"response": "a"},
+        metadata={},
+    )
+    trace_b = Trace.objects.create(
+        project=observe_project,
+        name="Trace B (llm)",
+        input={"prompt": "b"},
+        output={"response": "b"},
+        metadata={},
+    )
+
+    def _mk(span_id, trace, parent_span_id, obs_type, start):
+        span = ObservationSpan.objects.create(
+            id=span_id,
+            project=observe_project,
+            trace=trace,
+            parent_span_id=parent_span_id,
+            name=f"Span {span_id}",
+            observation_type=obs_type,
+            start_time=start,
+            end_time=start + timedelta(seconds=1),
+            input={"messages": [{"role": "user", "content": span_id}]},
+            output={"choices": [{"message": {"content": span_id}}]},
+            span_attributes={
+                "input": {"value": span_id},
+                "output": {"value": span_id},
+            },
+            model="gpt-4",
+            status="OK",
+        )
+        return span
+
+    out["conv_root"] = _mk("vc_conv_root", trace_a, None, "conversation", anchor)
+    out["conv_child"] = _mk(
+        "vc_conv_child", trace_a, "vc_conv_root", "conversation", anchor
+    )
+    out["llm_root"] = _mk("vc_llm_root", trace_b, None, "llm", anchor)
+
+    return out
+
+
+@pytest.fixture
+def voice_call_eval_task(db, populated_voice_project, eval_template):
+    """Historical voiceCalls eval task scoped to ``populated_voice_project``."""
     from tracer.models.eval_task import RowType
 
-    project = populated_observe_project["project"]
+    project = populated_voice_project["project"]
     config = CustomEvalConfig.objects.create(
         project=project,
         eval_template=eval_template,
@@ -215,40 +283,105 @@ def voice_call_eval_task(db, populated_observe_project, eval_template):
 @pytest.mark.api
 @pytest.mark.django_db
 class TestProcessEvalTaskVoiceCalls:
-    """Dispatcher must route voiceCalls through the spans flow.
+    """Dispatcher narrows voiceCalls to root conversation spans.
 
-    Regression net for the bug where ``row_type='voiceCalls'`` hit the
-    dispatcher's ``else`` branch (added in fb134ddf) and raised
-    ``ValueError`` — flipping every voiceCalls task in prod to FAILED.
+    Mirrors ``list_voice_calls`` (CH ``VoiceCallListQueryBuilder``):
+    ``parent_span_id IS NULL AND observation_type = 'conversation'``,
+    windowed by ``start_time``.
 
-    Behaviour pin: voiceCalls is a literal alias of spans at dispatch.
-    Any observation_type narrowing (e.g. limiting to conversation roots)
-    is the caller's responsibility via ``EvalTask.filters``.
+    Regression net for the earlier bug where ``row_type='voiceCalls'`` hit
+    the dispatcher's ``else`` branch (added in fb134ddf) and raised
+    ``ValueError`` — covered by the status-transitions test below.
     """
 
-    def test_dispatches_same_spans_as_spans_path(
+    def test_dispatches_only_conversation_root_spans(
         self,
-        populated_observe_project,
+        populated_voice_project,
         voice_call_eval_task,
         stub_run_eval,
         stub_cost_log,
         inline_temporal,
     ):
-        """voiceCalls fan-out matches the spans path on the same project."""
+        """Only spans where parent_span_id IS NULL AND observation_type='conversation' are evaluated."""
         task = voice_call_eval_task["task"]
 
         process_eval_task._original_func(str(task.id))
 
         rows = EvalLogger.objects.filter(eval_task_id=str(task.id), deleted=False)
-        # populated_observe_project has 2 sessions × 2 traces × 3 spans = 12
-        # spans × 1 eval -> 12 EvalLogger rows (no observation_type narrowing).
-        assert rows.count() == 12
-        expected_ids = {s.id for s in populated_observe_project["spans"]}
-        assert {r.observation_span_id for r in rows} == expected_ids
+        # Fixture has one conversation-root span (``conv_root``). The other
+        # roots are non-conversation; ``conv_child`` is conversation-typed
+        # but has a parent — neither qualifies.
+        assert rows.count() == 1
+        assert {r.observation_span_id for r in rows} == {
+            populated_voice_project["conv_root"].id
+        }
 
-    def test_status_transitions_match_spans_path(
+    def test_date_range_binds_to_start_time(
         self,
-        populated_observe_project,
+        populated_voice_project,
+        voice_call_eval_task,
+        stub_run_eval,
+        stub_cost_log,
+        inline_temporal,
+    ):
+        """``date_range`` filters voiceCalls on ``start_time`` (not ``created_at``).
+
+        Force a second conversation root whose ``start_time`` falls outside
+        the saved window. The dispatcher must dispatch only the in-window
+        span — even though both rows were ``created_at`` ~now.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+
+        project = populated_voice_project["project"]
+        anchor = populated_voice_project["anchor"]
+        # Past-window conversation root: start_time well before the window.
+        past_start = anchor - timedelta(days=30)
+        out_of_window = ObservationSpan.objects.create(
+            id="vc_conv_root_past",
+            project=project,
+            trace=Trace.objects.create(
+                project=project, name="Trace past", input={}, output={}, metadata={}
+            ),
+            parent_span_id=None,
+            name="Span past conversation",
+            observation_type="conversation",
+            start_time=past_start,
+            end_time=past_start + timedelta(seconds=1),
+            input={}, output={},
+            span_attributes={"input": {"value": "past"}, "output": {"value": "past"}},
+            model="gpt-4",
+            status="OK",
+        )
+
+        # Window covers only ``anchor`` (today's conv_root), not ``past_start``.
+        window_start = (anchor - timedelta(hours=1)).isoformat()
+        window_end = (anchor + timedelta(hours=1)).isoformat()
+        task = voice_call_eval_task["task"]
+        task.filters = {
+            "project_id": str(project.id),
+            "date_range": [window_start, window_end],
+        }
+        task.save(update_fields=["filters", "updated_at"])
+
+        process_eval_task._original_func(str(task.id))
+
+        dispatched = {
+            r.observation_span_id
+            for r in EvalLogger.objects.filter(
+                eval_task_id=str(task.id), deleted=False
+            )
+        }
+        # Only the in-window conversation root is dispatched. The past
+        # span is excluded by the start_time filter; the present non-
+        # conversation roots are excluded by observation_type narrowing.
+        assert dispatched == {populated_voice_project["conv_root"].id}
+        assert out_of_window.id not in dispatched
+
+    def test_status_transitions(
+        self,
+        populated_voice_project,
         voice_call_eval_task,
         stub_run_eval,
         stub_cost_log,
