@@ -228,11 +228,15 @@ from model_hub.views.separate_evals import (
     TestEvaluationTemplateAPIView,
     UpdateEvalTemplateView,
 )
+from model_hub.views.dataset_eval_config import DatasetEvalConfigViewSet
 from model_hub.views.tools import ToolsViewSet
 from model_hub.views.tts_voices import TTSVoiceViewSet
 
 router = DefaultRouter()
 router.register(r"kb", KnowledgeBaseViewSet, basename="knowledge-base")
+router.register(
+    r"dataset-eval-configs", DatasetEvalConfigViewSet, basename="dataset-eval-config"
+)
 router.register(r"api-keys", ApiKeyViewSet, basename="api-key")
 router.register(r"tools", ToolsViewSet, basename="tool")
 router.register(r"tts-voices", TTSVoiceViewSet, basename="tts-voices")
