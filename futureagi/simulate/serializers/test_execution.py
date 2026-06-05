@@ -119,14 +119,26 @@ class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
 
 
 def _normalize_eval_value(value, output_type):
-    """Normalize evaluation result values for the frontend.
-
-    For ``output_type == "choices"`` the stored value is the LLM's single
-    selected category (a string). The run-detail grid renders choice cells as
-    a list of Chip components and expects an iterable, so wrap bare scalars in
-    a single-element list. Values that are already lists, None, or for other
-    output types are returned unchanged.
-    """
+    """Normalize an eval value for the FE: choices → list-wrap; dict shapes
+    → extract score for score-type templates, choice/choices for choices-type."""
+    if isinstance(value, dict):
+        choices = value.get("choices")
+        choice = value.get("choice")
+        score = value.get("score")
+        if output_type in ("score", "numeric"):
+            if isinstance(score, (int, float)) and not isinstance(score, bool):
+                value = float(score)
+            elif isinstance(choices, list):
+                value = choices
+            elif isinstance(choice, str):
+                value = choice
+        else:
+            if isinstance(choices, list):
+                value = choices
+            elif isinstance(choice, str):
+                value = choice
+            elif isinstance(score, (int, float)) and not isinstance(score, bool):
+                value = float(score)
     if output_type == "choices" and value is not None and not isinstance(value, list):
         return [value]
     return value

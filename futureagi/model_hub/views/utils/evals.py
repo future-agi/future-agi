@@ -12,6 +12,7 @@ from accounts.models.organization import Organization
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
+from evaluations.engine.normalize import coerce_to_legacy_scalar
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
 from model_hub.models.evals_metric import EvalTemplate
@@ -29,6 +30,17 @@ try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
     log_and_deduct_cost_for_api_request = None
+
+
+def _build_eval_audit_payload(value, template, reason_text):
+    """Audit-log payload written into ``APICallLog.config["output"]``."""
+    return {
+        "output": value,
+        "output_scalar": coerce_to_legacy_scalar(
+            value, template.config.get("output", "score")
+        ),
+        "reason": reason_text,
+    }
 
 
 def run_eval_func(
@@ -387,7 +399,7 @@ def run_eval_func(
         if api_call_log_row is None:
             return response
         config_dict = json.loads(api_call_log_row.config)
-        output_payload = {"output": value, "reason": response["reason"]}
+        output_payload = _build_eval_audit_payload(value, template, response["reason"])
         # Mirror the dataset path: propagate partial-input warnings into
         # the API call log so the eval usage view (which reads APICallLog)
         # can surface them alongside the eval's output.
@@ -634,20 +646,20 @@ def process_eval_for_single_row(
 
         config_dict = json.loads(api_call_log_row.config)
 
+        _audit_output = _build_eval_audit_payload(
+            value, eval_template, response["reason"]
+        )
+
         if (
             eval_template
             and eval_template.config.get("eval_type_id") == "DeterministicEvaluator"
         ):
             metadata_json = eval_result.eval_results[0].get("metadata", "{}")
             json.loads(metadata_json)
-            config_dict.update(
-                {"output": {"output": value, "reason": response["reason"]}}
-            )
+            config_dict.update({"output": _audit_output})
 
         else:
-            config_dict.update(
-                {"output": {"output": value, "reason": response["reason"]}}
-            )
+            config_dict.update({"output": _audit_output})
 
         input_types = {}
         for key, mapping_value in mappings.items():

@@ -4,6 +4,11 @@ from django.db import models
 
 from accounts.models.organization import Organization
 from accounts.models.user import User
+from evaluations.engine.normalize import (
+    coerce_to_legacy_scalar,
+    dual_write_eval_value,
+    eval_config_output,
+)
 from model_hub.models.error_localizer_model import ErrorLocalizerTask
 from model_hub.models.evals_metric import EvalTemplate
 from tfc.utils.base_model import BaseModel
@@ -111,27 +116,15 @@ class Evaluation(BaseModel):
         return f"Evaluation {self.id} - {template_name} ({self.status})"
 
     def save(self, *args, **kwargs):
-        """
-        Override save to automatically populate type-specific output fields
-        based on the value and output type, following the inline_evals logic.
-        """
         if self.value is not None:
             try:
-                data = self.value
-
-                if isinstance(data, float) or isinstance(data, int):
-                    self.output_float = float(data)
-                elif isinstance(data, bool) or data in [["Passed"], ["Failed"]]:
-                    self.output_bool = (
-                        True if data == "Passed" or data is True else False
-                    )
-                elif isinstance(data, list):
-                    self.output_str_list = data
-                elif isinstance(data, str) and data in ["Passed", "Failed"]:
-                    self.output_bool = True if data == "Passed" else False
-                else:
-                    self.output_str = str(data)
-
+                config_output = eval_config_output(self.eval_template)
+                projected = {}
+                dual_write_eval_value(self.value, config_output, projected)
+                for col in ("output_bool", "output_float", "output_str_list", "output_str"):
+                    if col in projected:
+                        setattr(self, col, projected[col])
+                self.value = coerce_to_legacy_scalar(self.value, config_output)
             except Exception:
                 self.output_str = str(self.value)
 

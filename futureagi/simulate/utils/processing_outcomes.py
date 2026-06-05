@@ -24,6 +24,8 @@ def build_skipped_eval_output_payload(
     """Build a standardized skipped eval output payload for UI rendering."""
     return {
         "output": None,
+        "output_scalar": None,
+        "output_dict": None,
         "reason": reason,
         "output_type": None,
         "name": eval_name,

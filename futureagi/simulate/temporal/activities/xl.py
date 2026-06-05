@@ -719,6 +719,8 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     "name": eval_config.name,
                     "timestamp": timezone.now().isoformat(),
                     "output": None,
+                    "output_scalar": None,
+                    "output_dict": None,
                     "output_type": derive_kpi_output_type(eval_template),
                 }
                 call_execution.eval_outputs[str(eval_config.id)] = error_result
@@ -792,12 +794,20 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             eval_output = eval_result.get("output")
             eval_reason = eval_result.get("reason", "")
 
-            call_execution.eval_outputs[str(eval_config.id)] = {
-                "output": eval_output,
-                "reason": eval_reason,
-                "output_type": eval_result.get("output_type"),
-                "name": eval_config.name,
-            }
+            from evaluations.engine.normalize import (
+                build_simulate_eval_payload,
+                eval_config_output,
+            )
+
+            call_execution.eval_outputs[str(eval_config.id)] = (
+                build_simulate_eval_payload(
+                    name=eval_config.name,
+                    output=eval_output,
+                    reason=eval_reason,
+                    output_type=eval_result.get("output_type"),
+                    config_output=eval_config_output(eval_template),
+                )
+            )
             call_execution.save(update_fields=["eval_outputs"])
 
             # Trigger error localization if enabled
@@ -841,6 +851,8 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             "name": eval_config.name,
             "timestamp": timezone.now().isoformat(),
             "output": None,
+            "output_scalar": None,
+            "output_dict": None,
             "output_type": derive_kpi_output_type(eval_config.eval_template),
         }
         call_execution.eval_outputs[str(eval_config.id)] = error_result
@@ -1009,6 +1021,8 @@ def _run_evaluations_standalone(
             for eval_config in eval_configs:
                 call_execution.eval_outputs[str(eval_config.id)] = {
                     "output": None,
+                    "output_scalar": None,
+                    "output_dict": None,
                     "reason": "No transcript data available",
                     "output_type": derive_kpi_output_type(eval_config.eval_template),
                     "name": eval_config.name,
