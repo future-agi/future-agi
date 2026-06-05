@@ -1350,12 +1350,23 @@ class EvaluationRunner:
         if is_user_eval_stopped(self.user_eval_metric_id):
             return
 
+        # Cell.value is a TextField — coerce to a string-safe scalar; rich
+        # dict stays in value_infos.
+        from evaluations.engine.normalize import (
+            coerce_to_legacy_scalar,
+            eval_config_output,
+        )
+
+        cell_value = coerce_to_legacy_scalar(
+            value, eval_config_output(self.eval_template)
+        )
+
         cell_data = {
             "dataset": dataset,
             "column": column,
             "row": row,
             "value_infos": json.dumps(response),
-            "value": value,
+            "value": cell_value,
             "status": status,
         }
 

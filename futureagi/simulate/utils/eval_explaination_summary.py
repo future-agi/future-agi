@@ -205,10 +205,14 @@ def _collect_eval_data_by_call_execution(eval_configs, call_executions):
                 if eval_data.get("error"):
                     continue
 
+                eval_value = eval_data.get("output_scalar")
+                if eval_value is None:
+                    eval_value = eval_data.get("output")
+
                 # Add this eval config's data to the call execution
                 eval_data_by_call_execution[call_exec_id][eval_config.name] = {
                     "eval_reason": eval_data.get("reason", ""),
-                    "eval_value": eval_data.get("output"),
+                    "eval_value": eval_value,
                     "eval_template_id": str(eval_template.id),
                     "eval_template_name": str(eval_template.name),
                     "eval_template_criteria": str(eval_template.criteria),

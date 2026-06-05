@@ -4835,7 +4835,10 @@ class UpdateEvalConfigView(APIView):
 
                     # Set placeholder values for the eval config that will be rerun
                     call_execution.eval_outputs[str(eval_config.id)] = {
-                        "status": "pending"
+                        "status": "pending",
+                        "output": None,
+                        "output_scalar": None,
+                        "output_dict": None,
                     }
 
                     call_executions_list.append(call_execution)
@@ -5446,9 +5449,13 @@ class CSVExportView(APIView):
                         eval_data,
                     ) in call_execution.eval_outputs.items():
                         eval_name = eval_data.get("name", f"Eval_{eval_config_id}")
-                        eval_output = eval_data.get("output", "")
+                        eval_output = eval_data.get("output_scalar")
+                        if eval_output is None:
+                            eval_output = eval_data.get("output", "")
                         eval_reason = eval_data.get("reason", "")
-                        row_data[eval_name] = str(eval_output)
+                        row_data[eval_name] = (
+                            "" if eval_output is None else str(eval_output)
+                        )
                         row_data[f"{eval_name}_reason"] = str(eval_reason)
 
                 # Initialize all tool output columns with empty values

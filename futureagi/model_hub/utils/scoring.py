@@ -40,6 +40,15 @@ def normalize_score(
             return 1.0 if value > 0 else 0.0
         return 0.0
 
+    # choice_scores-mapped templates emit {"score","choice"} or
+    # {"score","choices"}; unwrap to the field matching this output type
+    # so the existing scalar/list branches keep working.
+    if isinstance(value, dict):
+        if output_type == "percentage":
+            value = value.get("score")
+        elif output_type == "deterministic":
+            value = value.get("choices") or value.get("choice")
+
     if output_type == "percentage":
         try:
             score = float(value)
