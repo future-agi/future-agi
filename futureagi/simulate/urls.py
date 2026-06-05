@@ -29,6 +29,7 @@ from simulate.views.run_test import (
     CallExecutionErrorLocalizerTasksView,
     CallExecutionLogsView,
     CallExecutionRerunView,
+    CreateMinimalSuiteView,
     CSVExportView,
     DeleteEvalConfigView,
     GetEvalConfigStructureView,
@@ -263,6 +264,7 @@ urlpatterns = [
     # Run Test API endpoints
     path("run-tests/", RunTestListView.as_view(), name="run-tests-list"),
     path("run-tests/create/", CreateRunTestView.as_view(), name="run-tests-create"),
+    path("run-tests/create-cli/", CreateMinimalSuiteView.as_view(), name="run-tests-create-cli"),
     path(
         "run-tests/<uuid:run_test_id>/",
         RunTestDetailView.as_view(),
