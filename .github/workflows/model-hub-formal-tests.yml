@@ -1,0 +1,35 @@
+name: model-hub formal verification
+
+on:
+  push:
+    paths:
+      - 'futureagi/model_hub/formal_tests/**'
+      - 'futureagi/model_hub/utils/column_utils.py'
+      - 'futureagi/model_hub/utils/scoring.py'
+      - 'futureagi/model_hub/utils/eval_validators.py'
+  pull_request:
+    paths:
+      - 'futureagi/model_hub/formal_tests/**'
+      - 'futureagi/model_hub/utils/column_utils.py'
+      - 'futureagi/model_hub/utils/scoring.py'
+      - 'futureagi/model_hub/utils/eval_validators.py'
+
+jobs:
+  formal-verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: futureagi/model_hub/formal_tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install z3-solver hypothesis pytest
+
+      - name: Run formal verification
+        run: python -m pytest . -v -m unit --tb=short
