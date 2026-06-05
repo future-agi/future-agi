@@ -427,6 +427,64 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error retrieving trial prompt: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path=r"trial/(?P<trial_id>[^/.]+)/apply",
+    )
+    def apply_trial(self, request, trial_id=None, *args, **kwargs):
+        """Apply an optimised trial as a NEW PromptVersion (TH-5642).
+
+        "Directly apply the fix" = create a new, non-destructive version carrying
+        the trial's optimised prompt; the POST is the user's confirmation, so the
+        new version goes live as the template's default. The baseline is untouched.
+
+        URL: POST /agent-prompt-optimiser/{id}/trial/{trial_id}/apply/
+        Body (optional): {"make_default": bool}  (default true)
+        """
+        try:
+            instance = self.get_object()
+            trial = instance.trials.get(id=trial_id)
+
+            if trial.is_baseline:
+                return self._gm.bad_request("Cannot apply the baseline trial.")
+            if not (trial.prompt or "").strip():
+                return self._gm.bad_request("Trial has no prompt to apply.")
+
+            base_version = getattr(
+                getattr(getattr(instance, "test_execution", None), "run_test", None),
+                "prompt_version", None,
+            )
+            if base_version is None:
+                return self._gm.bad_request(
+                    "This optimiser run is not linked to a prompt version to apply to."
+                )
+
+            from simulate.services.optimizer_apply import (
+                apply_optimized_prompt_as_new_version,
+            )
+
+            make_default = bool(request.data.get("make_default", True))
+            new_version = apply_optimized_prompt_as_new_version(
+                base_version, trial.prompt, make_default=make_default
+            )
+
+            return self._gm.success_response(
+                {
+                    "applied": True,
+                    "new_prompt_version_id": str(new_version.id),
+                    "template_version": new_version.template_version,
+                    "original_template_id": str(new_version.original_template_id),
+                    "is_default": new_version.is_default,
+                    "source_trial_id": str(trial.id),
+                }
+            )
+        except PromptTrial.DoesNotExist:
+            return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
+        except Exception as e:
+            logger.exception(f"Error applying trial prompt: {str(e)}")
+            return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
+
     @swagger_auto_schema(
         responses={
             200: AgentPromptOptimiserTrialEvaluationsResponseSerializer,
