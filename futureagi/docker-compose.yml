@@ -58,7 +58,7 @@ services:
       - FAST_STARTUP=${FAST_STARTUP:-true}
       - AGENTCC_INTERNAL_URL=http://agentcc-gateway:8090
       - AGENTCC_GATEWAY_INTERNAL_URL=http://agentcc-gateway:8090
-      - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
+      - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
       - CH25_DATABASE=${CH25_DATABASE:-futureagi}
       # Read replica: uncomment to test read/write split locally (points to same DB).
       # Both PGBOUNCER_READ_HOST and READ_REPLICA_OPT_IN must be set for any
@@ -117,7 +117,7 @@ services:
     env_file:
       - .env
     environment:
-      - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
+      - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-local-dev-only-shared-secret-replace-me}
       # Gateway WORKDIR is /, so credentials_file resolution needs an absolute
       # path. Override the relative value from .env.
       - GOOGLE_APPLICATION_CREDENTIALS=/app/Vertex_AI_Creds.json
