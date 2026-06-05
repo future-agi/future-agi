@@ -134,7 +134,11 @@ class FutureAGIChatService(ChatServiceBlueprint):
         if input.initial_message and input.initial_message.content:
             initial_messages.append(
                 {
-                    "role": "user",  # Simulator (AI customer) speaks as "user"
+                    # Opening greeting seeded for the agent under test — the
+                    # agent will see this as its incoming user turn. The
+                    # simulator's own subsequent replies are stored as
+                    # role="assistant" (see send_message).
+                    "role": "user",
                     "content": input.initial_message.content,
                 }
             )
@@ -210,6 +214,14 @@ class FutureAGIChatService(ChatServiceBlueprint):
         messages: List[Dict[str, Any]] = list(session.messages)
 
         for msg in input.messages:
+            # Skip tool-role messages: the simulator role-plays a customer and
+            # doesn't need the agent's internal tool exchanges. Including them
+            # would orphan the `tool` message (its parent `tool_calls` is dropped
+            # below), causing OpenAI to reject the next turn with
+            # "messages with role 'tool' must be a response to a preceding
+            # message with 'tool_calls'".
+            if msg.role == ChatRole.TOOL:
+                continue
             content = (msg.content or "").strip()
             if not content:
                 logger.warning(
@@ -229,7 +241,7 @@ class FutureAGIChatService(ChatServiceBlueprint):
                 turn_count=turn_count,
             )
             final_content = f"Maximum conversation turns ({MAX_CONVERSATION_TURNS}) reached. Ending conversation."
-            messages.append({"role": "user", "content": final_content})
+            messages.append({"role": "assistant", "content": final_content})
             session.messages = messages
             session.has_chat_ended = True
             session.status = "ended"
@@ -267,11 +279,22 @@ class FutureAGIChatService(ChatServiceBlueprint):
             ended_reason = response.get("ended_reason")
             usage: LLMUsage = response.get("usage") or LLMUsage()
 
+            # The simulator LLM's own output — must be stored as "assistant"
+            # so the next OpenAI call sees its own prior turn correctly.
+            # The SDK's cloud engine also expects backend simulator messages to
+            # use role="assistant" (it converts them to "user" on its side).
+            #
+            # Only persist tool_calls when the chat actually ends (i.e. endCall).
+            # A non-ending tool_call (hallucinated tool name, future simulator
+            # tool, malformed endCall) would leave the next OpenAI turn with
+            # dangling tool_calls and no `tool` response, re-triggering the
+            # 400 this fix is for.
+            include_tool_calls = bool(tool_calls) and has_chat_ended
             messages.append(
                 {
-                    "role": "user",
+                    "role": "assistant",
                     "content": content,
-                    **({"tool_calls": tool_calls} if tool_calls else {}),
+                    **({"tool_calls": tool_calls} if include_tool_calls else {}),
                 }
             )
 
