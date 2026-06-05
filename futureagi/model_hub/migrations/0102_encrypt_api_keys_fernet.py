@@ -1,7 +1,10 @@
 import base64
+import logging
 import os
 
 from django.db import migrations
+
+logger = logging.getLogger(__name__)
 
 
 def _to_fernet(stored, credential_manager):
@@ -49,7 +52,7 @@ def reencrypt(apps, schema_editor):
     # under it would make these rows undecryptable after the next restart.
     # The dual-format read path keeps legacy base64 rows working until then.
     if not os.environ.get("INTEGRATION_ENCRYPTION_KEY"):
-        print("INTEGRATION_ENCRYPTION_KEY not set in env; skipping re-encryption.")
+        logger.warning("INTEGRATION_ENCRYPTION_KEY not set in env; skipping re-encryption.")
         return
 
     from integrations.services.credentials import CredentialManager
