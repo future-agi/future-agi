@@ -1182,10 +1182,20 @@ def process_single_error_localization(task_id):
                 from ee.usage.services.emitter import emit
             except ImportError:
                 emit = None
+            try:
+                from ee.usage.utils.event_properties import llm_usage_properties
+            except ImportError:
+                llm_usage_properties = lambda obj: {}
 
             actual_cost = getattr(localizer, "cost", {}).get("total_cost", 0)
             if not actual_cost and hasattr(localizer, "llm"):
                 actual_cost = getattr(localizer.llm, "cost", {}).get("total_cost", 0)
+            if not actual_cost:
+                error_agent = getattr(localizer, "error_agent", None)
+                error_llm = getattr(error_agent, "llm", None)
+                actual_cost = getattr(error_llm, "cost", {}).get(
+                    "total_cost", 0
+                )
             if BillingConfig is not None:
                 credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
@@ -1199,6 +1209,9 @@ def process_single_error_localization(task_id):
                         "source": "error_localizer",
                         "source_id": str(task.id),
                         "raw_cost_usd": str(actual_cost),
+                        **llm_usage_properties(
+                            getattr(localizer, "error_agent", None)
+                        ),
                     },
                 )
             )

@@ -9,7 +9,7 @@ import React, {
   useState,
 } from "react";
 import PropTypes from "prop-types";
-import { Box, CircularProgress, Typography } from "@mui/material";
+import { Box, Typography } from "@mui/material";
 import { useParams, useLocation, useNavigate } from "react-router";
 import { Helmet } from "react-helmet-async";
 import { formatDate } from "src/utils/report-utils";
@@ -231,6 +231,10 @@ const UsersView = ({
   // --- Extra filters from TraceFilterPanel (popover) ---
   const [extraFilters, setExtraFilters] = useState([]);
   const [isFilterOpen, setIsFilterOpen] = useUrlState("userFilterOpen", false);
+  // Anchor for the filter popover when opened via the chip-row `+` or
+  // by clicking an existing chip. Null falls back to the toolbar Filter
+  // button (handled by ObserveToolbar).
+  const [externalFilterAnchor, setExternalFilterAnchor] = useState(null);
 
   const hasActiveFilter = extraFilters.length > 0;
 
@@ -726,8 +730,6 @@ const UsersView = ({
     searchState === "searching" ||
     hasActiveFilter;
 
-  const shouldShowLoading = isLoading && hasData === null;
-
   return (
     <>
       {!observeId && (
@@ -749,7 +751,13 @@ const UsersView = ({
         onSaveView={handleSaveView}
         graphFilters={extraFilters}
         isFilterOpen={isFilterOpen}
-        onFilterToggle={() => setIsFilterOpen(!isFilterOpen)}
+        externalFilterAnchor={externalFilterAnchor}
+        onFilterToggle={() => {
+          // Clear any chip-row anchor so the popover re-anchors to the
+          // toolbar Filter button on the next open.
+          setExternalFilterAnchor(null);
+          setIsFilterOpen(!isFilterOpen);
+        }}
         filterFields={USER_FILTER_FIELDS}
         onApplyExtraFilters={setExtraFilters}
         // Columns (Display panel)
@@ -816,9 +824,23 @@ const UsersView = ({
             USER_FILTER_FIELDS.find((c) => c.id === f.column_id)?.name,
         }))}
         onRemoveFilter={(idx) => {
+          // Chips are keyed by array index, so any removal re-mounts the
+          // later chips and invalidates a chip-anchored popover ref.
+          setExternalFilterAnchor(null);
           setExtraFilters((prev) => prev.filter((_, i) => i !== idx));
         }}
-        onClearAll={() => setExtraFilters([])}
+        onClearAll={() => {
+          setExternalFilterAnchor(null);
+          setExtraFilters([]);
+        }}
+        onAddFilter={(anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
+        onChipClick={(_idx, anchorEl) => {
+          setExternalFilterAnchor(anchorEl || null);
+          setIsFilterOpen(true);
+        }}
       />
 
       {/* Graph — hidden in cross-project mode (no project context to
@@ -849,20 +871,6 @@ const UsersView = ({
           pt: 1,
         }}
       >
-        {/* Loading spinner */}
-        {shouldShowLoading && (
-          <Box
-            sx={{
-              flex: 1,
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-            }}
-          >
-            <CircularProgress />
-          </Box>
-        )}
-
         {/* Empty state */}
         {shouldShowEmptyLayout && (
           <Box

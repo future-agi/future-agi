@@ -795,6 +795,15 @@ CLICKHOUSE_V2 = {
     "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
+# Eval-logger table read by the trace/voice/user eval-config discovery queries.
+# The CH25 spans cutover intentionally kept the legacy peerdb CDC table
+# `tracer_eval_logger` (`_peerdb_is_deleted`/`deleted` columns); the v2 table
+# `tracer_eval_logger_v2` (`is_deleted`) is its prepared replacement. Flip this
+# per-deployment (default = legacy so the peerdb-backed stacks are unaffected;
+# CH-direct stacks set it to `tracer_eval_logger_v2`). See
+# tracer/services/clickhouse/v2/schema/011_eval_logger_v2.sql + docs/CH25_MIGRATION.md.
+CH25_EVAL_LOGGER_TABLE = os.getenv("CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
+
 # Where the eval runner reads span data from.
 #   "postgres"   — current behavior; reads from tracer_observation_span (Django ORM)
 #   "clickhouse" — reads span data from CH 25.3 via the hybrid loader

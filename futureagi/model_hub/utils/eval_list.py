@@ -270,6 +270,7 @@ def build_user_eval_list_items(
             "eval_required_keys": (template.config or {}).get("required_keys", []),
             "eval_template_tags": template.eval_tags,
             "description": template.description,
+            "config": user_eval.config or {},
             "model": run_config.get("model")
             or (user_eval.config or {}).get("config", {}).get("model", ""),
             "column_id": column_map.get(str(user_eval.id)),

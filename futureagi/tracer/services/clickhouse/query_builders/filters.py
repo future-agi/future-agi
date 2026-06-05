@@ -346,7 +346,10 @@ class ClickHouseFilterBuilder:
             id_filter = (
                 f" AND id IN ("
                 f"SELECT observation_span_id FROM model_hub_score AS s FINAL "
-                f"WHERE s._peerdb_is_deleted = 0 AND s.deleted = false "
+                # model_hub_score keeps the legacy `_peerdb_is_deleted` column;
+                # the v2 SQL rewriter renames it to `is_deleted` (which this table
+                # lacks). `s.deleted = false` is the real soft-delete filter.
+                f"WHERE s.deleted = false "
                 f"AND notEmpty(s.observation_span_id)"
                 f"{score_date}"
                 f" {score_side_where})"
@@ -432,8 +435,7 @@ class ClickHouseFilterBuilder:
             f"FROM model_hub_score AS s FINAL "
             f"LEFT JOIN {spans_subq} AS sp "
             f"ON sp.id = s.observation_span_id "
-            f"WHERE s._peerdb_is_deleted = 0 "
-            f"AND s.deleted = false "
+            f"WHERE s.deleted = false "
             f"AND isNotNull({score_trace_expr}) "
             f"AND {score_trace_expr} != ''"
             f"{date_clause}"
@@ -506,8 +508,7 @@ class ClickHouseFilterBuilder:
             f"FROM model_hub_score AS s FINAL "
             f"LEFT JOIN {spans_subq} AS root_sp "
             f"ON root_sp.trace_id = toString(s.trace_id) "
-            f"WHERE s._peerdb_is_deleted = 0 "
-            f"AND s.deleted = false "
+            f"WHERE s.deleted = false "
             f"AND isNotNull({score_span_expr}) "
             f"AND {score_span_expr} != ''"
             f"{date_clause}"

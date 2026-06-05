@@ -165,6 +165,10 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
                 from ee.usage.services.emitter import emit
             except ImportError:
                 emit = None
+            try:
+                from ee.usage.utils.event_properties import llm_usage_properties
+            except ImportError:
+                llm_usage_properties = lambda obj: {}
 
             actual_cost = getattr(agent, "cost", {}).get("total_cost", 0)
             if not actual_cost and hasattr(agent, "llm"):
@@ -185,6 +189,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
                             "source_id": str(trace_id),
                             "errors_found": error_count,
                             "raw_cost_usd": str(actual_cost),
+                            **llm_usage_properties(agent),
                         },
                     )
                 )

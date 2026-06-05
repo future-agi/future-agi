@@ -445,11 +445,21 @@ const EvalsListView = () => {
         header: "Evaluation Name",
         meta: { flex: 1.5 },
         minSize: 200,
-        cell: ({ getValue }) => (
-          <Typography variant="body2" noWrap sx={{ fontWeight: 500 }}>
-            {getValue()}
-          </Typography>
-        ),
+        cell: ({ getValue }) => {
+          const name = getValue();
+          return (
+            <CustomTooltip size="small" type="black" show arrow title={name || ""} placement="top">
+              <Typography
+                variant="s1"
+
+                noWrap
+               
+              >
+                {name}
+              </Typography>
+            </CustomTooltip>
+          );
+        },
       },
       {
         id: "thirtyDayChart",

@@ -28,7 +28,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
-import { fCurrency } from "src/utils/format-number";
+import { fCurrency, fUsage } from "src/utils/format-number";
 import UsageChart from "./UsageChart";
 import WorkspaceBreakdown from "./WorkspaceBreakdown";
 
@@ -64,14 +64,17 @@ const DIMENSION_CONFIG = {
   },
 };
 
-function formatUsage(value, unit) {
-  if (value == null) return `0 ${unit}`;
-  if (value === 0) return `0 ${unit}`;
-  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B ${unit}`;
-  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M ${unit}`;
-  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K ${unit}`;
-  if (Number.isInteger(value)) return `${value.toLocaleString()} ${unit}`;
-  return `${value.toFixed(1)} ${unit}`;
+function getSingularUnit(unit) {
+  if (!unit) return "unit";
+  if (/^[A-Z]+$/.test(unit)) return unit;
+  return unit.endsWith("s") ? unit.slice(0, -1) : unit;
+}
+
+function formatTierRate(rateStr) {
+  if (rateStr == null) return "$0";
+  const num = parseFloat(String(rateStr).replace(/[^0-9.-]/g, ""));
+  if (!Number.isFinite(num) || num === 0) return "$0";
+  return fCurrency(num, true);
 }
 
 // ── Usage Gauge (multi-segment bar) ───────────────────────────────────────
@@ -245,7 +248,7 @@ StatCard.propTypes = {
 
 // ── Dimension Product Card ────────────────────────────────────────────────
 
-function DimensionCard({ dim }) {
+function DimensionCard({ dim, periodCaption }) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
   const config = DIMENSION_CONFIG[dim.key] || {};
@@ -311,7 +314,10 @@ function DimensionCard({ dim }) {
                 )}
                 {dim.free_allowance > 0 && !isOverFree && (
                   <Typography variant="caption" color="text.secondary">
-                    {usagePct.toFixed(0)}% of free tier used
+                    {usagePct > 0 && usagePct < 1
+                      ? `${usagePct.toFixed(2)}`
+                      : usagePct.toFixed(0)}
+                    % of free tier used
                   </Typography>
                 )}
               </Stack>
@@ -323,7 +329,7 @@ function DimensionCard({ dim }) {
               {fCurrency(dim.estimated_cost)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              month to date
+              {periodCaption}
             </Typography>
           </Stack>
         </Stack>
@@ -348,10 +354,10 @@ function DimensionCard({ dim }) {
               component="span"
               sx={{ fontWeight: 600, color: "text.primary" }}
             >
-              {formatUsage(dim.current_usage, dim.display_unit)}
+              {fUsage(dim.current_usage, dim.display_unit)}
             </Box>
             {dim.free_allowance > 0 && (
-              <> of {formatUsage(dim.free_allowance, dim.display_unit)} free</>
+              <> of {fUsage(dim.free_allowance, dim.display_unit)} free</>
             )}
           </Typography>
           {dim.projected_usage > dim.current_usage && (
@@ -362,7 +368,7 @@ function DimensionCard({ dim }) {
                 sx={{ color: "text.disabled" }}
               />
               <Typography variant="caption" color="text.disabled">
-                ~{formatUsage(dim.projected_usage, dim.display_unit)} projected
+                ~{fUsage(dim.projected_usage, dim.display_unit)} projected
               </Typography>
             </Stack>
           )}
@@ -406,12 +412,49 @@ function DimensionCard({ dim }) {
                   borderColor: "divider",
                 }}
               >
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 120px 140px 100px",
+                    columnGap: 2,
+                    pb: 0.75,
+                    mb: 0.25,
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Typography variant="overline" color="text.secondary">
+                    {`Range${dim.display_unit ? ` (${dim.display_unit})` : ""}`}
+                  </Typography>
+                  <Typography
+                    variant="overline"
+                    color="text.secondary"
+                    textAlign="right"
+                  >
+                    Used
+                  </Typography>
+                  <Typography
+                    variant="overline"
+                    color="text.secondary"
+                    textAlign="right"
+                  >
+                    Rate
+                  </Typography>
+                  <Typography
+                    variant="overline"
+                    color="text.secondary"
+                    textAlign="right"
+                  >
+                    Cost
+                  </Typography>
+                </Box>
                 {dim.tier_breakdown.map((tier, i) => (
-                  <Stack
+                  <Box
                     key={i}
-                    direction="row"
-                    justifyContent="space-between"
                     sx={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 120px 140px 100px",
+                      columnGap: 2,
                       py: 0.75,
                       borderBottom:
                         i < dim.tier_breakdown.length - 1
@@ -423,15 +466,28 @@ function DimensionCard({ dim }) {
                     <Typography variant="caption" color="text.secondary">
                       {tier.range}
                     </Typography>
-                    <Stack direction="row" spacing={2}>
-                      <Typography variant="caption" color="text.secondary">
-                        {tier.rate}/unit
-                      </Typography>
-                      <Typography variant="caption" fontWeight={600}>
-                        {fCurrency(tier.cost)}
-                      </Typography>
-                    </Stack>
-                  </Stack>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ textAlign: "right" }}
+                    >
+                      {fUsage(tier.usage, dim.display_unit)}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ textAlign: "right" }}
+                    >
+                      {formatTierRate(tier.rate)}/{getSingularUnit(dim.display_unit)}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      fontWeight={600}
+                      sx={{ textAlign: "right" }}
+                    >
+                      {fCurrency(tier.cost, true)}
+                    </Typography>
+                  </Box>
                 ))}
               </Box>
             </Collapse>
@@ -461,6 +517,7 @@ const dimensionPropType = PropTypes.shape({
 
 DimensionCard.propTypes = {
   dim: dimensionPropType.isRequired,
+  periodCaption: PropTypes.string.isRequired,
 };
 
 // ── Legend ─────────────────────────────────────────────────────────────────
@@ -563,6 +620,11 @@ const TIME_RANGES = [
   { value: "6", label: "6M" },
   { value: "12", label: "12M" },
 ];
+
+function getPeriodCaption(rangeValue) {
+  if (rangeValue === "current") return "month to date";
+  return `last ${rangeValue} months`;
+}
 
 function getPeriodRange(rangeValue) {
   const now = new Date();
@@ -904,7 +966,11 @@ export default function UsageSummaryV2() {
 
       <Stack spacing={2}>
         {overview?.dimensions?.map((dim) => (
-          <DimensionCard key={dim.key} dim={dim} />
+          <DimensionCard
+            key={dim.key}
+            dim={dim}
+            periodCaption={getPeriodCaption(timeRange)}
+          />
         ))}
       </Stack>
 
@@ -1014,7 +1080,7 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
           </Typography>
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography variant="caption" color="text.disabled">
-              {formatUsage(selected.current_usage, selected.display_unit)} total
+              {fUsage(selected.current_usage, selected.display_unit)} total
             </Typography>
           </Stack>
         </Stack>
