@@ -93,7 +93,7 @@ def resolve_version(eval_template, version_number=None, organization=None):
                     usage_count=models.F("usage_count") + 1
                 )
             except Exception:
-                pass  # usage_count column may not exist yet
+                logger.debug("usage_count_update_skipped")
 
         return resolved
 

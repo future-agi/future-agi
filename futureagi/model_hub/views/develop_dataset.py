@@ -7880,11 +7880,26 @@ class EditAndRunUserEvalView(APIView):
                 eval_metric.template_id = new_template.id
                 eval_metric.save()
 
+            # Validate config before creating a version to avoid orphans
+            new_config = request_data.get("config")
+            if new_config:
+                new_config = normalize_eval_runtime_config(
+                    eval_metric.template.config, new_config
+                )
+                from model_hub.utils.eval_validators import (
+                    get_required_mapping_keys_for_template,
+                    validate_required_key_mapping,
+                )
+                missing_keys = validate_required_key_mapping(
+                    new_config.get("mapping", {}),
+                    get_required_mapping_keys_for_template(eval_metric.template),
+                )
+                if missing_keys:
+                    return self._gm.bad_request(
+                        f"Missing required mapping keys: {', '.join(missing_keys)}"
+                    )
+
             # --- Version creation on edit ---
-            # Works the same for single and composite: snapshot everything
-            # the FE sent into an immutable version. The runtime reads from
-            # UserEvalMetric.config (single) or .composite_weight_overrides
-            # (composite) directly — the version is for audit/history.
             if eval_metric.template.owner == OwnerChoices.USER.value:
                 from model_hub.models.evals_metric import EvalTemplateVersion
                 from model_hub.utils.prompt_migration import config_to_prompt_messages
@@ -7930,27 +7945,8 @@ class EditAndRunUserEvalView(APIView):
                 )
                 eval_metric.pinned_version = _ver
 
-            # Update the config if provided in request
-            new_config = request_data.get("config")
+            # Update the config (already validated above)
             if new_config:
-                new_config = normalize_eval_runtime_config(
-                    eval_metric.template.config, new_config
-                )
-                from model_hub.utils.eval_validators import (
-                    get_required_mapping_keys_for_template,
-                    validate_required_key_mapping,
-                )
-
-                missing_keys = validate_required_key_mapping(
-                    new_config.get("mapping", {}),
-                    get_required_mapping_keys_for_template(eval_metric.template),
-                )
-                if missing_keys:
-                    return self._gm.bad_request(
-                        f"Missing required mapping keys: {', '.join(missing_keys)}"
-                    )
-                # Default reason_column to True if not specified by caller, so
-                # editing an eval never silently strips the reason column.
                 if "reason_column" not in new_config:
                     new_config["reason_column"] = True
                 eval_metric.config = new_config
