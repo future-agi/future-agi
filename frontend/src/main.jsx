@@ -50,6 +50,9 @@ import { initPostHog } from "./utils/PostHog";
 import { initGoogleAds } from "./utils/googleAds";
 import { initReddit } from "./utils/redditAds";
 import { initTwitter } from "./utils/twitterAds";
+import { applyTranslationDomGuard } from "./utils/translationDomGuard";
+
+applyTranslationDomGuard();
 
 Sentry.init({
   dsn: SENTRY_DSN,
