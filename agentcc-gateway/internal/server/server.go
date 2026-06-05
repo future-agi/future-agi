@@ -186,7 +186,7 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 	}
 
-	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, modelDBPtr, tenantStore, orgProviderCache, keyStore)
+	handlers := NewHandlers(registry, engine, cfg.Server.MaxRequestBodySize, cfg.Server.DefaultRequestTimeout, failover, modelFallbacks, condRouter, healthMonitor, cfg.Routing.ModelTimeouts, mirror, guardrailEngine, policyStore, cfg.Guardrails.Streaming, cfg.Guardrails.Reflexion, modelDBPtr, tenantStore, orgProviderCache, keyStore)
 	s.handlers = handlers
 
 	// Set up Files API store.
