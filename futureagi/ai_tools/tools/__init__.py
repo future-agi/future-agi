@@ -194,6 +194,7 @@ from ai_tools.tools.simulation import update_run_test  # noqa: F401
 from ai_tools.tools.simulation import update_scenario  # noqa: F401
 from ai_tools.tools.simulation import update_simulate_eval_config  # noqa: F401
 from ai_tools.tools.simulation import update_simulator_agent  # noqa: F401
+from ai_tools.tools.simulation import run_to_completion  # noqa: F401
 
 # Visualization tools (1)
 # Tracing tools (42) + Error Feed tools (7 — tagged category="error_feed")

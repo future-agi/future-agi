@@ -1,0 +1,98 @@
+name: Formal Verification Tests
+
+on:
+  push:
+    branches: [feat/*, fix/*, chore/*, docs/*, refactor/*, test/*, perf/*, hotfix/*]
+    paths:
+      - 'futureagi/**/formal_tests/**'
+      - 'futureagi/tfc/constants/**'
+      - 'futureagi/tfc/permissions/**'
+      - 'agentcc-gateway/formal_tests/**'
+      - '.github/workflows/formal-tests.yml'
+  pull_request:
+    paths:
+      - 'futureagi/**/formal_tests/**'
+      - 'futureagi/tfc/constants/**'
+      - 'futureagi/tfc/permissions/**'
+      - 'agentcc-gateway/formal_tests/**'
+      - '.github/workflows/formal-tests.yml'
+
+jobs:
+  formal-tests:
+    name: Z3 + Hypothesis formal tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install formal verification dependencies
+        run: pip install z3-solver hypothesis pytest
+
+      - name: Run accounts/ RBAC formal tests
+        if: hashFiles('futureagi/accounts/formal_tests/*.py') != ''
+        working-directory: futureagi/accounts/formal_tests
+        run: pytest test_rbac_z3.py test_rbac_hypothesis.py -v --noconftest
+        continue-on-error: true
+
+      - name: Run simulate/ formal tests
+        if: always() && hashFiles('futureagi/simulate/formal_tests/*.py') != ''
+        working-directory: futureagi/simulate/formal_tests
+        run: pytest . -v --noconftest
+        continue-on-error: true
+
+      - name: Run tracer/ formal tests
+        if: always() && hashFiles('futureagi/tracer/formal_tests/*.py') != ''
+        working-directory: futureagi/tracer/formal_tests
+        run: pytest . -v --noconftest
+        continue-on-error: true
+
+      - name: Run agentic_eval/ formal tests
+        if: always() && hashFiles('futureagi/agentic_eval/formal_tests/*.py') != ''
+        working-directory: futureagi/agentic_eval/formal_tests
+        run: pytest . -v --noconftest
+        continue-on-error: true
+
+      - name: Run model_hub/ formal tests
+        if: always() && hashFiles('futureagi/model_hub/formal_tests/*.py') != ''
+        working-directory: futureagi/model_hub/formal_tests
+        run: pytest . -v --noconftest
+        continue-on-error: true
+
+      - name: Run sdk/cli formal tests
+        if: always() && hashFiles('futureagi/sdk/cli/formal_tests/*.py') != ''
+        working-directory: futureagi/sdk/cli/formal_tests
+        run: pytest . -v --noconftest
+        continue-on-error: true
+
+      - name: Run agentcc-gateway/ reflexion formal tests
+        if: always() && hashFiles('agentcc-gateway/formal_tests/*.py') != ''
+        working-directory: agentcc-gateway/formal_tests
+        run: pytest test_reflexion_z3.py test_reflexion_hypothesis.py -v
+        continue-on-error: true
+
+  integration-probes:
+    name: Integration probes (no DB)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install probe dependencies
+        run: pip install requests rich pytest hypothesis
+
+      - name: Run fi-simulate CLI integration probes
+        env:
+          PYTHONPATH: ${{ github.workspace }}/futureagi
+        working-directory: futureagi/sdk/cli/formal_tests
+        run: pytest -m integration --no-header -q
