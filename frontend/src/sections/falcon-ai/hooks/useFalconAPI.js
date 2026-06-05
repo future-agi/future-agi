@@ -16,10 +16,13 @@ export async function fetchConversations({
   return data;
 }
 
-export async function createConversation(title, contextPage) {
+export async function createConversation(title, contextPage, { hidden } = {}) {
   const { data } = await axiosInstance.post(endpoints.falconAI.conversations, {
     title,
     context_page: contextPage,
+    // Hidden conversations don't appear in Falcon's chat-history list (used by
+    // the Error Feed "Fix" tab, whose RCA runs are internal, not user chats).
+    ...(hidden ? { hidden: true } : {}),
   });
   return data;
 }

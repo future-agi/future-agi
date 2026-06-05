@@ -330,7 +330,11 @@ export async function startRun({ clusterId, projectId, token, workspaceId }) {
   // Re-run gets a fresh conversation so the BE first-turn guard re-fires.
   let conversation;
   try {
-    conversation = await createConversation(`Cluster ${clusterId} analysis`, "error-feed");
+    conversation = await createConversation(
+      `Cluster ${clusterId} analysis`,
+      "error-feed",
+      { hidden: true },
+    );
   } catch {
     patchThread(clusterId, (t) => ({ ...t, runState: "idle" }));
     return;
