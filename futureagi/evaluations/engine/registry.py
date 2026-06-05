@@ -4,6 +4,8 @@ Evaluator class registry.
 Replaces the `from fi_evals import *` + `globals().get(eval_type_id)` pattern
 used across 7+ files. All evaluator classes are registered here once and
 looked up by their string type ID.
+
+Lazy singleton design — see docs/adr/005-registry-lazy-singleton.md.
 """
 
 import structlog

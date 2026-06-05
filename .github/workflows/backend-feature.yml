@@ -1,0 +1,29 @@
+name: Backend — Unit Tests
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "futureagi/**"
+      - ".github/workflows/backend-feature.yml"
+
+jobs:
+  unit-tests:
+    name: Evaluations engine unit tests (no Docker)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install z3-solver hypothesis pytest pytest-mock structlog
+
+      - name: Run evaluations engine unit tests
+        working-directory: futureagi
+        run: |
+          python -m pytest evaluations/tests/ -m unit -v --tb=short --no-header -p no:django
