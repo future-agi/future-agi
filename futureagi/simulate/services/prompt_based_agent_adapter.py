@@ -417,6 +417,10 @@ def create_adapter_from_run_test(
         organization_id=organization_id,
         workspace_id=workspace_id,
         variable_values=variable_values,
+        # Scenario-aligned mock tool returns live in the run_test metadata (TH-5642).
+        mock_tool_returns=(getattr(run_test, "metadata", None) or {}).get(
+            "mock_tool_returns"
+        ),
     )
 
 
@@ -454,4 +458,8 @@ def create_adapter_from_scenario(
         organization_id=organization_id,
         workspace_id=workspace_id,
         variable_values=variable_values,
+        # Scenario-aligned mock tool returns live in the scenario metadata (TH-5642).
+        mock_tool_returns=(getattr(scenario, "metadata", None) or {}).get(
+            "mock_tool_returns"
+        ),
     )

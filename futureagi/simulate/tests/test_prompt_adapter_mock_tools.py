@@ -69,6 +69,26 @@ def test_adapter_serves_mock_tool_then_returns_content(monkeypatch):
 
 
 @pytest.mark.unit
+def test_factory_passes_mock_tool_returns_from_metadata(monkeypatch):
+    import simulate.services.prompt_based_agent_adapter as mod
+
+    captured = {}
+
+    def fake_adapter(**kwargs):
+        captured.update(kwargs)
+        return "adapter"
+
+    monkeypatch.setattr(mod, "PromptBasedAgentAdapter", fake_adapter)
+
+    run_test = SimpleNamespace(
+        source_type="prompt", prompt_version=SimpleNamespace(id="pv"),
+        id="rt-1", metadata={"mock_tool_returns": {"get_x": "Y"}},
+    )
+    mod.create_adapter_from_run_test(run_test, organization_id="org")
+    assert captured["mock_tool_returns"] == {"get_x": "Y"}
+
+
+@pytest.mark.unit
 def test_adapter_without_mocks_is_single_call(monkeypatch):
     a = _adapter({})  # no mock tool returns → single LLM call, no loop
     calls = []
