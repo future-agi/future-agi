@@ -9,14 +9,17 @@ import pytest
 
 from simulate.providers import (
     PROVIDER_REGISTRY,
+    Direction,
     Role,
     Status,
     Transport,
     agent_platform_keys,
     connector_key_for,
     get_spec,
+    implements_direction,
     is_agent_platform,
     provider_choices,
+    supports_direction,
 )
 
 # The bridge connector keys that exist TODAY (ee/voice/.../bridge/connector.py).
@@ -169,6 +172,68 @@ class TestDerivations:
         # Providers without a push/API observability path are skipped (None).
         assert get_spec("pipecat").observability_key is None
         assert get_spec("deepgram").observability_key is None
+
+
+class TestCallDirection:
+    @pytest.mark.unit
+    def test_direction_values_mirror_calltype(self):
+        # The registry mirrors semantics.CallType by value (it can't import the
+        # Django-bound enum). Pin the equality so they can't drift.
+        from simulate.semantics import CallType
+
+        assert Direction.INBOUND.value == CallType.INBOUND.value
+        assert Direction.OUTBOUND.value == CallType.OUTBOUND.value
+
+    @pytest.mark.unit
+    def test_implemented_is_subset_of_supported(self):
+        # You can never implement a direction the provider can't support.
+        for spec in PROVIDER_REGISTRY.values():
+            assert spec.implemented_directions <= spec.supported_directions, spec.key
+
+    @pytest.mark.unit
+    def test_per_provider_direction_capability_matches_audit(self):
+        IN, OUT = Direction.INBOUND, Direction.OUTBOUND
+        # (key, supported, implemented) — from the direction audit (TH-5642).
+        expected = {
+            "vapi": ({IN, OUT}, {IN, OUT}),       # only fully-wired outbound provider
+            "retell": ({IN, OUT}, {IN}),
+            "livekit_bridge": ({IN, OUT}, {IN}),
+            "others": ({IN, OUT}, {IN, OUT}),
+            "elevenlabs": ({IN, OUT}, {IN}),
+            "deepgram": ({IN, OUT}, {IN}),
+            "agora": ({IN, OUT}, set()),
+            "pipecat": ({IN, OUT}, {IN}),
+            "bland": ({IN, OUT}, set()),
+            "twilio": (set(), set()),             # transport-only, direction n/a
+            "futureagi": (set(), set()),          # internal chat
+        }
+        for key, (sup, impl) in expected.items():
+            spec = get_spec(key)
+            assert set(spec.supported_directions) == sup, f"{key} supported"
+            assert set(spec.implemented_directions) == impl, f"{key} implemented"
+
+    @pytest.mark.unit
+    def test_supports_and_implements_helpers(self):
+        # Retell supports outbound but has not wired it — the distinction that lets
+        # dispatch fail loudly instead of silently running inbound.
+        assert supports_direction("retell", Direction.OUTBOUND)
+        assert not implements_direction("retell", Direction.OUTBOUND)
+        assert implements_direction("retell", Direction.INBOUND)
+        # Vapi: both supported and implemented.
+        assert implements_direction("vapi", Direction.OUTBOUND)
+        # Unknown provider / transport-only.
+        assert not supports_direction("nonsense", Direction.INBOUND)
+        assert not supports_direction("twilio", Direction.INBOUND)
+
+    @pytest.mark.unit
+    def test_direction_filtered_selectors(self):
+        # Every GA agent platform supports both directions, so a direction filter on
+        # GA choices doesn't drop any — but it MUST exclude transport/internal rows.
+        out_keys = set(agent_platform_keys(direction=Direction.OUTBOUND))
+        assert {"vapi", "retell", "livekit_bridge", "others"} <= out_keys
+        assert "twilio" not in out_keys and "futureagi" not in out_keys
+        ga_out = dict(provider_choices(direction=Direction.OUTBOUND))
+        assert set(ga_out) == {"vapi", "retell", "livekit_bridge", "others"}
 
 
 class TestBridgeRegistryParity:

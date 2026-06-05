@@ -59,6 +59,23 @@ class Status(StrEnum):
     INTERNAL = "internal"              # our own engine, not a tested platform
 
 
+class Direction(StrEnum):
+    """A telephony call direction (from the agent-under-test's call perspective).
+
+    Mirrors ``simulate.semantics.CallType`` (inbound/outbound) by VALUE — the
+    registry is intentionally Django-free, and CallType lives behind a Django import,
+    so we mirror rather than import; ``test_provider_registry`` pins the equality.
+    """
+
+    INBOUND = "inbound"    # FutureAGI's simulator CALLS the agent (agent receives)
+    OUTBOUND = "outbound"  # the agent CALLS FutureAGI (our simulator answers)
+
+
+_BOTH = frozenset({Direction.INBOUND, Direction.OUTBOUND})
+_IN = frozenset({Direction.INBOUND})
+_NONE: frozenset[Direction] = frozenset()
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     key: str                              # canonical client-provider string
@@ -70,6 +87,13 @@ class ProviderSpec:
     chat: bool = False                    # has / will have a named chat engine
     observability_key: str | None = None  # maps to ProviderChoices value, if any
     status: Status = Status.PLANNED
+    # Call directions the provider's API can do AND we can drive (capability).
+    supported_directions: frozenset[Direction] = _IN
+    # Subset of supported_directions actually WIRED in our orchestration today.
+    # Kept separate from `supported` (mirrors Status's planned-vs-GA intent): the
+    # orchestration must FAIL LOUDLY if a direction is requested that's supported but
+    # not yet implemented, instead of silently defaulting to inbound (audit gap).
+    implemented_directions: frozenset[Direction] = _NONE
 
     @property
     def is_agent_platform(self) -> bool:
@@ -78,6 +102,12 @@ class ProviderSpec:
     @property
     def is_ga(self) -> bool:
         return self.status in (Status.GA, Status.TRANSPORT_ONLY, Status.INTERNAL)
+
+    def supports(self, direction: Direction) -> bool:
+        return direction in self.supported_directions
+
+    def implements(self, direction: Direction) -> bool:
+        return direction in self.implemented_directions
 
 
 # Declarative registry — the ONLY place a provider is declared. See DESIGN.md §1/§5.
@@ -88,6 +118,8 @@ _SPECS: tuple[ProviderSpec, ...] = (
         transport=Transport.WEBRTC_BRIDGE, connector_key="web_vapi",
         credential_shape=CredentialShape.API_KEY_ASSISTANT, chat=True,
         observability_key="vapi", status=Status.GA,
+        # The only provider whose outbound (agent-dials-us) path is wired today.
+        supported_directions=_BOTH, implemented_directions=_BOTH,
     ),
     ProviderSpec(
         "retell", "Retell",
@@ -95,6 +127,8 @@ _SPECS: tuple[ProviderSpec, ...] = (
         transport=Transport.WEBRTC_BRIDGE, connector_key="web_retell",
         credential_shape=CredentialShape.API_KEY_ASSISTANT, chat=True,
         observability_key="retell", status=Status.GA,
+        # Retell supports both; only inbound (we dial the agent) is wired today.
+        supported_directions=_BOTH, implemented_directions=_IN,
     ),
     # The customer's own LiveKit agent (distinct from the SYSTEM 'livekit' engine).
     ProviderSpec(
@@ -103,6 +137,7 @@ _SPECS: tuple[ProviderSpec, ...] = (
         transport=Transport.WEBRTC_BRIDGE, connector_key="web_livekit_bridge",
         credential_shape=CredentialShape.LIVEKIT_SERVER,
         observability_key="livekit", status=Status.GA,
+        supported_directions=_BOTH, implemented_directions=_IN,
     ),
     # Provider-neutral catch-all: custom agents reached by phone (SIP) or websocket.
     ProviderSpec(
@@ -110,6 +145,8 @@ _SPECS: tuple[ProviderSpec, ...] = (
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.SIP, credential_shape=CredentialShape.WEBSOCKET_URL,
         observability_key="others", status=Status.GA,
+        # Plain-E.164 SIP works in both directions today.
+        supported_directions=_BOTH, implemented_directions=_BOTH,
     ),
     # --- Planned tested platforms (DESIGN.md §5) ---
     ProviderSpec(
@@ -118,12 +155,16 @@ _SPECS: tuple[ProviderSpec, ...] = (
         transport=Transport.DIRECT_WS, connector_key="web_elevenlabs",
         credential_shape=CredentialShape.AGENT_ID, chat=True,
         observability_key="eleven_labs", status=Status.PLANNED,
+        # Connector is connect()-only (simulator-initiated) → inbound wired; outbound
+        # would need a BYO-telephony/SIP leg (supported by API, not yet built).
+        supported_directions=_BOTH, implemented_directions=_IN,
     ),
     ProviderSpec(
         "deepgram", "Deepgram Voice Agent",
         roles=frozenset({Role.AGENT_PLATFORM, Role.STT}),
         transport=Transport.DIRECT_WS, connector_key="web_deepgram",
         credential_shape=CredentialShape.AGENT_ID, status=Status.PLANNED,
+        supported_directions=_BOTH, implemented_directions=_IN,
     ),
     # Agora Conversational AI Engine exposes its agents over SIP/PSTN via an
     # Elastic SIP Trunk (import a number, assign to the agent for inbound/outbound)
@@ -137,6 +178,8 @@ _SPECS: tuple[ProviderSpec, ...] = (
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.SIP,
         credential_shape=CredentialShape.API_KEY_ASSISTANT, status=Status.PLANNED,
+        # SIP/PSTN both directions per Agora's Elastic SIP Trunk; nothing wired yet.
+        supported_directions=_BOTH, implemented_directions=_NONE,
     ),
     # Pipecat-on-LiveKit reuses the existing LiveKit bridge connector (DESIGN.md §5.5).
     ProviderSpec(
@@ -144,6 +187,8 @@ _SPECS: tuple[ProviderSpec, ...] = (
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.WEBRTC_BRIDGE, connector_key="web_livekit_bridge",
         credential_shape=CredentialShape.LIVEKIT_SERVER, status=Status.PLANNED,
+        # Same bridge as livekit_bridge → inbound only until an answer path exists.
+        supported_directions=_BOTH, implemented_directions=_IN,
     ),
     # Bland.ai agents are reached via the provider-neutral SIP/phone path (no
     # WebRTC connector needed) — DESIGN.md §3/§6.
@@ -152,6 +197,8 @@ _SPECS: tuple[ProviderSpec, ...] = (
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.SIP, credential_shape=CredentialShape.API_KEY_ASSISTANT,
         status=Status.PLANNED,
+        # Bland send-call (outbound) + inbound numbers, both via SIP; nothing wired.
+        supported_directions=_BOTH, implemented_directions=_NONE,
     ),
     # --- Non-agent-platform roles ---
     ProviderSpec(
@@ -159,16 +206,22 @@ _SPECS: tuple[ProviderSpec, ...] = (
         roles=frozenset({Role.TRANSPORT}),
         transport=Transport.SIP, credential_shape=CredentialShape.SIP_ONLY,
         status=Status.TRANSPORT_ONLY,
+        # Carrier substrate, never directionally simulated as an agent.
+        supported_directions=_NONE, implemented_directions=_NONE,
     ),
     ProviderSpec(
         "livekit", "LiveKit (system engine)",
         roles=frozenset({Role.SYSTEM_ENGINE, Role.TRANSPORT}),
         transport=Transport.SIP, observability_key="livekit", status=Status.INTERNAL,
+        # The system engine drives both directions of the simulated call.
+        supported_directions=_BOTH, implemented_directions=_BOTH,
     ),
     ProviderSpec(
         "futureagi", "FutureAGI (internal simulator)",
         roles=frozenset({Role.SYSTEM_ENGINE, Role.CHAT_ENGINE}),
         status=Status.INTERNAL,
+        # Internal chat engine — telephony direction not applicable.
+        supported_directions=_NONE, implemented_directions=_NONE,
     ),
 )
 
@@ -195,23 +248,54 @@ def is_agent_platform(key: str | None) -> bool:
     return bool(spec and spec.is_agent_platform)
 
 
-def agent_platform_keys(*, include_planned: bool = True) -> list[str]:
-    """Provider keys that can be an agent-under-test."""
+def supports_direction(key: str | None, direction: Direction) -> bool:
+    """True if the provider's API can do this direction AND we can drive it."""
+    spec = PROVIDER_REGISTRY.get(key or "")
+    return bool(spec and direction in spec.supported_directions)
+
+
+def implements_direction(key: str | None, direction: Direction) -> bool:
+    """True if this direction is actually WIRED for the provider today.
+
+    Dispatch should check this (not just ``supports_direction``) and fail loudly
+    when a supported-but-unimplemented direction is requested, rather than silently
+    running the inbound path (audit: the ``is_outbound=False`` default bug).
+    """
+    spec = PROVIDER_REGISTRY.get(key or "")
+    return bool(spec and direction in spec.implemented_directions)
+
+
+def implemented_directions_for(key: str | None) -> frozenset[Direction]:
+    spec = PROVIDER_REGISTRY.get(key or "")
+    return spec.implemented_directions if spec else _NONE
+
+
+def agent_platform_keys(
+    *, include_planned: bool = True, direction: Direction | None = None
+) -> list[str]:
+    """Provider keys that can be an agent-under-test, optionally for a direction."""
     return [
         s.key
         for s in _SPECS
-        if s.is_agent_platform and (include_planned or s.is_ga)
+        if s.is_agent_platform
+        and (include_planned or s.is_ga)
+        and (direction is None or direction in s.supported_directions)
     ]
 
 
-def provider_choices(*, include_planned: bool = False) -> list[tuple[str, str]]:
+def provider_choices(
+    *, include_planned: bool = False, direction: Direction | None = None
+) -> list[tuple[str, str]]:
     """Django ``choices=`` for AgentDefinition.provider, derived from the registry.
 
     Defaults to GA agent platforms so the free-form CharField can be constrained
-    without rejecting in-flight definitions (DESIGN.md §4.1, §7 Q2).
+    without rejecting in-flight definitions (DESIGN.md §4.1, §7 Q2). Pass
+    ``direction`` to constrain the per-provider inbound/outbound toggle in the form.
     """
     return [
         (s.key, s.label)
         for s in _SPECS
-        if s.is_agent_platform and (include_planned or s.is_ga)
+        if s.is_agent_platform
+        and (include_planned or s.is_ga)
+        and (direction is None or direction in s.supported_directions)
     ]
