@@ -140,7 +140,11 @@ _SPECS: tuple[ProviderSpec, ...] = (
         transport=Transport.WEBRTC_BRIDGE, connector_key="web_livekit_bridge",
         credential_shape=CredentialShape.LIVEKIT_SERVER,
         observability_key="livekit", status=Status.GA,
-        supported_directions=_BOTH, implemented_directions=_IN,
+        # WebRTC bridge has NO PSTN leg: we connect to the agent the same way in
+        # both directions; the only difference is who speaks first, now handled by
+        # first_message_mode for all transports. So outbound = inbound bridge +
+        # agent-speaks-first → both wired.
+        supported_directions=_BOTH, implemented_directions=_BOTH,
     ),
     # Provider-neutral catch-all: custom agents reached by phone (SIP) or websocket.
     ProviderSpec(
@@ -190,8 +194,9 @@ _SPECS: tuple[ProviderSpec, ...] = (
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.WEBRTC_BRIDGE, connector_key="web_livekit_bridge",
         credential_shape=CredentialShape.LIVEKIT_SERVER, status=Status.PLANNED,
-        # Same bridge as livekit_bridge → inbound only until an answer path exists.
-        supported_directions=_BOTH, implemented_directions=_IN,
+        # Reuses the LiveKit bridge → same as livekit_bridge: outbound is just the
+        # agent-speaks-first opener over the same bridge connection. Both wired.
+        supported_directions=_BOTH, implemented_directions=_BOTH,
     ),
     # Bland.ai agents are reached via the provider-neutral SIP/phone path (no
     # WebRTC connector needed) — DESIGN.md §3/§6.

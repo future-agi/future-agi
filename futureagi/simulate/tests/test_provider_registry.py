@@ -197,12 +197,12 @@ class TestCallDirection:
         expected = {
             "vapi": ({IN, OUT}, {IN, OUT}),
             "retell": ({IN, OUT}, {IN, OUT}),     # outbound wired via RetellOutboundDialer
-            "livekit_bridge": ({IN, OUT}, {IN}),
+            "livekit_bridge": ({IN, OUT}, {IN, OUT}),  # bridge: outbound = speaking-order
             "others": ({IN, OUT}, {IN, OUT}),
             "elevenlabs": ({IN, OUT}, {IN, OUT}),  # outbound via ElevenLabsOutboundDialer
             "deepgram": ({IN, OUT}, {IN}),         # no native outbound (BYO-SIP only)
             "agora": ({IN, OUT}, set()),
-            "pipecat": ({IN, OUT}, {IN}),
+            "pipecat": ({IN, OUT}, {IN, OUT}),     # reuses bridge → outbound = speaking-order
             "bland": ({IN, OUT}, {OUT}),          # outbound-first; BlandOutboundDialer
             "twilio": (set(), set()),             # transport-only, direction n/a
             "futureagi": (set(), set()),          # internal chat
