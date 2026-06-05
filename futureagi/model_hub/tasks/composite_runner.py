@@ -241,6 +241,26 @@ class CompositeEvaluationRunner:
 
         return dict(zip(required_field, mapping_values, strict=False))
 
+    def _build_row_context(self, row: Row) -> dict | None:
+        """Build ``{column_name: value}`` for every cell in the row."""
+        try:
+            row_dict: dict = {}
+            for cell in Cell.objects.filter(row=row, deleted=False).select_related("column"):
+                col_name = cell.column.name if cell.column else None
+                if not col_name:
+                    continue
+                val = cell.value
+                if isinstance(val, str):
+                    try:
+                        val = json.loads(val)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                row_dict[col_name] = val
+            return row_dict or None
+        except Exception as e:
+            logger.warning("composite_runner_row_context_build_failed", error=str(e))
+            return None
+
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
@@ -540,6 +560,8 @@ class CompositeEvaluationRunner:
 
             model = self.user_eval_metric.model or ModelChoices.TURING_LARGE.value
 
+            row_context = self._build_row_context(row)
+
             outcome = execute_composite_children_sync(
                 parent=self.template,
                 child_links=self.children,
@@ -550,6 +572,7 @@ class CompositeEvaluationRunner:
                 model=model,
                 source="composite_eval_dataset",
                 weight_overrides=weight_overrides,
+                row_context=row_context,
             )
 
             self._write_cell(column, row, outcome)

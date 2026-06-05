@@ -732,11 +732,6 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         config = eval_config.config.copy() if eval_config.config else {}
         organization = call_execution.test_execution.run_test.organization
 
-        # Build call_context for data_injection support — gives the eval
-        # agent access to the full call data via explore_trace tool.
-        # Only built when the eval's data_injection.call_context flag is on,
-        # because the payload contains PII (phone_number, recording_url) and
-        # we shouldn't ship it into the LLM prompt unless explicitly enabled.
         from common.utils.data_injection import is_enabled as _di_enabled
 
         _di_cfg = (
@@ -744,37 +739,36 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             or (config or {}).get("data_injection")
             or {}
         )
-        _call_context = None
-        if _di_enabled(_di_cfg, "call_context"):
-            _call_context = {
-                "id": str(call_execution.id),
-                "status": call_execution.status,
-                "call_type": call_execution.call_type,
-                "simulation_call_type": call_execution.simulation_call_type,
-                "phone_number": call_execution.phone_number,
-                "started_at": str(call_execution.started_at) if call_execution.started_at else None,
-                "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
-                "duration_seconds": call_execution.duration_seconds,
-                "recording_url": call_execution.recording_url,
-                "call_summary": call_execution.call_summary,
-                "ended_reason": call_execution.ended_reason,
-                "error_message": call_execution.error_message,
-                "message_count": call_execution.message_count,
-                "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
-            }
 
-        eval_result = run_eval_func(
-            config=config,
-            mappings=updated_mapping,
-            template=eval_template,
-            org=organization,
-            model=eval_config.model,
-            kb_id=eval_config.kb_id,
-            error_localizer=eval_config.error_localizer,
-            workspace=call_execution.test_execution.run_test.workspace,
-            source="simulate",
-            call_context=_call_context,
-        )
+        if eval_template.template_type == "composite":
+            _call_context = _build_simulate_call_context(call_execution)
+            eval_result = _run_simulate_composite(
+                eval_template=eval_template,
+                eval_config=eval_config,
+                config=config,
+                mapping=updated_mapping,
+                org=organization,
+                workspace=call_execution.test_execution.run_test.workspace,
+                call_context=_call_context,
+            )
+        else:
+            _call_context = (
+                _build_simulate_call_context(call_execution)
+                if _di_enabled(_di_cfg, "call_context")
+                else None
+            )
+            eval_result = run_eval_func(
+                config=config,
+                mappings=updated_mapping,
+                template=eval_template,
+                org=organization,
+                model=eval_config.model,
+                kb_id=eval_config.kb_id,
+                error_localizer=eval_config.error_localizer,
+                workspace=call_execution.test_execution.run_test.workspace,
+                source="simulate",
+                call_context=_call_context,
+            )
 
         if isinstance(eval_result, str):
             if (
@@ -849,6 +843,84 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         eval_config.status = StatusType.FAILED.value
         eval_config.save()
         raise
+
+
+def _build_simulate_call_context(call_execution) -> dict:
+    """Build the ``call_context`` payload from a ``CallExecution`` row."""
+    return {
+        "id": str(call_execution.id),
+        "status": call_execution.status,
+        "call_type": call_execution.call_type,
+        "simulation_call_type": call_execution.simulation_call_type,
+        "phone_number": call_execution.phone_number,
+        "started_at": str(call_execution.started_at) if call_execution.started_at else None,
+        "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+        "duration_seconds": call_execution.duration_seconds,
+        "recording_url": call_execution.recording_url,
+        "call_summary": call_execution.call_summary,
+        "ended_reason": call_execution.ended_reason,
+        "error_message": call_execution.error_message,
+        "message_count": call_execution.message_count,
+        "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+    }
+
+
+def _run_simulate_composite(
+    *,
+    eval_template,
+    eval_config,
+    config,
+    mapping,
+    org,
+    workspace,
+    call_context,
+):
+    """Fan out a composite eval against a simulate call; return a single-eval-shaped dict."""
+    from model_hub.models.evals_metric import CompositeEvalChild
+    from model_hub.utils.composite_execution import execute_composite_children_sync
+
+    child_links = list(
+        CompositeEvalChild.objects.filter(parent=eval_template, deleted=False)
+        .select_related("child", "pinned_version")
+        .order_by("order")
+    )
+    if not child_links:
+        raise ValueError(
+            f"Composite eval template '{eval_template.name}' has no children."
+        )
+
+    outcome = execute_composite_children_sync(
+        parent=eval_template,
+        child_links=child_links,
+        mapping=mapping,
+        config=config or {},
+        org=org,
+        workspace=workspace,
+        model=eval_config.model,
+        error_localizer=eval_config.error_localizer,
+        source="simulate_composite",
+        call_context=call_context,
+    )
+
+    if eval_template.aggregation_enabled:
+        output = outcome.aggregate_score
+        output_type = "score"
+    else:
+        output = outcome.summary or ""
+        output_type = "text"
+
+    return {
+        "output": output,
+        "reason": outcome.summary or "",
+        "output_type": output_type,
+        "metadata": {
+            "composite_id": str(eval_template.id),
+            "aggregation_enabled": eval_template.aggregation_enabled,
+            "aggregation_function": eval_template.aggregation_function,
+            "aggregate_pass": outcome.aggregate_pass,
+            "children": [cr.model_dump() for cr in outcome.child_results],
+        },
+    }
 
 
 def _check_eval_completion(call_execution, eval_config_ids=None, run_test=None):
