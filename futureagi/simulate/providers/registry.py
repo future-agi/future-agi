@@ -212,11 +212,14 @@ _SPECS: tuple[ProviderSpec, ...] = (
     # --- Non-agent-platform roles ---
     ProviderSpec(
         "twilio", "Twilio",
-        roles=frozenset({Role.TRANSPORT}),
-        transport=Transport.SIP, credential_shape=CredentialShape.SIP_ONLY,
-        status=Status.TRANSPORT_ONLY,
-        # Carrier substrate, never directionally simulated as an agent.
-        supported_directions=_NONE, implemented_directions=_NONE,
+        # Twilio is BOTH a carrier substrate AND a platform customers build agents on
+        # (ConversationRelay / Media Streams / TwiML routed to their logic).
+        roles=frozenset({Role.AGENT_PLATFORM, Role.TRANSPORT}),
+        transport=Transport.SIP, credential_shape=CredentialShape.API_KEY_ASSISTANT,
+        status=Status.PLANNED,
+        # Inbound = dial the Twilio number over our SIP path; outbound = the
+        # TwilioOutboundDialer (Calls.json). Both wired.
+        supported_directions=_BOTH, implemented_directions=_BOTH,
     ),
     ProviderSpec(
         "livekit", "LiveKit (system engine)",

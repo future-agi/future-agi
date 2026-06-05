@@ -16,6 +16,7 @@ from simulate.services.outbound_dialer import (
     ElevenLabsOutboundDialer,
     OutboundDialError,
     RetellOutboundDialer,
+    TwilioOutboundDialer,
     get_outbound_dialer,
 )
 
@@ -35,8 +36,10 @@ class _FakeRequests:
         self._resp = resp
         self.calls = []
 
-    def post(self, url, headers=None, json=None, timeout=None):
-        self.calls.append({"url": url, "headers": headers, "json": json})
+    def post(self, url, headers=None, json=None, data=None, auth=None, timeout=None):
+        self.calls.append(
+            {"url": url, "headers": headers, "json": json, "data": data, "auth": auth}
+        )
         return self._resp
 
 
@@ -126,6 +129,45 @@ def test_elevenlabs_registered_for_both_spellings():
     assert OUTBOUND_DIALERS["elevenlabs"] is ElevenLabsOutboundDialer
     assert OUTBOUND_DIALERS["eleven_labs"] is ElevenLabsOutboundDialer
     assert isinstance(get_outbound_dialer("eleven_labs", "k"), ElevenLabsOutboundDialer)
+
+
+@pytest.mark.unit
+def test_twilio_outbound_request_shape(monkeypatch):
+    fake = _FakeRequests(_FakeResp({"sid": "CA999", "status": "queued"}))
+    monkeypatch.setattr(mod, "requests", fake)
+    # api_key carries "AccountSid:AuthToken"; assistant_id is a TwiML URL here.
+    dialer = TwilioOutboundDialer(api_key="ACsid:tok")
+    out = dialer.create_outbound_call(
+        assistant_id="https://example.com/twiml",
+        from_phone_number="+15551110000", to_phone_number="+15552220000",
+    )
+    assert out == {"id": "CA999"}
+    call = fake.calls[0]
+    assert call["url"].endswith("/2010-04-01/Accounts/ACsid/Calls.json")
+    assert call["auth"] == ("ACsid", "tok")  # HTTP Basic
+    assert call["data"]["To"] == "+15552220000"
+    assert call["data"]["From"] == "+15551110000"
+    assert call["data"]["Url"] == "https://example.com/twiml"  # URL → Url
+
+
+@pytest.mark.unit
+def test_twilio_application_sid_when_not_a_url(monkeypatch):
+    fake = _FakeRequests(_FakeResp({"sid": "CA1"}))
+    monkeypatch.setattr(mod, "requests", fake)
+    TwilioOutboundDialer(api_key="ACsid:tok").create_outbound_call(
+        assistant_id="AP123app", from_phone_number="+1", to_phone_number="+1",
+    )
+    # Non-URL assistant_id → ApplicationSid, not Url.
+    assert fake.calls[0]["data"]["ApplicationSid"] == "AP123app"
+    assert "Url" not in fake.calls[0]["data"]
+
+
+@pytest.mark.unit
+def test_twilio_requires_sid_and_token():
+    with pytest.raises(ValueError):
+        TwilioOutboundDialer(api_key="just-one-value").create_outbound_call(
+            assistant_id="x", from_phone_number="+1", to_phone_number="+1"
+        )
 
 
 @pytest.mark.unit

@@ -52,11 +52,13 @@ class TestRegistryShape:
 
 class TestTaxonomy:
     @pytest.mark.unit
-    def test_twilio_is_transport_not_agent_platform(self):
+    def test_twilio_is_both_transport_and_agent_platform(self):
+        # Twilio is a carrier substrate AND a platform customers build agents on
+        # (ConversationRelay/TwiML) — testable inbound (SIP) + outbound (Calls.json).
         spec = get_spec("twilio")
         assert Role.TRANSPORT in spec.roles
-        assert not spec.is_agent_platform
-        assert spec.status is Status.TRANSPORT_ONLY
+        assert spec.is_agent_platform
+        assert spec.supported_directions and spec.implemented_directions
 
     @pytest.mark.unit
     def test_system_livekit_distinct_from_livekit_bridge(self):
@@ -132,9 +134,8 @@ class TestDerivations:
         ga = set(agent_platform_keys(include_planned=False))
         assert ga == {"vapi", "retell", "livekit_bridge", "others"}
         allp = set(agent_platform_keys(include_planned=True))
-        assert {"elevenlabs", "deepgram", "agora", "pipecat", "bland"} <= allp
-        # transport-only / system engines are never agent platforms
-        assert "twilio" not in allp
+        assert {"elevenlabs", "deepgram", "agora", "pipecat", "bland", "twilio"} <= allp
+        # system engines are never agent platforms (twilio now is, via ConvRelay)
         assert "livekit" not in allp
         assert "futureagi" not in allp
 
@@ -148,7 +149,7 @@ class TestDerivations:
     @pytest.mark.unit
     def test_is_agent_platform(self):
         assert is_agent_platform("retell")
-        assert not is_agent_platform("twilio")
+        assert is_agent_platform("twilio")  # now an agent platform (ConvRelay/TwiML)
         assert not is_agent_platform("unknown")
 
     @pytest.mark.unit
@@ -204,7 +205,7 @@ class TestCallDirection:
             "agora": ({IN, OUT}, set()),
             "pipecat": ({IN, OUT}, {IN, OUT}),     # reuses bridge → outbound = speaking-order
             "bland": ({IN, OUT}, {OUT}),          # outbound-first; BlandOutboundDialer
-            "twilio": (set(), set()),             # transport-only, direction n/a
+            "twilio": ({IN, OUT}, {IN, OUT}),     # SIP inbound + TwilioOutboundDialer
             "futureagi": (set(), set()),          # internal chat
         }
         for key, (sup, impl) in expected.items():
@@ -222,17 +223,17 @@ class TestCallDirection:
         # Vapi and Retell: outbound both supported and wired (dialer registry).
         assert implements_direction("vapi", Direction.OUTBOUND)
         assert implements_direction("retell", Direction.OUTBOUND)
-        # Unknown provider / transport-only.
+        # Twilio is now an agent platform (both directions); only unknown is empty.
         assert not supports_direction("nonsense", Direction.INBOUND)
-        assert not supports_direction("twilio", Direction.INBOUND)
+        assert supports_direction("twilio", Direction.INBOUND)
 
     @pytest.mark.unit
     def test_direction_filtered_selectors(self):
         # Every GA agent platform supports both directions, so a direction filter on
         # GA choices doesn't drop any — but it MUST exclude transport/internal rows.
         out_keys = set(agent_platform_keys(direction=Direction.OUTBOUND))
-        assert {"vapi", "retell", "livekit_bridge", "others"} <= out_keys
-        assert "twilio" not in out_keys and "futureagi" not in out_keys
+        assert {"vapi", "retell", "livekit_bridge", "others", "twilio"} <= out_keys
+        assert "futureagi" not in out_keys  # system engine, never an agent platform
         ga_out = dict(provider_choices(direction=Direction.OUTBOUND))
         assert set(ga_out) == {"vapi", "retell", "livekit_bridge", "others"}
 

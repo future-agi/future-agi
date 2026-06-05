@@ -153,6 +153,52 @@ class ElevenLabsOutboundDialer(OutboundDialer):
         return self._require_id(data.get("conversation_id") or data.get("callSid"), data)
 
 
+class TwilioOutboundDialer(OutboundDialer):
+    """Twilio outbound via ``POST /2010-04-01/Accounts/{sid}/Calls.json``.
+
+    A Twilio "agent" is a number whose call is driven by the customer's TwiML app
+    (ConversationRelay / Media Streams / a TwiML URL), so ``assistant_id`` carries
+    either that TwiML **URL** (used as ``Url``) or an **ApplicationSid** (used as
+    ``ApplicationSid``). Twilio uses HTTP Basic auth and FORM bodies, so the api_key
+    is ``"AccountSid:AuthToken"``.
+    """
+
+    provider = "twilio"
+    BASE_URL = "https://api.twilio.com"
+
+    def _account_sid_and_token(self) -> tuple[str, str]:
+        sid, _, token = self._api_key.partition(":")
+        if not sid or not token:
+            raise ValueError(
+                "TwilioOutboundDialer api_key must be 'AccountSid:AuthToken'"
+            )
+        return sid, token
+
+    def create_outbound_call(
+        self, *, assistant_id, from_phone_number, to_phone_number, metadata=None
+    ):
+        sid, token = self._account_sid_and_token()
+        form: dict[str, Any] = {"To": to_phone_number, "From": from_phone_number}
+        # TwiML URL vs ApplicationSid: a URL drives the call's behaviour; an
+        # ApplicationSid points at the customer's pre-configured TwiML app/agent.
+        if str(assistant_id).startswith(("http://", "https://")):
+            form["Url"] = assistant_id
+        else:
+            form["ApplicationSid"] = assistant_id
+        resp = requests.post(
+            f"{self.BASE_URL}/2010-04-01/Accounts/{sid}/Calls.json",
+            data=form,
+            auth=(sid, token),
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code >= 400:
+            raise OutboundDialError(
+                f"Twilio Calls.json failed ({resp.status_code}): {resp.text}"
+            )
+        data = resp.json() or {}
+        return self._require_id(data.get("sid"), data)
+
+
 # provider key -> dialer class. Vapi keeps its existing engine path (it's already
 # wired); these add the previously-missing non-Vapi user-side dialers.
 OUTBOUND_DIALERS: dict[str, type[OutboundDialer]] = {
@@ -160,6 +206,7 @@ OUTBOUND_DIALERS: dict[str, type[OutboundDialer]] = {
     "bland": BlandOutboundDialer,
     "elevenlabs": ElevenLabsOutboundDialer,
     "eleven_labs": ElevenLabsOutboundDialer,  # provider-string drift
+    "twilio": TwilioOutboundDialer,
 }
 
 
