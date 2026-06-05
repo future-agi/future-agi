@@ -456,16 +456,18 @@ def monitor_chat_timeout_call_executions():
 )
 def process_prompt_based_chat_simulations():
     """
-    Process REGISTERED CallExecutions for prompt-based simulations.
+    Process REGISTERED CallExecutions for server-side chat simulations.
 
     This activity picks up CallExecutions that:
     - Have status REGISTERED
     - Are TEXT type simulations
-    - Belong to prompt-based RunTests (source_type="prompt")
+    - Are driven server-side: prompt-based RunTests, OR agent_definition TEXT
+      RunTests on an external hosted chat provider (see _server_side_chat_filter).
 
     For each CallExecution, it initiates the chat and runs the full conversation.
     """
     # Lazy import: simulate.services.chat_sim imports from this module (circular)
+    from simulate.services.chat_agent_adapter_factory import server_side_chat_filter
     from simulate.services.chat_sim import initiate_chat, run_prompt_based_conversation
 
     try:
@@ -478,9 +480,9 @@ def process_prompt_based_chat_simulations():
             registered = list(
                 CallExecution.objects.select_for_update(skip_locked=True)
                 .filter(
+                    server_side_chat_filter(),
                     status=CallExecution.CallStatus.REGISTERED,
                     simulation_call_type=CallExecution.SimulationCallType.TEXT,
-                    test_execution__run_test__source_type=RunTest.SourceTypes.PROMPT,
                 )
                 .select_related("test_execution__run_test")
                 .order_by("created_at")[:50]
@@ -493,9 +495,9 @@ def process_prompt_based_chat_simulations():
             org_ids = {ce.test_execution.run_test.organization_id for ce in registered}
             org_ongoing = dict(
                 CallExecution.objects.filter(
+                    server_side_chat_filter(),
                     status=CallExecution.CallStatus.ONGOING,
                     simulation_call_type=CallExecution.SimulationCallType.TEXT,
-                    test_execution__run_test__source_type=RunTest.SourceTypes.PROMPT,
                     test_execution__run_test__organization_id__in=org_ids,
                 )
                 .values_list("test_execution__run_test__organization_id")

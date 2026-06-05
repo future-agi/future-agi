@@ -13,7 +13,6 @@ import pytest
 
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
-from simulate.services import chat_agent_adapter_factory as mod
 from simulate.services.chat_agent_adapter_factory import (
     create_chat_agent_adapter,
     is_external_hosted_chat,
@@ -48,7 +47,10 @@ def test_prompt_source_delegates_to_prompt_adapter(monkeypatch):
         called["args"] = (run_test, org, ws, vals)
         return sentinel
 
-    monkeypatch.setattr(mod, "create_adapter_from_run_test", fake_create)
+    # Patched at the source module — the factory imports it lazily inside the call.
+    import simulate.services.prompt_based_agent_adapter as pba
+
+    monkeypatch.setattr(pba, "create_adapter_from_run_test", fake_create)
     rt = _run_test(RunTest.SourceTypes.PROMPT)
     out = create_chat_agent_adapter(rt, "org-1", "ws-1", {"v": 1})
     assert out is sentinel
