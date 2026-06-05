@@ -87,3 +87,35 @@ def test_emit_sim_trace_builds_and_emits_span_tree(organization, workspace, monk
     # session.id lives on the root AGENT span (links the whole conversation).
     root = next(s for s, _, _ in captured if s["attributes"]["gen_ai.span.kind"] == "AGENT")
     assert root["attributes"]["session.id"] == "sess-9"
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+def test_emit_sim_trace_accepts_voice_turns(organization, workspace, monkeypatch):
+    # VOICE: the completion hook passes its normalized transcript directly (voice
+    # transcripts live outside ChatMessageModel).
+    ce = _chat_call(organization, workspace)
+    ce.simulation_call_type = CallExecution.SimulationCallType.VOICE
+    ce.save(update_fields=["simulation_call_type"])
+
+    voice_turns = [
+        {"role": "user", "content": "Is my appointment confirmed?"},
+        {"role": "assistant", "content": "Yes, you're confirmed for 3pm.",
+         "voice_latency": {"ttfb": 480, "total": 950}},
+    ]
+    captured = []
+    import tracer.utils.create_otel_span as cos
+
+    monkeypatch.setattr(
+        cos, "create_single_otel_span",
+        lambda span, org, user, ws=None: captured.append(span),
+    )
+
+    from simulate.services.sim_observability import emit_sim_trace
+
+    emitted = emit_sim_trace(ce, turns=voice_turns)
+    assert emitted == 2
+    root = next(s for s in captured if s["attributes"]["gen_ai.span.kind"] == "AGENT")
+    assert root["name"] == "voice simulation"
+    llm = next(s for s in captured if s["attributes"]["gen_ai.span.kind"] == "LLM")
+    assert llm["attributes"]["gen_ai.voice.latency.ttfb"] == 480

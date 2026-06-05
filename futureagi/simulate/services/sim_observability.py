@@ -237,17 +237,25 @@ def _row_to_turn(row) -> dict[str, Any]:
     return turn
 
 
-def emit_sim_trace(call_execution, *, user_id: str | None = None) -> int:
+def emit_sim_trace(
+    call_execution,
+    *,
+    turns: list[dict[str, Any]] | None = None,
+    user_id: str | None = None,
+) -> int:
     """Emit a trace (span tree) for a completed sim CallExecution.
 
     Resolves the project from the agent definition's observability provider (falling
-    back to a per-org "Simulations" project), reads the persisted ChatMessage rows,
-    builds the span tree, and writes each span via the tracer's OTel ingest path so
-    the sim appears in the same trace/Session UI as production traces.
+    back to a per-org "Simulations" project), builds the span tree, and writes each
+    span via the tracer's OTel ingest path so the sim appears in the same
+    trace/Session UI as production traces.
+
+    ``turns``: pass a normalized ``[{"role","content",...}]`` conversation directly —
+    used by the VOICE completion hook, which stores its transcript outside
+    ChatMessageModel. When omitted (CHAT), the persisted ChatMessage rows are read.
 
     Returns the number of spans emitted.
     """
-    from simulate.models.chat_message import ChatMessageModel
     from tracer.utils.create_otel_span import create_single_otel_span
 
     test_execution = getattr(call_execution, "test_execution", None)
@@ -271,13 +279,24 @@ def emit_sim_trace(call_execution, *, user_id: str | None = None) -> int:
     else:
         project_name, project_type = "Simulations", "observe"
 
-    rows = list(
-        ChatMessageModel.objects.filter(call_execution=call_execution).order_by(
-            "created_at"
+    session_id = None
+    if turns is None:
+        # CHAT: read the persisted ChatMessage rows.
+        from simulate.models.chat_message import ChatMessageModel
+
+        rows = list(
+            ChatMessageModel.objects.filter(call_execution=call_execution).order_by(
+                "created_at"
+            )
         )
+        turns = [_row_to_turn(r) for r in rows]
+        session_id = next(
+            (str(r.session_id) for r in rows if getattr(r, "session_id", None)), None
+        )
+    session_id = session_id or str(
+        (getattr(call_execution, "call_metadata", None) or {}).get("chat_session_id")
+        or getattr(call_execution, "id", "")
     )
-    turns = [_row_to_turn(r) for r in rows]
-    session_id = next((str(r.session_id) for r in rows if getattr(r, "session_id", None)), None)
 
     modality = (
         "voice"
