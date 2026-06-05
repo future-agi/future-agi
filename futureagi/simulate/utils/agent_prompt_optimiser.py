@@ -1,4 +1,3 @@
-from typing import Optional
 
 import structlog
 from django.conf import settings
@@ -284,10 +283,81 @@ def store_optimization_results(
     )
 
 
+def _resolve_optimiser_base_prompt(prompt_optimiser_run) -> str:
+    """Best-effort current system prompt for the agent under optimisation (TH-5642)."""
+    te = prompt_optimiser_run.test_execution
+    agent_def = getattr(te, "agent_definition", None) or getattr(
+        getattr(te, "run_test", None), "agent_definition", None
+    )
+    for attr in ("system_prompt", "prompt", "instructions"):
+        val = getattr(agent_def, attr, None)
+        if val:
+            return str(val)
+    return "You are a helpful assistant."
+
+
+def _run_agent_learning_kit_optimisation(prompt_optimiser_run) -> None:
+    """Drive a prompt-optimiser run through the agent-learning-kit bridge (TH-5642).
+
+    Wires simulate.services.agent_learning_bridge into the real "Fix My Agent" flow so
+    the kit performs the optimisation + applies the fix. Candidates default to the
+    agent's current prompt (plus any in the run configuration); the kit scores them and
+    returns the winning config, stored as the run result.
+    """
+    from simulate.services import agent_learning_bridge as alb
+
+    if not alb.is_available():
+        prompt_optimiser_run.mark_as_failed(
+            "agent-learning-kit is not installed; cannot run the AGENT_LEARNING_KIT optimiser."
+        )
+        return
+
+    config = prompt_optimiser_run.configuration or {}
+    candidates = config.get("agent_candidates") or [
+        {"type": "llm", "instructions": _resolve_optimiser_base_prompt(prompt_optimiser_run)}
+    ]
+    evaluation_config = config.get("evaluation_config") or {
+        "metrics": [{"name": "task_completion"}]
+    }
+    try:
+        result = alb.optimize_and_apply_for_agent(
+            name=str(prompt_optimiser_run.id),
+            agent_candidates=candidates,
+            evaluation_config=evaluation_config,
+            dry_run=config.get("dry_run", True),
+        )
+    except Exception as e:  # surface on the run; don't crash the task
+        logger.exception("agent_learning_kit optimiser failed")
+        prompt_optimiser_run.mark_as_failed(str(e))
+        return
+
+    prompt_optimiser_run.result = result
+    prompt_optimiser_run.status = AgentPromptOptimiserRun.Status.COMPLETED
+    prompt_optimiser_run.save(update_fields=["result", "status", "updated_at"])
+    logger.info(
+        f"Agent prompt optimiser run {prompt_optimiser_run.id} completed via agent-learning-kit."
+    )
+
+
 def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
     """
     Runs the agent prompt optimiser and stores the results.
     """
+    prompt_optimiser_run = AgentPromptOptimiserRun.objects.get(
+        id=prompt_optimiser_run_id
+    )
+
+    # TH-5642: route through the agent-learning-kit bridge when requested. This makes
+    # simulate.services.agent_learning_bridge reachable from the real optimisation flow
+    # (the ticket: "use agent-learning-kit ... in optimisation we directly apply the
+    # fix"), rather than living only behind its own tests.
+    if (
+        prompt_optimiser_run.optimiser_type
+        == AgentPromptOptimiserRun.OptimiserType.AGENT_LEARNING_KIT
+    ):
+        _run_agent_learning_kit_optimisation(prompt_optimiser_run)
+        return
+
     try:
         from ee.agenthub.fix_your_agent.fix_your_agent import FixYourAgent
     except ImportError:
@@ -295,9 +365,6 @@ def run_agent_prompt_optimiser(prompt_optimiser_run_id: str) -> None:
             logger.warning("Could not import ee.agenthub.fix_your_agent.fix_your_agent", exc_info=True)
         return
 
-    prompt_optimiser_run = AgentPromptOptimiserRun.objects.get(
-        id=prompt_optimiser_run_id
-    )
     optimiser_run = prompt_optimiser_run.agent_optimiser_run
     test_execution = prompt_optimiser_run.test_execution
 
@@ -381,12 +448,12 @@ def get_agent_prompt_optimiser_run_steps(prompt_optimiser_run_id: str) -> list[d
 
 
 def update_agent_optimiser_run_step(
-    steps: Optional[list[dict]],
+    steps: list[dict] | None,
     step_number: int,
-    status: Optional[str] = None,
-    name: Optional[str] = None,
-    description: Optional[str] = None,
-    error: Optional[str] = None,
+    status: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    error: str | None = None,
 ) -> None:
     """
     Helper to update agent prompt optimiser run step status.
