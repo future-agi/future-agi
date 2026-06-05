@@ -25,6 +25,7 @@ from simulate.services.elevenlabs_chat_agent_adapter import (
     ElevenLabsChatAgentAdapter,
 )
 from simulate.services.retell_chat_agent_adapter import RetellChatAgentAdapter
+from simulate.services.vapi_chat_agent_adapter import VapiChatAgentAdapter
 
 # NOTE: ``create_adapter_from_run_test`` (prompt path) is imported lazily inside
 # create_chat_agent_adapter() — it transitively pulls in litellm/gateway clients,
@@ -37,6 +38,7 @@ logger = structlog.get_logger(__name__)
 # reached by API via assistant_id). provider key -> adapter builder(agent_id, api_key).
 EXTERNAL_HOSTED_CHAT_ADAPTERS = {
     "retell": RetellChatAgentAdapter,
+    "vapi": VapiChatAgentAdapter,
     # Both provider-string spellings exist in the wild (registry vs ProviderChoices).
     "elevenlabs": ElevenLabsChatAgentAdapter,
     "eleven_labs": ElevenLabsChatAgentAdapter,

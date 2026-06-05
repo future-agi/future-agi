@@ -91,7 +91,8 @@ def test_is_external_hosted_chat_predicate():
     assert not is_external_hosted_chat(_ad("retell", agent_type=VOICE))
     assert not is_external_hosted_chat(_ad("retell", assistant_id=""))
     assert not is_external_hosted_chat(_ad("livekit"))
-    assert not is_external_hosted_chat(_ad("vapi"))  # voice bridge, not hosted chat here
+    assert is_external_hosted_chat(_ad("vapi"))  # vapi now has a hosted chat adapter
+    assert not is_external_hosted_chat(_ad("deepgram"))  # voice-only, no hosted chat
     assert not is_external_hosted_chat(None)
 
 
