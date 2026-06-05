@@ -1777,7 +1777,11 @@ const TraceFilterPanel = ({
             (queryFieldDef?.type === "enum" ? "categorical" : "string"),
           apiColType: prop?.apiColType || queryFieldDef?.apiColType,
           operator: QUERY_TO_BASIC_OP[t.operator] || t.operator,
-          value: Array.isArray(t.value) ? t.value : [t.value],
+          value: NO_VALUE_OPS.has(t.operator)
+            ? ""
+            : Array.isArray(t.value)
+              ? t.value
+              : [t.value],
         };
       }),
     [propertyById, queryFieldMap],
@@ -2048,18 +2052,21 @@ const TraceFilterPanel = ({
               ref={queryInputRef}
               filterFields={queryFilterFields}
               fieldMap={queryFieldMap}
-              getOperators={getOperators}
+              getOperators={(type, field) =>
+                getOperatorsForFilter({ field, fieldType: type }).map((op) =>
+                  NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,
+                )
+              }
               onApply={handleQueryTokensChange}
               initialTokens={rows
-                .filter(
-                  (r) =>
-                    r.field &&
-                    (Array.isArray(r.value)
-                      ? r.value.length > 0
-                      : r.value !== "" &&
-                        r.value !== undefined &&
-                        r.value !== null),
-                )
+                .filter((r) => {
+                  if (!r.field) return false;
+                  if (NO_VALUE_OPS.has(normalizeFilterRowOperator(r).operator))
+                    return true;
+                  return Array.isArray(r.value)
+                    ? r.value.length > 0
+                    : r.value !== "" && r.value !== undefined && r.value !== null;
+                })
                 .map((r) => ({
                   field: r.field,
                   operator:
