@@ -91,9 +91,9 @@ _SPECS: tuple[ProviderSpec, ...] = (
     ),
     ProviderSpec(
         "retell", "Retell",
-        roles=frozenset({Role.AGENT_PLATFORM}),
+        roles=frozenset({Role.AGENT_PLATFORM, Role.CHAT_ENGINE}),
         transport=Transport.WEBRTC_BRIDGE, connector_key="web_retell",
-        credential_shape=CredentialShape.API_KEY_ASSISTANT,
+        credential_shape=CredentialShape.API_KEY_ASSISTANT, chat=True,
         observability_key="retell", status=Status.GA,
     ),
     # The customer's own LiveKit agent (distinct from the SYSTEM 'livekit' engine).
