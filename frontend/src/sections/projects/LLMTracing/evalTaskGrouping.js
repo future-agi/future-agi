@@ -18,17 +18,13 @@ const GLYPH_BY_ROW_TYPE = {
 
 export const isEvalMetricColumn = (col) => col?.groupBy === EVAL_METRICS_GROUP;
 
-// Groups newest-first by task creation date; evals without task fields are
-// returned in `ungrouped` and render flat as before.
-export const groupEvalColumnsByTask = (evalCols = []) => {
-  const groups = new Map();
-  const ungrouped = [];
-  for (const col of evalCols) {
-    if (!col?.evalTaskName) {
-      ungrouped.push(col);
-      continue;
-    }
-    let group = groups.get(col.evalTaskName);
+// Each task is emitted as one block at its first eval's array position so
+// user reorder sticks.
+export const buildColumnBlocks = (cols = []) => {
+  const byTask = new Map();
+  for (const col of cols) {
+    if (!col?.evalTaskName) continue;
+    let group = byTask.get(col.evalTaskName);
     if (!group) {
       group = {
         taskName: col.evalTaskName,
@@ -36,14 +32,24 @@ export const groupEvalColumnsByTask = (evalCols = []) => {
         rowType: col.rowType || null,
         evals: [],
       };
-      groups.set(col.evalTaskName, group);
+      byTask.set(col.evalTaskName, group);
     }
     group.evals.push(col);
   }
-  const sorted = Array.from(groups.values()).sort(
-    (a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0),
-  );
-  return { groups: sorted, ungrouped };
+  const blocks = [];
+  const emitted = new Set();
+  for (const col of cols) {
+    if (!col) continue;
+    if (col.evalTaskName) {
+      if (!emitted.has(col.evalTaskName)) {
+        emitted.add(col.evalTaskName);
+        blocks.push({ type: "task", group: byTask.get(col.evalTaskName) });
+      }
+    } else {
+      blocks.push({ type: "col", col });
+    }
+  }
+  return blocks;
 };
 
 export const getGlyphMeta = (rowType) =>

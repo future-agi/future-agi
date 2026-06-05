@@ -33,10 +33,7 @@ import { useReplaySessionsStoreShallow } from "../SessionsView/ReplaySessions/st
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
 import dummyTraces from "./dummyTraces.json";
-import {
-  groupEvalColumnsByTask,
-  isEvalMetricColumn,
-} from "./evalTaskGrouping";
+import { buildColumnBlocks } from "./evalTaskGrouping";
 import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
 
 const ROWS_LIMIT = 100;
@@ -392,28 +389,20 @@ const TraceGrid = React.forwardRef(
         (c) => c?.groupBy === "Annotation Metrics",
       );
       const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
-      const evalCols = columns.filter(isEvalMetricColumn);
-      const systemCols = columns.filter(
+      const mainCols = columns.filter(
         (c) =>
           c?.groupBy !== "Annotation Metrics" &&
-          c?.groupBy !== "Custom Columns" &&
-          !isEvalMetricColumn(c),
+          c?.groupBy !== "Custom Columns",
       );
 
-      const columnDefsResult = systemCols.map((c) => {
-        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        return getTraceListColumnDefs(c);
-      });
-
-      // Eval columns: Eval Task band (with row_type glyph) over its eval columns (TH-5641)
-      const { groups: taskGroups, ungrouped } =
-        groupEvalColumnsByTask(evalCols);
-      for (const c of ungrouped) {
-        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        columnDefsResult.push(getTraceListColumnDefs(c));
-      }
-      for (const task of taskGroups) {
-        columnDefsResult.push({
+      const columnDefsResult = buildColumnBlocks(mainCols).map((block) => {
+        if (block.type === "col") {
+          const c = block.col;
+          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+          return getTraceListColumnDefs(c);
+        }
+        const task = block.group;
+        return {
           headerName: task.taskName,
           headerGroupComponent: EvalTaskGroupHeader,
           headerGroupComponentParams: { rowType: task.rowType },
@@ -422,8 +411,8 @@ const TraceGrid = React.forwardRef(
             bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
             return getTraceListColumnDefs(c);
           }),
-        });
-      }
+        };
+      });
 
       // Group custom columns under a "Custom Columns" header (TH-4151)
       if (customCols.length > 0) {
