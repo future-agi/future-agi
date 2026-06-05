@@ -7318,56 +7318,51 @@ class DeleteEvalsView(APIView):
                         source_id=eval_metric.id, deleted=False
                     ).first()
                     if column:
-                        # Delete all cells associated with the column and its dependent columns
-                        Cell.objects.filter(
-                            Q(column=column)
-                            | Q(
-                                column__source_id__startswith=f"{column.id}-sourceid-"
-                            ),
-                            deleted=False,
-                        ).update(deleted=True)
-
-                        dataset = column.dataset
-
-                        # Remove columns from column_order
-                        if dataset.column_order:
-                            # Get all columns to delete (including those with source_id starting with column.id)
-                            columns_to_delete = Column.objects.filter(
+                        # One query to get ALL related column IDs (eval + reason cols)
+                        _col_ids = list(
+                            Column.objects.filter(
                                 Q(id=column.id)
                                 | Q(source_id__startswith=f"{column.id}-sourceid-"),
                                 deleted=False,
                             ).values_list("id", flat=True)
+                        )
+                        _col_id_strs = {str(c) for c in _col_ids}
 
-                            col_ids_to_remove = {str(c) for c in columns_to_delete}
-                            new_column_order = [
-                                col_id
-                                for col_id in dataset.column_order
-                                if col_id not in col_ids_to_remove
+                        # 1. Soft-delete cells by indexed column_id IN (...)
+                        if _col_ids:
+                            Cell.objects.filter(
+                                column_id__in=_col_ids, deleted=False,
+                            ).update(deleted=True)
+
+                        # 2. Update column_order on the dataset
+                        dataset = column.dataset
+                        if dataset.column_order and _col_id_strs:
+                            new_order = [
+                                c for c in dataset.column_order
+                                if c not in _col_id_strs
                             ]
                             Dataset.objects.filter(id=dataset.id).update(
-                                column_order=new_column_order
+                                column_order=new_order
                             )
 
-                        # Update metrics BEFORE deleting columns — the
-                        # lookup scopes by dataset via the Column row, which
-                        # must still be visible (deleted=False) for
-                        # BaseModelManager to find it.
+                        # 3. Mark other metrics referencing this column.
+                        #    Same as the original get_metrics_using_column but
+                        #    scoped to dataset (column is still alive here).
                         metrics = UserEvalMetric.get_metrics_using_column(
-                            getattr(request, "organization", None)
-                            or request.user.organization.id,
+                            organization.id,
                             column.id,
                         )
-                        if metrics:
+                        _metric_ids = [m.id for m in metrics if m.id != eval_metric.id]
+                        if _metric_ids:
                             UserEvalMetric.objects.filter(
-                                id__in=[m.id for m in metrics]
+                                id__in=_metric_ids,
                             ).update(column_deleted=True)
 
-                        # Delete all related columns
-                        Column.objects.filter(
-                            Q(id=column.id)
-                            | Q(source_id__startswith=f"{column.id}-sourceid-"),
-                            deleted=False,
-                        ).update(deleted=True)
+                        # 4. Soft-delete the columns
+                        if _col_ids:
+                            Column.objects.filter(
+                                id__in=_col_ids,
+                            ).update(deleted=True)
 
                 # Delete the eval_metric itself when delete_column is True
                 eval_metric.deleted = True
