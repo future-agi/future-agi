@@ -242,6 +242,19 @@ def store_chat_messages(
 
             logger.info(f"CallExecution {call_execution.id} marked as COMPLETED")
 
+            # Emit the simulation trace (span tree) so this chat sim shows up in the
+            # trace/Session UI like a production trace (TH-5642 observability). A
+            # trace failure must never break the sim.
+            try:
+                from simulate.services.sim_observability import emit_sim_trace
+
+                emit_sim_trace(call_execution)
+            except Exception:
+                logger.exception(
+                    "sim_trace_emit_failed",
+                    call_execution_id=str(call_execution.id),
+                )
+
             # Trigger test execution monitoring to update TestExecution status
             monitor_test_execution_for_chat.apply_async(
                 args=(str(call_execution.test_execution_id),)

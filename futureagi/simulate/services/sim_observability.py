@@ -22,6 +22,10 @@ from __future__ import annotations
 import secrets
 from typing import Any
 
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 # Attribute keys mirror tracer.utils.otel.SpanAttributes (FI/OpenInference). Kept
 # local so this module stays import-light + pure; test_sim_observability pins them
 # against the real SpanAttributes so they can't drift.
@@ -180,3 +184,121 @@ def build_sim_spans(
         history.append(f"assistant: {content}")
 
     return spans
+
+
+# ---------------------------------------------------------------------------
+# Emit layer — resolves the project + reads the call's messages, then hands each
+# built span to the tracer's existing OTel write path. Lazy imports keep the
+# builder above pure/Django-free.
+# ---------------------------------------------------------------------------
+def _message_text(row) -> str:
+    """Extract plain text from a ChatMessageModel row (messages list or content)."""
+    msgs = getattr(row, "messages", None)
+    if isinstance(msgs, list) and msgs:
+        return " ".join(str(m) for m in msgs if m)
+    content = getattr(row, "content", None)
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("content"):
+                parts.append(str(item["content"]))
+        return " ".join(parts)
+    return str(content) if content else ""
+
+
+def _tool_calls_from_row(row) -> list[dict[str, Any]]:
+    content = getattr(row, "content", None)
+    out: list[dict[str, Any]] = []
+    if isinstance(content, list):
+        for item in content:
+            for tc in (item.get("tool_calls") or []) if isinstance(item, dict) else []:
+                fn = tc.get("function") or {}
+                out.append({
+                    "name": fn.get("name") or tc.get("name") or "",
+                    "arguments": fn.get("arguments") or tc.get("arguments") or "",
+                    "result": tc.get("result") or "",
+                    "id": tc.get("id") or "",
+                })
+    return out
+
+
+def _row_to_turn(row) -> dict[str, Any]:
+    role = "assistant" if str(getattr(row, "role", "")) == "assistant" else "user"
+    turn: dict[str, Any] = {"role": role, "content": _message_text(row)}
+    if role == "assistant":
+        if getattr(row, "tokens", None) is not None:
+            turn["output_tokens"] = row.tokens
+            turn["total_tokens"] = row.tokens
+        if getattr(row, "latency_ms", None) is not None:
+            turn["latency_ms"] = row.latency_ms
+        tcs = _tool_calls_from_row(row)
+        if tcs:
+            turn["tool_calls"] = tcs
+    return turn
+
+
+def emit_sim_trace(call_execution, *, user_id: str | None = None) -> int:
+    """Emit a trace (span tree) for a completed sim CallExecution.
+
+    Resolves the project from the agent definition's observability provider (falling
+    back to a per-org "Simulations" project), reads the persisted ChatMessage rows,
+    builds the span tree, and writes each span via the tracer's OTel ingest path so
+    the sim appears in the same trace/Session UI as production traces.
+
+    Returns the number of spans emitted.
+    """
+    from simulate.models.chat_message import ChatMessageModel
+    from tracer.utils.create_otel_span import create_single_otel_span
+
+    test_execution = getattr(call_execution, "test_execution", None)
+    run_test = getattr(test_execution, "run_test", None)
+    agent_def = getattr(test_execution, "agent_definition", None) or getattr(
+        run_test, "agent_definition", None
+    )
+    organization_id = str(
+        getattr(run_test, "organization_id", None)
+        or getattr(call_execution, "organization_id", "")
+        or ""
+    )
+    workspace_id = getattr(run_test, "workspace_id", None)
+    workspace_id = str(workspace_id) if workspace_id else None
+
+    # Project: the agent's observability project, else a per-org Simulations project.
+    obs = getattr(agent_def, "observability_provider", None)
+    project = getattr(obs, "project", None)
+    if project is not None:
+        project_name, project_type = project.name, project.trace_type
+    else:
+        project_name, project_type = "Simulations", "observe"
+
+    rows = list(
+        ChatMessageModel.objects.filter(call_execution=call_execution).order_by(
+            "created_at"
+        )
+    )
+    turns = [_row_to_turn(r) for r in rows]
+    session_id = next((str(r.session_id) for r in rows if getattr(r, "session_id", None)), None)
+
+    modality = (
+        "voice"
+        if str(getattr(call_execution, "simulation_call_type", "")) == "voice"
+        else "chat"
+    )
+
+    spans = build_sim_spans(
+        turns,
+        modality=modality,
+        project_name=project_name,
+        project_type=project_type,
+        session_id=session_id,
+        agent_name=getattr(agent_def, "agent_name", "agent-under-test"),
+        metadata={"call_execution_id": str(getattr(call_execution, "id", ""))},
+    )
+    emitted = 0
+    for span in spans:
+        try:
+            create_single_otel_span(span, organization_id, user_id, workspace_id)
+            emitted += 1
+        except Exception:  # pragma: no cover - one bad span must not lose the rest
+            logger.exception("sim_trace_span_emit_failed", extra={"name": span.get("name")})
+    return emitted
