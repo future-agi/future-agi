@@ -1,0 +1,29 @@
+name: Simulate — Formal Verification Tests
+
+on:
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - "futureagi/simulate/**"
+      - ".github/workflows/simulate-formal-tests.yml"
+
+jobs:
+  formal-tests:
+    name: Simulate pure-function formal tests (no Docker)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install z3-solver hypothesis pytest pytest-mock structlog
+
+      - name: Run simulate formal tests
+        working-directory: futureagi
+        run: |
+          python -m pytest simulate/formal_tests/ -m unit -v --tb=short --no-header -p no:django
