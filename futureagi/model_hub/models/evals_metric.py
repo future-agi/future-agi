@@ -600,8 +600,14 @@ class EvalTemplateVersionManager(models.Manager):
             return version
 
     def get_default(self, eval_template):
-        """Get the default (active) version for a template."""
-        return self.filter(eval_template=eval_template, is_default=True).first()
+        """Get the default (active) version for a template.
+        Falls back to the latest version if no default is marked."""
+        ver = self.filter(eval_template=eval_template, is_default=True).first()
+        if not ver:
+            ver = self.filter(
+                eval_template=eval_template, deleted=False,
+            ).order_by("-version_number").first()
+        return ver
 
 
 class EvalTemplateVersion(ModelBaseModel):
