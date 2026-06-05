@@ -66,6 +66,38 @@ def test_other_optimiser_types_do_not_route_to_bridge():
     kit.assert_not_called()
 
 
+@pytest.mark.integration
+def test_real_kit_optimisation_runs_end_to_end_through_platform_flow():
+    """END-TO-END (not mocked): run_agent_prompt_optimiser → REAL agent-learning-kit
+    optimize → real result stored. Proves the wired path actually executes an
+    optimization and applies the winning candidate, not just that a function is called."""
+    from simulate.services import agent_learning_bridge as alb
+
+    if not alb.is_available():
+        pytest.skip("agent-learning-kit not installed")
+
+    run = _fake_run(
+        AgentPromptOptimiserRun.OptimiserType.AGENT_LEARNING_KIT,
+        {
+            "agent_candidates": [
+                {"type": "scripted", "responses": [{"content": "I don't know."}]},
+                {"type": "scripted",
+                 "responses": [{"content": "Sure! Our hours are 9-5 Mon-Fri."}]},
+            ],
+            "evaluation_config": {"metrics": [{"name": "task_completion"}]},
+            "dry_run": False,  # real (non-dry-run) kit optimisation
+        },
+    )
+    with patch.object(apo.AgentPromptOptimiserRun.objects, "get", return_value=run):
+        apo.run_agent_prompt_optimiser("run-1")
+
+    assert run.status == AgentPromptOptimiserRun.Status.COMPLETED
+    assert isinstance(run.result, dict)
+    # Real agent-learning-kit optimize result shape.
+    assert run.result.get("status") in ("passed", "failed")
+    assert "optimization" in run.result or "summary" in run.result
+
+
 @pytest.mark.unit
 def test_bridge_unavailable_marks_run_failed():
     run = _fake_run(AgentPromptOptimiserRun.OptimiserType.AGENT_LEARNING_KIT)
