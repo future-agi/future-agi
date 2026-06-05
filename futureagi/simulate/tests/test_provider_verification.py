@@ -23,11 +23,14 @@ def test_registry_matrix_covers_every_provider():
 
 
 @pytest.mark.unit
-def test_agora_has_no_implemented_cells():
+def test_agora_outbound_wired_inbound_not():
+    # Agora outbound is now wired (AgoraOutboundDialer); inbound is not.
     report = pv.declared_matrix()
     agora = [c for c in report.cells if c.provider == "agora"]
-    assert len(agora) == 1
-    assert agora[0].status == pv.NOT_IMPL
+    cells = {(c.modality, c.direction): c.status for c in agora}
+    assert ("voice", "outbound") in cells and cells[("voice", "outbound")] == pv.OK
+    assert ("voice", "inbound") not in cells
+    assert ("chat", None) not in cells  # no chat product
 
 
 @pytest.mark.unit

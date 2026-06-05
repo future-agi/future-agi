@@ -202,7 +202,7 @@ class TestCallDirection:
             "others": ({IN, OUT}, {IN, OUT}),
             "elevenlabs": ({IN, OUT}, {IN, OUT}),  # outbound via ElevenLabsOutboundDialer
             "deepgram": ({IN, OUT}, {IN}),         # no native outbound (BYO-SIP only)
-            "agora": ({IN, OUT}, set()),
+            "agora": ({IN, OUT}, {OUT}),          # outbound wired via AgoraOutboundDialer (ConvAI telephony)
             "pipecat": ({IN, OUT}, {IN, OUT}),     # reuses bridge → outbound = speaking-order
             "bland": ({IN, OUT}, {OUT}),          # outbound-first; BlandOutboundDialer
             "twilio": ({IN, OUT}, {IN, OUT}),     # SIP inbound + TwilioOutboundDialer

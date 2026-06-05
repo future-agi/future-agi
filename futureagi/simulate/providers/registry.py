@@ -185,8 +185,10 @@ _SPECS: tuple[ProviderSpec, ...] = (
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.SIP,
         credential_shape=CredentialShape.API_KEY_ASSISTANT, status=Status.PLANNED,
-        # SIP/PSTN both directions per Agora's Elastic SIP Trunk; nothing wired yet.
-        supported_directions=_BOTH, implemented_directions=_NONE,
+        # SIP/PSTN both directions per Agora's Elastic SIP Trunk. Outbound now wired via
+        # AgoraOutboundDialer (ConvAI telephony API; agent SIP-dials our pool number);
+        # inbound (we SIP-call an Agora number) is not wired yet — same shape as Bland.
+        supported_directions=_BOTH, implemented_directions=_OUT,
     ),
     # Pipecat-on-LiveKit reuses the existing LiveKit bridge connector (DESIGN.md §5.5).
     ProviderSpec(

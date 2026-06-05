@@ -199,6 +199,78 @@ class TwilioOutboundDialer(OutboundDialer):
         return self._require_id(data.get("sid"), data)
 
 
+class AgoraOutboundDialer(OutboundDialer):
+    """Agora Conversational AI outbound via the ConvAI telephony API.
+
+    Agora rides the provider-neutral SIP path (registry ``transport=SIP``): the ConvAI
+    agent places an outbound SIP call to our pool number and we answer on the LiveKit
+    SIP inbound trunk. Auth is HTTP Basic with the Agora **Customer Key:Secret** (the
+    same credential the connectivity probe validates), so ``api_key`` is
+    ``"CustomerKey:CustomerSecret"``. The Agora **App ID** (project) is not part of the
+    Basic credential and is read from the ``AGORA_APP_ID`` env var.
+
+    Maps our outbound semantics (the agent dials our pool number) onto Agora's outbound
+    call: ``to_phone_number`` is the called number, ``from_phone_number`` is the caller
+    ID, ``assistant_id`` is the AI-Studio published agent. The response's ``agent_id``
+    is the call/agent instance id.
+
+    Docs: https://docs.agora.io/en/conversational-ai/rest-api/telephony/start (outbound)
+    and .../rest-api/agent/join (base ``/conversational-ai-agent/v2/projects/{appid}``,
+    Basic auth, ``agent_id`` response). The exact outbound telephony PATH is overridable
+    via ``AGORA_OUTBOUND_CALL_URL`` and should be confirmed against your Agora project on
+    the first live call; auth, body and response parsing here follow the documented
+    contract and are unit-tested.
+    """
+
+    provider = "agora"
+    BASE_URL = "https://api.agora.io/api/conversational-ai-agent/v2"
+
+    def _key_and_secret(self) -> tuple[str, str]:
+        key, _, secret = self._api_key.partition(":")
+        if not key or not secret:
+            raise ValueError(
+                "AgoraOutboundDialer api_key must be 'CustomerKey:CustomerSecret'"
+            )
+        return key, secret
+
+    def create_outbound_call(
+        self, *, assistant_id, from_phone_number, to_phone_number, metadata=None
+    ):
+        key, secret = self._key_and_secret()
+        app_id = os.getenv("AGORA_APP_ID", "")
+        if not app_id:
+            raise OutboundDialError(
+                "AGORA_APP_ID env var is required for Agora outbound calls"
+            )
+        url = os.getenv(
+            "AGORA_OUTBOUND_CALL_URL",
+            f"{self.BASE_URL}/projects/{app_id}/sip/outbound",
+        )
+        # The agent + SIP gateway share a per-call RTC channel.
+        channel = (metadata or {}).get("channel") or f"sim-{to_phone_number}"
+        resp = requests.post(
+            url,
+            headers={"Content-Type": "application/json"},
+            auth=(key, secret),
+            json={
+                "name": channel,
+                "sip": {
+                    "called_number": to_phone_number,
+                    "caller_id": from_phone_number,
+                },
+                "properties": {"channel": channel, "agent_id": assistant_id},
+                "metadata": metadata or {},
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code >= 400:
+            raise OutboundDialError(
+                f"Agora outbound call failed ({resp.status_code}): {resp.text}"
+            )
+        data = resp.json() or {}
+        return self._require_id(data.get("agent_id") or data.get("id"), data)
+
+
 # provider key -> dialer class. Vapi keeps its existing engine path (it's already
 # wired); these add the previously-missing non-Vapi user-side dialers.
 OUTBOUND_DIALERS: dict[str, type[OutboundDialer]] = {
@@ -207,6 +279,7 @@ OUTBOUND_DIALERS: dict[str, type[OutboundDialer]] = {
     "elevenlabs": ElevenLabsOutboundDialer,
     "eleven_labs": ElevenLabsOutboundDialer,  # provider-string drift
     "twilio": TwilioOutboundDialer,
+    "agora": AgoraOutboundDialer,
 }
 
 
