@@ -73,6 +73,18 @@ def test_tool_span_attributes():
 
 
 @pytest.mark.unit
+def test_root_span_carries_conversation_token_rollup():
+    # The root AGENT span sums the per-turn usage so the trace shows total cost.
+    spans = build_sim_spans(CHAT_TURNS, modality="chat", project_name="p")
+    root = spans[0]
+    assert root["attributes"][so.FI_SPAN_KIND] == "AGENT"
+    # Two assistant turns: input 30+50=80, output 8+10=18, total 38+60=98.
+    assert root["attributes"][so.USAGE_INPUT_TOKENS] == 80
+    assert root["attributes"][so.USAGE_OUTPUT_TOKENS] == 18
+    assert root["attributes"][so.USAGE_TOTAL_TOKENS] == 98
+
+
+@pytest.mark.unit
 def test_voice_modality_emits_pipeline_latency():
     voice_turns = [
         {"role": "user", "content": "hello"},

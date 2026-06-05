@@ -131,6 +131,20 @@ def build_sim_spans(
     last_agent = next((t.get("content", "") for t in reversed(agent_turns)), "")
 
     base_attrs: dict[str, Any] = {INPUT_VALUE: first_user, OUTPUT_VALUE: last_agent}
+    # Conversation-level token rollup on the root span (the ingest converter computes
+    # per-LLM-span cost, but not the trace total) — so the trace shows total usage.
+    _ti = sum(int(t.get("input_tokens") or 0) for t in agent_turns)
+    _to = sum(int(t.get("output_tokens") or 0) for t in agent_turns)
+    _tt = sum(int(t.get("total_tokens") or 0) for t in agent_turns)
+    if _ti:
+        base_attrs[USAGE_INPUT_TOKENS] = _ti
+    if _to:
+        base_attrs[USAGE_OUTPUT_TOKENS] = _to
+    if _tt:
+        base_attrs[USAGE_TOTAL_TOKENS] = _tt
+    if model:
+        base_attrs[REQUEST_MODEL] = model
+        base_attrs[LLM_MODEL_NAME] = model
     if session_id:
         base_attrs[SESSION_ID] = session_id
     if metadata:
