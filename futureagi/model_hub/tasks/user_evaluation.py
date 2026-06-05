@@ -226,7 +226,7 @@ def process_single_evaluation(user_eval_metric):
             _source_configs["version_id"] = str(_default_ver.id)
             _source_configs["version_number"] = _default_ver.version_number
     except Exception:
-        pass
+        logger.warning("version_tracking_failed", eval_id=str(eval_id), exc_info=True)
 
     runner = EvaluationRunner(
         user_eval_metric_id=user_eval_metric.id,

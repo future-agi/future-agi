@@ -11485,7 +11485,7 @@ def run_evaluation_task(evaluation_data):
                                 "version_number", _default_ver.version_number
                             )
                     except Exception:
-                        pass
+                        logger.warning("version_tracking_failed", metric_id=str(metric_id), exc_info=True)
                     runner_args["source_configs"] = runner_source_configs
 
                     evaluation_runner = EvaluationRunner(

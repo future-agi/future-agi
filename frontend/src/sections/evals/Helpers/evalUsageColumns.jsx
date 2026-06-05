@@ -56,8 +56,9 @@ export const DEFAULT_COLUMN_CONFIG = [
   { value: "input", label: "Input", enabled: true, is_visible: true, order_index: 2 },
   { value: "reason", label: "Reason", enabled: true, is_visible: true, order_index: 3 },
   { value: "source", label: "Source", enabled: true, is_visible: true, order_index: 4 },
-  { value: "feedback", label: "Feedback", enabled: true, is_visible: true, order_index: 5 },
-  { value: "created_at", label: "Ran at", enabled: true, is_visible: true, order_index: 6 },
+  { value: "version", label: "Version", enabled: true, is_visible: true, order_index: 5 },
+  { value: "feedback", label: "Feedback", enabled: true, is_visible: true, order_index: 6 },
+  { value: "created_at", label: "Ran at", enabled: true, is_visible: true, order_index: 7 },
 ];
 
 export const COLUMN_CONFIG_URL_PARAM = "cols";
