@@ -675,6 +675,222 @@ class TestClickHouseFilterBuilder:
         assert "LIKE" in where
         assert any("%" in str(v) for v in params.values())
 
+    def test_translate_span_attribute_text_multi_value_not_contains_and_joined(self):
+        """not_contains with a list of strings must AND-join NOT LIKE clauses."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(query_mode="span")
+        filters = [
+            {
+                "column_id": "log.message",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "not_contains",
+                    "filter_value": ["error", "timeout"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ]
+        where, params = builder.translate(filters)
+        assert where.count("NOT LIKE") == 2
+        assert " AND " in where
+        assert " OR " not in where
+        like_params = sorted(v for v in params.values() if isinstance(v, str))
+        assert like_params == ["%error%", "%timeout%"]
+
+    def test_translate_span_attribute_text_multi_value_contains_or_joined(self):
+        """contains with a list of strings must OR-join LIKE clauses inside parens."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(query_mode="span")
+        filters = [
+            {
+                "column_id": "model",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "contains",
+                    "filter_value": ["gpt-4", "claude"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ]
+        where, params = builder.translate(filters)
+        assert where.count("LIKE") == 2
+        assert "NOT LIKE" not in where
+        assert " OR " in where
+        assert "(" in where and ")" in where
+        like_params = sorted(v for v in params.values() if isinstance(v, str))
+        assert like_params == ["%claude%", "%gpt-4%"]
+
+    def test_translate_span_attribute_text_multi_value_equals_or(self):
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(query_mode="span")
+        filters = [
+            {
+                "column_id": "env",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "equals",
+                    "filter_value": ["prod", "staging"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ]
+        where, params = builder.translate(filters)
+        assert where.count(" = ") == 2
+        assert " OR " in where
+        assert sorted(v for v in params.values() if isinstance(v, str)) == [
+            "prod",
+            "staging",
+        ]
+
+    def test_translate_span_attribute_text_multi_value_not_equals_and(self):
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(query_mode="span")
+        filters = [
+            {
+                "column_id": "env",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "not_equals",
+                    "filter_value": ["prod", "staging"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ]
+        where, params = builder.translate(filters)
+        assert where.count(" != ") == 2
+        assert " AND " in where
+        assert " OR " not in where
+
+    def test_translate_span_attribute_text_multi_value_starts_and_ends_with(self):
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(query_mode="span")
+        where_sw, params_sw = builder.translate([
+            {
+                "column_id": "path",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "starts_with",
+                    "filter_value": ["/api", "/admin"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ])
+        assert where_sw.count("LIKE") == 2
+        assert " OR " in where_sw
+        assert sorted(v for v in params_sw.values() if isinstance(v, str)) == [
+            "/admin%",
+            "/api%",
+        ]
+
+        builder2 = ClickHouseFilterBuilder(query_mode="span")
+        where_ew, params_ew = builder2.translate([
+            {
+                "column_id": "path",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "ends_with",
+                    "filter_value": [".json", ".xml"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ])
+        assert where_ew.count("LIKE") == 2
+        assert " OR " in where_ew
+        assert sorted(v for v in params_ew.values() if isinstance(v, str)) == [
+            "%.json",
+            "%.xml",
+        ]
+
+    def test_translate_span_attribute_text_single_string_backward_compatible(self):
+        """Single-string filter_value must keep producing single-clause SQL."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        for op, expected_param in [
+            ("contains", "%gpt%"),
+            ("not_contains", "%gpt%"),
+            ("starts_with", "gpt%"),
+            ("ends_with", "%gpt"),
+            ("equals", "gpt"),
+            ("not_equals", "gpt"),
+        ]:
+            builder = ClickHouseFilterBuilder(query_mode="span")
+            where, params = builder.translate([
+                {
+                    "column_id": "model",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": op,
+                        "filter_value": "gpt",
+                        "col_type": "SPAN_ATTRIBUTE",
+                    },
+                }
+            ])
+            # exactly one comparison clause; no OR/AND-joined siblings
+            assert " OR " not in where, f"{op}: {where}"
+            # the only AND in the predicate is the 'exists AND value <op>' linker
+            assert where.count(" AND ") == 1, f"{op}: {where}"
+            assert expected_param in params.values(), f"{op}: {params}"
+
+    def test_translate_span_attribute_text_single_element_list_no_paren_group(self):
+        """A 1-element list should emit a single clause, no wrapping OR group."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(query_mode="span")
+        where, _ = builder.translate([
+            {
+                "column_id": "model",
+                "filter_config": {
+                    "filter_type": "text",
+                    "filter_op": "contains",
+                    "filter_value": ["gpt"],
+                    "col_type": "SPAN_ATTRIBUTE",
+                },
+            }
+        ])
+        assert " OR " not in where
+        # No outer parenthesised OR group around a single clause.
+        assert "LIKE %(attr_1)s)" not in where
+
+    def test_translate_span_attribute_text_empty_list_rejected(self):
+        """Empty list for a text op must raise ValueError (parity with in/not_in)."""
+        import pytest
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(query_mode="span")
+        with pytest.raises(ValueError):
+            builder.translate([
+                {
+                    "column_id": "model",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "not_contains",
+                        "filter_value": [],
+                        "col_type": "SPAN_ATTRIBUTE",
+                    },
+                }
+            ])
+
     def test_translate_span_attribute_is_null(self):
         """SPAN_ATTRIBUTE is_null filter should check mapContains with NOT."""
         from tracer.services.clickhouse.query_builders.filters import (

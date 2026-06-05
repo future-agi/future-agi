@@ -405,3 +405,11 @@ SPAN_ATTR_ALLOWED_OPS: dict[str, set[str]] = {
 LIST_OPS: set[str] = {"in", "not_in"}
 RANGE_OPS: set[str] = {"between", "not_between"}
 NO_VALUE_OPS: set[str] = {"is_null", "is_not_null"}
+# Text ops that accept either a single value or a list of values.
+# Positive ops compose with OR; negative ops compose with AND.
+TEXT_MULTI_VALUE_OPS: set[str] = {
+    "equals", "not_equals",
+    "contains", "not_contains",
+    "starts_with", "ends_with",
+}
+TEXT_NEGATIVE_OPS: set[str] = {"not_equals", "not_contains"}
