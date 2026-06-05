@@ -408,20 +408,44 @@ const EvalsListView = () => {
     if (changed) setCreatorsVersion((v) => v + 1);
   }, [items]);
 
+  // Accumulate tags seen across loaded evals (same pattern as creators) so
+  // custom tags — not just the predefined EVAL_TAGS — become filter choices.
+  const tagsRef = useRef(new Set());
+  const [tagsVersion, setTagsVersion] = useState(0);
+  useEffect(() => {
+    let changed = false;
+    for (const item of items) {
+      const itemTags = Array.isArray(item?.tags) ? item.tags : [];
+      for (const t of itemTags) {
+        if (t && !tagsRef.current.has(t)) {
+          tagsRef.current.add(t);
+          changed = true;
+        }
+      }
+    }
+    if (changed) setTagsVersion((v) => v + 1);
+  }, [items]);
+
   const filterFields = useMemo(() => {
     const evalNames = (allEvalNames || [])
       .map((e) => e.name)
       .filter(Boolean)
       .sort();
     const creators = [...creatorsRef.current].sort();
+    // Predefined tags + any custom tags harvested from loaded evals.
+    const tagChoices = [
+      ...new Set([...EVAL_TAGS.map((t) => t.value), ...tagsRef.current]),
+    ].sort();
     return [
       { value: "name", label: "Name", type: "enum", choices: evalNames },
       { value: "owner", label: "Created By", type: "enum", choices: creators },
-      ...STATIC_FILTER_FIELDS,
+      ...STATIC_FILTER_FIELDS.map((f) =>
+        f.value === "tags" ? { ...f, choices: tagChoices } : f,
+      ),
     ];
-    // creatorsVersion is the reactivity bump — the real data is in the ref.
+    // creatorsVersion / tagsVersion are reactivity bumps — real data is in refs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allEvalNames, creatorsVersion]);
+  }, [allEvalNames, creatorsVersion, tagsVersion]);
 
   // Fetch 30-day charts separately (ClickHouse, async)
   const templateIds = useMemo(() => items.map((item) => item.id), [items]);
