@@ -229,15 +229,25 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     if (!isComposite) return;
     if (!compositeDetail) return;
     if (compositePopulatedRef.current) return;
+    // Start from template child weights, then overlay saved per-binding overrides
     const initial = {};
     (compositeDetail.children || []).forEach((c) => {
       if (c?.child_id != null) {
         initial[c.child_id] = c.weight != null ? c.weight : 1.0;
       }
     });
+    const saved =
+      evalData?.composite_weight_overrides ||
+      evalData?.compositeWeightOverrides ||
+      {};
+    if (saved && typeof saved === "object") {
+      Object.entries(saved).forEach(([childId, w]) => {
+        if (w != null) initial[childId] = w;
+      });
+    }
     setCompositeChildWeights(initial);
     compositePopulatedRef.current = true;
-  }, [isComposite, compositeDetail]);
+  }, [isComposite, compositeDetail, evalData]);
   // Configuring a per-dataset attachment (UserEvalMetric) — NOT editing the
   // underlying template itself. Lock-down policy:
   //   - System evals: instructions + output_type category are READ-ONLY.

@@ -7881,51 +7881,43 @@ class EditAndRunUserEvalView(APIView):
                 eval_metric.save()
 
             # --- Version creation on edit ---
-            _req_config = request_data.get("config") or {}
-            _inner_config = _req_config.get("config", {})
-            _edited_rule_prompt = _inner_config.get("rule_prompt")
-            _is_user_eval = eval_metric.template.owner == OwnerChoices.USER.value
-            _is_composite = (
-                getattr(eval_metric.template, "template_type", "single") == "composite"
-            )
-
-            if _is_user_eval and (_edited_rule_prompt or _is_composite):
+            # Works the same for single and composite: snapshot everything
+            # the FE sent into an immutable version. The runtime reads from
+            # UserEvalMetric.config (single) or .composite_weight_overrides
+            # (composite) directly — the version is for audit/history.
+            if eval_metric.template.owner == OwnerChoices.USER.value:
                 from model_hub.models.evals_metric import EvalTemplateVersion
+                from model_hub.utils.prompt_migration import config_to_prompt_messages
 
                 _tpl = eval_metric.template
-                _snap = dict(_tpl.config or {})
+                _req_config = request_data.get("config") or {}
+                _inner_config = _req_config.get("config", {})
+                _run_config = _req_config.get("run_config", {})
                 _resolved_model = (
                     request_data.get("model") or eval_metric.model
                     or _tpl.model or ""
                 )
 
-                if _is_composite:
-                    # Composite: snapshot weights + aggregation config
-                    _weight_overrides = request_data.get("composite_weight_overrides")
-                    if _weight_overrides is not None:
-                        _snap["composite_weight_overrides"] = _weight_overrides
-                    _snap["model"] = _resolved_model
-                    _criteria = _tpl.criteria or ""
-                    _pm = []
-                else:
-                    # Single: snapshot prompt + all config
-                    from model_hub.utils.prompt_migration import config_to_prompt_messages
-
+                # Build snapshot: template base → FE config → run_config → top-level fields
+                _snap = dict(_tpl.config or {})
+                if _inner_config:
                     _snap.update(_inner_config)
-                    _run_config = _req_config.get("run_config", {})
-                    if _run_config:
-                        _snap.update(_run_config)
-                    _snap["model"] = _resolved_model
-                    _snap["messages"] = [
-                        {"role": "system", "content": _edited_rule_prompt}
-                    ]
-                    _criteria = _edited_rule_prompt
-                    _pm = config_to_prompt_messages(
-                        _snap,
-                        criteria=_criteria,
-                        eval_type_id=_snap.get("eval_type_id"),
-                    )
+                if _run_config:
+                    _snap.update(_run_config)
+                _snap["model"] = _resolved_model
+                _weight_overrides = request_data.get("composite_weight_overrides")
+                if _weight_overrides is not None:
+                    _snap["composite_weight_overrides"] = _weight_overrides
 
+                _rule_prompt = _inner_config.get("rule_prompt")
+                _criteria = _rule_prompt or _tpl.criteria or ""
+                if _rule_prompt:
+                    _snap["messages"] = [{"role": "system", "content": _rule_prompt}]
+
+                _pm = config_to_prompt_messages(
+                    _snap, criteria=_criteria,
+                    eval_type_id=_snap.get("eval_type_id"),
+                )
                 _ver = EvalTemplateVersion.objects.create_version(
                     eval_template=_tpl,
                     prompt_messages=_pm,
@@ -7981,6 +7973,11 @@ class EditAndRunUserEvalView(APIView):
                     request_data["config"]["run_config"]["error_localizer_enabled"]
                 )
             eval_metric.model = request_data.get("model") or eval_metric.model
+            # Persist composite weight overrides when provided
+            if request_data.get("composite_weight_overrides") is not None:
+                eval_metric.composite_weight_overrides = request_data[
+                    "composite_weight_overrides"
+                ]
 
             # Reason-column reconciliation differs by scope:
             #  * dataset: exactly one EVALUATION column (source_id == eval_metric.id)

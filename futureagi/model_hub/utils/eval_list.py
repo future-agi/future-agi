@@ -309,6 +309,7 @@ def build_user_eval_list_items(
                     "children_count": template.composite_children.filter(
                         deleted=False
                     ).count(),
+                    "composite_weight_overrides": user_eval.composite_weight_overrides,
                 }
             )
 
