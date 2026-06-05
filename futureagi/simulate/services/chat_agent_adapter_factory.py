@@ -21,6 +21,9 @@ from django.db.models import Q
 
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.run_test import RunTest
+from simulate.services.elevenlabs_chat_agent_adapter import (
+    ElevenLabsChatAgentAdapter,
+)
 from simulate.services.retell_chat_agent_adapter import RetellChatAgentAdapter
 
 # NOTE: ``create_adapter_from_run_test`` (prompt path) is imported lazily inside
@@ -34,6 +37,9 @@ logger = structlog.get_logger(__name__)
 # reached by API via assistant_id). provider key -> adapter builder(agent_id, api_key).
 EXTERNAL_HOSTED_CHAT_ADAPTERS = {
     "retell": RetellChatAgentAdapter,
+    # Both provider-string spellings exist in the wild (registry vs ProviderChoices).
+    "elevenlabs": ElevenLabsChatAgentAdapter,
+    "eleven_labs": ElevenLabsChatAgentAdapter,
 }
 
 # Provider keys the platform drives server-side — used by the trigger query to
