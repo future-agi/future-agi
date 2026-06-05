@@ -87,7 +87,13 @@ def _span(
     return {
         "trace_id": trace_id,
         "span_id": span_id,
+        # ``parent_span_id`` is the canonical key (asserted by tests / read by
+        # other sim tooling); ``parent_id`` is the key the OTel ingest converter
+        # (tracer.utils.otel.convert_otel_span_to_observation_span) actually reads
+        # to set ObservationSpan.parent_span_id. Emit BOTH so the persisted trace
+        # is a real tree, not flat. (Caught by TH-5642 local DB-verified emit.)
         "parent_span_id": parent_span_id,
+        "parent_id": parent_span_id,
         "name": name,
         "latency": latency,
         "project_name": project_name,
@@ -376,7 +382,10 @@ def attach_sim_evals_to_trace(call_execution, eval_attributes: dict[str, Any]) -
         return 0
     root_span_id = _det_span_id(seed, "root")
     updated = 0
-    for span in ObservationSpan.objects.filter(span_id=root_span_id):
+    # ObservationSpan's PK ``id`` IS the OTLP span id (CharField); there is no
+    # separate ``span_id`` column — mirror tracer.utils.eval_tasks which filters
+    # spans by ``id__in``. (Caught by the TH-5642 local DB-verified eval run.)
+    for span in ObservationSpan.objects.filter(id=root_span_id):
         attrs = dict(span.span_attributes or {})
         attrs.update(eval_attributes)
         span.span_attributes = attrs

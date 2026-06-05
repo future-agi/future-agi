@@ -144,8 +144,11 @@ def test_attach_sim_evals_to_trace_merges_onto_root_span(monkeypatch):
         class objects:  # noqa: N801
             @staticmethod
             def filter(**kwargs):
-                # Looked up by the deterministic root span id.
-                assert kwargs.get("span_id")
+                # Looked up by the deterministic root span id, which is the
+                # ObservationSpan PRIMARY KEY ``id`` (a CharField) — there is no
+                # ``span_id`` column. Asserting the wrong field here is what let a
+                # real-DB FieldError slip through (caught by TH-5642 DB-verify).
+                assert kwargs.get("id")
                 return [fake]
 
     monkeypatch.setattr(osmod, "ObservationSpan", _FakeObservationSpan)
