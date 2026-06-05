@@ -14,6 +14,14 @@ class ProviderChoices(models.TextChoices):
     RETELL = "retell", "Retell"
     LIVEKIT = "livekit", "LiveKit"
     OTHERS = "others", "Others"
+    # TH-5642: observability registration for the remaining simulation providers, so
+    # every platform can bind to a provider-named observability project (the trace
+    # emission itself is already provider-agnostic via emit_sim_trace).
+    DEEPGRAM = "deepgram", "Deepgram"
+    AGORA = "agora", "Agora"
+    PIPECAT = "pipecat", "Pipecat"
+    BLAND = "bland", "Bland.ai"
+    TWILIO = "twilio", "Twilio"
 
 
 class ObservabilityProvider(BaseModel):

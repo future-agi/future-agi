@@ -170,6 +170,7 @@ _SPECS: tuple[ProviderSpec, ...] = (
         "deepgram", "Deepgram Voice Agent",
         roles=frozenset({Role.AGENT_PLATFORM, Role.STT}),
         transport=Transport.DIRECT_WS, connector_key="web_deepgram",
+        observability_key="deepgram",
         credential_shape=CredentialShape.AGENT_ID, status=Status.PLANNED,
         supported_directions=_BOTH, implemented_directions=_IN,
     ),
@@ -183,7 +184,7 @@ _SPECS: tuple[ProviderSpec, ...] = (
     ProviderSpec(
         "agora", "Agora Conversational AI",
         roles=frozenset({Role.AGENT_PLATFORM}),
-        transport=Transport.SIP,
+        transport=Transport.SIP, observability_key="agora",
         credential_shape=CredentialShape.API_KEY_ASSISTANT, status=Status.PLANNED,
         # SIP/PSTN both directions per Agora's Elastic SIP Trunk. Outbound now wired via
         # AgoraOutboundDialer (ConvAI telephony API; agent SIP-dials our pool number);
@@ -195,6 +196,7 @@ _SPECS: tuple[ProviderSpec, ...] = (
         "pipecat", "Pipecat (LiveKit transport)",
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.WEBRTC_BRIDGE, connector_key="web_livekit_bridge",
+        observability_key="pipecat",
         credential_shape=CredentialShape.LIVEKIT_SERVER, status=Status.PLANNED,
         # Reuses the LiveKit bridge → same as livekit_bridge: outbound is just the
         # agent-speaks-first opener over the same bridge connection. Both wired.
@@ -206,7 +208,7 @@ _SPECS: tuple[ProviderSpec, ...] = (
         "bland", "Bland.ai",
         roles=frozenset({Role.AGENT_PLATFORM}),
         transport=Transport.SIP, credential_shape=CredentialShape.API_KEY_ASSISTANT,
-        status=Status.PLANNED,
+        observability_key="bland", status=Status.PLANNED,
         # Bland is outbound-first: outbound now wired via BlandOutboundDialer
         # (/v1/calls). Inbound (receiving on a Bland number) is not wired yet.
         supported_directions=_BOTH, implemented_directions=_OUT,
@@ -218,7 +220,7 @@ _SPECS: tuple[ProviderSpec, ...] = (
         # (ConversationRelay / Media Streams / TwiML routed to their logic).
         roles=frozenset({Role.AGENT_PLATFORM, Role.TRANSPORT}),
         transport=Transport.SIP, credential_shape=CredentialShape.API_KEY_ASSISTANT,
-        status=Status.PLANNED,
+        observability_key="twilio", status=Status.PLANNED,
         # Inbound = dial the Twilio number over our SIP path; outbound = the
         # TwilioOutboundDialer (Calls.json). Both wired.
         supported_directions=_BOTH, implemented_directions=_BOTH,

@@ -170,9 +170,21 @@ class TestDerivations:
         assert get_spec("elevenlabs").observability_key == "eleven_labs"
         assert get_spec("vapi").observability_key == "vapi"
         assert get_spec("retell").observability_key == "retell"
-        # Providers without a push/API observability path are skipped (None).
-        assert get_spec("pipecat").observability_key is None
-        assert get_spec("deepgram").observability_key is None
+        # TH-5642: observability now registered for ALL agent platforms — every key
+        # resolves to a tracer ProviderChoices value so each platform can bind to a
+        # provider-named observability project (trace emission is provider-agnostic).
+        assert get_spec("pipecat").observability_key == "pipecat"
+        assert get_spec("deepgram").observability_key == "deepgram"
+        assert get_spec("agora").observability_key == "agora"
+        assert get_spec("bland").observability_key == "bland"
+        assert get_spec("twilio").observability_key == "twilio"
+
+        from tracer.models.observability_provider import ProviderChoices
+
+        valid = set(ProviderChoices.values)
+        for key in agent_platform_keys():
+            obs = get_spec(key).observability_key
+            assert obs in valid, f"{key} observability_key {obs!r} not a ProviderChoices value"
 
 
 class TestCallDirection:
