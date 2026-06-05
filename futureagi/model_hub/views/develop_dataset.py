@@ -7880,43 +7880,58 @@ class EditAndRunUserEvalView(APIView):
                 eval_metric.template_id = new_template.id
                 eval_metric.save()
 
-            # --- Version creation on prompt edit ---
+            # --- Version creation on edit ---
             _req_config = request_data.get("config") or {}
             _inner_config = _req_config.get("config", {})
             _edited_rule_prompt = _inner_config.get("rule_prompt")
-            if (
-                _edited_rule_prompt
-                and eval_metric.template.owner == OwnerChoices.USER.value
-            ):
+            _is_user_eval = eval_metric.template.owner == OwnerChoices.USER.value
+            _is_composite = (
+                getattr(eval_metric.template, "template_type", "single") == "composite"
+            )
+
+            if _is_user_eval and (_edited_rule_prompt or _is_composite):
                 from model_hub.models.evals_metric import EvalTemplateVersion
-                from model_hub.utils.prompt_migration import config_to_prompt_messages
 
                 _tpl = eval_metric.template
-                # Start from template config, then overlay ALL fields the FE sent
                 _snap = dict(_tpl.config or {})
-                _snap.update(_inner_config)
-                # Top-level fields and run_config aren't in config.config — merge them
-                _run_config = _req_config.get("run_config", {})
-                if _run_config:
-                    _snap.update(_run_config)
-                _resolved_model = request_data.get("model") or eval_metric.model or _tpl.model or ""
-                _snap["model"] = _resolved_model
-                # Keep messages in sync with the edited prompt
-                _snap["messages"] = [
-                    {"role": "system", "content": _edited_rule_prompt}
-                ]
-                _criteria = _edited_rule_prompt
-                _pm = config_to_prompt_messages(
-                    _snap,
-                    criteria=_criteria,
-                    eval_type_id=_snap.get("eval_type_id"),
+                _resolved_model = (
+                    request_data.get("model") or eval_metric.model
+                    or _tpl.model or ""
                 )
+
+                if _is_composite:
+                    # Composite: snapshot weights + aggregation config
+                    _weight_overrides = request_data.get("composite_weight_overrides")
+                    if _weight_overrides is not None:
+                        _snap["composite_weight_overrides"] = _weight_overrides
+                    _snap["model"] = _resolved_model
+                    _criteria = _tpl.criteria or ""
+                    _pm = []
+                else:
+                    # Single: snapshot prompt + all config
+                    from model_hub.utils.prompt_migration import config_to_prompt_messages
+
+                    _snap.update(_inner_config)
+                    _run_config = _req_config.get("run_config", {})
+                    if _run_config:
+                        _snap.update(_run_config)
+                    _snap["model"] = _resolved_model
+                    _snap["messages"] = [
+                        {"role": "system", "content": _edited_rule_prompt}
+                    ]
+                    _criteria = _edited_rule_prompt
+                    _pm = config_to_prompt_messages(
+                        _snap,
+                        criteria=_criteria,
+                        eval_type_id=_snap.get("eval_type_id"),
+                    )
+
                 _ver = EvalTemplateVersion.objects.create_version(
                     eval_template=_tpl,
                     prompt_messages=_pm,
                     config_snapshot=_snap,
                     criteria=_criteria,
-                    model=request_data.get("model") or eval_metric.model or _tpl.model or "",
+                    model=_resolved_model,
                     user=request.user,
                     organization=organization,
                     workspace=getattr(request, "workspace", None),
