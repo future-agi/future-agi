@@ -158,9 +158,9 @@ _SPECS: tuple[ProviderSpec, ...] = (
         transport=Transport.DIRECT_WS, connector_key="web_elevenlabs",
         credential_shape=CredentialShape.AGENT_ID, chat=True,
         observability_key="eleven_labs", status=Status.PLANNED,
-        # Connector is connect()-only (simulator-initiated) → inbound wired; outbound
-        # would need a BYO-telephony/SIP leg (supported by API, not yet built).
-        supported_directions=_BOTH, implemented_directions=_IN,
+        # Inbound via the connect()-only WS connector; outbound now wired via
+        # ElevenLabsOutboundDialer (POST /v1/convai/twilio/outbound-call).
+        supported_directions=_BOTH, implemented_directions=_BOTH,
     ),
     ProviderSpec(
         "deepgram", "Deepgram Voice Agent",

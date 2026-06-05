@@ -199,8 +199,8 @@ class TestCallDirection:
             "retell": ({IN, OUT}, {IN, OUT}),     # outbound wired via RetellOutboundDialer
             "livekit_bridge": ({IN, OUT}, {IN}),
             "others": ({IN, OUT}, {IN, OUT}),
-            "elevenlabs": ({IN, OUT}, {IN}),
-            "deepgram": ({IN, OUT}, {IN}),
+            "elevenlabs": ({IN, OUT}, {IN, OUT}),  # outbound via ElevenLabsOutboundDialer
+            "deepgram": ({IN, OUT}, {IN}),         # no native outbound (BYO-SIP only)
             "agora": ({IN, OUT}, set()),
             "pipecat": ({IN, OUT}, {IN}),
             "bland": ({IN, OUT}, {OUT}),          # outbound-first; BlandOutboundDialer

@@ -119,11 +119,47 @@ class BlandOutboundDialer(OutboundDialer):
         return self._require_id(data.get("call_id"), data)
 
 
+class ElevenLabsOutboundDialer(OutboundDialer):
+    """ElevenLabs ConvAI outbound via ``POST /v1/convai/twilio/outbound-call``.
+
+    ElevenLabs places outbound calls through its Twilio integration, so
+    ``from_phone_number`` here carries the agent's registered
+    ``agent_phone_number_id`` (not a raw E.164 number). Auth is ``xi-api-key``.
+    """
+
+    provider = "elevenlabs"
+    BASE_URL = "https://api.elevenlabs.io"
+
+    def create_outbound_call(
+        self, *, assistant_id, from_phone_number, to_phone_number, metadata=None
+    ):
+        resp = requests.post(
+            f"{self.BASE_URL}/v1/convai/twilio/outbound-call",
+            headers={"xi-api-key": self._api_key, "Content-Type": "application/json"},
+            json={
+                "agent_id": assistant_id,
+                "agent_phone_number_id": from_phone_number,
+                "to_number": to_phone_number,
+                "conversation_initiation_client_data": {"metadata": metadata or {}},
+            },
+            timeout=REQUEST_TIMEOUT,
+        )
+        if resp.status_code >= 400:
+            raise OutboundDialError(
+                f"ElevenLabs outbound-call failed ({resp.status_code}): {resp.text}"
+            )
+        data = resp.json() or {}
+        # The call id is conversation_id (fall back to Twilio's callSid).
+        return self._require_id(data.get("conversation_id") or data.get("callSid"), data)
+
+
 # provider key -> dialer class. Vapi keeps its existing engine path (it's already
 # wired); these add the previously-missing non-Vapi user-side dialers.
 OUTBOUND_DIALERS: dict[str, type[OutboundDialer]] = {
     "retell": RetellOutboundDialer,
     "bland": BlandOutboundDialer,
+    "elevenlabs": ElevenLabsOutboundDialer,
+    "eleven_labs": ElevenLabsOutboundDialer,  # provider-string drift
 }
 
 

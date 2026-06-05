@@ -13,6 +13,7 @@ from simulate.services import outbound_dialer as mod
 from simulate.services.outbound_dialer import (
     OUTBOUND_DIALERS,
     BlandOutboundDialer,
+    ElevenLabsOutboundDialer,
     OutboundDialError,
     RetellOutboundDialer,
     get_outbound_dialer,
@@ -97,6 +98,34 @@ def test_bland_outbound_request_shape(monkeypatch):
     assert call["json"]["phone_number"] == "+15552220000"
     assert call["json"]["pathway_id"] == "pathway_1"
     assert call["json"]["from"] == "+15551110000"
+
+
+@pytest.mark.unit
+def test_elevenlabs_outbound_request_shape(monkeypatch):
+    fake = _FakeRequests(_FakeResp(
+        {"success": True, "conversation_id": "conv_9", "callSid": "CA123"}))
+    monkeypatch.setattr(mod, "requests", fake)
+    dialer = ElevenLabsOutboundDialer(api_key="xi-key")
+    out = dialer.create_outbound_call(
+        assistant_id="agent_el", from_phone_number="phnum_id_1",
+        to_phone_number="+15552220000",
+    )
+    # call id = conversation_id.
+    assert out == {"id": "conv_9"}
+    call = fake.calls[0]
+    assert call["url"].endswith("/v1/convai/twilio/outbound-call")
+    # ElevenLabs uses xi-api-key, and from_phone_number carries the phone_number_id.
+    assert call["headers"]["xi-api-key"] == "xi-key"
+    assert call["json"]["agent_id"] == "agent_el"
+    assert call["json"]["agent_phone_number_id"] == "phnum_id_1"
+    assert call["json"]["to_number"] == "+15552220000"
+
+
+@pytest.mark.unit
+def test_elevenlabs_registered_for_both_spellings():
+    assert OUTBOUND_DIALERS["elevenlabs"] is ElevenLabsOutboundDialer
+    assert OUTBOUND_DIALERS["eleven_labs"] is ElevenLabsOutboundDialer
+    assert isinstance(get_outbound_dialer("eleven_labs", "k"), ElevenLabsOutboundDialer)
 
 
 @pytest.mark.unit
