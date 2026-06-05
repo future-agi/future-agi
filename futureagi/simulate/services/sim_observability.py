@@ -20,11 +20,25 @@ hands each span to the tracer's existing ``create_single_otel_span`` write path.
 from __future__ import annotations
 
 import secrets
+import uuid
 from typing import Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# Fixed namespace so deterministic ids are stable across processes/retries.
+_SIM_TRACE_NS = uuid.UUID("9f1b6d2e-0c3a-4e7b-9a1d-5e2f7c8b4a10")
+
+
+def _det_trace_id(seed: str) -> str:
+    """Deterministic 128-bit (32 hex) trace id from a seed (e.g. the call id)."""
+    return uuid.uuid5(_SIM_TRACE_NS, f"trace:{seed}").hex
+
+
+def _det_span_id(seed: str, key: str) -> str:
+    """Deterministic 64-bit (16 hex) span id from a seed + a per-span key."""
+    return uuid.uuid5(_SIM_TRACE_NS, f"span:{seed}:{key}").hex[:16]
 
 # Attribute keys mirror tracer.utils.otel.SpanAttributes (FI/OpenInference). Kept
 # local so this module stays import-light + pure; test_sim_observability pins them
@@ -93,6 +107,7 @@ def build_sim_spans(
     model: str | None = None,
     metadata: dict[str, Any] | None = None,
     trace_id: str | None = None,
+    seed: str | None = None,
 ) -> list[dict[str, Any]]:
     """Build the OTLP span dicts for one simulated conversation.
 
@@ -105,8 +120,10 @@ def build_sim_spans(
     Returns root AGENT span + one LLM span per assistant turn + TOOL spans, all
     sharing one trace_id, parented correctly.
     """
-    trace_id = trace_id or _trace_id()
-    root_id = _span_id()
+    # Deterministic ids from `seed` (the call id) make re-emits idempotent — a
+    # Temporal retry produces the SAME trace + span ids instead of a duplicate trace.
+    trace_id = trace_id or (_det_trace_id(seed) if seed else _trace_id())
+    root_id = _det_span_id(seed, "root") if seed else _span_id()
 
     user_turns = [t for t in turns if t.get("role") == "user"]
     agent_turns = [t for t in turns if t.get("role") == "assistant"]
@@ -140,7 +157,7 @@ def build_sim_spans(
             history.append(f"user: {content}")
             continue
         turn_no += 1
-        llm_id = _span_id()
+        llm_id = _det_span_id(seed, f"turn:{turn_no}") if seed else _span_id()
         attrs: dict[str, Any] = {
             INPUT_VALUE: "\n".join(history) or first_user,
             OUTPUT_VALUE: content,
@@ -167,11 +184,16 @@ def build_sim_spans(
                 latency=t.get("latency_ms"),
             )
         )
-        for tc in t.get("tool_calls") or []:
+        for tool_idx, tc in enumerate(t.get("tool_calls") or []):
+            tool_sid = (
+                _det_span_id(seed, f"turn:{turn_no}:tool:{tool_idx}")
+                if seed
+                else _span_id()
+            )
             spans.append(
                 _span(
                     name=tc.get("name") or "tool", kind=SPAN_KIND_TOOL,
-                    span_id=_span_id(), parent_span_id=llm_id, trace_id=trace_id,
+                    span_id=tool_sid, parent_span_id=llm_id, trace_id=trace_id,
                     attributes={
                         TOOL_NAME: tc.get("name") or "",
                         TOOL_CALL_ID: tc.get("id") or "",
@@ -312,6 +334,7 @@ def emit_sim_trace(
         session_id=session_id,
         agent_name=getattr(agent_def, "agent_name", "agent-under-test"),
         metadata={"call_execution_id": str(getattr(call_execution, "id", ""))},
+        seed=str(getattr(call_execution, "id", "")) or None,
     )
     emitted = 0
     for span in spans:

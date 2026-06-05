@@ -88,6 +88,24 @@ def test_voice_modality_emits_pipeline_latency():
 
 
 @pytest.mark.unit
+def test_seed_makes_ids_deterministic_and_idempotent():
+    # Same seed → same trace + span ids (so a Temporal retry re-emits the SAME
+    # trace instead of a duplicate). Different seed → different ids.
+    a = build_sim_spans(CHAT_TURNS, modality="chat", project_name="p", seed="call-1")
+    b = build_sim_spans(CHAT_TURNS, modality="chat", project_name="p", seed="call-1")
+    c = build_sim_spans(CHAT_TURNS, modality="chat", project_name="p", seed="call-2")
+    assert [s["trace_id"] for s in a] == [s["trace_id"] for s in b]
+    assert [s["span_id"] for s in a] == [s["span_id"] for s in b]
+    assert a[0]["trace_id"] != c[0]["trace_id"]
+    # Ids are valid OTLP hex widths.
+    assert len(a[0]["trace_id"]) == 32 and len(a[0]["span_id"]) == 16
+    # Without a seed, ids are random (not equal across calls).
+    d = build_sim_spans(CHAT_TURNS, modality="chat", project_name="p")
+    e = build_sim_spans(CHAT_TURNS, modality="chat", project_name="p")
+    assert d[0]["trace_id"] != e[0]["trace_id"]
+
+
+@pytest.mark.unit
 def test_empty_conversation_yields_just_root():
     spans = build_sim_spans([], modality="chat", project_name="proj")
     assert len(spans) == 1
