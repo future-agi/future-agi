@@ -6,9 +6,29 @@ from django.db import models
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from integrations.services.credentials import CredentialManager
 from model_hub.models.choices import LiteLlmModelProvider
 from tfc.settings import settings
 from tfc.utils.base_model import BaseModel
+
+
+def _encrypt_secret(value):
+    if not value:
+        return None
+    return CredentialManager.encrypt({"v": value}).decode()
+
+
+def _decrypt_secret(stored):
+    """Decrypt a stored secret, transparently handling both the legacy
+    base64(salt+value) format and the current Fernet format."""
+    if not stored:
+        return None
+    try:
+        if str(stored).startswith("gAAAAA"):
+            return CredentialManager.decrypt(stored.encode())["v"]
+        return base64.b64decode(stored)[16:].decode()
+    except Exception:
+        return None
 
 
 def validate_model_provider_choice(value):
@@ -86,26 +106,10 @@ class ApiKey(BaseModel):
             self._actual_json = self.decrypt_json(self.config_json)
 
     def encrypt_key(self, key):
-        if not key:
-            return None
-        # Use a secret salt from settings
-        salt = settings.SECRET_KEY[:16].encode()
-        # Combine salt and key, then encode
-        salted = salt + key.encode()
-        encoded = base64.b64encode(salted).decode()
-        return encoded
+        return _encrypt_secret(key)
 
     def decrypt_key(self):
-        if not self.key:
-            return None
-        try:
-            # Decode the stored value
-            decoded = base64.b64decode(self.key)
-            # Remove the salt (first 16 bytes)
-            actual_key = decoded[16:].decode()
-            return actual_key
-        except Exception:
-            return None
+        return _decrypt_secret(self.key)
 
     @property
     def actual_key(self):
@@ -133,7 +137,8 @@ class ApiKey(BaseModel):
             self._actual_key = self.key
             self.key = self.encrypt_key(self.key)
         if self.config_json and not all(
-            v.startswith(b"gAAAAA".decode()) for v in self.config_json.values()
+            isinstance(v, str) and v.startswith("gAAAAA")
+            for v in self.config_json.values()
         ):
             self._actual_json = self.config_json
             self.config_json = self.encrypt_json(self.config_json)
@@ -165,16 +170,7 @@ class ApiKey(BaseModel):
             return value
 
     def get_decrypted_json_key(self, json_key):
-        if not json_key:
-            return None
-        try:
-            # Decode the stored value
-            decoded = base64.b64decode(json_key)
-            # Remove the salt (first 16 bytes)
-            actual_key = decoded[16:].decode()
-            return actual_key
-        except Exception:
-            return None
+        return _decrypt_secret(json_key)
 
     def decrypt_json(self, json_key=None):
         actual_key = {}
@@ -256,26 +252,10 @@ class SecretModel(BaseModel):
             self._actual_key = self.decrypt_key()
 
     def encrypt_key(self, key):
-        if not key:
-            return None
-        # Use a secret salt from settings
-        salt = settings.SECRET_KEY[:16].encode()
-        # Combine salt and key, then encode
-        salted = salt + key.encode()
-        encoded = base64.b64encode(salted).decode()
-        return encoded
+        return _encrypt_secret(key)
 
     def decrypt_key(self):
-        if not self.key:
-            return None
-        try:
-            # Decode the stored value
-            decoded = base64.b64decode(self.key)
-            # Remove the salt (first 16 bytes)
-            actual_key = decoded[16:].decode()
-            return actual_key
-        except Exception:
-            return None
+        return _decrypt_secret(self.key)
 
     @property
     def actual_key(self):
