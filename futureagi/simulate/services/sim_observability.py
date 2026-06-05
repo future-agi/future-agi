@@ -344,3 +344,30 @@ def emit_sim_trace(
         except Exception:  # pragma: no cover - one bad span must not lose the rest
             logger.exception("sim_trace_span_emit_failed", extra={"name": span.get("name")})
     return emitted
+
+
+def attach_sim_evals_to_trace(call_execution, eval_attributes: dict[str, Any]) -> int:
+    """Write eval results onto the sim trace's root span, AFTER evals run.
+
+    The trace is emitted at sim completion (before async evals finish), so this is
+    the second half: it finds the root span by its DETERMINISTIC id (same seed = the
+    call id) and merges the eval results into ``span_attributes``, making eval
+    verdicts filterable at span granularity in the trace UI. Idempotent. Returns the
+    number of root spans updated (0 if the trace wasn't emitted / no evals).
+    """
+    from tracer.models.observation_span import ObservationSpan
+
+    seed = str(getattr(call_execution, "id", ""))
+    if not seed or not eval_attributes:
+        return 0
+    root_span_id = _det_span_id(seed, "root")
+    updated = 0
+    for span in ObservationSpan.objects.filter(span_id=root_span_id):
+        attrs = dict(span.span_attributes or {})
+        attrs.update(eval_attributes)
+        span.span_attributes = attrs
+        span.save(update_fields=["span_attributes"])
+        updated += 1
+    if not updated:
+        logger.info("sim_eval_attach_no_root_span", call_execution_id=seed)
+    return updated

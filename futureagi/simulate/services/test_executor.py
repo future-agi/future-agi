@@ -3462,6 +3462,30 @@ class TestExecutor:
                     "call_metadata",  # JSONFields that may be modified in-place
                 ]
                 call_execution.save(update_fields=fields_to_update)
+
+                # Attach eval results onto the sim trace's root span (deterministic
+                # id), so eval verdicts are filterable at span granularity in the
+                # trace UI alongside the conversation spans (TH-5642). Idempotent +
+                # best-effort: a no-op if the trace wasn't emitted.
+                try:
+                    from simulate.services.sim_observability import (
+                        attach_sim_evals_to_trace,
+                    )
+
+                    _eval_attrs = {}
+                    if call_execution.overall_score is not None:
+                        _eval_attrs["gen_ai.evaluation.overall_score"] = float(
+                            call_execution.overall_score
+                        )
+                    _cmd = call_execution.conversation_metrics_data or {}
+                    if isinstance(_cmd, dict) and _cmd:
+                        _eval_attrs["gen_ai.evaluation.conversation_metrics"] = _cmd
+                    if _eval_attrs:
+                        attach_sim_evals_to_trace(call_execution, _eval_attrs)
+                except Exception:
+                    logger.exception(
+                        f"sim_eval_attach_failed for {call_execution.id}"
+                    )
                 # Calculate call duration and deduct cost if call is completed and has recording
                 if (
                     call_execution.status == CallExecution.CallStatus.COMPLETED

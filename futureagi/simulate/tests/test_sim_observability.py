@@ -113,6 +113,56 @@ def test_empty_conversation_yields_just_root():
 
 
 @pytest.mark.unit
+def test_attach_sim_evals_to_trace_merges_onto_root_span(monkeypatch):
+    from types import SimpleNamespace
+
+    import tracer.models.observation_span as osmod
+
+    class _FakeSpan:
+        def __init__(self):
+            self.span_attributes = {"gen_ai.span.kind": "AGENT"}
+            self.saved_fields = None
+
+        def save(self, update_fields=None):
+            self.saved_fields = update_fields
+
+    fake = _FakeSpan()
+
+    class _FakeObservationSpan:
+        class objects:  # noqa: N801
+            @staticmethod
+            def filter(**kwargs):
+                # Looked up by the deterministic root span id.
+                assert kwargs.get("span_id")
+                return [fake]
+
+    monkeypatch.setattr(osmod, "ObservationSpan", _FakeObservationSpan)
+
+    from simulate.services.sim_observability import attach_sim_evals_to_trace
+
+    n = attach_sim_evals_to_trace(
+        SimpleNamespace(id="call-1"),
+        {"gen_ai.evaluation.score": 0.8, "gen_ai.evaluation.passed": True},
+    )
+    assert n == 1
+    # Merged (existing kept) + eval results added; saved the field.
+    assert fake.span_attributes["gen_ai.span.kind"] == "AGENT"
+    assert fake.span_attributes["gen_ai.evaluation.score"] == 0.8
+    assert fake.span_attributes["gen_ai.evaluation.passed"] is True
+    assert fake.saved_fields == ["span_attributes"]
+
+
+@pytest.mark.unit
+def test_attach_sim_evals_noops_without_evals_or_id():
+    from types import SimpleNamespace
+
+    from simulate.services.sim_observability import attach_sim_evals_to_trace
+
+    assert attach_sim_evals_to_trace(SimpleNamespace(id="c1"), {}) == 0
+    assert attach_sim_evals_to_trace(SimpleNamespace(id=""), {"x": 1}) == 0
+
+
+@pytest.mark.unit
 def test_attribute_keys_match_tracer_spanattributes():
     # Drift guard: our local keys must equal the tracer's real SpanAttributes so
     # the ingest converter reads them correctly.
