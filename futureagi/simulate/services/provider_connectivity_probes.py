@@ -137,3 +137,47 @@ def agora_probe(env: Mapping[str, str]) -> tuple[bool, str]:
         auth=(customer_key, customer_secret),
     )
     return _classify(resp, "agora creds valid (GET /dev/v1/projects 2xx)", "agora")
+
+
+def make_livekit_probe(provider_key: str):
+    """Build a LiveKit-server probe for ``provider_key`` (livekit_bridge, pipecat, ...).
+
+    Reads SIM_VERIFY_<PROVIDER>_LIVEKIT_URL/_API_KEY/_API_SECRET and lists rooms on the
+    server — a read-only call that validates the server creds without joining a room or
+    placing a call. The SDK call is async, so it is run in a fresh event loop.
+    """
+    prefix = provider_key.upper()
+    url_var = f"SIM_VERIFY_{prefix}_LIVEKIT_URL"
+    key_var = f"SIM_VERIFY_{prefix}_LIVEKIT_API_KEY"
+    secret_var = f"SIM_VERIFY_{prefix}_LIVEKIT_API_SECRET"
+
+    def _probe(env: Mapping[str, str]) -> tuple[bool, str]:
+        url = env.get(url_var)
+        api_key = env.get(key_var)
+        api_secret = env.get(secret_var)
+        missing = [
+            v for v, val in ((url_var, url), (key_var, api_key), (secret_var, api_secret))
+            if not val
+        ]
+        if missing:
+            return False, f"not set: {', '.join(missing)}"
+
+        import asyncio
+
+        async def _list_rooms() -> int:
+            from livekit import api
+
+            lkapi = api.LiveKitAPI(url, api_key, api_secret)
+            try:
+                resp = await lkapi.room.list_rooms(api.ListRoomsRequest())
+                return len(resp.rooms)
+            finally:
+                await lkapi.aclose()
+
+        try:
+            count = asyncio.run(_list_rooms())
+        except Exception as exc:
+            return False, f"{provider_key} list_rooms failed: {type(exc).__name__}: {exc}"
+        return True, f"{provider_key} server creds valid (list_rooms ok, {count} rooms)"
+
+    return _probe

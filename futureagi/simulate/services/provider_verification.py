@@ -215,6 +215,8 @@ def default_connectivity_probes() -> dict[str, ConnectivityProbe]:
         "bland": p.bland_probe,
         "twilio": p.twilio_probe,
         "agora": p.agora_probe,
+        "livekit_bridge": p.make_livekit_probe("livekit_bridge"),
+        "pipecat": p.make_livekit_probe("pipecat"),
     }
 
 

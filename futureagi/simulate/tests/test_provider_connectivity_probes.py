@@ -100,6 +100,25 @@ def test_default_probes_registered():
     from simulate.services import provider_verification as pv
 
     probes = pv.default_connectivity_probes()
-    assert {"deepgram", "elevenlabs", "vapi", "retell", "bland", "twilio", "agora"} <= set(
-        probes
-    )
+    assert {
+        "deepgram", "elevenlabs", "vapi", "retell", "bland", "twilio", "agora",
+        "livekit_bridge", "pipecat",
+    } <= set(probes)
+
+
+@pytest.mark.unit
+def test_livekit_probe_reports_missing_env():
+    probe = p.make_livekit_probe("livekit_bridge")
+    ok, detail = probe({})
+    assert not ok
+    assert "SIM_VERIFY_LIVEKIT_BRIDGE_LIVEKIT_URL" in detail
+    assert "SIM_VERIFY_LIVEKIT_BRIDGE_LIVEKIT_API_SECRET" in detail
+
+
+@pytest.mark.unit
+def test_livekit_probe_reads_provider_prefixed_vars():
+    # pipecat reuses the LiveKit probe under its own env prefix.
+    probe = p.make_livekit_probe("pipecat")
+    ok, detail = probe({"SIM_VERIFY_PIPECAT_LIVEKIT_URL": "wss://x"})
+    assert not ok
+    assert "SIM_VERIFY_PIPECAT_LIVEKIT_API_KEY" in detail
