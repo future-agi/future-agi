@@ -210,6 +210,11 @@ def default_connectivity_probes() -> dict[str, ConnectivityProbe]:
     return {
         "deepgram": p.deepgram_probe,
         "elevenlabs": p.elevenlabs_probe,
+        "vapi": p.vapi_probe,
+        "retell": p.retell_probe,
+        "bland": p.bland_probe,
+        "twilio": p.twilio_probe,
+        "agora": p.agora_probe,
     }
 
 

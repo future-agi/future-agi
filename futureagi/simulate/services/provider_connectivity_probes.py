@@ -14,11 +14,29 @@ from collections.abc import Mapping
 _TIMEOUT_SECONDS = 10.0
 
 
-def _http_get(url: str, headers: dict[str, str], params: dict[str, str] | None = None):
+def _http_get(
+    url: str,
+    headers: dict[str, str] | None = None,
+    params: dict[str, str] | None = None,
+    auth: tuple[str, str] | None = None,
+):
     import httpx
 
     with httpx.Client(timeout=_TIMEOUT_SECONDS) as client:
-        return client.get(url, headers=headers, params=params)
+        return client.get(url, headers=headers or {}, params=params, auth=auth)
+
+
+def _classify(resp, ok_detail: str, provider: str) -> tuple[bool, str]:
+    """Map an HTTP response to (ok, detail).
+
+    2xx -> valid credentials. 401/403 -> credentials rejected. Anything else is reported
+    verbatim so a wrong endpoint reads as an endpoint issue, not a credential failure.
+    """
+    if 200 <= resp.status_code < 300:
+        return True, ok_detail
+    if resp.status_code in (401, 403):
+        return False, f"{provider} rejected credentials ({resp.status_code})"
+    return False, f"{provider} returned {resp.status_code}"
 
 
 def deepgram_probe(env: Mapping[str, str]) -> tuple[bool, str]:
@@ -55,3 +73,67 @@ def elevenlabs_probe(env: Mapping[str, str]) -> tuple[bool, str]:
     if signed.status_code == 200:
         return True, "elevenlabs key + agent valid (signed-url 200)"
     return False, f"elevenlabs agent check returned {signed.status_code}"
+
+
+def vapi_probe(env: Mapping[str, str]) -> tuple[bool, str]:
+    """Validate a Vapi key via the read-only list-assistants endpoint."""
+    key = env.get("SIM_VERIFY_VAPI_API_KEY")
+    if not key:
+        return False, "SIM_VERIFY_VAPI_API_KEY not set"
+    resp = _http_get(
+        "https://api.vapi.ai/assistant",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    return _classify(resp, "vapi key valid (GET /assistant 2xx)", "vapi")
+
+
+def retell_probe(env: Mapping[str, str]) -> tuple[bool, str]:
+    """Validate a Retell key via the read-only list-agents endpoint."""
+    key = env.get("SIM_VERIFY_RETELL_API_KEY")
+    if not key:
+        return False, "SIM_VERIFY_RETELL_API_KEY not set"
+    resp = _http_get(
+        "https://api.retellai.com/list-agents",
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    return _classify(resp, "retell key valid (GET /list-agents 2xx)", "retell")
+
+
+def bland_probe(env: Mapping[str, str]) -> tuple[bool, str]:
+    """Validate a Bland key via the read-only account endpoint (no call placed)."""
+    key = env.get("SIM_VERIFY_BLAND_API_KEY")
+    if not key:
+        return False, "SIM_VERIFY_BLAND_API_KEY not set"
+    # Bland uses the raw key in the `authorization` header (no Bearer prefix).
+    resp = _http_get("https://api.bland.ai/v1/me", headers={"authorization": key})
+    return _classify(resp, "bland key valid (GET /v1/me 2xx)", "bland")
+
+
+def twilio_probe(env: Mapping[str, str]) -> tuple[bool, str]:
+    """Validate Twilio creds via GET Account (Basic auth). Credential is 'AccountSid:AuthToken'."""
+    raw = env.get("SIM_VERIFY_TWILIO_API_KEY")
+    if not raw:
+        return False, "SIM_VERIFY_TWILIO_API_KEY not set (expected 'AccountSid:AuthToken')"
+    if ":" not in raw:
+        return False, "SIM_VERIFY_TWILIO_API_KEY must be 'AccountSid:AuthToken'"
+    sid, token = raw.split(":", 1)
+    resp = _http_get(
+        f"https://api.twilio.com/2010-04-01/Accounts/{sid}.json",
+        auth=(sid, token),
+    )
+    return _classify(resp, "twilio creds valid (GET Account 2xx)", "twilio")
+
+
+def agora_probe(env: Mapping[str, str]) -> tuple[bool, str]:
+    """Validate Agora REST creds via GET projects (Basic auth). Credential is 'CustomerKey:CustomerSecret'."""
+    raw = env.get("SIM_VERIFY_AGORA_API_KEY")
+    if not raw:
+        return False, "SIM_VERIFY_AGORA_API_KEY not set (expected 'CustomerKey:CustomerSecret')"
+    if ":" not in raw:
+        return False, "SIM_VERIFY_AGORA_API_KEY must be 'CustomerKey:CustomerSecret'"
+    customer_key, customer_secret = raw.split(":", 1)
+    resp = _http_get(
+        "https://api.agora.io/dev/v1/projects",
+        auth=(customer_key, customer_secret),
+    )
+    return _classify(resp, "agora creds valid (GET /dev/v1/projects 2xx)", "agora")
