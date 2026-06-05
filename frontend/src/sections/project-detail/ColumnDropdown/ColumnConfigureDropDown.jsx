@@ -27,6 +27,9 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import Iconify from "src/components/iconify";
 import { useDebounce } from "src/hooks/use-debounce";
+import TruncatedLabel from "src/components/truncated-label/TruncatedLabel";
+import { groupEvalColumnsByTask } from "src/sections/projects/LLMTracing/evalTaskGrouping";
+import TaskGroupHeader from "./TaskGroupHeader";
 
 // ---------------------------------------------------------------------------
 // Aggregate selection state
@@ -47,7 +50,7 @@ const aggregateState = (cols) => {
 
 const toggleMap = (cols, value) =>
   (cols || []).reduce((acc, c) => {
-    acc[c.id] = value;
+    if (c?.id) acc[c.id] = value;
     return acc;
   }, {});
 
@@ -111,7 +114,7 @@ BulkSelectRow.propTypes = {
 // ---------------------------------------------------------------------------
 // Draggable column row
 // ---------------------------------------------------------------------------
-const DraggableColumnRow = ({ id, name, checked, onChange }) => {
+const DraggableColumnRow = ({ id, name, checked, onChange, indent }) => {
   const {
     attributes,
     listeners,
@@ -135,7 +138,8 @@ const DraggableColumnRow = ({ id, name, checked, onChange }) => {
         display: "flex",
         alignItems: "center",
         gap: "4px",
-        px: "4px",
+        pl: indent ? "20px" : "4px",
+        pr: "4px",
         py: "2px",
         borderRadius: "4px",
         cursor: "default",
@@ -172,19 +176,7 @@ const DraggableColumnRow = ({ id, name, checked, onChange }) => {
       >
         <Iconify icon="mdi:dots-grid" width={14} />
       </Box>
-      <Typography
-        variant="body2"
-        noWrap
-        sx={{
-          fontSize: 14,
-          lineHeight: "22px",
-          color: "text.primary",
-          flex: 1,
-          minWidth: 0,
-        }}
-      >
-        {name}
-      </Typography>
+      <TruncatedLabel text={name} />
     </Box>
   );
 };
@@ -194,6 +186,7 @@ DraggableColumnRow.propTypes = {
   name: PropTypes.string.isRequired,
   checked: PropTypes.bool,
   onChange: PropTypes.func,
+  indent: PropTypes.bool,
 };
 
 // ---------------------------------------------------------------------------
@@ -226,6 +219,24 @@ const ColumnConfigureDropDown = ({
       col?.name?.toLowerCase()?.includes(debouncedSearchQuery.toLowerCase()),
     );
   }, [flatColumns, debouncedSearchQuery]);
+
+  // Eval columns with task fields nest under their task; everything else flat
+  const { ungroupedColumns, taskGroups, sortableIds } = useMemo(() => {
+    const cols = filteredColumns || [];
+    const evals = cols.filter((c) => c?.evalTaskName);
+    const rest = cols.filter((c) => !c?.evalTaskName);
+    const { groups } = groupEvalColumnsByTask(evals);
+    return {
+      ungroupedColumns: rest,
+      taskGroups: groups || [],
+      sortableIds: [
+        ...rest.map((c) => c?.id).filter(Boolean),
+        ...(groups || []).flatMap((g) =>
+          (g?.evals || []).map((c) => c?.id).filter(Boolean),
+        ),
+      ],
+    };
+  }, [filteredColumns]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -371,20 +382,50 @@ const ColumnConfigureDropDown = ({
           onDragEnd={handleDragEnd}
         >
           <SortableContext
-            items={filteredColumns.map((c) => c.id)}
+            items={sortableIds}
             strategy={verticalListSortingStrategy}
           >
-            {filteredColumns.map((column) => (
-              <DraggableColumnRow
-                key={column.id}
-                id={column.id}
-                name={column.name}
-                checked={column.isVisible}
-                onChange={(e) => {
-                  onColumnChange({ [column.id]: e.target.checked });
-                }}
-              />
-            ))}
+            {ungroupedColumns.map((column) =>
+              column?.id ? (
+                <DraggableColumnRow
+                  key={column.id}
+                  id={column.id}
+                  name={column.name || column.id}
+                  checked={!!column.isVisible}
+                  onChange={(e) => {
+                    onColumnChange({ [column.id]: e.target.checked });
+                  }}
+                />
+              ) : null,
+            )}
+            {taskGroups.map((task) => {
+              const evals = task?.evals || [];
+              const state = aggregateState(evals);
+              return (
+                <React.Fragment key={task?.taskName}>
+                  <TaskGroupHeader
+                    label={task?.taskName}
+                    checked={state === SELECTION_STATE.ALL}
+                    indeterminate={state === SELECTION_STATE.SOME}
+                    onToggle={(value) => onColumnChange(toggleMap(evals, value))}
+                  />
+                  {evals.map((column) =>
+                    column?.id ? (
+                      <DraggableColumnRow
+                        key={column.id}
+                        id={column.id}
+                        name={column.name || column.id}
+                        checked={!!column.isVisible}
+                        indent
+                        onChange={(e) => {
+                          onColumnChange({ [column.id]: e.target.checked });
+                        }}
+                      />
+                    ) : null,
+                  )}
+                </React.Fragment>
+              );
+            })}
           </SortableContext>
         </DndContext>
 

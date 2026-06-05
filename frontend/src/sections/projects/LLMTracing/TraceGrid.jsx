@@ -32,8 +32,24 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useReplaySessionsStoreShallow } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
+import dummyTraces from "./dummyTraces.json";
+import {
+  groupEvalColumnsByTask,
+  isEvalMetricColumn,
+} from "./evalTaskGrouping";
+import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
 
 const ROWS_LIMIT = 100;
+
+// TH-5641 dev stub: serve the captured list_traces_of_session response (with
+// task-enriched config) instead of hitting the API. Page 0 only — later pages
+// return an empty table so infinite scroll terminates. Flip to false to restore
+// the live call.
+const USE_DUMMY_TRACES = true;
+const EMPTY_DUMMY_PAGE = {
+  ...dummyTraces,
+  result: { ...dummyTraces.result, table: [] },
+};
 const EMPTY_EXTRA_FILTERS = [];
 
 // Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
@@ -230,12 +246,19 @@ const TraceGrid = React.forwardRef(
               // Use prefetched data if available, otherwise fetch
               const cached = prefetchCache.current.get(pageNumber);
               prefetchCache.current.delete(pageNumber);
-              const results =
-                cached ||
-                (await axios.get(
-                  endpoints.project.getTracesForObserveProject(),
-                  { params: buildParams(pageNumber) },
-                ));
+              let results;
+              if (USE_DUMMY_TRACES) {
+                results = {
+                  data: pageNumber === 0 ? dummyTraces : EMPTY_DUMMY_PAGE,
+                };
+              } else {
+                results =
+                  cached ||
+                  (await axios.get(
+                    endpoints.project.getTracesForObserveProject(),
+                    { params: buildParams(pageNumber) },
+                  ));
+              }
 
               const res = results?.data?.result;
               const newCols = normalizeConfigKeys(res?.config);
@@ -321,7 +344,7 @@ const TraceGrid = React.forwardRef(
               }, 0);
 
               // Prefetch next page so scroll feels instant
-              if (!isLastPage) {
+              if (!isLastPage && !USE_DUMMY_TRACES) {
                 axios
                   .get(endpoints.project.getTracesForObserveProject(), {
                     params: buildParams(pageNumber + 1),
@@ -364,23 +387,43 @@ const TraceGrid = React.forwardRef(
         };
       }
 
-      // Flat columns — no grouping for eval/annotation metrics
       const bottomRowObj = {};
       const annotationCols = columns.filter(
         (c) => c?.groupBy === "Annotation Metrics",
       );
       const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
-      const otherCols = columns.filter(
+      const evalCols = columns.filter(isEvalMetricColumn);
+      const systemCols = columns.filter(
         (c) =>
           c?.groupBy !== "Annotation Metrics" &&
-          c?.groupBy !== "Custom Columns",
+          c?.groupBy !== "Custom Columns" &&
+          !isEvalMetricColumn(c),
       );
 
-      // Build flat column defs for non-annotation, non-custom columns
-      const columnDefsResult = otherCols.map((c) => {
+      const columnDefsResult = systemCols.map((c) => {
         bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
         return getTraceListColumnDefs(c);
       });
+
+      // Eval columns: Eval Task band (with row_type glyph) over its eval columns (TH-5641)
+      const { groups: taskGroups, ungrouped } =
+        groupEvalColumnsByTask(evalCols);
+      for (const c of ungrouped) {
+        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+        columnDefsResult.push(getTraceListColumnDefs(c));
+      }
+      for (const task of taskGroups) {
+        columnDefsResult.push({
+          headerName: task.taskName,
+          headerGroupComponent: EvalTaskGroupHeader,
+          headerGroupComponentParams: { rowType: task.rowType },
+          marryChildren: true,
+          children: task.evals.map((c) => {
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getTraceListColumnDefs(c);
+          }),
+        });
+      }
 
       // Group custom columns under a "Custom Columns" header (TH-4151)
       if (customCols.length > 0) {
