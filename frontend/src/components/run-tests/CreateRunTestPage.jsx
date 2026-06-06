@@ -1828,10 +1828,16 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     </Typography>
                     <Typography typography="s1" fontWeight={500}>
                       {
-                        agentDefinitions.filter(
-                          (definition) =>
-                            definition.id === formData.agentDefinitionId,
-                        )[0]?.agentName
+                        (() => {
+                          const ad = agentDefinitions.filter(
+                            (definition) =>
+                              definition.id === formData.agentDefinitionId,
+                          )[0];
+                          // snake_case from /simulate/agent-definitions/ (no camelCase
+                          // interceptor) — agentName was undefined so the summary showed
+                          // "Agent Definition (-)" (TH-5642).
+                          return ad?.agent_name ?? ad?.agentName;
+                        })()
                       }
                       &nbsp; (
                       {versionOptions.find(
