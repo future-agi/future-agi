@@ -904,9 +904,13 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     agentDefinitionsLoading
                       ? []
                       : agentDefinitions?.map((agent) => ({
-                          label: agent?.agentName,
+                          // The /simulate/agent-definitions/ list returns snake_case
+                          // (no camelCase interceptor), so `agentName`/`agentType`
+                          // were undefined -> every option label was undefined and
+                          // the picker rendered "No option provided" (TH-5642 UI bug).
+                          label: agent?.agent_name ?? agent?.agentName,
                           value: agent?.id,
-                          type: agent?.agentType,
+                          type: agent?.agent_type ?? agent?.agentType,
                           component: (
                             <Box
                               sx={{
@@ -920,11 +924,11 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               <SvgColor
                                 sx={{ width: 18 }}
                                 src={getIconForAgentDefinitions(
-                                  agent?.agentType,
+                                  agent?.agent_type ?? agent?.agentType,
                                 )}
                               />
                               <Typography variant="s2_1">
-                                {agent?.agentName}
+                                {agent?.agent_name ?? agent?.agentName}
                               </Typography>
                             </Box>
                           ),
