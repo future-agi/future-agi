@@ -274,10 +274,13 @@ const CreateScenarioView = () => {
     const agentOptions = agentDefinitionsLoading
       ? []
       : agentDefinitions?.map((agent) => ({
-          label: agent?.agentName,
+          // /simulate/agent-definitions/ returns snake_case (no camelCase
+          // interceptor) — agentName/agentType were undefined, blanking the
+          // agent picker on the Create Scenario flow too (TH-5642 UI bug).
+          label: agent?.agent_name ?? agent?.agentName,
           value: agent?.id,
           sourceType: SourceType.AGENT_DEFINITION,
-          agentType: agent?.agentType,
+          agentType: agent?.agent_type ?? agent?.agentType,
         })) ?? [];
 
     const promptOptions = isLoadingPrompts
@@ -607,9 +610,10 @@ const CreateScenarioView = () => {
     if (defaultSelectedAgent) {
       applySourceChange({
         value: defaultSelectedAgent.id,
-        label: defaultSelectedAgent.agentName,
+        label: defaultSelectedAgent.agent_name ?? defaultSelectedAgent.agentName,
         sourceType: SourceType.AGENT_DEFINITION,
-        agentType: defaultSelectedAgent.agentType,
+        agentType:
+          defaultSelectedAgent.agent_type ?? defaultSelectedAgent.agentType,
       });
     }
   }, [defaultAgentDefinitionId, agentDefinitions]);
