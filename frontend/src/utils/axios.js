@@ -257,6 +257,14 @@ export const endpoints = {
   getStarted: {
     getTabs: apiPath("/accounts/first-checks/"),
   },
+  onboarding: {
+    activationEvent: apiPath("/accounts/activation-events/"),
+    activationState: apiPath("/accounts/activation-state/"),
+    goal: apiPath("/accounts/onboarding/goal/"),
+    sampleProject: apiPath("/accounts/sample-project/"),
+    hideSampleProject: apiPath("/accounts/sample-project/hide/"),
+    sendTestTrace: apiPath("/accounts/test-trace/"),
+  },
   overview: {
     dashboardSummary: apiPath("/model-hub/overview/"),
   },
@@ -562,6 +570,11 @@ export const endpoints = {
     usageTotals: apiPath("/usage/workspace-usage-summary/"),
     workspaceUsage: apiPath("/usage/workspace-eval-summary/"),
     usageMetrics: apiPath("/usage/usage-summary/"),
+    notifications: apiPath("/accounts/notification-preferences/"),
+    notificationChannelTest: (id) =>
+      apiPath("/accounts/notification-channels/{channel_id}/test/", {
+        channel_id: id,
+      }),
     v2: {
       usageOverview: apiPath("/usage/v2/usage-overview/"),
       usageTimeSeries: apiPath("/usage/v2/usage-time-series/"),

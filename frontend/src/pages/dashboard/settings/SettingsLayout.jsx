@@ -22,6 +22,7 @@ const ICONS = {
   Pricing: icon("plansPricing"),
   Billing: icon("Billing"),
   Profile: icon("Profile"),
+  Notifications: icon("Billing"),
   Security: icon("Security"),
 };
 
@@ -137,6 +138,11 @@ const SettingsLayout = React.memo(() => {
         path: "/dashboard/settings/profile-settings",
         title: "Profile",
         icon: ICONS.Profile,
+      },
+      {
+        path: "/dashboard/settings/notifications",
+        title: "Notifications",
+        icon: ICONS.Notifications,
       },
     ];
     return allTabs;

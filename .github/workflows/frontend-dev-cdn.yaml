@@ -5,8 +5,8 @@ on:
     branches:
       - dev
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-dev-cdn.yaml'
+      - "frontend/**"
+      - ".github/workflows/frontend-dev-cdn.yaml"
   workflow_dispatch:
     inputs:
       branch:

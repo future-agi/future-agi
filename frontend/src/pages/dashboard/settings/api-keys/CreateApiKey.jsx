@@ -15,21 +15,43 @@ import Iconify from "src/components/iconify";
 import { LoadingButton } from "@mui/lab";
 import axios, { endpoints } from "src/utils/axios";
 import { useMutation } from "@tanstack/react-query";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { RouterLink } from "src/routes/components";
 import { ShowComponent } from "src/components/show";
 import { enqueueSnackbar } from "notistack";
 import { copyToClipboard } from "src/utils/utils";
 import SvgColor from "src/components/svg-color";
 
-const CreateApiKey = ({ open, onClose, refreshGrid }) => {
+const CreateApiKey = ({
+  completionHref = "",
+  initialKeyName = "",
+  open,
+  onClose,
+  refreshGrid,
+}) => {
   const [keyName, setKeyName] = useState("");
   const [showKeys, setShowKeys] = useState(false);
+  const [copiedKeys, setCopiedKeys] = useState({
+    apiKey: false,
+    secretKey: false,
+  });
+  const normalizedInitialKeyName = initialKeyName.trim();
 
-  const handleClose = () => {
-    setKeyName("");
-    setShowKeys(false);
-    reset();
-    onClose();
+  useEffect(() => {
+    if (open && normalizedInitialKeyName) {
+      setKeyName(normalizedInitialKeyName);
+    }
+  }, [normalizedInitialKeyName, open]);
+
+  const handleCopyCredential = (credentialType, credentialValue) => {
+    copyToClipboard(credentialValue);
+    setCopiedKeys((previousCopiedKeys) => ({
+      ...previousCopiedKeys,
+      [credentialType]: true,
+    }));
+    enqueueSnackbar("Copied to clipboard", {
+      variant: "success",
+    });
   };
 
   const {
@@ -44,6 +66,7 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
       }),
     onSuccess: () => {
       setShowKeys(true);
+      setCopiedKeys({ apiKey: false, secretKey: false });
       refreshGrid();
     },
   });
@@ -51,6 +74,14 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
   const isSecretKey = useMemo(() => {
     return createdKey && showKeys && open;
   }, [showKeys, createdKey, open]);
+  const completionActionProps = completionHref
+    ? { component: RouterLink, href: completionHref }
+    : {};
+  const hasCopiedBothKeys = copiedKeys.apiKey && copiedKeys.secretKey;
+  const requiresCopiedKeys = Boolean(completionHref) && isSecretKey;
+  const canCloseDialog = !completionHref || hasCopiedBothKeys;
+  const isCompletionDisabled =
+    !keyName || (requiresCopiedKeys && !hasCopiedBothKeys);
 
   const keyResult = createdKey?.data?.result || {};
   const keys = {
@@ -59,6 +90,24 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
     maskedApiKey: keyResult.masked_api_key || keyResult.maskedApiKey || "",
     maskedSecretKey:
       keyResult.masked_secret_key || keyResult.maskedSecretKey || "",
+  };
+
+  const handleClose = () => {
+    if (!canCloseDialog) {
+      enqueueSnackbar(
+        isSecretKey
+          ? "Copy both keys before returning to trace setup."
+          : "Create the key to continue trace setup.",
+        { variant: "info" },
+      );
+      return;
+    }
+
+    setKeyName("");
+    setShowKeys(false);
+    setCopiedKeys({ apiKey: false, secretKey: false });
+    reset();
+    onClose();
   };
 
   return (
@@ -88,7 +137,7 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
             <Typography color="text.primary" fontWeight={700} fontSize="18px">
               {isSecretKey ? "Key’s Generated" : "Key Name"}
             </Typography>
-            <IconButton onClick={handleClose}>
+            <IconButton onClick={handleClose} disabled={!canCloseDialog}>
               <Iconify icon="mdi:close" />
             </IconButton>
           </Box>
@@ -134,6 +183,15 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
                 visible again in your Future AGI account. If you lose it, you’ll
                 need to generate a new one.
               </Typography>
+              {completionHref ? (
+                <Typography
+                  typography={"s1"}
+                  fontWeight={"fontWeightMedium"}
+                  color="text.primary"
+                >
+                  Copy both keys before returning to trace setup.
+                </Typography>
+              ) : null}
               <Box display="flex" gap={1}>
                 <TextField
                   label={"API key"}
@@ -143,33 +201,26 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
                   variant="outlined"
                   size="small"
                 />
-                <Box
-                  sx={{
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 1,
-                    padding: "8px 16px",
-                    display: "flex",
-                    alignItems: "center",
-                  }}
+                <Button
+                  aria-label="Copy API key"
+                  size="small"
+                  variant="outlined"
+                  startIcon={
+                    <SvgColor
+                      src="/assets/icons/ic_copy.svg"
+                      alt="Copy"
+                      sx={{
+                        width: "20px",
+                        height: "20px",
+                        color: "text.disabled",
+                      }}
+                    />
+                  }
+                  sx={{ minWidth: 96 }}
+                  onClick={() => handleCopyCredential("apiKey", keys.apiKey)}
                 >
-                  <SvgColor
-                    src="/assets/icons/ic_copy.svg"
-                    alt="Copy"
-                    sx={{
-                      width: "20px",
-                      height: "20px",
-                      cursor: "pointer",
-                      color: "text.disabled",
-                    }}
-                    onClick={() => {
-                      copyToClipboard(keys.apiKey);
-                      enqueueSnackbar("Copied to clipboard", {
-                        variant: "success",
-                      });
-                    }}
-                  />
-                </Box>
+                  {copiedKeys.apiKey ? "Copied" : "Copy"}
+                </Button>
               </Box>
               <Box display="flex" gap={1}>
                 <TextField
@@ -180,33 +231,28 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
                   variant="outlined"
                   size="small"
                 />
-                <Box
-                  sx={{
-                    border: "1px solid",
-                    borderColor: "divider",
-                    borderRadius: 1,
-                    padding: "8px 16px",
-                    display: "flex",
-                    alignItems: "center",
-                  }}
+                <Button
+                  aria-label="Copy secret key"
+                  size="small"
+                  variant="outlined"
+                  startIcon={
+                    <SvgColor
+                      src="/assets/icons/ic_copy.svg"
+                      alt="Copy"
+                      sx={{
+                        width: "20px",
+                        height: "20px",
+                        color: "text.disabled",
+                      }}
+                    />
+                  }
+                  sx={{ minWidth: 96 }}
+                  onClick={() =>
+                    handleCopyCredential("secretKey", keys.secretKey)
+                  }
                 >
-                  <SvgColor
-                    src="/assets/icons/ic_copy.svg"
-                    alt="Copy"
-                    sx={{
-                      width: "20px",
-                      height: "20px",
-                      cursor: "pointer",
-                      color: "text.disabled",
-                    }}
-                    onClick={() => {
-                      copyToClipboard(keys.secretKey);
-                      enqueueSnackbar("Copied to clipboard", {
-                        variant: "success",
-                      });
-                    }}
-                  />
-                </Box>
+                  {copiedKeys.secretKey ? "Copied" : "Copy"}
+                </Button>
               </Box>
               <Divider orientation="horizontal" />
             </Box>
@@ -214,7 +260,12 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
         </DialogContent>
         <ShowComponent condition={!isSecretKey}>
           <DialogActions sx={{ padding: 0, marginTop: 4 }}>
-            <Button variant="outlined" onClick={handleClose} size="small">
+            <Button
+              variant="outlined"
+              onClick={handleClose}
+              size="small"
+              disabled={!canCloseDialog}
+            >
               Cancel
             </Button>
             <LoadingButton
@@ -237,10 +288,12 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
               fullWidth
               onClick={handleClose}
               size="small"
+              disabled={!canCloseDialog}
             >
               Cancel
             </Button>
             <LoadingButton
+              {...completionActionProps}
               type="button"
               size="small"
               fullWidth
@@ -248,9 +301,9 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
               color="primary"
               onClick={handleClose}
               loading={loading}
-              disabled={!keyName}
+              disabled={isCompletionDisabled}
             >
-              Done
+              {completionHref ? "Back to trace setup" : "Done"}
             </LoadingButton>
           </DialogActions>
         </ShowComponent>
@@ -262,6 +315,8 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
 export default CreateApiKey;
 
 CreateApiKey.propTypes = {
+  completionHref: PropTypes.string,
+  initialKeyName: PropTypes.string,
   open: PropTypes.bool,
   onClose: PropTypes.func,
   refreshGrid: PropTypes.func,

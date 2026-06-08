@@ -814,7 +814,7 @@ class CHSpanReader:
         `interval` ∈ {"hour", "day", "week", "month"}; mapped to the CH
         toStartOfX function. Returns one row per non-empty bucket.
         """
-        # Codex wave-2 P2: align weekly bucket with the shared CH builder
+        # Review wave-2 P2: align weekly bucket with the shared CH builder
         # convention (tracer/services/clickhouse/query_builders/base.py:139
         # uses `toMonday`). `toStartOfWeek` defaults to Sunday in CH 25.x;
         # inconsistent with the rest of the codebase.
@@ -876,7 +876,7 @@ class CHSpanReader:
         a general-purpose Q→CH translator; intentionally narrow to the
         eval-task filter shape so behavior is testable in isolation.
 
-        Codex wave-2 fixes (2026-05-26):
+        Review wave-2 fixes (2026-05-26):
           • P1: created_at_* predicates target the CH `created_at` column
             (schema 002 has it — earlier impl wrongly mapped to start_time
             which broke eval-task rerun sampling parity with the PG path).
@@ -1244,7 +1244,7 @@ class CHSpanReader:
             params["tids"] = tuple(trace_ids)
         if observation_type is not None:
             if isinstance(observation_type, list | tuple | set):
-                # Codex wave-3 P2: empty list = match nothing (matches
+                # Review wave-3 P2: empty list = match nothing (matches
                 # the Django .filter(observation_type__in=[]) semantic).
                 if len(observation_type) == 0:
                     return []
@@ -1320,7 +1320,7 @@ class CHSpanReader:
             params["tids"] = tuple(trace_ids)
         if observation_type is not None:
             if isinstance(observation_type, list | tuple | set):
-                # Codex wave-3 P2: empty list = match nothing.
+                # Review wave-3 P2: empty list = match nothing.
                 if len(observation_type) == 0:
                     return {
                         "span_count": 0,
@@ -1575,7 +1575,7 @@ class CHSpanReader:
             .filter(trace_id__in=[, parent_span_id__isnull=parent_only]).values("trace_id")
             .annotate(latency=Avg, latency_stddev=StdDev, cost=Sum, count=Count)
 
-        Codex wave-3 P1 (2026-05-26): Django's bare `StdDev()` is
+        Review wave-3 P1 (2026-05-26): Django's bare `StdDev()` is
         STDDEV_POP (population), not sample. Use CH `stddevPop()` so
         consumer z-scores match the legacy PG path. Callers computing
         outliers from this method's `stddev_latency_ms` see the same
@@ -1623,7 +1623,7 @@ class CHSpanReader:
         Replaces the row-walking pattern in
         tracer/views/observation_span.py::get_trace_id_by_index_spans_as_*.
         """
-        # Codex wave-3 P2 (2026-05-26): scope the anchor lookup itself to
+        # Review wave-3 P2 (2026-05-26): scope the anchor lookup itself to
         # the same project / version / type as the prev-next walk. An
         # unscoped anchor leaked one tenant's start_time into another
         # tenant's walk window (silent cross-org via foreign timestamp).
@@ -1684,7 +1684,7 @@ class CHSpanReader:
         root-span start_time. Mirrors prev_next_span_by_start_time but at
         the trace level. Used by experiment-mode trace navigation.
         """
-        # Codex wave-3 P2 (2026-05-26): scope the anchor lookup to the
+        # Review wave-3 P2 (2026-05-26): scope the anchor lookup to the
         # same project (and optionally version) as the walk; an unscoped
         # anchor leaks foreign trace timestamps into the walk window.
         anchor_where = [
@@ -1719,7 +1719,7 @@ class CHSpanReader:
             where_base.append("project_version_id = %(pvid)s")
             params["pvid"] = project_version_id
         base = " AND ".join(where_base)
-        # Codex wave-3 P1 (2026-05-26): `trace_id` is declared as String in
+        # Review wave-3 P1 (2026-05-26): `trace_id` is declared as String in
         # schema 002 (not UUID), so wrapping the param in toUUID() yielded
         # a type mismatch in the tuple compare. Compare String-to-String.
         prev = self._client.query(

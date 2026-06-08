@@ -328,7 +328,7 @@ def _pg_conn(args) -> psycopg.Connection:
     # timestamp regardless of the server's default `timezone` setting. Without
     # this, a server set to e.g. Asia/Kolkata would return a non-UTC bucket and
     # our subsequent `_stream_window` query (which compares to UTC) would miss
-    # rows. See codex P2 finding #4.
+    # rows. See review P2 finding #4.
     conn = psycopg.connect(
         host=args.pg_host, port=args.pg_port, user=args.pg_user,
         password=args.pg_pass, dbname=args.pg_db,
@@ -382,7 +382,7 @@ def _stream_window(
     this clamp, a 30-minute --since=2026-04-09T07:30:00 would still pull the
     07:00 hour's full 60 minutes — including data the user explicitly excluded.
     The checkpoint then claims work for "07:00 hour" that doesn't match what
-    actually ran. (codex P2 finding #3.)
+    actually ran. (review P2 finding #3.)
     """
     hour_start = hour_bucket
     hour_end   = hour_bucket + timedelta(hours=1)

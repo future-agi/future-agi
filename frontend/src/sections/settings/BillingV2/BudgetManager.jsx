@@ -27,6 +27,8 @@ import {
   DialogContent,
   DialogActions,
   Skeleton,
+  FormControlLabel,
+  Switch,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
@@ -54,18 +56,82 @@ const SCOPE_OPTIONS = [
   { value: "total_spend", label: "Total Spend ($)" },
 ];
 
-const EMPTY_BUDGET = {
+const DEFAULT_BUDGET_THRESHOLDS = [
+  { percent: 50, enabled: true, severity: "info" },
+  { percent: 80, enabled: true, severity: "warning" },
+  { percent: 100, enabled: true, severity: "critical" },
+];
+
+const THRESHOLD_STAGE_COPY = {
+  50: { label: "Early warning", color: "info" },
+  80: { label: "Escalation", color: "warning" },
+  100: { label: "Limit reached", color: "error" },
+};
+
+const createEmptyBudget = () => ({
   name: "",
   scope: "ai_credits",
   threshold_value: "",
   action: "notify",
-};
+  is_active: true,
+  notify_emails: "",
+  notify_slack_webhook: "",
+  thresholds: DEFAULT_BUDGET_THRESHOLDS.map((stage) => ({ ...stage })),
+});
+
+function normalizeBudgetThresholds(thresholds) {
+  const byPercent = new Map(
+    DEFAULT_BUDGET_THRESHOLDS.map((stage) => [stage.percent, { ...stage }]),
+  );
+
+  (Array.isArray(thresholds) ? thresholds : []).forEach((stage) => {
+    if (!byPercent.has(stage?.percent)) return;
+    const fallback = byPercent.get(stage.percent);
+    byPercent.set(stage.percent, {
+      percent: stage.percent,
+      enabled: stage.enabled !== false,
+      severity: stage.severity || fallback.severity,
+    });
+  });
+
+  return DEFAULT_BUDGET_THRESHOLDS.map((stage) => byPercent.get(stage.percent));
+}
+
+function parseEmailRecipients(value) {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((email) => email.trim())
+    .filter(Boolean);
+}
+
+function formatEmailRecipients(recipients) {
+  return Array.isArray(recipients) ? recipients.join(", ") : "";
+}
+
+function normalizeSlackWebhook(value) {
+  const webhook = (value || "").trim();
+  return webhook || null;
+}
+
+function budgetFormToPayload(budget) {
+  return {
+    name: budget.name.trim(),
+    scope: budget.scope,
+    threshold_value: budget.threshold_value,
+    action: budget.action,
+    is_active: budget.is_active !== false,
+    notify_emails: parseEmailRecipients(budget.notify_emails),
+    notify_slack_webhook: normalizeSlackWebhook(budget.notify_slack_webhook),
+    thresholds: normalizeBudgetThresholds(budget.thresholds),
+  };
+}
 
 export default function BudgetManager() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
-  const [newBudget, setNewBudget] = useState(EMPTY_BUDGET);
+  const [newBudget, setNewBudget] = useState(createEmptyBudget);
 
   const queryClient = useQueryClient();
 
@@ -81,7 +147,7 @@ export default function BudgetManager() {
       queryClient.invalidateQueries({ queryKey: ["v2-budgets"] });
       setDialogOpen(false);
       setEditingId(null);
-      setNewBudget(EMPTY_BUDGET);
+      setNewBudget(createEmptyBudget());
       enqueueSnackbar("Budget created", { variant: "success" });
     },
     onError: () =>
@@ -95,7 +161,7 @@ export default function BudgetManager() {
       queryClient.invalidateQueries({ queryKey: ["v2-budgets"] });
       setDialogOpen(false);
       setEditingId(null);
-      setNewBudget(EMPTY_BUDGET);
+      setNewBudget(createEmptyBudget());
       enqueueSnackbar("Budget updated", { variant: "success" });
     },
     onError: () =>
@@ -111,6 +177,24 @@ export default function BudgetManager() {
     },
   });
 
+  const activeToggleMutation = useMutation({
+    mutationFn: ({ id, isActive }) =>
+      axios.put(endpoints.settings.v2.budgetDetail(id), {
+        is_active: isActive,
+      }),
+    onSuccess: (_response, variables) => {
+      queryClient.invalidateQueries({ queryKey: ["v2-budgets"] });
+      enqueueSnackbar(
+        variables.isActive ? "Budget enabled" : "Budget disabled",
+        {
+          variant: "success",
+        },
+      );
+    },
+    onError: () =>
+      enqueueSnackbar("Failed to update budget status", { variant: "error" }),
+  });
+
   const handleOpenEdit = useCallback((budget) => {
     setEditingId(budget.id);
     setNewBudget({
@@ -118,23 +202,44 @@ export default function BudgetManager() {
       scope: budget.scope,
       threshold_value: String(budget.threshold_value),
       action: budget.action,
+      is_active: budget.is_active !== false,
+      notify_emails: formatEmailRecipients(budget.notify_emails),
+      notify_slack_webhook: budget.notify_slack_webhook || "",
+      thresholds: normalizeBudgetThresholds(budget.thresholds),
     });
     setDialogOpen(true);
   }, []);
 
   const handleSave = useCallback(() => {
+    const payload = budgetFormToPayload(newBudget);
     if (editingId) {
-      updateMutation.mutate({ id: editingId, data: newBudget });
+      updateMutation.mutate({ id: editingId, data: payload });
     } else {
-      createMutation.mutate(newBudget);
+      createMutation.mutate(payload);
     }
   }, [editingId, newBudget, updateMutation, createMutation]);
 
   const handleCloseDialog = useCallback(() => {
     setDialogOpen(false);
     setEditingId(null);
-    setNewBudget(EMPTY_BUDGET);
+    setNewBudget(createEmptyBudget());
   }, []);
+
+  const handleThresholdToggle = useCallback((percent, enabled) => {
+    setNewBudget((current) => ({
+      ...current,
+      thresholds: normalizeBudgetThresholds(current.thresholds).map((stage) =>
+        stage.percent === percent ? { ...stage, enabled } : stage,
+      ),
+    }));
+  }, []);
+
+  const handleBudgetActiveToggle = useCallback(
+    (budget, isActive) => {
+      activeToggleMutation.mutate({ id: budget.id, isActive });
+    },
+    [activeToggleMutation],
+  );
 
   // Threshold must be a positive decimal. HTML `type="number"` accepts
   // `e` / `E` as scientific-notation exponents (`1e5` parses as 100000),
@@ -152,22 +257,37 @@ export default function BudgetManager() {
   return (
     <Box>
       <Stack
-        direction="row"
+        direction={{ xs: "column", sm: "row" }}
         justifyContent="space-between"
-        alignItems="center"
+        alignItems={{ xs: "stretch", sm: "center" }}
         mb={2}
+        spacing={1}
       >
         <Typography variant="subtitle1" fontWeight={600}>
           Usage Budgets
         </Typography>
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<Iconify icon="mdi:plus" />}
-          onClick={() => setDialogOpen(true)}
+        <Stack
+          direction={{ xs: "column", sm: "row" }}
+          spacing={1}
+          alignItems={{ xs: "stretch", sm: "center" }}
         >
-          Add Budget
-        </Button>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<Iconify icon="mdi:plus" />}
+            onClick={() => setDialogOpen(true)}
+          >
+            Add Budget
+          </Button>
+          <Button
+            variant="text"
+            size="small"
+            startIcon={<Iconify icon="mdi:bell-cog-outline" />}
+            href="/dashboard/settings/notifications"
+          >
+            Notification settings
+          </Button>
+        </Stack>
       </Stack>
 
       {!budgets || budgets.length === 0 ? (
@@ -198,17 +318,26 @@ export default function BudgetManager() {
             const scopeLabel =
               SCOPE_OPTIONS.find((s) => s.value === budget.scope)?.label ||
               budget.scope;
+            const thresholdStages = normalizeBudgetThresholds(
+              budget.thresholds,
+            );
+            const isActive = budget.is_active !== false;
 
             return (
               <Paper
                 key={budget.id}
                 variant="outlined"
-                sx={{ p: 2, borderRadius: 2 }}
+                sx={{
+                  p: 2,
+                  borderRadius: 2,
+                  opacity: isActive ? 1 : 0.72,
+                }}
               >
                 <Stack
-                  direction="row"
+                  direction={{ xs: "column", md: "row" }}
                   justifyContent="space-between"
-                  alignItems="center"
+                  alignItems={{ xs: "stretch", md: "center" }}
+                  spacing={2}
                 >
                   <Stack direction="row" alignItems="center" spacing={1.5}>
                     <Iconify
@@ -222,12 +351,66 @@ export default function BudgetManager() {
                       </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {scopeLabel}:{" "}
-                        {Number(budget.threshold_value).toLocaleString()} →{" "}
+                        {Number(budget.threshold_value).toLocaleString()} -{" "}
                         {actionConfig.label}
                       </Typography>
+                      <Stack direction="row" spacing={0.75} flexWrap="wrap">
+                        {thresholdStages.map((stage) => {
+                          const stageCopy = THRESHOLD_STAGE_COPY[
+                            stage.percent
+                          ] || {
+                            label: "Threshold",
+                            color: "default",
+                          };
+                          const disabled = stage.enabled === false;
+                          return (
+                            <Chip
+                              key={stage.percent}
+                              size="small"
+                              label={`${stage.percent}% ${
+                                disabled ? "Off" : stageCopy.label
+                              }`}
+                              color={disabled ? "default" : stageCopy.color}
+                              variant="outlined"
+                              sx={{ mt: 0.75 }}
+                            />
+                          );
+                        })}
+                      </Stack>
                     </Box>
                   </Stack>
-                  <Stack direction="row" spacing={1} alignItems="center">
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    alignItems="center"
+                    justifyContent={{ xs: "space-between", md: "flex-end" }}
+                    flexWrap="wrap"
+                    useFlexGap
+                  >
+                    <FormControlLabel
+                      sx={{ mr: 0 }}
+                      control={
+                        <Switch
+                          size="small"
+                          checked={isActive}
+                          onChange={(event) =>
+                            handleBudgetActiveToggle(
+                              budget,
+                              event.target.checked,
+                            )
+                          }
+                          disabled={activeToggleMutation.isPending}
+                          inputProps={{
+                            "aria-label": `${budget.name} active`,
+                          }}
+                        />
+                      }
+                      label={
+                        <Typography variant="caption" color="text.secondary">
+                          {isActive ? "Active" : "Disabled"}
+                        </Typography>
+                      }
+                    />
                     <Chip
                       label={actionConfig.label}
                       size="small"
@@ -237,6 +420,13 @@ export default function BudgetManager() {
                     {budget.last_triggered_period && (
                       <Chip
                         label={`Triggered ${budget.last_triggered_period}`}
+                        size="small"
+                        variant="outlined"
+                      />
+                    )}
+                    {budget.notify_slack_webhook && (
+                      <Chip
+                        label="Slack webhook"
                         size="small"
                         variant="outlined"
                       />
@@ -332,6 +522,86 @@ export default function BudgetManager() {
                 <MenuItem value="pause">Pause — block further usage</MenuItem>
               </Select>
             </FormControl>
+            <Box>
+              <Typography variant="subtitle2" mb={0.5}>
+                Notification stages
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                Send budget alerts as usage approaches the limit.
+              </Typography>
+              <Stack spacing={1} mt={1}>
+                {normalizeBudgetThresholds(newBudget.thresholds).map(
+                  (stage) => {
+                    const stageCopy = THRESHOLD_STAGE_COPY[stage.percent];
+                    return (
+                      <FormControlLabel
+                        key={stage.percent}
+                        control={
+                          <Switch
+                            checked={stage.enabled !== false}
+                            onChange={(event) =>
+                              handleThresholdToggle(
+                                stage.percent,
+                                event.target.checked,
+                              )
+                            }
+                            inputProps={{
+                              "aria-label": `Alert at ${stage.percent}%`,
+                            }}
+                          />
+                        }
+                        label={
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            alignItems="center"
+                            flexWrap="wrap"
+                          >
+                            <Chip
+                              size="small"
+                              label={`${stage.percent}%`}
+                              color={stageCopy.color}
+                              variant="outlined"
+                            />
+                            <Typography variant="body2">
+                              {stageCopy.label}
+                            </Typography>
+                          </Stack>
+                        }
+                      />
+                    );
+                  },
+                )}
+              </Stack>
+            </Box>
+            <TextField
+              label="Notification emails"
+              fullWidth
+              size="small"
+              value={newBudget.notify_emails}
+              onChange={(e) =>
+                setNewBudget({
+                  ...newBudget,
+                  notify_emails: e.target.value,
+                })
+              }
+              placeholder="ops@example.com, finance@example.com"
+              helperText="Leave empty to notify organization admins."
+            />
+            <TextField
+              label="Slack webhook"
+              fullWidth
+              size="small"
+              value={newBudget.notify_slack_webhook}
+              onChange={(e) =>
+                setNewBudget({
+                  ...newBudget,
+                  notify_slack_webhook: e.target.value,
+                })
+              }
+              placeholder="https://hooks.slack.com/services/..."
+              helperText="Optional. Shared Slack channels can also be managed from notification settings."
+            />
           </Stack>
         </DialogContent>
         <DialogActions>

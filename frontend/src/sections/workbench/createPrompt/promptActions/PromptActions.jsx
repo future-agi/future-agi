@@ -14,7 +14,13 @@ import {
   useTheme,
 } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import React, { useMemo, useState, useRef, useEffect } from "react";
+import React, {
+  useMemo,
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+} from "react";
 import { useNavigate, useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import { ShowComponent } from "src/components/show";
@@ -40,7 +46,7 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { usePromptStore } from "../../../workbench-v2/store/usePromptStore";
-import { NavLink } from "react-router-dom";
+import { NavLink, useSearchParams } from "react-router-dom";
 import { createDraftPayload } from "../../constant";
 import { getMetricsTabSx } from "../Metrics/common";
 import SaveAndCommit from "./SaveAndCommit";
@@ -49,10 +55,29 @@ import { DraftBadge } from "../SharedStyledComponents";
 import VersionStyle from "./VersionStyle";
 import MoreActions from "./MoreActions";
 import { getColorMap as getTagColorMap } from "../VersionHistory/common";
+import PromptOnboardingFocusPanel from "./PromptOnboardingFocusPanel";
+import {
+  buildPromptTestRunCompletedPayload,
+  buildPromptVersionCreatedPayload,
+  buildPromptCreatedHref,
+  buildPromptEditorHref,
+  countCommittedPromptVersions,
+  getPromptOnboardingRouteParams,
+  isPromptSecondVersionJourneyStep,
+  PROMPT_ONBOARDING_JOURNEY_STEPS,
+  PROMPT_ONBOARDING_MODES,
+  resolvePromptPostSaveJourneyStep,
+  resolvePromptSaveCommitTarget,
+  shouldAdvancePromptRunOnboarding,
+  shouldAdvancePromptSaveOnboarding,
+} from "./promptOnboardingRoute";
+import { appendSetupQuickStartAttributionToHref } from "src/sections/auth/jwt/setup-org-quick-starts";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 
 const PromptActions = () => {
   const theme = useTheme();
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const [editName, setEdit] = useState(false);
   const [title, setTitle] = useState("");
@@ -93,7 +118,10 @@ const PromptActions = () => {
   const tabSx = useMemo(() => getMetricsTabSx(theme), [theme]);
 
   const timeoutRef = useRef(null);
+  const promptRunRecordedRef = useRef(new Set());
+  const promptVersionRecordedRef = useRef(new Set());
   const navigate = useNavigate();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const handleWritePrompt = () => {
     setCurrentTab("Playground");
     createDraft(createDraftPayload);
@@ -116,10 +144,10 @@ const PromptActions = () => {
         [PropertyName.click]: true,
         [PropertyName.promptId]: data?.data?.result?.rootTemplate,
       });
-      navigate(
-        `/dashboard/workbench/create/${data?.data?.result?.rootTemplate}`,
-        { replace: true },
-      );
+      const promptId = data?.data?.result?.rootTemplate;
+      navigate(buildPromptCreatedHref({ promptId, search: searchParams }), {
+        replace: true,
+      });
     },
   });
   useEffect(() => {
@@ -313,6 +341,240 @@ const PromptActions = () => {
     () => !!selectedVersions?.some((version) => version?.isDraft),
     [selectedVersions],
   );
+  const isRunPromptDisabled =
+    loadingPrompt ||
+    currentTab === "Evaluation" ||
+    currentTab === "Metrics" ||
+    !RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole];
+  const promptOnboardingParams = useMemo(
+    () => getPromptOnboardingRouteParams(searchParams),
+    [searchParams],
+  );
+  const promptListHref = useMemo(
+    () =>
+      appendSetupQuickStartAttributionToHref(
+        "/dashboard/workbench",
+        Object.fromEntries(searchParams),
+      ),
+    [searchParams],
+  );
+  const onboardingMode = promptOnboardingParams.mode;
+  const onboardingJourneyStep = promptOnboardingParams.journeyStep;
+  const onboardingSource = promptOnboardingParams.isOnboarding
+    ? "onboarding"
+    : searchParams.get("source");
+  const committedVersionCount = useMemo(
+    () => countCommittedPromptVersions(versions),
+    [versions],
+  );
+  const compareNeedsSecondVersion =
+    onboardingSource === "onboarding" &&
+    onboardingMode === PROMPT_ONBOARDING_MODES.COMPARE &&
+    onboardingJourneyStep !==
+      PROMPT_ONBOARDING_JOURNEY_STEPS.COMPARE_VERSIONS &&
+    committedVersionCount < 2;
+  const promptSaveCommitTarget = useMemo(
+    () =>
+      resolvePromptSaveCommitTarget({
+        mode: onboardingMode,
+        selectedVersions,
+        source: onboardingSource,
+      }),
+    [onboardingMode, onboardingSource, selectedVersions],
+  );
+  const promptSaveTargetVersion =
+    promptSaveCommitTarget?.version ||
+    promptSaveCommitTarget?.templateVersion ||
+    promptSaveCommitTarget?.template_version ||
+    promptSaveCommitTarget?.id;
+  const isPromptSaveBlocked =
+    onboardingSource === "onboarding" &&
+    onboardingMode === PROMPT_ONBOARDING_MODES.SAVE_VERSION &&
+    !promptSaveTargetVersion;
+  const promptOnboardingBlocker =
+    onboardingMode === PROMPT_ONBOARDING_MODES.METRICS
+      ? null
+      : isPromptSaveBlocked
+        ? "Create or select a draft version first"
+        : buttonTooltip;
+  const postSaveJourneyStep = resolvePromptPostSaveJourneyStep({
+    baseVersion,
+    commitTarget: promptSaveCommitTarget,
+  });
+
+  useEffect(() => {
+    if (
+      !id ||
+      !shouldAdvancePromptRunOnboarding({
+        isContentEmpty,
+        isGenerating,
+        loadingPrompt,
+        mode: onboardingMode,
+        source: onboardingSource,
+      })
+    ) {
+      return;
+    }
+
+    const payload = buildPromptTestRunCompletedPayload({
+      promptId: id,
+      search: searchParams,
+      versions: selectedVersions,
+    });
+    if (!promptRunRecordedRef.current.has(payload.idempotencyKey)) {
+      promptRunRecordedRef.current.add(payload.idempotencyKey);
+      recordActivationEvent(payload, {
+        onError: () => {
+          promptRunRecordedRef.current.delete(payload.idempotencyKey);
+        },
+      });
+    }
+
+    navigate(
+      buildPromptEditorHref({
+        journeyStep: isPromptSecondVersionJourneyStep(onboardingJourneyStep)
+          ? PROMPT_ONBOARDING_JOURNEY_STEPS.CREATE_SECOND_VERSION
+          : undefined,
+        promptId: id,
+        mode: PROMPT_ONBOARDING_MODES.SAVE_VERSION,
+        search: searchParams,
+        selectedVersions,
+      }),
+      { replace: true },
+    );
+  }, [
+    id,
+    isContentEmpty,
+    isGenerating,
+    loadingPrompt,
+    navigate,
+    onboardingMode,
+    onboardingSource,
+    recordActivationEvent,
+    searchParams,
+    selectedVersions,
+    onboardingJourneyStep,
+  ]);
+
+  const handlePromptVersionCommitted = useCallback(() => {
+    if (
+      !id ||
+      !shouldAdvancePromptSaveOnboarding({
+        mode: onboardingMode,
+        source: onboardingSource,
+      })
+    ) {
+      return;
+    }
+
+    queryClient.invalidateQueries({
+      queryKey: ["prompt-versions"],
+    });
+    refetch();
+
+    const payload = buildPromptVersionCreatedPayload({
+      isComparableVersion:
+        postSaveJourneyStep ===
+        PROMPT_ONBOARDING_JOURNEY_STEPS.COMPARE_VERSIONS,
+      promptId: id,
+      search: searchParams,
+      version: promptSaveCommitTarget,
+    });
+    if (!promptVersionRecordedRef.current.has(payload.idempotencyKey)) {
+      promptVersionRecordedRef.current.add(payload.idempotencyKey);
+      recordActivationEvent(payload, {
+        onError: () => {
+          promptVersionRecordedRef.current.delete(payload.idempotencyKey);
+        },
+      });
+    }
+
+    navigate(
+      buildPromptEditorHref({
+        journeyStep: postSaveJourneyStep,
+        promptId: id,
+        mode: PROMPT_ONBOARDING_MODES.COMPARE,
+        search: searchParams,
+        selectedVersions,
+      }),
+      { replace: true },
+    );
+  }, [
+    id,
+    navigate,
+    onboardingMode,
+    onboardingSource,
+    queryClient,
+    recordActivationEvent,
+    refetch,
+    postSaveJourneyStep,
+    promptSaveCommitTarget,
+    searchParams,
+    selectedVersions,
+  ]);
+
+  const handleCreateSecondVersion = useCallback(async () => {
+    setCurrentTab("Playground");
+    const nextSelectedVersions = await addToCompare();
+    if (id) {
+      navigate(
+        buildPromptEditorHref({
+          journeyStep: PROMPT_ONBOARDING_JOURNEY_STEPS.CREATE_SECOND_VERSION,
+          promptId: id,
+          mode: PROMPT_ONBOARDING_MODES.RUN_TEST,
+          search: searchParams,
+          selectedVersions: nextSelectedVersions,
+        }),
+        { replace: true },
+      );
+    }
+  }, [addToCompare, id, navigate, searchParams, setCurrentTab]);
+
+  const handleRunPrompt = () => {
+    if (buttonTooltip) {
+      if (noModelIndex !== -1) {
+        setOpenSelectModel(noModelIndex);
+        trackEvent(Events.promptSelectModelClicked, {
+          [PropertyName.promptId]: id,
+          [PropertyName.type]: "system",
+          [PropertyName.version]: selectedVersions?.map(
+            (item) => item?.version,
+          ),
+        });
+      } else if (!isVariablesDefined) {
+        setVariableDrawerOpen(true);
+      }
+      return;
+    }
+    trackEvent(Events.promptRunPromptClicked, {
+      [PropertyName.promptId]: id,
+      [PropertyName.type]: "overall",
+      [PropertyName.version]: selectedVersions?.map((item) => item?.version),
+    });
+    if (!checkIfAudioModelHasAudioContent(modelConfig, prompts)) {
+      enqueueSnackbar(
+        "Audio input is missing. Please add audio before running the prompt.",
+        { variant: "error" },
+      );
+      return;
+    }
+    saveAndRun();
+  };
+
+  const handleOpenPlayground = () => setCurrentTab("Playground");
+  const handleOpenEvaluation = () => setCurrentTab("Evaluation");
+  const handleOpenMetrics = () => setCurrentTab("Metrics");
+  const handleOpenSaveVersion = () => {
+    if (isPromptSaveBlocked) {
+      enqueueSnackbar("Create or select a draft version before saving.", {
+        variant: "warning",
+      });
+      return;
+    }
+    setCurrentTab("Playground");
+    setSaveCommitOpen(true);
+  };
+
   const disableCommit = isAnyPromptDraft || selectedVersions.length > 1;
 
   // const selectedVersion = useMemo(() => {
@@ -340,7 +602,7 @@ const PromptActions = () => {
           }}
         >
           <NavLink
-            to="/dashboard/workbench"
+            to={promptListHref}
             style={{
               textDecoration: "none",
               whiteSpace: "nowrap",
@@ -695,46 +957,8 @@ const PromptActions = () => {
               </ShowComponent>
               <ShowComponent condition={!isGenerating}>
                 <RunPromptButton
-                  disabled={
-                    loadingPrompt ||
-                    currentTab === "Evaluation" ||
-                    currentTab === "Metrics" ||
-                    !RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]
-                  }
-                  onClick={() => {
-                    if (buttonTooltip) {
-                      if (noModelIndex !== -1) {
-                        setOpenSelectModel(noModelIndex);
-                        trackEvent(Events.promptSelectModelClicked, {
-                          [PropertyName.promptId]: id,
-                          [PropertyName.type]: "system",
-                          [PropertyName.version]: selectedVersions?.map(
-                            (item) => item?.version,
-                          ),
-                        });
-                      } else if (!isVariablesDefined) {
-                        setVariableDrawerOpen(true);
-                      }
-                      return;
-                    }
-                    trackEvent(Events.promptRunPromptClicked, {
-                      [PropertyName.promptId]: id,
-                      [PropertyName.type]: "overall",
-                      [PropertyName.version]: selectedVersions?.map(
-                        (item) => item?.version,
-                      ),
-                    });
-                    if (
-                      !checkIfAudioModelHasAudioContent(modelConfig, prompts)
-                    ) {
-                      enqueueSnackbar(
-                        "Audio input is missing. Please add audio before running the prompt.",
-                        { variant: "error" },
-                      );
-                      return;
-                    }
-                    saveAndRun();
-                  }}
+                  disabled={isRunPromptDisabled}
+                  onClick={handleRunPrompt}
                 >
                   {" "}
                   <Typography variant="s1" fontWeight={"fontWeightMedium"}>
@@ -746,6 +970,25 @@ const PromptActions = () => {
           </ShowComponent>
         </Box>
       </Box>
+
+      <PromptOnboardingFocusPanel
+        blocker={promptOnboardingBlocker}
+        compareNeedsSecondVersion={compareNeedsSecondVersion}
+        currentTab={currentTab}
+        isRunDisabled={isRunPromptDisabled}
+        isSaveDisabled={isPromptSaveBlocked}
+        journeyStep={onboardingJourneyStep}
+        mode={onboardingMode}
+        onCreateSecondVersion={handleCreateSecondVersion}
+        onOpenEvaluation={handleOpenEvaluation}
+        onOpenMetrics={handleOpenMetrics}
+        onOpenPlayground={handleOpenPlayground}
+        onOpenSaveVersion={handleOpenSaveVersion}
+        onOpenVersionHistory={() => setVersionHistoryOpen(true)}
+        onRunPrompt={handleRunPrompt}
+        source={onboardingSource}
+        tourAnchor={promptOnboardingParams.tourAnchor}
+      />
 
       <Divider
         sx={{
@@ -887,7 +1130,8 @@ const PromptActions = () => {
       <SaveAndCommit
         open={saveCommitOpen}
         onClose={() => setSaveCommitOpen(false)}
-        data={baseVersion}
+        onCommitted={handlePromptVersionCommitted}
+        data={promptSaveCommitTarget}
         promptName={promptName}
       />
     </Stack>

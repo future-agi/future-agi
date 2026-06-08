@@ -7,6 +7,7 @@ import {
   Drawer,
   Menu,
   MenuItem,
+  Stack,
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
@@ -232,6 +233,7 @@ const TraceDetailDrawerV2 = ({
   hasNext = true,
   initialFullscreen = false,
   initialSpanId = null,
+  onboardingBanner,
   refreshParentGrid,
 }) => {
   const navigate = useNavigate();
@@ -952,6 +954,49 @@ const TraceDetailDrawerV2 = ({
         hasActiveFilter={spanFilters.length > 0}
       />
 
+      {onboardingBanner ? (
+        <Box
+          data-testid="trace-onboarding-banner"
+          sx={{
+            px: 1.5,
+            py: 1,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            bgcolor: "background.default",
+            flexShrink: 0,
+          }}
+        >
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            spacing={1}
+            alignItems={{ xs: "flex-start", md: "center" }}
+            justifyContent="space-between"
+          >
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="subtitle2">
+                {onboardingBanner.title}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {onboardingBanner.description}
+              </Typography>
+            </Box>
+            {onboardingBanner.primaryAction ? (
+              <Button
+                size="small"
+                variant="contained"
+                startIcon={<Iconify icon="mdi:arrow-right" width={16} />}
+                onClick={onboardingBanner.primaryAction.onClick}
+                data-tour-anchor={
+                  onboardingBanner.primaryAction.tourAnchor || undefined
+                }
+              >
+                {onboardingBanner.primaryAction.label}
+              </Button>
+            ) : null}
+          </Stack>
+        </Box>
+      ) : null}
+
       {/* Display options popover — hidden on Imagine tab */}
       {!isImagineActive && (
         <TraceDisplayPanel
@@ -1548,6 +1593,15 @@ TraceDetailDrawerV2.propTypes = {
   hasNext: PropTypes.bool,
   initialFullscreen: PropTypes.bool,
   initialSpanId: PropTypes.string,
+  onboardingBanner: PropTypes.shape({
+    description: PropTypes.string.isRequired,
+    primaryAction: PropTypes.shape({
+      label: PropTypes.string.isRequired,
+      onClick: PropTypes.func.isRequired,
+      tourAnchor: PropTypes.string,
+    }),
+    title: PropTypes.string.isRequired,
+  }),
   refreshParentGrid: PropTypes.func,
 };
 

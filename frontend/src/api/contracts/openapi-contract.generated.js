@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 980,
+  "endpointCount": 991,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -385,6 +385,230 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/AccountsTokenPairResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/activation-events/": {
+      "post": {
+        "operationId": "accounts_activation-events_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/ActivationEventRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ActivationEventResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/activation-state/": {
+      "get": {
+        "operationId": "accounts_activation-state_list",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": null,
+        "queryParameters": {
+          "source": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "campaign_key": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "email_key": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "target_stage": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "feature_disabled",
+                "workspace_missing",
+                "permission_limited",
+                "choose_goal",
+                "selected_path_unavailable",
+                "activated",
+                "daily_review",
+                "connect_observability",
+                "waiting_for_first_trace",
+                "waiting_for_first_trace_sample_available",
+                "review_first_trace",
+                "create_trace_evaluator",
+                "review_sample_signal",
+                "start_prompt",
+                "run_prompt_test",
+                "save_prompt_version",
+                "create_second_prompt_version",
+                "compare_prompt_versions",
+                "prompt_next_loop",
+                "create_agent",
+                "add_agent_node",
+                "run_agent_scenario",
+                "review_agent_trace",
+                "save_agent_eval",
+                "agent_create_eval",
+                "create_trace_dashboard",
+                "create_trace_alert",
+                "configure_gateway_provider",
+                "create_gateway_key",
+                "run_gateway_request",
+                "review_gateway_log",
+                "fix_gateway_failure",
+                "add_gateway_policy",
+                "create_voice_agent",
+                "run_voice_test_call",
+                "review_voice_call",
+                "add_voice_success_criteria",
+                "voice_monitor_calls",
+                "create_eval_dataset",
+                "add_eval_scorer",
+                "run_eval",
+                "review_eval_failures",
+                "eval_next_loop",
+                "open_sample_project",
+                "connect_real_data"
+              ]
+            }
+          },
+          "target_event": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "target_route": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "send_log_id": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "email_status": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "link_issued_at": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "stale_reason": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "context_status": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "current",
+                "stale",
+                "expired",
+                "invalid",
+                "complete",
+                "route_unavailable"
+              ]
+            }
+          },
+          "mode": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "quick_start_goal": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "quick_start_id": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "quick_start_primary_path": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "debug": {
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ActivationStateApiResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -1126,6 +1350,104 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "/accounts/notification-channels/{channel_id}/test/": {
+      "post": {
+        "operationId": "accounts_notification-channels_test_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/AccountsEmptyRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/NotificationChannelTestResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/notification-preferences/": {
+      "get": {
+        "operationId": "accounts_notification-preferences_list",
+        "runtimeRequestValidation": false,
+        "runtimeResponseValidation": true,
+        "requestBody": null,
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/NotificationSettingsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      },
+      "patch": {
+        "operationId": "accounts_notification-preferences_partial_update",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/NotificationSettingsPatchRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/NotificationSettingsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/accounts/notifications/snooze/": {
       "get": {
         "operationId": "accounts_notifications_snooze_list",
@@ -1232,6 +1554,162 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/UserOnboardingSaveResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/onboarding/activation-facts/": {
+      "post": {
+        "operationId": "accounts_onboarding_activation-facts_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/OnboardingActivationFactReceiptRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/OnboardingActivationFactReceiptApiResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/onboarding/goal/": {
+      "post": {
+        "operationId": "accounts_onboarding_goal_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/ActivationGoalRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/ActivationStateApiResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ActivationGoalConflictResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/onboarding/lifecycle/digest-previews/": {
+      "get": {
+        "operationId": "accounts_onboarding_lifecycle_digest-previews_list",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": null,
+        "queryParameters": {
+          "campaign_key": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "daily_quality_open_actions"
+              ]
+            }
+          },
+          "limit": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/OnboardingLifecycleDigestReviewResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/onboarding/lifecycle/digest-previews/promote/": {
+      "post": {
+        "operationId": "accounts_onboarding_lifecycle_digest-previews_promote_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/OnboardingLifecycleDigestPromotionRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/OnboardingLifecycleDigestPromotionResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -2264,6 +2742,74 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "/accounts/sample-project/": {
+      "post": {
+        "operationId": "accounts_sample-project_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/SampleProjectRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/SampleProjectApiResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/sample-project/hide/": {
+      "post": {
+        "operationId": "accounts_sample-project_hide_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/SampleProjectHideRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/SampleProjectApiResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
     "/accounts/signup/": {
       "post": {
         "operationId": "accounts_signup_create",
@@ -2464,6 +3010,40 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/TeamRemoveResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "401": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/AccountsErrorResponse"
+          },
+          "default": {
+            "$ref": "#/definitions/ManagementAPIErrorResponse"
+          }
+        }
+      }
+    },
+    "/accounts/test-trace/": {
+      "post": {
+        "operationId": "accounts_test-trace_create",
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/TestTraceRequest"
+        },
+        "queryParameters": {},
+        "responses": {
+          "200": {
+            "$ref": "#/definitions/TestTraceApiResponse"
           },
           "400": {
             "$ref": "#/definitions/AccountsErrorResponse"
@@ -9665,15 +10245,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "put": {
         "operationId": "integrations_connections_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/IntegrationConnectionList"
+          "$ref": "#/definitions/IntegrationConnectionUpdate"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/IntegrationConnectionList"
+            "$ref": "#/definitions/IntegrationConnectionDetailResponse"
           },
           "400": {
             "$ref": "#/definitions/IntegrationErrorResponse"
@@ -12266,6 +12846,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             }
           },
           "include_archived": {
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          "archived": {
             "required": false,
             "schema": {
               "type": "boolean"
@@ -20023,7 +20609,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "required": false,
             "schema": {
               "type": "string",
-              "default": ""
+              "default": {}
             }
           },
           "filters": {
@@ -20698,15 +21284,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "model-hub_kb_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/KnowledgeBase"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/KnowledgeBase"
+            "$ref": "#/definitions/KnowledgeBaseResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31082,34 +31683,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           }
         },
         "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/EvalTask"
-                }
-              }
-            }
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31117,7 +31690,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "tracer_eval-task_create",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/EvalTask"
@@ -31154,34 +31727,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           }
         },
         "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/EvalTask"
-                }
-              }
-            }
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31209,34 +31754,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           }
         },
         "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/EvalTask"
-                }
-              }
-            }
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31264,34 +31781,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           }
         },
         "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/EvalTask"
-                }
-              }
-            }
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31353,12 +31842,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           }
         },
         "responses": {
-          "200": {
-            "type": "array",
-            "items": {
-              "$ref": "#/definitions/EvalTask"
-            }
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31420,12 +31903,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           }
         },
         "responses": {
-          "200": {
-            "type": "array",
-            "items": {
-              "$ref": "#/definitions/EvalTask"
-            }
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31435,15 +31912,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/mark_eval_tasks_deleted/": {
       "post": {
         "operationId": "tracer_eval-task_mark_eval_tasks_deleted",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/EvalTask"
+          "$ref": "#/definitions/EvalTaskDeleteRequest"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/EvalTask"
+            "$ref": "#/definitions/EvalTaskDeleteRequest"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31454,15 +31931,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/pause_eval_task/": {
       "post": {
         "operationId": "tracer_eval-task_pause_eval_task",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/EvalTask"
+          "$ref": "#/definitions/EmptyRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/EvalTask"
+          "200": {
+            "$ref": "#/definitions/EvalTaskMessageResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31473,15 +31950,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/unpause_eval_task/": {
       "post": {
         "operationId": "tracer_eval-task_unpause_eval_task",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/EvalTask"
+          "$ref": "#/definitions/EmptyRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/EvalTask"
+          "200": {
+            "$ref": "#/definitions/EvalTaskMessageResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31492,15 +31969,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/update_eval_task/": {
       "patch": {
         "operationId": "tracer_eval-task_update_eval_task",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/EvalTask"
+          "$ref": "#/definitions/EditEvalTask"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/EvalTask"
+            "$ref": "#/definitions/EditEvalTask"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31516,9 +31993,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": null,
         "queryParameters": {},
         "responses": {
-          "200": {
-            "$ref": "#/definitions/EvalTask"
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -31526,7 +32000,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "put": {
         "operationId": "tracer_eval-task_update",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/EvalTask"
@@ -31543,7 +32017,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "tracer_eval-task_partial_update",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/EvalTask"
@@ -36607,34 +37081,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           }
         },
         "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/UserAlertMonitor"
-                }
-              }
-            }
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -36642,7 +37088,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "tracer_user-alerts_create",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/UserAlertMonitor"
@@ -36661,15 +37107,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/user-alerts/bulk-mute/": {
       "post": {
         "operationId": "tracer_user-alerts_bulk_mute",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/UserAlertMonitor"
+          "$ref": "#/definitions/UserAlertBulkMuteRequest"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/UserAlertMonitor"
+            "$ref": "#/definitions/UserAlertBulkMuteRequest"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36726,34 +37172,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           }
         },
         "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/UserAlertMonitor"
-                }
-              }
-            }
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -36764,7 +37182,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_user-alerts_metric_options",
         "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -36802,7 +37220,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/user-alerts/preview-graph/": {
       "post": {
         "operationId": "tracer_user-alerts_preview_graph",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/UserAlertMonitor"
@@ -36826,9 +37244,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": null,
         "queryParameters": {},
         "responses": {
-          "200": {
-            "$ref": "#/definitions/UserAlertMonitor"
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -36836,7 +37251,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "put": {
         "operationId": "tracer_user-alerts_update",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/UserAlertMonitor"
@@ -36853,7 +37268,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "tracer_user-alerts_partial_update",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/UserAlertMonitor"
@@ -36889,9 +37304,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": null,
         "queryParameters": {},
         "responses": {
-          "200": {
-            "$ref": "#/definitions/UserAlertMonitor"
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -36906,9 +37318,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "requestBody": null,
         "queryParameters": {},
         "responses": {
-          "200": {
-            "$ref": "#/definitions/UserAlertMonitor"
-          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -42177,6 +42586,391 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ActivationEventRequest": {
+      "required": [
+        "event_name"
+      ],
+      "type": "object",
+      "properties": {
+        "event_name": {
+          "title": "Event name",
+          "type": "string",
+          "minLength": 1
+        },
+        "primary_path": {
+          "title": "Primary path",
+          "type": "string",
+          "x-nullable": true
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ],
+          "x-nullable": true
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "artifact_type": {
+          "title": "Artifact type",
+          "type": "string",
+          "enum": [
+            "trace",
+            "observe_project",
+            "observe_setup",
+            "project",
+            "agent",
+            "agent_node",
+            "graph_execution",
+            "test_execution",
+            "call_execution",
+            "voice_agent",
+            "voice_call",
+            "voice_scenario",
+            "voice_test",
+            "dataset",
+            "eval",
+            "eval_group",
+            "eval_run",
+            "eval_scorer",
+            "eval_task",
+            "gateway",
+            "gateway_provider",
+            "gateway_key",
+            "gateway_request",
+            "gateway_policy",
+            "request_log"
+          ],
+          "x-nullable": true
+        },
+        "artifact_id": {
+          "title": "Artifact id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "project_id": {
+          "title": "Project id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          }
+        },
+        "idempotency_key": {
+          "title": "Idempotency key",
+          "type": "string",
+          "maxLength": 160,
+          "x-nullable": true
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "campaign_key": {
+          "title": "Campaign key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "email_key": {
+          "title": "Email key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "send_log_id": {
+          "title": "Send log id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "email_status": {
+          "title": "Email status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "target_stage": {
+          "title": "Target stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ],
+          "x-nullable": true
+        },
+        "target_event": {
+          "title": "Target event",
+          "type": "string",
+          "x-nullable": true
+        },
+        "link_issued_at": {
+          "title": "Link issued at",
+          "type": "string",
+          "x-nullable": true
+        },
+        "stale_reason": {
+          "title": "Stale reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "context_status": {
+          "title": "Context status",
+          "type": "string",
+          "enum": [
+            "current",
+            "stale",
+            "expired",
+            "invalid",
+            "complete",
+            "route_unavailable"
+          ],
+          "x-nullable": true
+        }
+      }
+    },
+    "ActivationEventResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/ActivationEventResult"
+        }
+      }
+    },
+    "ActivationGoalConflictResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": false
+        },
+        "result": {
+          "$ref": "#/definitions/ActivationGoalConflictResult"
+        }
+      }
+    },
+    "ActivationGoalRequest": {
+      "required": [
+        "goal"
+      ],
+      "type": "object",
+      "properties": {
+        "goal": {
+          "title": "Goal",
+          "type": "string",
+          "minLength": 1
+        },
+        "primary_path": {
+          "title": "Primary path",
+          "type": "string",
+          "x-nullable": true
+        },
+        "persona": {
+          "title": "Persona",
+          "type": "string",
+          "x-nullable": true
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "campaign_key": {
+          "title": "Campaign key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "enum": [
+            "first_selection",
+            "path_change",
+            "email_link",
+            "manual_switch"
+          ],
+          "x-nullable": true
+        },
+        "expected_stage": {
+          "title": "Expected stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ],
+          "x-nullable": true
+        },
+        "known_goal_id": {
+          "title": "Known goal id",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "ActivationStateApiResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/ActivationStateResponse"
+        }
+      }
+    },
     "AddApiColumnRequest": {
       "required": [
         "column_name",
@@ -43668,11 +44462,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "api_key": {
           "title": "Api key",
-          "description": "API key for the agent",
           "type": "string",
-          "readOnly": true,
-          "minLength": 1,
-          "x-nullable": true
+          "readOnly": true
         },
         "observability_provider": {
           "title": "Observability provider",
@@ -46583,6 +47374,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Annotation count",
           "type": "integer",
           "readOnly": true
+        },
+        "archived": {
+          "title": "Archived",
+          "type": "boolean",
+          "readOnly": true
         }
       }
     },
@@ -48019,8 +48815,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "readOnly": true
         },
+        "test_execution_id": {
+          "title": "Test execution id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
         "scenario_id": {
           "title": "Scenario id",
+          "type": "string",
+          "readOnly": true
+        },
+        "scenario_graph": {
+          "title": "Scenario graph",
+          "type": "string",
+          "readOnly": true
+        },
+        "scenario_graph_id": {
+          "title": "Scenario graph id",
           "type": "string",
           "readOnly": true
         },
@@ -49413,6 +50225,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "object",
           "x-nullable": true
         },
+        "child_pinned_versions": {
+          "title": "Child pinned versions",
+          "type": "object",
+          "x-nullable": true
+        },
         "composite_child_axis": {
           "title": "Composite child axis",
           "type": "string",
@@ -49582,6 +50399,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "child_weights": {
           "title": "Child weights",
+          "type": "object",
+          "x-nullable": true
+        },
+        "child_pinned_versions": {
+          "title": "Child pinned versions",
           "type": "object",
           "x-nullable": true
         },
@@ -49778,6 +50600,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Team id",
           "type": "string",
           "minLength": 1
+        },
+        "trace_id": {
+          "title": "Trace id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         },
         "title": {
           "title": "Title",
@@ -52727,6 +53555,187 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EditEvalTask": {
+      "required": [
+        "edit_type"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "filters": {
+          "title": "Filters",
+          "type": "object",
+          "x-nullable": true,
+          "properties": {
+            "project_id": {
+              "type": "string",
+              "x-nullable": true,
+              "description": "Project scope for the evaluation task."
+            },
+            "date_range": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "Inclusive start/end ISO timestamps."
+            },
+            "created_at": {
+              "type": "string",
+              "description": "Lower-bound ISO timestamp for legacy task filters."
+            },
+            "session_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Trace session id(s) to constrain the task."
+            },
+            "trace_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Trace id(s) to constrain linked-source tasks."
+            },
+            "span_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Observation span id(s) to constrain linked-source tasks."
+            },
+            "observation_type": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Observation span type(s), for example llm, tool, or chain."
+            },
+            "span_attributes_filters": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "column_id": {
+                    "type": "string",
+                    "description": "Column or attribute id to filter on."
+                  },
+                  "display_name": {
+                    "type": "string",
+                    "description": "Optional UI label for chips and saved views."
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                  },
+                  "output_type": {
+                    "type": "string",
+                    "description": "Optional metric output type metadata used by eval and annotation filters."
+                  },
+                  "filter_config": {
+                    "type": "object",
+                    "properties": {
+                      "filter_type": {
+                        "type": "string",
+                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                      },
+                      "filter_op": {
+                        "type": "string",
+                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                      },
+                      "filter_value": {
+                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                      },
+                      "col_type": {
+                        "type": "string",
+                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      }
+                    },
+                    "required": [
+                      "filter_type",
+                      "filter_op"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "column_id",
+                  "filter_config"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "sampling_rate": {
+          "title": "Sampling rate",
+          "type": "number",
+          "maximum": 100,
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "spans_limit": {
+          "title": "Spans limit",
+          "type": "integer",
+          "maximum": 1000000,
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "run_type": {
+          "title": "Run type",
+          "type": "string",
+          "enum": [
+            "continuous",
+            "historical"
+          ]
+        },
+        "row_type": {
+          "title": "Row type",
+          "type": "string",
+          "enum": [
+            "spans",
+            "traces",
+            "sessions",
+            "voiceCalls"
+          ]
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "completed",
+            "failed",
+            "paused",
+            "deleted"
+          ]
+        },
+        "evals": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "edit_type": {
+          "title": "Edit type",
+          "type": "string",
+          "enum": [
+            "edit_rerun",
+            "fresh_run"
+          ]
+        }
+      }
+    },
     "EditRunPromptColumn": {
       "required": [
         "dataset_id",
@@ -53723,8 +54732,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "description": "Lower-bound ISO timestamp for legacy task filters."
             },
             "session_id": {
-              "type": "string",
-              "description": "Trace session id to constrain the task."
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Trace session id(s) to constrain the task."
+            },
+            "trace_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Trace id(s) to constrain linked-source tasks."
+            },
+            "span_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Observation span id(s) to constrain linked-source tasks."
             },
             "observation_type": {
               "type": "array",
@@ -53890,6 +54916,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EvalTaskDeleteRequest": {
+      "required": [
+        "eval_task_ids"
+      ],
+      "type": "object",
+      "properties": {
+        "eval_task_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "EvalTaskMessageResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/EvalTaskMessageResult"
+        }
+      }
+    },
     "EvalTemplate": {
       "required": [
         "name",
@@ -53906,9 +54963,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "owner": {
           "title": "Owner",
           "type": "string",
-          "default": "system",
-          "maxLength": 50,
-          "minLength": 1
+          "enum": [
+            "system",
+            "user"
+          ],
+          "default": "user"
         },
         "config": {
           "title": "Config",
@@ -57625,116 +58684,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "IntegrationConnectionList": {
-      "required": [
-        "platform",
-        "display_name",
-        "host_url",
-        "external_project_name"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true
-        },
-        "platform": {
-          "title": "Platform",
-          "type": "string",
-          "enum": [
-            "langfuse",
-            "datadog",
-            "posthog",
-            "pagerduty",
-            "mixpanel",
-            "cloud_storage",
-            "message_queue",
-            "linear"
-          ]
-        },
-        "display_name": {
-          "title": "Display name",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1
-        },
-        "host_url": {
-          "title": "Host url",
-          "type": "string",
-          "format": "uri",
-          "maxLength": 500,
-          "minLength": 1
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "enum": [
-            "active",
-            "paused",
-            "error",
-            "syncing",
-            "backfilling"
-          ]
-        },
-        "status_message": {
-          "title": "Status message",
-          "type": "string",
-          "x-nullable": true
-        },
-        "external_project_name": {
-          "title": "External project name",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1
-        },
-        "last_synced_at": {
-          "title": "Last synced at",
-          "type": "string",
-          "format": "date-time",
-          "x-nullable": true
-        },
-        "total_traces_synced": {
-          "title": "Total traces synced",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0
-        },
-        "total_spans_synced": {
-          "title": "Total spans synced",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0
-        },
-        "total_scores_synced": {
-          "title": "Total scores synced",
-          "type": "integer",
-          "maximum": 2147483647,
-          "minimum": 0
-        },
-        "backfill_completed": {
-          "title": "Backfill completed",
-          "type": "boolean"
-        },
-        "backfill_progress": {
-          "title": "Backfill progress",
-          "type": "object"
-        },
-        "sync_interval_seconds": {
-          "title": "Sync interval seconds",
-          "type": "integer",
-          "maximum": 1800,
-          "minimum": 60
-        },
-        "created_at": {
-          "title": "Created at",
-          "type": "string",
-          "format": "date-time",
-          "readOnly": true
-        }
-      }
-    },
     "IntegrationConnectionListResponse": {
       "required": [
         "result"
@@ -60548,6 +61497,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "NotificationChannelTestResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/NotificationChannelTestResult"
+        }
+      }
+    },
+    "NotificationSettingsPatchRequest": {
+      "type": "object",
+      "properties": {
+        "preferences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NotificationPreferencePatchItem"
+          }
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NotificationChannelPatchItem"
+          }
+        }
+      }
+    },
+    "NotificationSettingsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/NotificationSettingsResult"
+        }
+      }
+    },
     "OTLPHTTPErrorResponse": {
       "type": "object",
       "properties": {
@@ -61114,6 +62112,138 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/ObserveGraphDataResult"
+        }
+      }
+    },
+    "OnboardingActivationFactReceiptApiResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/OnboardingActivationFactReceiptResult"
+        }
+      }
+    },
+    "OnboardingActivationFactReceiptRequest": {
+      "required": [
+        "type",
+        "export_log_id",
+        "idempotency_key",
+        "schema_version",
+        "evaluated_at",
+        "fact"
+      ],
+      "type": "object",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "maxLength": 64,
+          "minLength": 1
+        },
+        "export_log_id": {
+          "title": "Export log id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "idempotency_key": {
+          "title": "Idempotency key",
+          "type": "string",
+          "maxLength": 220,
+          "minLength": 1
+        },
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "maxLength": 96,
+          "minLength": 1
+        },
+        "event_cursor": {
+          "title": "Event cursor",
+          "type": "string",
+          "maxLength": 160,
+          "x-nullable": true
+        },
+        "evaluated_at": {
+          "title": "Evaluated at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "fact": {
+          "title": "Fact",
+          "type": "object"
+        }
+      }
+    },
+    "OnboardingLifecycleDigestPromotionRequest": {
+      "required": [
+        "sources"
+      ],
+      "type": "object",
+      "properties": {
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OnboardingLifecycleDigestPromotionSource"
+          }
+        },
+        "scope_type": {
+          "title": "Scope type",
+          "type": "string",
+          "enum": [
+            "user",
+            "workspace"
+          ],
+          "default": "user"
+        },
+        "dry_run": {
+          "title": "Dry run",
+          "type": "boolean",
+          "default": false
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "maxLength": 180
+        }
+      }
+    },
+    "OnboardingLifecycleDigestPromotionResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/OnboardingLifecycleDigestPromotionResult"
+        }
+      }
+    },
+    "OnboardingLifecycleDigestReviewResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/OnboardingLifecycleDigestReviewResult"
         }
       }
     },
@@ -67329,6 +68459,206 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SampleProjectApiResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/SampleProjectResponse"
+        }
+      }
+    },
+    "SampleProjectHideRequest": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "SampleProjectRequest": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string",
+          "default": "observe",
+          "minLength": 1
+        },
+        "manifest_id": {
+          "title": "Manifest id",
+          "type": "string"
+        },
+        "manifest_version": {
+          "title": "Manifest version",
+          "type": "string"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "open_after_create": {
+          "title": "Open after create",
+          "type": "boolean",
+          "default": false
+        },
+        "campaign_key": {
+          "title": "Campaign key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "email_key": {
+          "title": "Email key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "send_log_id": {
+          "title": "Send log id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "email_status": {
+          "title": "Email status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "target_stage": {
+          "title": "Target stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ],
+          "x-nullable": true
+        },
+        "target_event": {
+          "title": "Target event",
+          "type": "string",
+          "x-nullable": true
+        },
+        "link_issued_at": {
+          "title": "Link issued at",
+          "type": "string",
+          "x-nullable": true
+        },
+        "stale_reason": {
+          "title": "Stale reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "context_status": {
+          "title": "Context status",
+          "type": "string",
+          "enum": [
+            "current",
+            "stale",
+            "expired",
+            "invalid",
+            "complete",
+            "route_unavailable"
+          ],
+          "x-nullable": true
+        },
+        "quick_start_goal": {
+          "title": "Quick start goal",
+          "type": "string",
+          "enum": [
+            "monitor_production_ai_app",
+            "improve_prompts",
+            "build_ai_agent",
+            "control_model_traffic",
+            "evaluate_quality",
+            "connect_voice_ai_agent",
+            "explore_sample_data"
+          ],
+          "x-nullable": true
+        },
+        "quick_start_id": {
+          "title": "Quick start id",
+          "type": "string",
+          "pattern": "^[a-z0-9_:-]{1,80}$",
+          "x-nullable": true
+        },
+        "quick_start_primary_path": {
+          "title": "Quick start primary path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ],
+          "x-nullable": true
+        }
+      }
+    },
     "SavedViewDetailResponse": {
       "required": [
         "result"
@@ -70736,6 +72066,186 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TestTraceApiResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/TestTraceResponse"
+        }
+      }
+    },
+    "TestTraceRequest": {
+      "required": [
+        "project_id"
+      ],
+      "type": "object",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string",
+          "default": "observe",
+          "minLength": 1
+        },
+        "project_id": {
+          "title": "Project id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "campaign_key": {
+          "title": "Campaign key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "email_key": {
+          "title": "Email key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "send_log_id": {
+          "title": "Send log id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "email_status": {
+          "title": "Email status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "target_stage": {
+          "title": "Target stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ],
+          "x-nullable": true
+        },
+        "target_event": {
+          "title": "Target event",
+          "type": "string",
+          "x-nullable": true
+        },
+        "link_issued_at": {
+          "title": "Link issued at",
+          "type": "string",
+          "x-nullable": true
+        },
+        "stale_reason": {
+          "title": "Stale reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "context_status": {
+          "title": "Context status",
+          "type": "string",
+          "enum": [
+            "current",
+            "stale",
+            "expired",
+            "invalid",
+            "complete",
+            "route_unavailable"
+          ],
+          "x-nullable": true
+        },
+        "quick_start_goal": {
+          "title": "Quick start goal",
+          "type": "string",
+          "enum": [
+            "monitor_production_ai_app",
+            "improve_prompts",
+            "build_ai_agent",
+            "control_model_traffic",
+            "evaluate_quality",
+            "connect_voice_ai_agent",
+            "explore_sample_data"
+          ],
+          "x-nullable": true
+        },
+        "quick_start_id": {
+          "title": "Quick start id",
+          "type": "string",
+          "pattern": "^[a-z0-9_:-]{1,80}$",
+          "x-nullable": true
+        },
+        "quick_start_primary_path": {
+          "title": "Quick start primary path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ],
+          "x-nullable": true
+        }
+      }
+    },
     "TimezoneRequest": {
       "required": [
         "timezone"
@@ -70887,7 +72397,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "project_version": {
           "title": "Project version",
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "x-nullable": true
         },
         "name": {
           "title": "Name",
@@ -70918,7 +72429,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "session": {
           "title": "Session",
           "type": "string",
-          "format": "uuid"
+          "format": "uuid",
+          "x-nullable": true
         },
         "external_id": {
           "title": "External id",
@@ -71873,6 +73385,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "format": "uri",
           "x-nullable": true
         },
+        "thresholds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UsageBudgetThreshold"
+          }
+        },
         "is_active": {
           "title": "Is active",
           "type": "boolean"
@@ -72471,6 +73989,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/UsageWorkspaceBreakdownResult"
+        }
+      }
+    },
+    "UserAlertBulkMuteRequest": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "is_mute": {
+          "title": "Is mute",
+          "type": "boolean",
+          "default": true
+        },
+        "select_all": {
+          "title": "Select all",
+          "type": "boolean",
+          "default": false
+        },
+        "exclude_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
         }
       }
     },
@@ -74367,6 +75916,434 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "value": {
           "title": "Value",
           "type": "object"
+        }
+      }
+    },
+    "ActivationEventResult": {
+      "required": [
+        "event_id",
+        "event_name",
+        "activation_state"
+      ],
+      "type": "object",
+      "properties": {
+        "event_id": {
+          "title": "Event id",
+          "type": "string",
+          "minLength": 1
+        },
+        "event_name": {
+          "title": "Event name",
+          "type": "string",
+          "enum": [
+            "onboarding_transition_viewed",
+            "onboarding_home_viewed",
+            "onboarding_goal_selected",
+            "onboarding_goal_changed",
+            "onboarding_recommended_action_viewed",
+            "onboarding_recommended_action_clicked",
+            "onboarding_path_card_clicked",
+            "onboarding_blocked_state_viewed",
+            "onboarding_diagnostics_opened",
+            "onboarding_sample_project_opened",
+            "onboarding_fallback_action_clicked",
+            "sample_trace_available",
+            "sample_signal_viewed",
+            "sample_to_real_setup_clicked",
+            "first_quality_loop_completed",
+            "daily_quality_home_viewed",
+            "daily_quality_top_signal_shown",
+            "daily_quality_top_change_reviewed",
+            "daily_quality_item_reviewed",
+            "daily_quality_action_created",
+            "daily_quality_action_opened",
+            "daily_quality_action_assigned",
+            "daily_quality_action_completed",
+            "daily_quality_action_dismissed",
+            "daily_quality_no_signal_viewed",
+            "daily_quality_empty_state_viewed",
+            "daily_quality_digest_destination_opened",
+            "daily_quality_route_fallback_used",
+            "weekly_quality_review_opened",
+            "weekly_quality_action_assigned",
+            "weekly_quality_action_completed",
+            "weekly_quality_review_completed",
+            "weekly_quality_digest_sent",
+            "weekly_quality_digest_suppressed",
+            "lifecycle_email_send_queued",
+            "lifecycle_email_sent",
+            "lifecycle_email_send_failed",
+            "lifecycle_email_send_suppressed",
+            "lifecycle_email_clicked",
+            "lifecycle_email_unsubscribed",
+            "lifecycle_email_snoozed",
+            "lifecycle_email_completed",
+            "reactivation_reason_clicked",
+            "observe_project_created",
+            "onboarding_observe_package_selected",
+            "onboarding_observe_route_focus_viewed",
+            "trace_received",
+            "trace_reviewed",
+            "trace_detail_opened",
+            "prompt_created",
+            "prompt_test_input_added",
+            "prompt_test_run_completed",
+            "prompt_version_created",
+            "prompt_comparable_version_created",
+            "prompt_comparison_completed",
+            "dataset_example_added",
+            "eval_dataset_created",
+            "eval_scorer_created",
+            "eval_run_started",
+            "eval_run_completed",
+            "eval_failures_reviewed",
+            "eval_failure_action_created",
+            "eval_group_created",
+            "onboarding_eval_source_selected",
+            "onboarding_eval_route_focus_viewed",
+            "onboarding_eval_run_clicked",
+            "onboarding_eval_failure_detail_opened",
+            "onboarding_eval_source_fix_cta_clicked",
+            "onboarding_eval_source_fix_route_viewed",
+            "onboarding_eval_source_fix_rerun_clicked",
+            "onboarding_eval_scorer_edit_cta_clicked",
+            "onboarding_eval_fix_rerun_completed",
+            "onboarding_eval_fix_rerun_reviewed",
+            "onboarding_eval_sample_viewed",
+            "voice_agent_created",
+            "voice_scenario_created",
+            "voice_test_call_started",
+            "voice_test_call_completed",
+            "voice_call_reviewed",
+            "voice_success_criteria_added",
+            "voice_call_monitor_opened",
+            "onboarding_voice_route_focus_viewed",
+            "onboarding_voice_call_detail_opened",
+            "onboarding_voice_success_criteria_cta_clicked",
+            "onboarding_voice_sample_viewed",
+            "prompt_version_promoted",
+            "agent_created",
+            "agent_node_added",
+            "agent_scenario_created",
+            "agent_prototype_run_completed",
+            "agent_trace_reviewed",
+            "agent_scenario_saved_as_eval",
+            "agent_eval_created",
+            "agent_live_trace_received",
+            "gateway_provider_added",
+            "gateway_key_created",
+            "gateway_test_request_sent",
+            "gateway_request_seen",
+            "gateway_log_opened",
+            "gateway_failure_resolved",
+            "gateway_policy_created",
+            "gateway_dashboard_created",
+            "team_member_invited",
+            "trace_failure_detected"
+          ]
+        },
+        "activation_state": {
+          "$ref": "#/definitions/ActivationStateResponse"
+        }
+      }
+    },
+    "ActivationGoalConflictResult": {
+      "required": [
+        "error_code",
+        "reason",
+        "current_goal_id",
+        "activation_state"
+      ],
+      "type": "object",
+      "properties": {
+        "error_code": {
+          "title": "Error code",
+          "type": "string",
+          "enum": [
+            "ONBOARDING_GOAL_CONFLICT"
+          ]
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "minLength": 1
+        },
+        "current_goal_id": {
+          "title": "Current goal id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "activation_state": {
+          "$ref": "#/definitions/ActivationStateResponse"
+        }
+      }
+    },
+    "ActivationStateResponse": {
+      "required": [
+        "schema_version",
+        "request_id",
+        "server_time",
+        "workspace_id",
+        "organization_id",
+        "user_id",
+        "goal",
+        "persona",
+        "primary_path",
+        "stage",
+        "home_mode",
+        "is_activated",
+        "activated_at",
+        "recommended_action",
+        "fallback_action",
+        "progress",
+        "signals",
+        "available_paths",
+        "sample_project",
+        "email_eligibility",
+        "permissions",
+        "feature_flags",
+        "route_availability",
+        "email_context",
+        "last_meaningful_event",
+        "diagnostics",
+        "warnings"
+      ],
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "title": "Schema version",
+          "type": "string",
+          "minLength": 1
+        },
+        "request_id": {
+          "title": "Request id",
+          "type": "string",
+          "minLength": 1
+        },
+        "server_time": {
+          "title": "Server time",
+          "type": "string",
+          "format": "date-time"
+        },
+        "workspace_id": {
+          "title": "Workspace id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "organization_id": {
+          "title": "Organization id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "minLength": 1
+        },
+        "goal": {
+          "title": "Goal",
+          "type": "string",
+          "enum": [
+            "monitor_production_ai_app",
+            "improve_prompts",
+            "build_ai_agent",
+            "control_model_traffic",
+            "evaluate_quality",
+            "connect_voice_ai_agent",
+            "explore_sample_data"
+          ],
+          "x-nullable": true
+        },
+        "persona": {
+          "title": "Persona",
+          "type": "string",
+          "x-nullable": true
+        },
+        "primary_path": {
+          "title": "Primary path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ],
+          "x-nullable": true
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ]
+        },
+        "stage_copy": {
+          "$ref": "#/definitions/ActivationStageCopy"
+        },
+        "home_mode": {
+          "title": "Home mode",
+          "type": "string",
+          "enum": [
+            "first_run",
+            "daily_quality",
+            "fallback"
+          ]
+        },
+        "is_activated": {
+          "title": "Is activated",
+          "type": "boolean"
+        },
+        "activated_via": {
+          "title": "Activated via",
+          "type": "string",
+          "enum": [
+            "workspace",
+            "organization"
+          ],
+          "x-nullable": true
+        },
+        "activated_at": {
+          "title": "Activated at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "recommended_action": {
+          "$ref": "#/definitions/ActivationAction"
+        },
+        "fallback_action": {
+          "$ref": "#/definitions/ActivationAction"
+        },
+        "progress": {
+          "$ref": "#/definitions/ActivationProgress"
+        },
+        "signals": {
+          "$ref": "#/definitions/ActivationSignals"
+        },
+        "available_goals": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AvailableGoal"
+          }
+        },
+        "available_paths": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/AvailablePath"
+          }
+        },
+        "journey_plan": {
+          "$ref": "#/definitions/ActivationJourneyPlan"
+        },
+        "sample_project": {
+          "$ref": "#/definitions/SampleProjectState"
+        },
+        "prompt": {
+          "$ref": "#/definitions/ActivationPromptState"
+        },
+        "agent": {
+          "$ref": "#/definitions/ActivationAgentState"
+        },
+        "eval": {
+          "$ref": "#/definitions/ActivationEvalState"
+        },
+        "voice": {
+          "$ref": "#/definitions/ActivationVoiceState"
+        },
+        "gateway": {
+          "$ref": "#/definitions/ActivationGatewayState"
+        },
+        "lifecycle": {
+          "$ref": "#/definitions/LifecyclePreview"
+        },
+        "daily_quality": {
+          "$ref": "#/definitions/DailyQualityState"
+        },
+        "email_eligibility": {
+          "$ref": "#/definitions/LifecycleEligibility"
+        },
+        "permissions": {
+          "$ref": "#/definitions/ActivationPermissions"
+        },
+        "feature_flags": {
+          "title": "Feature flags",
+          "type": "object",
+          "additionalProperties": {
+            "type": "boolean"
+          }
+        },
+        "route_availability": {
+          "$ref": "#/definitions/RouteAvailability"
+        },
+        "email_context": {
+          "$ref": "#/definitions/ActivationEmailContext"
+        },
+        "last_meaningful_event": {
+          "$ref": "#/definitions/ActivationMeaningfulEvent"
+        },
+        "value_signal": {
+          "$ref": "#/definitions/ActivationValueSignal"
+        },
+        "diagnostics": {
+          "$ref": "#/definitions/ActivationDiagnostics"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
@@ -79028,7 +81005,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "metadata": {
           "title": "Metadata",
-          "type": "object"
+          "type": "object",
+          "x-nullable": true
         },
         "log_id": {
           "title": "Log id",
@@ -79153,7 +81131,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
             ]
           }
         },
+        "eval_type_not": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "llm",
+              "code",
+              "agent"
+            ]
+          }
+        },
         "output_type": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "pass_fail",
+              "percentage",
+              "deterministic"
+            ]
+          }
+        },
+        "output_type_not": {
           "type": "array",
           "items": {
             "type": "string",
@@ -79174,7 +81174,24 @@ export const OPENAPI_CONTRACT = Object.freeze({
             ]
           }
         },
+        "template_type_not": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "single",
+              "composite"
+            ]
+          }
+        },
         "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "tags_not": {
           "type": "array",
           "items": {
             "type": "string",
@@ -79188,7 +81205,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "minLength": 1
           }
         },
+        "created_by_not": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
         "names": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "names_not": {
           "type": "array",
           "items": {
             "type": "string",
@@ -79369,6 +81400,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "criteria": {
           "title": "Criteria",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "EvalTaskMessageResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
           "type": "string",
           "minLength": 1
         }
@@ -81156,6 +83200,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Model",
           "type": "string",
           "minLength": 1
+        },
+        "request_id": {
+          "title": "Request id",
+          "type": "string"
         },
         "blocked": {
           "title": "Blocked",
@@ -83540,6 +85588,178 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "NotificationChannelTestResult": {
+      "required": [
+        "channel"
+      ],
+      "type": "object",
+      "properties": {
+        "channel": {
+          "$ref": "#/definitions/NotificationChannel"
+        }
+      }
+    },
+    "NotificationChannelPatchItem": {
+      "required": [
+        "type",
+        "display_name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "title": "Scope",
+          "type": "string",
+          "enum": [
+            "organization",
+            "workspace"
+          ],
+          "default": "workspace"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "email_list",
+            "slack_webhook",
+            "webhook"
+          ]
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string",
+          "maxLength": 120,
+          "minLength": 1
+        },
+        "config": {
+          "title": "Config",
+          "type": "object"
+        },
+        "is_active": {
+          "title": "Is active",
+          "type": "boolean",
+          "default": true
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object"
+        }
+      }
+    },
+    "NotificationPreferencePatchItem": {
+      "required": [
+        "family",
+        "channel",
+        "enabled"
+      ],
+      "type": "object",
+      "properties": {
+        "scope": {
+          "title": "Scope",
+          "type": "string",
+          "enum": [
+            "organization",
+            "workspace",
+            "user",
+            "user_workspace"
+          ],
+          "default": "user"
+        },
+        "family": {
+          "title": "Family",
+          "type": "string",
+          "enum": [
+            "product_onboarding",
+            "daily_quality_digest",
+            "usage_budget",
+            "gateway_alert",
+            "observe_monitor",
+            "eval_quality_alert",
+            "workspace_admin"
+          ]
+        },
+        "channel": {
+          "title": "Channel",
+          "type": "string",
+          "enum": [
+            "email",
+            "slack",
+            "webhook"
+          ]
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "mute_until": {
+          "title": "Mute until",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "frequency_cap_minutes": {
+          "title": "Frequency cap minutes",
+          "type": "integer",
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "settings": {
+          "title": "Settings",
+          "type": "object"
+        }
+      }
+    },
+    "NotificationSettingsResult": {
+      "required": [
+        "families",
+        "channels",
+        "preferences",
+        "decisions",
+        "delivery_logs",
+        "can_manage_workspace"
+      ],
+      "type": "object",
+      "properties": {
+        "families": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NotificationFamily"
+          }
+        },
+        "channels": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NotificationChannel"
+          }
+        },
+        "preferences": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NotificationPreference"
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NotificationDecision"
+          }
+        },
+        "delivery_logs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/NotificationDeliveryLog"
+          }
+        },
+        "can_manage_workspace": {
+          "title": "Can manage workspace",
+          "type": "boolean"
+        }
+      }
+    },
     "OTLPPartialSuccess": {
       "type": "object",
       "properties": {
@@ -83568,6 +85788,198 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "array",
           "items": {
             "$ref": "#/definitions/ObserveGraphDataPoint"
+          }
+        }
+      }
+    },
+    "OnboardingActivationFactReceiptResult": {
+      "required": [
+        "receipt_id",
+        "created",
+        "idempotency_key",
+        "workspace_id",
+        "activation_stage",
+        "primary_path",
+        "cohort_keys"
+      ],
+      "type": "object",
+      "properties": {
+        "receipt_id": {
+          "title": "Receipt id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "created": {
+          "title": "Created",
+          "type": "boolean"
+        },
+        "idempotency_key": {
+          "title": "Idempotency key",
+          "type": "string",
+          "minLength": 1
+        },
+        "workspace_id": {
+          "title": "Workspace id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "activation_stage": {
+          "title": "Activation stage",
+          "type": "string",
+          "minLength": 1
+        },
+        "primary_path": {
+          "title": "Primary path",
+          "type": "string",
+          "minLength": 1
+        },
+        "cohort_keys": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "OnboardingLifecycleDigestPromotionSource": {
+      "required": [
+        "source_type",
+        "source_id"
+      ],
+      "type": "object",
+      "properties": {
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "enum": [
+            "evaluation_log",
+            "send_log"
+          ]
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "OnboardingLifecycleDigestPromotionResult": {
+      "required": [
+        "generated_at",
+        "environment",
+        "campaign_key",
+        "scope_type",
+        "dry_run",
+        "promoted_count",
+        "skipped_count",
+        "created_count",
+        "updated_count",
+        "entries",
+        "skipped"
+      ],
+      "type": "object",
+      "properties": {
+        "generated_at": {
+          "title": "Generated at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "environment": {
+          "title": "Environment",
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_key": {
+          "title": "Campaign key",
+          "type": "string",
+          "minLength": 1
+        },
+        "scope_type": {
+          "title": "Scope type",
+          "type": "string",
+          "enum": [
+            "user",
+            "workspace"
+          ]
+        },
+        "dry_run": {
+          "title": "Dry run",
+          "type": "boolean"
+        },
+        "promoted_count": {
+          "title": "Promoted count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped_count": {
+          "title": "Skipped count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "created_count": {
+          "title": "Created count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "updated_count": {
+          "title": "Updated count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OnboardingLifecycleDigestPromotionEntry"
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OnboardingLifecycleDigestPromotionSkipped"
+          }
+        }
+      }
+    },
+    "OnboardingLifecycleDigestReviewResult": {
+      "required": [
+        "generated_at",
+        "limit",
+        "count",
+        "items"
+      ],
+      "type": "object",
+      "properties": {
+        "generated_at": {
+          "title": "Generated at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "limit": {
+          "title": "Limit",
+          "type": "integer",
+          "maximum": 100,
+          "minimum": 1
+        },
+        "campaign_key": {
+          "title": "Campaign key",
+          "type": "string"
+        },
+        "count": {
+          "title": "Count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OnboardingLifecycleDigestReviewItem"
           }
         }
       }
@@ -86998,6 +89410,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SampleProjectResponse": {
+      "required": [
+        "sample_project",
+        "activation_state"
+      ],
+      "type": "object",
+      "properties": {
+        "sample_project": {
+          "$ref": "#/definitions/SampleProjectState"
+        },
+        "activation_state": {
+          "$ref": "#/definitions/ActivationStateResponse"
+        }
+      }
+    },
     "SavedViewDetail": {
       "required": [
         "name",
@@ -88387,6 +90814,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TestTraceResponse": {
+      "required": [
+        "trace_id",
+        "project_id",
+        "created",
+        "activation_state"
+      ],
+      "type": "object",
+      "properties": {
+        "trace_id": {
+          "title": "Trace id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "project_id": {
+          "title": "Project id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "created": {
+          "title": "Created",
+          "type": "boolean"
+        },
+        "activation_state": {
+          "$ref": "#/definitions/ActivationStateResponse"
+        }
+      }
+    },
     "ToolDiscoveryResult": {
       "type": "object",
       "properties": {
@@ -88915,6 +91370,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "UsageBudgetThreshold": {
+      "required": [
+        "percent"
+      ],
+      "type": "object",
+      "properties": {
+        "percent": {
+          "title": "Percent",
+          "type": "integer"
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "UsageBudgetMutationResult": {
       "required": [
         "id",
@@ -88947,6 +91423,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Action",
           "type": "string",
           "minLength": 1
+        },
+        "notify_slack_webhook": {
+          "title": "Notify slack webhook",
+          "type": "string",
+          "format": "uri",
+          "x-nullable": true
+        },
+        "thresholds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UsageBudgetThreshold"
+          }
         },
         "is_active": {
           "title": "Is active",
@@ -89920,6 +92408,2914 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       },
       "x-nullable": true
+    },
+    "ActivationAction": {
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "description",
+        "href",
+        "cta_label",
+        "priority",
+        "blocked",
+        "route_available",
+        "fallback_href",
+        "analytics"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string",
+          "enum": [
+            "choose_goal",
+            "setup",
+            "send_signal",
+            "review",
+            "improve",
+            "sample_project",
+            "request_access",
+            "fallback",
+            "daily_quality",
+            "adjacent_loop"
+          ]
+        },
+        "title": {
+          "title": "Title",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        },
+        "href": {
+          "title": "Href",
+          "type": "string",
+          "x-nullable": true
+        },
+        "cta_label": {
+          "title": "Cta label",
+          "type": "string",
+          "minLength": 1
+        },
+        "estimated_minutes": {
+          "title": "Estimated minutes",
+          "type": "integer",
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "priority": {
+          "title": "Priority",
+          "type": "integer"
+        },
+        "blocked": {
+          "title": "Blocked",
+          "type": "boolean"
+        },
+        "blocked_reason": {
+          "title": "Blocked reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "requires_permission": {
+          "title": "Requires permission",
+          "type": "string",
+          "x-nullable": true
+        },
+        "completion_event": {
+          "title": "Completion event",
+          "type": "string",
+          "x-nullable": true
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "route_available": {
+          "title": "Route available",
+          "type": "boolean"
+        },
+        "fallback_href": {
+          "title": "Fallback href",
+          "type": "string",
+          "minLength": 1
+        },
+        "analytics": {
+          "$ref": "#/definitions/ActivationAnalytics"
+        }
+      },
+      "x-nullable": true
+    },
+    "ActivationAgentState": {
+      "required": [
+        "stage",
+        "has_agent",
+        "has_agent_version",
+        "has_step",
+        "has_scenario",
+        "has_run",
+        "has_review",
+        "has_eval_coverage"
+      ],
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "title": "Agent id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_source": {
+          "title": "Agent source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_version_id": {
+          "title": "Agent version id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "scenario_id": {
+          "title": "Scenario id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "test_id": {
+          "title": "Test id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "execution_id": {
+          "title": "Execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "call_execution_id": {
+          "title": "Call execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "graph_execution_id": {
+          "title": "Graph execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "run_status": {
+          "title": "Run status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "run_completed_at": {
+          "title": "Run completed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ]
+        },
+        "has_agent": {
+          "title": "Has agent",
+          "type": "boolean"
+        },
+        "has_agent_version": {
+          "title": "Has agent version",
+          "type": "boolean"
+        },
+        "has_step": {
+          "title": "Has step",
+          "type": "boolean"
+        },
+        "has_scenario": {
+          "title": "Has scenario",
+          "type": "boolean"
+        },
+        "has_run": {
+          "title": "Has run",
+          "type": "boolean"
+        },
+        "has_review": {
+          "title": "Has review",
+          "type": "boolean"
+        },
+        "has_eval_coverage": {
+          "title": "Has eval coverage",
+          "type": "boolean"
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "sample_agent_count": {
+          "title": "Sample agent count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "voice_feature_unavailable": {
+          "title": "Voice feature unavailable",
+          "type": "boolean",
+          "default": false
+        },
+        "permission_limited": {
+          "title": "Permission limited",
+          "type": "boolean",
+          "default": false
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "x-nullable": true
+    },
+    "ActivationDiagnostics": {
+      "required": [
+        "resolver_version",
+        "decision_reason",
+        "matched_rule",
+        "candidate_actions",
+        "suppressed_actions",
+        "evaluated_at"
+      ],
+      "type": "object",
+      "properties": {
+        "resolver_version": {
+          "title": "Resolver version",
+          "type": "string",
+          "minLength": 1
+        },
+        "decision_reason": {
+          "title": "Decision reason",
+          "type": "string",
+          "minLength": 1
+        },
+        "matched_rule": {
+          "title": "Matched rule",
+          "type": "string",
+          "minLength": 1
+        },
+        "candidate_actions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "suppressed_actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActivationDiagnosticsSuppressedAction"
+          }
+        },
+        "evaluated_at": {
+          "title": "Evaluated at",
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "x-nullable": true
+    },
+    "ActivationEmailContext": {
+      "required": [
+        "context_status",
+        "resolved_href"
+      ],
+      "type": "object",
+      "properties": {
+        "campaign_key": {
+          "title": "Campaign key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "email_key": {
+          "title": "Email key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "send_log_id": {
+          "title": "Send log id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "email_status": {
+          "title": "Email status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "link_issued_at": {
+          "title": "Link issued at",
+          "type": "string",
+          "x-nullable": true
+        },
+        "target_stage": {
+          "title": "Target stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ],
+          "x-nullable": true
+        },
+        "target_event": {
+          "title": "Target event",
+          "type": "string",
+          "x-nullable": true
+        },
+        "target_route": {
+          "title": "Target route",
+          "type": "string",
+          "x-nullable": true
+        },
+        "context_status": {
+          "title": "Context status",
+          "type": "string",
+          "enum": [
+            "current",
+            "stale",
+            "expired",
+            "invalid",
+            "complete",
+            "route_unavailable"
+          ]
+        },
+        "stale_reason": {
+          "title": "Stale reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "resolved_href": {
+          "title": "Resolved href",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "x-nullable": true
+    },
+    "ActivationEvalState": {
+      "required": [
+        "stage"
+      ],
+      "type": "object",
+      "properties": {
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "source_name": {
+          "title": "Source name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "scorer_id": {
+          "title": "Scorer id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "scorer_template_id": {
+          "title": "Scorer template id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "scorer_name": {
+          "title": "Scorer name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_group_id": {
+          "title": "Eval group id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "run_id": {
+          "title": "Run id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "run_status": {
+          "title": "Run status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "run_completed_at": {
+          "title": "Run completed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "failure_count": {
+          "title": "Failure count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "reviewed_at": {
+          "title": "Reviewed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "failure_action_at": {
+          "title": "Failure action at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ]
+        },
+        "has_source": {
+          "title": "Has source",
+          "type": "boolean",
+          "default": false
+        },
+        "has_scorer": {
+          "title": "Has scorer",
+          "type": "boolean",
+          "default": false
+        },
+        "has_completed_run": {
+          "title": "Has completed run",
+          "type": "boolean",
+          "default": false
+        },
+        "has_failures": {
+          "title": "Has failures",
+          "type": "boolean",
+          "default": false
+        },
+        "has_review": {
+          "title": "Has review",
+          "type": "boolean",
+          "default": false
+        },
+        "has_failure_action": {
+          "title": "Has failure action",
+          "type": "boolean",
+          "default": false
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "sample_source_count": {
+          "title": "Sample source count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "permission_limited": {
+          "title": "Permission limited",
+          "type": "boolean",
+          "default": false
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "x-nullable": true
+    },
+    "ActivationGatewayState": {
+      "required": [
+        "gateway_available",
+        "stage"
+      ],
+      "type": "object",
+      "properties": {
+        "gateway_available": {
+          "title": "Gateway available",
+          "type": "boolean"
+        },
+        "gateway_id": {
+          "title": "Gateway id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_status": {
+          "title": "Gateway status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_public_url": {
+          "title": "Gateway public url",
+          "type": "string",
+          "x-nullable": true
+        },
+        "provider_count": {
+          "title": "Provider count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "provider_credential_id": {
+          "title": "Provider credential id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "provider_name": {
+          "title": "Provider name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "provider_health_status": {
+          "title": "Provider health status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "provider_model_count": {
+          "title": "Provider model count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "has_provider": {
+          "title": "Has provider",
+          "type": "boolean",
+          "default": false
+        },
+        "has_key": {
+          "title": "Has key",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_key_id": {
+          "title": "Gateway key id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "key_prefix": {
+          "title": "Key prefix",
+          "type": "string",
+          "x-nullable": true
+        },
+        "key_status": {
+          "title": "Key status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "has_request": {
+          "title": "Has request",
+          "type": "boolean",
+          "default": false
+        },
+        "request_log_id": {
+          "title": "Request log id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "request_id": {
+          "title": "Request id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "request_status_code": {
+          "title": "Request status code",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "request_is_error": {
+          "title": "Request is error",
+          "type": "boolean",
+          "default": false
+        },
+        "request_error_message": {
+          "title": "Request error message",
+          "type": "string",
+          "x-nullable": true
+        },
+        "request_provider": {
+          "title": "Request provider",
+          "type": "string",
+          "x-nullable": true
+        },
+        "request_model": {
+          "title": "Request model",
+          "type": "string",
+          "x-nullable": true
+        },
+        "request_resolved_model": {
+          "title": "Request resolved model",
+          "type": "string",
+          "x-nullable": true
+        },
+        "request_latency_ms": {
+          "title": "Request latency ms",
+          "type": "integer",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "request_cost": {
+          "title": "Request cost",
+          "type": "string",
+          "x-nullable": true
+        },
+        "request_cache_hit": {
+          "title": "Request cache hit",
+          "type": "boolean",
+          "default": false
+        },
+        "request_fallback_used": {
+          "title": "Request fallback used",
+          "type": "boolean",
+          "default": false
+        },
+        "request_guardrail_triggered": {
+          "title": "Request guardrail triggered",
+          "type": "boolean",
+          "default": false
+        },
+        "has_review": {
+          "title": "Has review",
+          "type": "boolean",
+          "default": false
+        },
+        "reviewed_at": {
+          "title": "Reviewed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "has_failure_repair": {
+          "title": "Has failure repair",
+          "type": "boolean",
+          "default": false
+        },
+        "has_policy": {
+          "title": "Has policy",
+          "type": "boolean",
+          "default": false
+        },
+        "policy_type": {
+          "title": "Policy type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "policy_id": {
+          "title": "Policy id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "policy_route": {
+          "title": "Policy route",
+          "type": "string",
+          "x-nullable": true
+        },
+        "policy_synced": {
+          "title": "Policy synced",
+          "type": "boolean",
+          "default": false
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "sample_request_count": {
+          "title": "Sample request count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "permission_limited": {
+          "title": "Permission limited",
+          "type": "boolean",
+          "default": false
+        },
+        "guard_blocked": {
+          "title": "Guard blocked",
+          "type": "boolean",
+          "default": false
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ]
+        }
+      },
+      "x-nullable": true
+    },
+    "ActivationJourneyPlan": {
+      "required": [
+        "id",
+        "primary_path",
+        "eyebrow",
+        "title",
+        "description",
+        "chips",
+        "current_step_id",
+        "current_step_index",
+        "steps"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "primary_path": {
+          "title": "Primary path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ]
+        },
+        "eyebrow": {
+          "title": "Eyebrow",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "title": "Title",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        },
+        "chips": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "current_step_id": {
+          "title": "Current step id",
+          "type": "string",
+          "minLength": 1
+        },
+        "current_step_index": {
+          "title": "Current step index",
+          "type": "integer",
+          "minimum": 0
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActivationJourneyStep"
+          }
+        }
+      }
+    },
+    "ActivationMeaningfulEvent": {
+      "required": [
+        "name",
+        "occurred_at"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "occurred_at": {
+          "title": "Occurred at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "path": {
+          "title": "Path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ],
+          "x-nullable": true
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "x-nullable": true
+          }
+        }
+      },
+      "x-nullable": true
+    },
+    "ActivationPermissions": {
+      "required": [
+        "role",
+        "can_read",
+        "can_write",
+        "can_manage_workspace",
+        "missing_permissions",
+        "permission_limited"
+      ],
+      "type": "object",
+      "properties": {
+        "role": {
+          "title": "Role",
+          "type": "string",
+          "x-nullable": true
+        },
+        "can_read": {
+          "title": "Can read",
+          "type": "boolean"
+        },
+        "can_write": {
+          "title": "Can write",
+          "type": "boolean"
+        },
+        "can_manage_workspace": {
+          "title": "Can manage workspace",
+          "type": "boolean"
+        },
+        "missing_permissions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "request_access_href": {
+          "title": "Request access href",
+          "type": "string",
+          "x-nullable": true
+        },
+        "permission_limited": {
+          "title": "Permission limited",
+          "type": "boolean"
+        }
+      }
+    },
+    "ActivationProgress": {
+      "required": [
+        "build",
+        "test",
+        "observe",
+        "ship",
+        "improve"
+      ],
+      "type": "object",
+      "properties": {
+        "build": {
+          "title": "Build",
+          "type": "string",
+          "enum": [
+            "not_started",
+            "available",
+            "selected",
+            "in_progress",
+            "blocked",
+            "complete",
+            "sample_only"
+          ]
+        },
+        "test": {
+          "title": "Test",
+          "type": "string",
+          "enum": [
+            "not_started",
+            "available",
+            "selected",
+            "in_progress",
+            "blocked",
+            "complete",
+            "sample_only"
+          ]
+        },
+        "observe": {
+          "title": "Observe",
+          "type": "string",
+          "enum": [
+            "not_started",
+            "available",
+            "selected",
+            "in_progress",
+            "blocked",
+            "complete",
+            "sample_only"
+          ]
+        },
+        "ship": {
+          "title": "Ship",
+          "type": "string",
+          "enum": [
+            "not_started",
+            "available",
+            "selected",
+            "in_progress",
+            "blocked",
+            "complete",
+            "sample_only"
+          ]
+        },
+        "improve": {
+          "title": "Improve",
+          "type": "string",
+          "enum": [
+            "not_started",
+            "available",
+            "selected",
+            "in_progress",
+            "blocked",
+            "complete",
+            "sample_only"
+          ]
+        }
+      }
+    },
+    "ActivationPromptState": {
+      "required": [
+        "stage",
+        "has_real_prompt",
+        "has_test_run",
+        "has_committed_version",
+        "has_comparison",
+        "has_next_loop_action"
+      ],
+      "type": "object",
+      "properties": {
+        "prompt_id": {
+          "title": "Prompt id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "prompt_name": {
+          "title": "Prompt name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ]
+        },
+        "has_real_prompt": {
+          "title": "Has real prompt",
+          "type": "boolean"
+        },
+        "has_test_run": {
+          "title": "Has test run",
+          "type": "boolean"
+        },
+        "has_committed_version": {
+          "title": "Has committed version",
+          "type": "boolean"
+        },
+        "has_comparable_versions": {
+          "title": "Has comparable versions",
+          "type": "boolean",
+          "default": false
+        },
+        "has_comparison": {
+          "title": "Has comparison",
+          "type": "boolean"
+        },
+        "has_next_loop_action": {
+          "title": "Has next loop action",
+          "type": "boolean"
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "sample_prompt_count": {
+          "title": "Sample prompt count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "x-nullable": true
+    },
+    "ActivationSignals": {
+      "type": "object",
+      "properties": {
+        "provider_keys": {
+          "title": "Provider keys",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "datasets": {
+          "title": "Datasets",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "evals": {
+          "title": "Evals",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "eval_runs": {
+          "title": "Eval runs",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "eval_source_count": {
+          "title": "Eval source count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "eval_source_type": {
+          "title": "Eval source type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_source_id": {
+          "title": "Eval source id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_source_name": {
+          "title": "Eval source name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_scorer_count": {
+          "title": "Eval scorer count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "eval_scorer_id": {
+          "title": "Eval scorer id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_scorer_template_id": {
+          "title": "Eval scorer template id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_scorer_name": {
+          "title": "Eval scorer name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_group_count": {
+          "title": "Eval group count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "eval_group_id": {
+          "title": "Eval group id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_run_count": {
+          "title": "Eval run count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "eval_run_id": {
+          "title": "Eval run id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_run_status": {
+          "title": "Eval run status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_run_completed_at": {
+          "title": "Eval run completed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "eval_failure_count": {
+          "title": "Eval failure count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "eval_has_source": {
+          "title": "Eval has source",
+          "type": "boolean",
+          "default": false
+        },
+        "eval_has_scorer": {
+          "title": "Eval has scorer",
+          "type": "boolean",
+          "default": false
+        },
+        "eval_has_completed_run": {
+          "title": "Eval has completed run",
+          "type": "boolean",
+          "default": false
+        },
+        "eval_has_failures": {
+          "title": "Eval has failures",
+          "type": "boolean",
+          "default": false
+        },
+        "eval_has_review": {
+          "title": "Eval has review",
+          "type": "boolean",
+          "default": false
+        },
+        "eval_has_failure_action": {
+          "title": "Eval has failure action",
+          "type": "boolean",
+          "default": false
+        },
+        "eval_first_loop_completed": {
+          "title": "Eval first loop completed",
+          "type": "boolean",
+          "default": false
+        },
+        "eval_is_sample_only": {
+          "title": "Eval is sample only",
+          "type": "boolean",
+          "default": false
+        },
+        "eval_sample_source_count": {
+          "title": "Eval sample source count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "eval_permission_limited": {
+          "title": "Eval permission limited",
+          "type": "boolean",
+          "default": false
+        },
+        "prompt_templates": {
+          "title": "Prompt templates",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "prompt_versions": {
+          "title": "Prompt versions",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "prompt_comparisons": {
+          "title": "Prompt comparisons",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "first_prompt_id": {
+          "title": "First prompt id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "latest_prompt_id": {
+          "title": "Latest prompt id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "prompt_sample_templates": {
+          "title": "Prompt sample templates",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "prompt_comparable_versions_exist": {
+          "title": "Prompt comparable versions exist",
+          "type": "boolean",
+          "default": false
+        },
+        "prompt_run_exists": {
+          "title": "Prompt run exists",
+          "type": "boolean",
+          "default": false
+        },
+        "prompt_committed_version_exists": {
+          "title": "Prompt committed version exists",
+          "type": "boolean",
+          "default": false
+        },
+        "prompt_comparison_completed": {
+          "title": "Prompt comparison completed",
+          "type": "boolean",
+          "default": false
+        },
+        "prompt_next_loop_action_exists": {
+          "title": "Prompt next loop action exists",
+          "type": "boolean",
+          "default": false
+        },
+        "prompt_first_loop_completed": {
+          "title": "Prompt first loop completed",
+          "type": "boolean",
+          "default": false
+        },
+        "agents": {
+          "title": "Agents",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "agent_prototype_runs": {
+          "title": "Agent prototype runs",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "agent_id": {
+          "title": "Agent id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_source": {
+          "title": "Agent source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_version_id": {
+          "title": "Agent version id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_scenario_id": {
+          "title": "Agent scenario id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_test_id": {
+          "title": "Agent test id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_execution_id": {
+          "title": "Agent execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_call_execution_id": {
+          "title": "Agent call execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_graph_execution_id": {
+          "title": "Agent graph execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_run_status": {
+          "title": "Agent run status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_sample_count": {
+          "title": "Agent sample count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "agent_has_agent": {
+          "title": "Agent has agent",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_agent_version": {
+          "title": "Agent has agent version",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_step": {
+          "title": "Agent has step",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_scenario": {
+          "title": "Agent has scenario",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_run": {
+          "title": "Agent has run",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_run_failed": {
+          "title": "Agent run failed",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_review": {
+          "title": "Agent has review",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_has_eval_coverage": {
+          "title": "Agent has eval coverage",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_multiple_scenarios": {
+          "title": "Agent multiple scenarios",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_first_loop_completed": {
+          "title": "Agent first loop completed",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_voice_feature_unavailable": {
+          "title": "Agent voice feature unavailable",
+          "type": "boolean",
+          "default": false
+        },
+        "agent_permission_limited": {
+          "title": "Agent permission limited",
+          "type": "boolean",
+          "default": false
+        },
+        "observe_projects": {
+          "title": "Observe projects",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "traces": {
+          "title": "Traces",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "trace_reviews": {
+          "title": "Trace reviews",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "gateway_keys": {
+          "title": "Gateway keys",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "gateway_requests": {
+          "title": "Gateway requests",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "gateway_policies": {
+          "title": "Gateway policies",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "gateway_available": {
+          "title": "Gateway available",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_id": {
+          "title": "Gateway id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_status": {
+          "title": "Gateway status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_public_url": {
+          "title": "Gateway public url",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_provider_count": {
+          "title": "Gateway provider count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "gateway_provider_credential_id": {
+          "title": "Gateway provider credential id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_provider_name": {
+          "title": "Gateway provider name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_provider_health_status": {
+          "title": "Gateway provider health status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_provider_model_count": {
+          "title": "Gateway provider model count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "gateway_has_provider": {
+          "title": "Gateway has provider",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_has_key": {
+          "title": "Gateway has key",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_key_id": {
+          "title": "Gateway key id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_key_prefix": {
+          "title": "Gateway key prefix",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_key_status": {
+          "title": "Gateway key status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_has_request": {
+          "title": "Gateway has request",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_request_log_id": {
+          "title": "Gateway request log id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_request_id": {
+          "title": "Gateway request id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_request_status_code": {
+          "title": "Gateway request status code",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "gateway_request_is_error": {
+          "title": "Gateway request is error",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_request_error_message": {
+          "title": "Gateway request error message",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_request_provider": {
+          "title": "Gateway request provider",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_request_model": {
+          "title": "Gateway request model",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_request_resolved_model": {
+          "title": "Gateway request resolved model",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_request_latency_ms": {
+          "title": "Gateway request latency ms",
+          "type": "integer",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "gateway_request_cost": {
+          "title": "Gateway request cost",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_request_cache_hit": {
+          "title": "Gateway request cache hit",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_request_fallback_used": {
+          "title": "Gateway request fallback used",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_request_guardrail_triggered": {
+          "title": "Gateway request guardrail triggered",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_has_review": {
+          "title": "Gateway has review",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_reviewed_at": {
+          "title": "Gateway reviewed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "gateway_has_failure_repair": {
+          "title": "Gateway has failure repair",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_has_policy": {
+          "title": "Gateway has policy",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_policy_type": {
+          "title": "Gateway policy type",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_policy_id": {
+          "title": "Gateway policy id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_policy_route": {
+          "title": "Gateway policy route",
+          "type": "string",
+          "x-nullable": true
+        },
+        "gateway_policy_synced": {
+          "title": "Gateway policy synced",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_is_sample_only": {
+          "title": "Gateway is sample only",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_sample_request_count": {
+          "title": "Gateway sample request count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "gateway_permission_limited": {
+          "title": "Gateway permission limited",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_guard_blocked": {
+          "title": "Gateway guard blocked",
+          "type": "boolean",
+          "default": false
+        },
+        "gateway_first_loop_completed": {
+          "title": "Gateway first loop completed",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_agents": {
+          "title": "Voice agents",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "voice_simulations": {
+          "title": "Voice simulations",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "voice_calls": {
+          "title": "Voice calls",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "voice_reviews": {
+          "title": "Voice reviews",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "voice_agent_id": {
+          "title": "Voice agent id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "voice_agent_name": {
+          "title": "Voice agent name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "voice_agent_provider": {
+          "title": "Voice agent provider",
+          "type": "string",
+          "x-nullable": true
+        },
+        "voice_agent_version_id": {
+          "title": "Voice agent version id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "voice_scenario_id": {
+          "title": "Voice scenario id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "voice_run_test_id": {
+          "title": "Voice run test id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "voice_test_execution_id": {
+          "title": "Voice test execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "voice_call_execution_id": {
+          "title": "Voice call execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "voice_call_status": {
+          "title": "Voice call status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "voice_call_completed_at": {
+          "title": "Voice call completed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "voice_call_duration_seconds": {
+          "title": "Voice call duration seconds",
+          "type": "integer",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "voice_call_response_time_ms": {
+          "title": "Voice call response time ms",
+          "type": "integer",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "voice_call_interruption_count": {
+          "title": "Voice call interruption count",
+          "type": "integer",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "voice_transcript_available": {
+          "title": "Voice transcript available",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_recording_available": {
+          "title": "Voice recording available",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_has_agent": {
+          "title": "Voice has agent",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_has_scenario": {
+          "title": "Voice has scenario",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_has_test": {
+          "title": "Voice has test",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_has_call": {
+          "title": "Voice has call",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_has_completed_call": {
+          "title": "Voice has completed call",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_call_failed": {
+          "title": "Voice call failed",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_has_review": {
+          "title": "Voice has review",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_has_success_criteria": {
+          "title": "Voice has success criteria",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_first_loop_completed": {
+          "title": "Voice first loop completed",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_is_sample_only": {
+          "title": "Voice is sample only",
+          "type": "boolean",
+          "default": false
+        },
+        "voice_sample_call_count": {
+          "title": "Voice sample call count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "voice_permission_limited": {
+          "title": "Voice permission limited",
+          "type": "boolean",
+          "default": false
+        },
+        "team_invites": {
+          "title": "Team invites",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "dashboards": {
+          "title": "Dashboards",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "alerts": {
+          "title": "Alerts",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "first_trace_id": {
+          "title": "First trace id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "first_observe_id": {
+          "title": "First observe id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "sample_project_opened": {
+          "title": "Sample project opened",
+          "type": "boolean",
+          "default": false
+        },
+        "sample_trace_available": {
+          "title": "Sample trace available",
+          "type": "boolean",
+          "default": false
+        },
+        "sample_signal_viewed": {
+          "title": "Sample signal viewed",
+          "type": "boolean",
+          "default": false
+        },
+        "sample_trace_reviewed": {
+          "title": "Sample trace reviewed",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "ActivationStageCopy": {
+      "required": [
+        "eyebrow",
+        "title",
+        "description"
+      ],
+      "type": "object",
+      "properties": {
+        "eyebrow": {
+          "title": "Eyebrow",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "title": "Title",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ActivationValueSignal": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string",
+          "enum": [
+            "observe_trace_metrics",
+            "prompt_quality_loop",
+            "agent_quality_loop",
+            "gateway_routing_loop",
+            "eval_quality_loop",
+            "voice_quality_loop"
+          ],
+          "x-nullable": true
+        },
+        "headline": {
+          "title": "Headline",
+          "type": "string"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ActivationValueMetric"
+          }
+        },
+        "latency_ms": {
+          "title": "Latency ms",
+          "type": "integer",
+          "minimum": 0
+        },
+        "cost": {
+          "title": "Cost",
+          "type": "number",
+          "minimum": 0
+        },
+        "total_tokens": {
+          "title": "Total tokens",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "x-nullable": true
+    },
+    "ActivationVoiceState": {
+      "required": [
+        "stage"
+      ],
+      "type": "object",
+      "properties": {
+        "agent_id": {
+          "title": "Agent id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_name": {
+          "title": "Agent name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_provider": {
+          "title": "Agent provider",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_version_id": {
+          "title": "Agent version id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "scenario_id": {
+          "title": "Scenario id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "run_test_id": {
+          "title": "Run test id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "test_execution_id": {
+          "title": "Test execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "call_execution_id": {
+          "title": "Call execution id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "call_status": {
+          "title": "Call status",
+          "type": "string",
+          "x-nullable": true
+        },
+        "call_completed_at": {
+          "title": "Call completed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "call_duration_seconds": {
+          "title": "Call duration seconds",
+          "type": "integer",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "call_response_time_ms": {
+          "title": "Call response time ms",
+          "type": "integer",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "call_interruption_count": {
+          "title": "Call interruption count",
+          "type": "integer",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "transcript_available": {
+          "title": "Transcript available",
+          "type": "boolean",
+          "default": false
+        },
+        "recording_available": {
+          "title": "Recording available",
+          "type": "boolean",
+          "default": false
+        },
+        "reviewed_at": {
+          "title": "Reviewed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "success_criteria_at": {
+          "title": "Success criteria at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "eval_config_id": {
+          "title": "Eval config id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ]
+        },
+        "has_agent": {
+          "title": "Has agent",
+          "type": "boolean",
+          "default": false
+        },
+        "has_scenario": {
+          "title": "Has scenario",
+          "type": "boolean",
+          "default": false
+        },
+        "has_test": {
+          "title": "Has test",
+          "type": "boolean",
+          "default": false
+        },
+        "has_call": {
+          "title": "Has call",
+          "type": "boolean",
+          "default": false
+        },
+        "has_completed_call": {
+          "title": "Has completed call",
+          "type": "boolean",
+          "default": false
+        },
+        "call_failed": {
+          "title": "Call failed",
+          "type": "boolean",
+          "default": false
+        },
+        "has_review": {
+          "title": "Has review",
+          "type": "boolean",
+          "default": false
+        },
+        "has_success_criteria": {
+          "title": "Has success criteria",
+          "type": "boolean",
+          "default": false
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "sample_call_count": {
+          "title": "Sample call count",
+          "type": "integer",
+          "default": 0,
+          "minimum": 0
+        },
+        "permission_limited": {
+          "title": "Permission limited",
+          "type": "boolean",
+          "default": false
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "x-nullable": true
+    },
+    "AvailableGoal": {
+      "required": [
+        "id",
+        "goal",
+        "primary_path",
+        "label",
+        "description"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "goal": {
+          "title": "Goal",
+          "type": "string",
+          "enum": [
+            "monitor_production_ai_app",
+            "improve_prompts",
+            "build_ai_agent",
+            "control_model_traffic",
+            "evaluate_quality",
+            "connect_voice_ai_agent",
+            "explore_sample_data"
+          ]
+        },
+        "primary_path": {
+          "title": "Primary path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ]
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        },
+        "outcome_preview": {
+          "title": "Outcome preview",
+          "type": "string",
+          "x-nullable": true
+        },
+        "estimated_minutes": {
+          "title": "Estimated minutes",
+          "type": "integer",
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "disabled": {
+          "title": "Disabled",
+          "type": "boolean",
+          "default": false
+        },
+        "disabled_reason": {
+          "title": "Disabled reason",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "AvailablePath": {
+      "required": [
+        "id",
+        "label",
+        "description",
+        "status",
+        "href",
+        "is_available"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ]
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "available",
+            "selected",
+            "in_progress",
+            "blocked",
+            "complete",
+            "sample_only",
+            "hidden"
+          ]
+        },
+        "href": {
+          "title": "Href",
+          "type": "string",
+          "minLength": 1
+        },
+        "is_available": {
+          "title": "Is available",
+          "type": "boolean"
+        },
+        "blocked_reason": {
+          "title": "Blocked reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "requires_permission": {
+          "title": "Requires permission",
+          "type": "string",
+          "x-nullable": true
+        },
+        "first_action_id": {
+          "title": "First action id",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "DailyQualityState": {
+      "required": [
+        "mode",
+        "window",
+        "digest_eligible"
+      ],
+      "type": "object",
+      "properties": {
+        "mode": {
+          "title": "Mode",
+          "type": "string",
+          "enum": [
+            "new_signal",
+            "open_action",
+            "no_new_signal",
+            "permission_limited",
+            "unavailable"
+          ]
+        },
+        "last_reviewed_at": {
+          "title": "Last reviewed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "window": {
+          "$ref": "#/definitions/DailyQualityWindow"
+        },
+        "top_signal": {
+          "$ref": "#/definitions/DailyQualitySignal"
+        },
+        "primary_action": {
+          "$ref": "#/definitions/DailyQualityAction"
+        },
+        "action_cards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DailyQualityAction"
+          }
+        },
+        "product_cards": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DailyQualityProductCard"
+          }
+        },
+        "weekly_review": {
+          "$ref": "#/definitions/DailyQualityWeeklyReview"
+        },
+        "digest_eligible": {
+          "title": "Digest eligible",
+          "type": "boolean"
+        },
+        "digest_suppression_reason": {
+          "title": "Digest suppression reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "diagnostics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "x-nullable": true
+    },
+    "LifecycleEligibility": {
+      "required": [
+        "eligible",
+        "suppressed",
+        "digest_eligible",
+        "frequency_cap_remaining"
+      ],
+      "type": "object",
+      "properties": {
+        "eligible": {
+          "title": "Eligible",
+          "type": "boolean"
+        },
+        "suppressed": {
+          "title": "Suppressed",
+          "type": "boolean"
+        },
+        "suppression_reason": {
+          "title": "Suppression reason",
+          "type": "string",
+          "enum": [
+            "activated",
+            "target_event_complete",
+            "workspace_suppressed",
+            "user_unsubscribed",
+            "user_snoozed",
+            "sample_hidden",
+            "sample_not_allowed",
+            "route_unavailable",
+            "permission_limited",
+            "feature_disabled",
+            "dry_run_flag_off",
+            "send_flag_off",
+            "frequency_cap",
+            "frequency_cap_user_24h",
+            "frequency_cap_user_7d",
+            "frequency_cap_workspace_24h",
+            "frequency_cap_campaign_7d",
+            "wait_window_open",
+            "recent_goal_change",
+            "recent_same_task_activity",
+            "path_changed",
+            "missing_email",
+            "workspace_inactive",
+            "activation_state_error",
+            "no_matching_campaign",
+            "manual_pause",
+            "not_activated",
+            "sample_only",
+            "no_useful_signal",
+            "open_action",
+            "already_reviewed",
+            "frequency_capped",
+            "flag_disabled",
+            "preferences_blocked",
+            "missing_digest_preview"
+          ],
+          "x-nullable": true
+        },
+        "next_email_key": {
+          "title": "Next email key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "next_email_after": {
+          "title": "Next email after",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "digest_eligible": {
+          "title": "Digest eligible",
+          "type": "boolean"
+        },
+        "last_email_sent_at": {
+          "title": "Last email sent at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "frequency_cap_remaining": {
+          "title": "Frequency cap remaining",
+          "type": "integer",
+          "minimum": 0
+        },
+        "dry_run_only": {
+          "title": "Dry run only",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "LifecyclePreview": {
+      "required": [
+        "dry_run_enabled",
+        "status",
+        "suppressed"
+      ],
+      "type": "object",
+      "properties": {
+        "dry_run_enabled": {
+          "title": "Dry run enabled",
+          "type": "boolean"
+        },
+        "send_enabled": {
+          "title": "Send enabled",
+          "type": "boolean",
+          "default": false
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "eligible",
+            "suppressed",
+            "skipped",
+            "error"
+          ]
+        },
+        "next_campaign_key": {
+          "title": "Next campaign key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "template_key": {
+          "title": "Template key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eligible_at": {
+          "title": "Eligible at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "suppressed": {
+          "title": "Suppressed",
+          "type": "boolean"
+        },
+        "suppression_reason": {
+          "title": "Suppression reason",
+          "type": "string",
+          "enum": [
+            "activated",
+            "target_event_complete",
+            "workspace_suppressed",
+            "user_unsubscribed",
+            "user_snoozed",
+            "sample_hidden",
+            "sample_not_allowed",
+            "route_unavailable",
+            "permission_limited",
+            "feature_disabled",
+            "dry_run_flag_off",
+            "send_flag_off",
+            "frequency_cap",
+            "frequency_cap_user_24h",
+            "frequency_cap_user_7d",
+            "frequency_cap_workspace_24h",
+            "frequency_cap_campaign_7d",
+            "wait_window_open",
+            "recent_goal_change",
+            "recent_same_task_activity",
+            "path_changed",
+            "missing_email",
+            "workspace_inactive",
+            "activation_state_error",
+            "no_matching_campaign",
+            "manual_pause",
+            "not_activated",
+            "sample_only",
+            "no_useful_signal",
+            "open_action",
+            "already_reviewed",
+            "frequency_capped",
+            "flag_disabled",
+            "preferences_blocked",
+            "missing_digest_preview"
+          ],
+          "x-nullable": true
+        },
+        "target_success_event": {
+          "title": "Target success event",
+          "type": "string",
+          "x-nullable": true
+        },
+        "target_action_id": {
+          "title": "Target action id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "target_url": {
+          "title": "Target url",
+          "type": "string",
+          "x-nullable": true
+        },
+        "dry_run_only": {
+          "title": "Dry run only",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "x-nullable": true
+    },
+    "RouteAvailability": {
+      "type": "object",
+      "properties": {}
+    },
+    "SampleProjectState": {
+      "required": [
+        "available",
+        "created",
+        "status",
+        "href",
+        "version",
+        "is_hidden",
+        "entry_routes",
+        "missing_artifacts"
+      ],
+      "type": "object",
+      "properties": {
+        "available": {
+          "title": "Available",
+          "type": "boolean"
+        },
+        "created": {
+          "title": "Created",
+          "type": "boolean"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "not_created",
+            "unavailable",
+            "available",
+            "creating",
+            "ready_for_observe",
+            "partially_ready",
+            "ready",
+            "partial",
+            "hidden",
+            "stale_manifest",
+            "repair_required",
+            "repair_failed"
+          ]
+        },
+        "href": {
+          "title": "Href",
+          "type": "string",
+          "x-nullable": true
+        },
+        "version": {
+          "title": "Version",
+          "type": "string",
+          "x-nullable": true
+        },
+        "manifest_id": {
+          "title": "Manifest id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "manifest_version": {
+          "title": "Manifest version",
+          "type": "string",
+          "x-nullable": true
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "default": "Sample"
+        },
+        "entry_route": {
+          "title": "Entry route",
+          "type": "string",
+          "x-nullable": true
+        },
+        "is_repairable": {
+          "title": "Is repairable",
+          "type": "boolean",
+          "default": false
+        },
+        "blocked_reason": {
+          "title": "Blocked reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "artifact_refs": {
+          "title": "Artifact refs",
+          "type": "object"
+        },
+        "health": {
+          "title": "Health",
+          "type": "object"
+        },
+        "real_setup_href": {
+          "title": "Real setup href",
+          "type": "string",
+          "x-nullable": true
+        },
+        "is_hidden": {
+          "title": "Is hidden",
+          "type": "boolean"
+        },
+        "hidden_reason": {
+          "title": "Hidden reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "entry_routes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "missing_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "last_opened_at": {
+          "title": "Last opened at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        }
+      }
     },
     "OrganizationSummary": {
       "required": [
@@ -91289,6 +96685,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "properties": {
         "dataset_name": {
           "title": "Dataset name",
+          "type": "string",
+          "minLength": 1
+        },
+        "experiment_id": {
+          "title": "Experiment id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "experiment_name": {
+          "title": "Experiment name",
           "type": "string",
           "minLength": 1
         },
@@ -93517,6 +98923,116 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "IntegrationConnectionList": {
+      "required": [
+        "platform",
+        "display_name",
+        "host_url",
+        "external_project_name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "platform": {
+          "title": "Platform",
+          "type": "string",
+          "enum": [
+            "langfuse",
+            "datadog",
+            "posthog",
+            "pagerduty",
+            "mixpanel",
+            "cloud_storage",
+            "message_queue",
+            "linear"
+          ]
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "host_url": {
+          "title": "Host url",
+          "type": "string",
+          "format": "uri",
+          "maxLength": 500,
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "active",
+            "paused",
+            "error",
+            "syncing",
+            "backfilling"
+          ]
+        },
+        "status_message": {
+          "title": "Status message",
+          "type": "string",
+          "x-nullable": true
+        },
+        "external_project_name": {
+          "title": "External project name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "last_synced_at": {
+          "title": "Last synced at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "total_traces_synced": {
+          "title": "Total traces synced",
+          "type": "integer",
+          "maximum": 2147483647,
+          "minimum": 0
+        },
+        "total_spans_synced": {
+          "title": "Total spans synced",
+          "type": "integer",
+          "maximum": 2147483647,
+          "minimum": 0
+        },
+        "total_scores_synced": {
+          "title": "Total scores synced",
+          "type": "integer",
+          "maximum": 2147483647,
+          "minimum": 0
+        },
+        "backfill_completed": {
+          "title": "Backfill completed",
+          "type": "boolean"
+        },
+        "backfill_progress": {
+          "title": "Backfill progress",
+          "type": "object"
+        },
+        "sync_interval_seconds": {
+          "title": "Sync interval seconds",
+          "type": "integer",
+          "maximum": 1800,
+          "minimum": 60
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true
+        }
+      }
+    },
     "IntegrationValidationProject": {
       "type": "object",
       "properties": {
@@ -94303,6 +99819,366 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "NotificationChannel": {
+      "required": [
+        "type",
+        "display_name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "title": "Scope",
+          "type": "string",
+          "enum": [
+            "organization",
+            "workspace"
+          ]
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "email_list",
+            "slack_webhook",
+            "webhook"
+          ]
+        },
+        "display_name": {
+          "title": "Display name",
+          "type": "string",
+          "minLength": 1
+        },
+        "target_identifier": {
+          "title": "Target identifier",
+          "type": "string",
+          "x-nullable": true
+        },
+        "config": {
+          "title": "Config",
+          "type": "object"
+        },
+        "is_active": {
+          "title": "Is active",
+          "type": "boolean",
+          "default": true
+        },
+        "last_tested_at": {
+          "title": "Last tested at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "last_test_status": {
+          "title": "Last test status",
+          "type": "string",
+          "enum": [
+            "untested",
+            "ready",
+            "failed"
+          ]
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object"
+        }
+      }
+    },
+    "NotificationDecision": {
+      "required": [
+        "allowed",
+        "family",
+        "channel",
+        "source"
+      ],
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "title": "Allowed",
+          "type": "boolean"
+        },
+        "family": {
+          "title": "Family",
+          "type": "string",
+          "enum": [
+            "product_onboarding",
+            "daily_quality_digest",
+            "usage_budget",
+            "gateway_alert",
+            "observe_monitor",
+            "eval_quality_alert",
+            "workspace_admin"
+          ]
+        },
+        "channel": {
+          "title": "Channel",
+          "type": "string",
+          "enum": [
+            "email",
+            "slack",
+            "webhook"
+          ]
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "minLength": 1
+        },
+        "preference_id": {
+          "title": "Preference id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        }
+      }
+    },
+    "NotificationDeliveryLog": {
+      "required": [
+        "id",
+        "family",
+        "source_type",
+        "channel",
+        "status"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "family": {
+          "title": "Family",
+          "type": "string",
+          "enum": [
+            "product_onboarding",
+            "daily_quality_digest",
+            "usage_budget",
+            "gateway_alert",
+            "observe_monitor",
+            "eval_quality_alert",
+            "workspace_admin"
+          ]
+        },
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "channel": {
+          "title": "Channel",
+          "type": "string",
+          "enum": [
+            "email",
+            "slack",
+            "webhook"
+          ]
+        },
+        "recipient_type": {
+          "title": "Recipient type",
+          "type": "string"
+        },
+        "recipient_identifier_masked": {
+          "title": "Recipient identifier masked",
+          "type": "string"
+        },
+        "notification_key": {
+          "title": "Notification key",
+          "type": "string"
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string"
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "eligible",
+            "suppressed",
+            "sent",
+            "failed",
+            "clicked",
+            "completed"
+          ]
+        },
+        "suppressed_reason": {
+          "title": "Suppressed reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "route_url": {
+          "title": "Route url",
+          "type": "string"
+        },
+        "sent_at": {
+          "title": "Sent at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object"
+        }
+      }
+    },
+    "NotificationFamily": {
+      "required": [
+        "id",
+        "label",
+        "description",
+        "default_channels",
+        "non_critical",
+        "user_controllable",
+        "workspace_controllable"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "enum": [
+            "product_onboarding",
+            "daily_quality_digest",
+            "usage_budget",
+            "gateway_alert",
+            "observe_monitor",
+            "eval_quality_alert",
+            "workspace_admin"
+          ]
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        },
+        "default_channels": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "email",
+              "slack",
+              "webhook"
+            ]
+          }
+        },
+        "non_critical": {
+          "title": "Non critical",
+          "type": "boolean"
+        },
+        "user_controllable": {
+          "title": "User controllable",
+          "type": "boolean"
+        },
+        "workspace_controllable": {
+          "title": "Workspace controllable",
+          "type": "boolean"
+        }
+      }
+    },
+    "NotificationPreference": {
+      "required": [
+        "scope",
+        "family",
+        "channel",
+        "enabled"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "scope": {
+          "title": "Scope",
+          "type": "string",
+          "enum": [
+            "organization",
+            "workspace",
+            "user",
+            "user_workspace"
+          ]
+        },
+        "family": {
+          "title": "Family",
+          "type": "string",
+          "enum": [
+            "product_onboarding",
+            "daily_quality_digest",
+            "usage_budget",
+            "gateway_alert",
+            "observe_monitor",
+            "eval_quality_alert",
+            "workspace_admin"
+          ]
+        },
+        "channel": {
+          "title": "Channel",
+          "type": "string",
+          "enum": [
+            "email",
+            "slack",
+            "webhook"
+          ]
+        },
+        "enabled": {
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "mute_until": {
+          "title": "Mute until",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "frequency_cap_minutes": {
+          "title": "Frequency cap minutes",
+          "type": "integer",
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "settings": {
+          "title": "Settings",
+          "type": "object"
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "ObserveGraphDataPoint": {
       "required": [
         "timestamp",
@@ -94324,6 +100200,220 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Primary traffic",
           "type": "number",
           "x-nullable": true
+        }
+      }
+    },
+    "OnboardingLifecycleDigestPromotionEntry": {
+      "required": [
+        "source_type",
+        "source_id",
+        "operation",
+        "scope_type",
+        "scope_value",
+        "user_id",
+        "workspace_id"
+      ],
+      "type": "object",
+      "properties": {
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "enum": [
+            "evaluation_log",
+            "send_log"
+          ]
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "allowlist_id": {
+          "title": "Allowlist id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "operation": {
+          "title": "Operation",
+          "type": "string",
+          "enum": [
+            "created",
+            "updated",
+            "would_create",
+            "would_update"
+          ]
+        },
+        "scope_type": {
+          "title": "Scope type",
+          "type": "string",
+          "enum": [
+            "user",
+            "workspace"
+          ]
+        },
+        "scope_value": {
+          "title": "Scope value",
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_group": {
+          "title": "Campaign group",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "workspace_id": {
+          "title": "Workspace id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "OnboardingLifecycleDigestPromotionSkipped": {
+      "required": [
+        "source_type",
+        "source_id",
+        "reason"
+      ],
+      "type": "object",
+      "properties": {
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "enum": [
+            "evaluation_log",
+            "send_log"
+          ]
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "enum": [
+            "duplicate_source",
+            "duplicate_target",
+            "missing_digest_preview",
+            "not_found",
+            "unsupported_campaign"
+          ]
+        }
+      }
+    },
+    "OnboardingLifecycleDigestReviewItem": {
+      "required": [
+        "source_type",
+        "source_id",
+        "campaign_key",
+        "status",
+        "user_id",
+        "created_at",
+        "preview",
+        "summary",
+        "delivery_logs"
+      ],
+      "type": "object",
+      "properties": {
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "enum": [
+            "evaluation_log",
+            "send_log"
+          ]
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "campaign_key": {
+          "title": "Campaign key",
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_group": {
+          "title": "Campaign group",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "template_key": {
+          "title": "Template key",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "template_version": {
+          "title": "Template version",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "minLength": 1
+        },
+        "suppression_reason": {
+          "title": "Suppression reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "user_id": {
+          "title": "User id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "workspace_id": {
+          "title": "Workspace id",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "evaluated_at": {
+          "title": "Evaluated at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "queued_at": {
+          "title": "Queued at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "sent_at": {
+          "title": "Sent at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "preview": {
+          "$ref": "#/definitions/OnboardingLifecycleDigestPreview"
+        },
+        "summary": {
+          "$ref": "#/definitions/OnboardingLifecycleDigestSummary"
+        },
+        "delivery_logs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OnboardingLifecycleDigestDeliveryLog"
+          }
         }
       }
     },
@@ -96164,6 +102254,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "minLength": 1
           }
         },
+        "notify_slack_webhook": {
+          "title": "Notify slack webhook",
+          "type": "string",
+          "format": "uri",
+          "x-nullable": true
+        },
         "is_active": {
           "title": "Is active",
           "type": "boolean"
@@ -96179,6 +102275,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "date-time",
           "x-nullable": true
+        },
+        "thresholds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/UsageBudgetThreshold"
+          }
         },
         "created_at": {
           "title": "Created at",
@@ -96857,6 +102959,690 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ActivationAnalytics": {
+      "required": [
+        "event_name"
+      ],
+      "type": "object",
+      "properties": {
+        "event_name": {
+          "title": "Event name",
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "x-nullable": true
+        },
+        "target_path": {
+          "title": "Target path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ],
+          "x-nullable": true
+        }
+      }
+    },
+    "ActivationDiagnosticsSuppressedAction": {
+      "required": [
+        "id",
+        "reason"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ActivationJourneyStep": {
+      "required": [
+        "id",
+        "stage",
+        "action_id",
+        "label",
+        "description",
+        "status",
+        "href",
+        "fallback_href",
+        "route_available"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "stage": {
+          "title": "Stage",
+          "type": "string",
+          "enum": [
+            "feature_disabled",
+            "workspace_missing",
+            "permission_limited",
+            "choose_goal",
+            "selected_path_unavailable",
+            "activated",
+            "daily_review",
+            "connect_observability",
+            "waiting_for_first_trace",
+            "waiting_for_first_trace_sample_available",
+            "review_first_trace",
+            "create_trace_evaluator",
+            "review_sample_signal",
+            "start_prompt",
+            "run_prompt_test",
+            "save_prompt_version",
+            "create_second_prompt_version",
+            "compare_prompt_versions",
+            "prompt_next_loop",
+            "create_agent",
+            "add_agent_node",
+            "run_agent_scenario",
+            "review_agent_trace",
+            "save_agent_eval",
+            "agent_create_eval",
+            "create_trace_dashboard",
+            "create_trace_alert",
+            "configure_gateway_provider",
+            "create_gateway_key",
+            "run_gateway_request",
+            "review_gateway_log",
+            "fix_gateway_failure",
+            "add_gateway_policy",
+            "create_voice_agent",
+            "run_voice_test_call",
+            "review_voice_call",
+            "add_voice_success_criteria",
+            "voice_monitor_calls",
+            "create_eval_dataset",
+            "add_eval_scorer",
+            "run_eval",
+            "review_eval_failures",
+            "eval_next_loop",
+            "open_sample_project",
+            "connect_real_data"
+          ]
+        },
+        "action_id": {
+          "title": "Action id",
+          "type": "string",
+          "minLength": 1
+        },
+        "success_event": {
+          "title": "Success event",
+          "type": "string",
+          "enum": [
+            "onboarding_transition_viewed",
+            "onboarding_home_viewed",
+            "onboarding_goal_selected",
+            "onboarding_goal_changed",
+            "onboarding_recommended_action_viewed",
+            "onboarding_recommended_action_clicked",
+            "onboarding_path_card_clicked",
+            "onboarding_blocked_state_viewed",
+            "onboarding_diagnostics_opened",
+            "onboarding_sample_project_opened",
+            "onboarding_fallback_action_clicked",
+            "sample_trace_available",
+            "sample_signal_viewed",
+            "sample_to_real_setup_clicked",
+            "first_quality_loop_completed",
+            "daily_quality_home_viewed",
+            "daily_quality_top_signal_shown",
+            "daily_quality_top_change_reviewed",
+            "daily_quality_item_reviewed",
+            "daily_quality_action_created",
+            "daily_quality_action_opened",
+            "daily_quality_action_assigned",
+            "daily_quality_action_completed",
+            "daily_quality_action_dismissed",
+            "daily_quality_no_signal_viewed",
+            "daily_quality_empty_state_viewed",
+            "daily_quality_digest_destination_opened",
+            "daily_quality_route_fallback_used",
+            "weekly_quality_review_opened",
+            "weekly_quality_action_assigned",
+            "weekly_quality_action_completed",
+            "weekly_quality_review_completed",
+            "weekly_quality_digest_sent",
+            "weekly_quality_digest_suppressed",
+            "lifecycle_email_send_queued",
+            "lifecycle_email_sent",
+            "lifecycle_email_send_failed",
+            "lifecycle_email_send_suppressed",
+            "lifecycle_email_clicked",
+            "lifecycle_email_unsubscribed",
+            "lifecycle_email_snoozed",
+            "lifecycle_email_completed",
+            "reactivation_reason_clicked",
+            "observe_project_created",
+            "onboarding_observe_package_selected",
+            "onboarding_observe_route_focus_viewed",
+            "trace_received",
+            "trace_reviewed",
+            "trace_detail_opened",
+            "prompt_created",
+            "prompt_test_input_added",
+            "prompt_test_run_completed",
+            "prompt_version_created",
+            "prompt_comparable_version_created",
+            "prompt_comparison_completed",
+            "dataset_example_added",
+            "eval_dataset_created",
+            "eval_scorer_created",
+            "eval_run_started",
+            "eval_run_completed",
+            "eval_failures_reviewed",
+            "eval_failure_action_created",
+            "eval_group_created",
+            "onboarding_eval_source_selected",
+            "onboarding_eval_route_focus_viewed",
+            "onboarding_eval_run_clicked",
+            "onboarding_eval_failure_detail_opened",
+            "onboarding_eval_source_fix_cta_clicked",
+            "onboarding_eval_source_fix_route_viewed",
+            "onboarding_eval_source_fix_rerun_clicked",
+            "onboarding_eval_scorer_edit_cta_clicked",
+            "onboarding_eval_fix_rerun_completed",
+            "onboarding_eval_fix_rerun_reviewed",
+            "onboarding_eval_sample_viewed",
+            "voice_agent_created",
+            "voice_scenario_created",
+            "voice_test_call_started",
+            "voice_test_call_completed",
+            "voice_call_reviewed",
+            "voice_success_criteria_added",
+            "voice_call_monitor_opened",
+            "onboarding_voice_route_focus_viewed",
+            "onboarding_voice_call_detail_opened",
+            "onboarding_voice_success_criteria_cta_clicked",
+            "onboarding_voice_sample_viewed",
+            "prompt_version_promoted",
+            "agent_created",
+            "agent_node_added",
+            "agent_scenario_created",
+            "agent_prototype_run_completed",
+            "agent_trace_reviewed",
+            "agent_scenario_saved_as_eval",
+            "agent_eval_created",
+            "agent_live_trace_received",
+            "gateway_provider_added",
+            "gateway_key_created",
+            "gateway_test_request_sent",
+            "gateway_request_seen",
+            "gateway_log_opened",
+            "gateway_failure_resolved",
+            "gateway_policy_created",
+            "gateway_dashboard_created",
+            "team_member_invited",
+            "trace_failure_detected"
+          ]
+        },
+        "tour_anchor": {
+          "title": "Tour anchor",
+          "type": "string"
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "complete",
+            "current",
+            "queued"
+          ]
+        },
+        "href": {
+          "title": "Href",
+          "type": "string"
+        },
+        "fallback_href": {
+          "title": "Fallback href",
+          "type": "string",
+          "minLength": 1
+        },
+        "route_available": {
+          "title": "Route available",
+          "type": "boolean"
+        },
+        "blocked_reason": {
+          "title": "Blocked reason",
+          "type": "string"
+        },
+        "requires_permission": {
+          "title": "Requires permission",
+          "type": "string"
+        }
+      }
+    },
+    "ActivationValueMetric": {
+      "required": [
+        "label",
+        "value"
+      ],
+      "type": "object",
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "title": "Value",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "DailyQualityAction": {
+      "required": [
+        "id",
+        "label",
+        "body",
+        "route",
+        "fallback_route",
+        "source_type"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "title": "Path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ],
+          "x-nullable": true
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "title": "Body",
+          "type": "string",
+          "minLength": 1
+        },
+        "route": {
+          "title": "Route",
+          "type": "string",
+          "minLength": 1
+        },
+        "fallback_route": {
+          "title": "Fallback route",
+          "type": "string",
+          "minLength": 1
+        },
+        "route_available": {
+          "title": "Route available",
+          "type": "boolean",
+          "default": true
+        },
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "assigned_to_user_id": {
+          "title": "Assigned to user id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "assigned_to_name": {
+          "title": "Assigned to name",
+          "type": "string",
+          "x-nullable": true
+        },
+        "assigned_at": {
+          "title": "Assigned at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "due_at": {
+          "title": "Due at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "is_overdue": {
+          "title": "Is overdue",
+          "type": "boolean",
+          "default": false
+        },
+        "success_event": {
+          "title": "Success event",
+          "type": "string",
+          "x-nullable": true
+        },
+        "is_primary": {
+          "title": "Is primary",
+          "type": "boolean",
+          "default": false
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "requires_permission": {
+          "title": "Requires permission",
+          "type": "string",
+          "x-nullable": true
+        },
+        "activation_kind": {
+          "title": "Activation kind",
+          "type": "string",
+          "enum": [
+            "choose_goal",
+            "setup",
+            "send_signal",
+            "review",
+            "improve",
+            "sample_project",
+            "request_access",
+            "fallback",
+            "daily_quality",
+            "adjacent_loop"
+          ],
+          "x-nullable": true
+        }
+      },
+      "x-nullable": true
+    },
+    "DailyQualityProductCard": {
+      "required": [
+        "path",
+        "status",
+        "label",
+        "summary",
+        "metric",
+        "route"
+      ],
+      "type": "object",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ]
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string",
+          "minLength": 1
+        },
+        "metric": {
+          "title": "Metric",
+          "type": "string",
+          "minLength": 1
+        },
+        "change": {
+          "title": "Change",
+          "type": "string",
+          "x-nullable": true
+        },
+        "route": {
+          "title": "Route",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "DailyQualitySignal": {
+      "required": [
+        "id",
+        "type",
+        "severity",
+        "title",
+        "body",
+        "source_type",
+        "source_id",
+        "route",
+        "created_at"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "path": {
+          "title": "Path",
+          "type": "string",
+          "enum": [
+            "prompt",
+            "agent",
+            "observe",
+            "gateway",
+            "voice",
+            "evals",
+            "dashboards",
+            "sample"
+          ],
+          "x-nullable": true
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "trace_failure",
+            "prompt_quality_review",
+            "span_latency",
+            "span_cost",
+            "agent_run_issue",
+            "gateway_request_issue",
+            "eval_failure",
+            "voice_call_issue",
+            "alert_triggered",
+            "feed_issue",
+            "dashboard_missing",
+            "alert_missing",
+            "evaluator_missing",
+            "saved_view_missing"
+          ]
+        },
+        "severity": {
+          "title": "Severity",
+          "type": "string",
+          "enum": [
+            "critical",
+            "warning",
+            "info"
+          ]
+        },
+        "title": {
+          "title": "Title",
+          "type": "string",
+          "minLength": 1
+        },
+        "body": {
+          "title": "Body",
+          "type": "string",
+          "minLength": 1
+        },
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string",
+          "minLength": 1
+        },
+        "project_id": {
+          "title": "Project id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "route": {
+          "title": "Route",
+          "type": "string",
+          "minLength": 1
+        },
+        "is_sample": {
+          "title": "Is sample",
+          "type": "boolean",
+          "default": false
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "x-nullable": true
+    },
+    "DailyQualityWeeklyReview": {
+      "required": [
+        "due",
+        "status",
+        "route",
+        "window",
+        "summary",
+        "unresolved_count",
+        "completed_count"
+      ],
+      "type": "object",
+      "properties": {
+        "due": {
+          "title": "Due",
+          "type": "boolean"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "due",
+            "not_due",
+            "permission_limited",
+            "flag_disabled",
+            "no_useful_signal",
+            "completed_recently"
+          ]
+        },
+        "route": {
+          "title": "Route",
+          "type": "string",
+          "minLength": 1
+        },
+        "window": {
+          "$ref": "#/definitions/DailyQualityWindow"
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "string",
+          "minLength": 1
+        },
+        "unresolved_count": {
+          "title": "Unresolved count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "completed_count": {
+          "title": "Completed count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_completed_at": {
+          "title": "Last completed at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "action_label": {
+          "title": "Action label",
+          "type": "string",
+          "x-nullable": true
+        }
+      },
+      "x-nullable": true
+    },
+    "DailyQualityWindow": {
+      "required": [
+        "start_at",
+        "end_at"
+      ],
+      "type": "object",
+      "properties": {
+        "start_at": {
+          "title": "Start at",
+          "type": "string",
+          "format": "date-time"
+        },
+        "end_at": {
+          "title": "End at",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "AgentPromptOptimiserTrialEvalScore": {
       "type": "object",
       "properties": {
@@ -97320,6 +104106,148 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "OnboardingLifecycleDigestDeliveryLog": {
+      "required": [
+        "id",
+        "channel",
+        "status",
+        "created_at"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "channel": {
+          "title": "Channel",
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "eligible",
+            "suppressed",
+            "sent",
+            "failed",
+            "clicked",
+            "completed"
+          ]
+        },
+        "suppressed_reason": {
+          "title": "Suppressed reason",
+          "type": "string",
+          "x-nullable": true
+        },
+        "sent_at": {
+          "title": "Sent at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "OnboardingLifecycleDigestPreview": {
+      "required": [
+        "kind",
+        "campaign_key",
+        "template_key",
+        "workspace_id",
+        "action_count",
+        "omitted_action_count",
+        "actions"
+      ],
+      "type": "object",
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string",
+          "minLength": 1
+        },
+        "campaign_key": {
+          "title": "Campaign key",
+          "type": "string",
+          "minLength": 1
+        },
+        "template_key": {
+          "title": "Template key",
+          "type": "string",
+          "minLength": 1
+        },
+        "generated_at": {
+          "title": "Generated at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "workspace_id": {
+          "title": "Workspace id",
+          "type": "string",
+          "minLength": 1
+        },
+        "action_count": {
+          "title": "Action count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "omitted_action_count": {
+          "title": "Omitted action count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/OnboardingLifecycleDigestAction"
+          }
+        }
+      }
+    },
+    "OnboardingLifecycleDigestSummary": {
+      "required": [
+        "action_count",
+        "visible_action_count",
+        "omitted_action_count",
+        "overdue_count",
+        "assigned_count"
+      ],
+      "type": "object",
+      "properties": {
+        "action_count": {
+          "title": "Action count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "visible_action_count": {
+          "title": "Visible action count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "omitted_action_count": {
+          "title": "Omitted action count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "overdue_count": {
+          "title": "Overdue count",
+          "type": "integer",
+          "minimum": 0
+        },
+        "assigned_count": {
+          "title": "Assigned count",
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
     "KeyMoment": {
       "required": [
         "kevinified",
@@ -97751,6 +104679,83 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Avg score",
           "type": "number",
           "x-nullable": true
+        }
+      }
+    },
+    "OnboardingLifecycleDigestAction": {
+      "required": [
+        "action_id",
+        "label",
+        "route",
+        "fallback_route",
+        "source_type",
+        "age_minutes"
+      ],
+      "type": "object",
+      "properties": {
+        "action_id": {
+          "title": "Action id",
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "route": {
+          "title": "Route",
+          "type": "string",
+          "minLength": 1
+        },
+        "fallback_route": {
+          "title": "Fallback route",
+          "type": "string",
+          "minLength": 1
+        },
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "minLength": 1
+        },
+        "source_id": {
+          "title": "Source id",
+          "type": "string"
+        },
+        "primary_path": {
+          "title": "Primary path",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "age_minutes": {
+          "title": "Age minutes",
+          "type": "integer",
+          "minimum": 0
+        },
+        "last_event_at": {
+          "title": "Last event at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "assigned_to_user_id": {
+          "title": "Assigned to user id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "due_at": {
+          "title": "Due at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "is_overdue": {
+          "title": "Is overdue",
+          "type": "boolean",
+          "default": false
         }
       }
     },

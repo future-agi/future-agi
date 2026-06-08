@@ -17,12 +17,14 @@ import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useNavigate, useParams } from "react-router";
+import { useSearchParams } from "react-router-dom";
 import { createDraftPayload } from "src/sections/workbench/constant";
 import { DefaultMessages } from "./constant";
 import { LoadingButton } from "@mui/lab";
 import { usePromptWorkbenchContext } from "./createPrompt/WorkbenchContext";
 import { getRandomId } from "src/utils/utils";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import { buildPromptCreatedHref } from "./createPrompt/promptActions/promptOnboardingRoute";
 
 export const SelectedPromptTemplateDrawer = ({
   open,
@@ -32,6 +34,7 @@ export const SelectedPromptTemplateDrawer = ({
 }) => {
   const { folder } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const {
     setSelectTemplateDrawerOpen,
     selectedPromptIndex,
@@ -57,13 +60,11 @@ export const SelectedPromptTemplateDrawer = ({
       trackEvent(Events.promptCreateClicked, {
         [PropertyName.click]: true,
       });
+      const promptId = data?.data?.result?.root_template;
       timeoutRef.current = setTimeout(() => {
-        navigate(
-          `/dashboard/workbench/create/${data?.data?.result?.root_template}`,
-          {
-            state: { fromOption: "use-template" },
-          },
-        );
+        navigate(buildPromptCreatedHref({ promptId, search: searchParams }), {
+          state: { fromOption: "use-template" },
+        });
       }, 0);
     },
   });

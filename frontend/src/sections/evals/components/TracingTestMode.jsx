@@ -209,6 +209,46 @@ const normalizeRowType = (value) => {
   return "Span";
 };
 
+const getFirstPresentRowValue = (row, keys) => {
+  if (!row) return null;
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).length > 0) {
+      return value;
+    }
+  }
+  return null;
+};
+
+export const getTracingRowIdentifiers = (row, rowType) => {
+  const normalizedRowType = normalizeRowType(rowType);
+  const rowId = getFirstPresentRowValue(row, ["id"]);
+  const traceId =
+    getFirstPresentRowValue(row, ["trace_id", "traceId", "trace"]) ||
+    (normalizedRowType === "Trace" ? rowId : null);
+  const spanId =
+    getFirstPresentRowValue(row, ["span_id", "spanId", "span"]) ||
+    (normalizedRowType === "Span" ? rowId : null);
+  const sessionId =
+    getFirstPresentRowValue(row, ["session_id", "sessionId", "session"]) ||
+    (normalizedRowType === "Session" ? rowId : null);
+
+  return {
+    spanId,
+    traceId,
+    sessionId,
+  };
+};
+
+export const findTracingRowIndexByTraceId = (rows = [], traceId) => {
+  if (!traceId) return -1;
+  const targetTraceId = String(traceId);
+  return rows.findIndex((row) => {
+    const { traceId: rowTraceId } = getTracingRowIdentifiers(row, "Trace");
+    return String(rowTraceId || "") === targetTraceId;
+  });
+};
+
 export const buildTracingPreviewListParams = ({
   selectedProjectId,
   effectiveFilters,
@@ -228,6 +268,7 @@ const TracingTestMode = React.forwardRef(
       codeParams = {},
       onTestResult,
       onColumnsLoaded,
+      onSourceSelected,
       onClearResult,
       // Signals to EvalPickerConfigFull that all variables are mapped so
       // it can enable the Test Evaluation / Add Evaluation buttons.
@@ -237,6 +278,7 @@ const TracingTestMode = React.forwardRef(
       // drawer so the user sees the exact same data their task will run on.
       initialProjectId = null,
       initialRowType = null,
+      initialTraceId = null,
       // Optional: seed the variable→field mapping (used when editing an
       // already-configured eval so the user's previous mapping is preserved).
       initialMapping = null,
@@ -283,6 +325,16 @@ const TracingTestMode = React.forwardRef(
       initialRowType ? normalizeRowType(initialRowType) : "Span",
     );
 
+    useEffect(() => {
+      if (!projectLocked) return;
+      setSelectedProjectId(initialProjectId || "");
+    }, [projectLocked, initialProjectId]);
+
+    useEffect(() => {
+      if (!rowTypeLocked) return;
+      setRowType(initialRowType ? normalizeRowType(initialRowType) : "Span");
+    }, [rowTypeLocked, initialRowType]);
+
     const internalFilterForm = useForm({ defaultValues: { filters: [] } });
     const internalFormFilters = useWatch({
       control: internalFilterForm.control,
@@ -293,13 +345,20 @@ const TracingTestMode = React.forwardRef(
       [internalFormFilters],
     );
     const effectiveFilters = hostsFilter ? internalApiFilters : localFilters;
+    const effectiveFiltersKey = useMemo(
+      () => JSON.stringify(effectiveFilters || []),
+      [effectiveFilters],
+    );
+    const effectiveSelectedProjectId = projectLocked
+      ? initialProjectId || ""
+      : selectedProjectId;
 
     // Filter rows are project-scoped (attribute columns differ per project);
     // clear them when the user switches projects so stale columns aren't sent.
     useEffect(() => {
       if (hostsFilter) internalFilterForm.reset({ filters: [] });
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedProjectId]);
+    }, [effectiveSelectedProjectId]);
 
     // Project details fetched per selected project. The list_projects API
     // omits the `source` field, so we hit project-detail to know whether
@@ -314,9 +373,16 @@ const TracingTestMode = React.forwardRef(
       if (selectedProjectDetail) return selectedProjectDetail;
       if (projectLocked) return null;
       return (
-        projects.find((p) => String(p.id) === String(selectedProjectId)) || null
+        projects.find(
+          (p) => String(p.id) === String(effectiveSelectedProjectId),
+        ) || null
       );
-    }, [selectedProjectDetail, projectLocked, projects, selectedProjectId]);
+    }, [
+      effectiveSelectedProjectId,
+      selectedProjectDetail,
+      projectLocked,
+      projects,
+    ]);
 
     const isVoiceProject = selectedProject?.source === PROJECT_SOURCE.SIMULATOR;
 
@@ -325,14 +391,14 @@ const TracingTestMode = React.forwardRef(
     // back to Span so the data table can populate with span rows.
     useEffect(() => {
       if (rowTypeLocked) return;
-      if (!selectedProjectId) return;
+      if (!effectiveSelectedProjectId) return;
       if (isVoiceProject && rowType !== "VoiceCall") {
         setRowType("VoiceCall");
       } else if (!isVoiceProject && rowType === "VoiceCall") {
         setRowType("Span");
       }
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedProjectId, isVoiceProject]);
+    }, [effectiveSelectedProjectId, isVoiceProject]);
 
     // Data
     const [columns, setColumns] = useState([]);
@@ -348,8 +414,8 @@ const TracingTestMode = React.forwardRef(
     // against the last-fetched key tells us synchronously — in the same
     // render that the props changed — that new data is on the way.
     const [lastFetchedKey, setLastFetchedKey] = useState(null);
-    const currentFetchKey = selectedProjectId
-      ? `${selectedProjectId}:${rowType}`
+    const currentFetchKey = effectiveSelectedProjectId
+      ? `${effectiveSelectedProjectId}:${rowType}`
       : null;
     const isPendingNewFetch =
       !!currentFetchKey && lastFetchedKey !== currentFetchKey;
@@ -425,7 +491,7 @@ const TracingTestMode = React.forwardRef(
     // would never detect voice projects. Also covers the task-flow path
     // where the list fetch is skipped entirely.
     useEffect(() => {
-      const pid = projectLocked ? initialProjectId : selectedProjectId;
+      const pid = effectiveSelectedProjectId;
       if (!pid) {
         setSelectedProjectDetail(null);
         return undefined;
@@ -446,11 +512,11 @@ const TracingTestMode = React.forwardRef(
       return () => {
         cancelled = true;
       };
-    }, [projectLocked, initialProjectId, selectedProjectId]);
+    }, [effectiveSelectedProjectId]);
 
     // ── Fetch data when project or rowType changes ──
     useEffect(() => {
-      if (!selectedProjectId) {
+      if (!effectiveSelectedProjectId) {
         setColumns([]);
         setRows([]);
         setTotalRows(0);
@@ -461,7 +527,7 @@ const TracingTestMode = React.forwardRef(
 
       setLoading(true);
       let cancelled = false;
-      const fetchKey = `${selectedProjectId}:${rowType}`;
+      const fetchKey = `${effectiveSelectedProjectId}:${rowType}`;
 
       const fetchData = async () => {
         setRows([]);
@@ -469,7 +535,7 @@ const TracingTestMode = React.forwardRef(
           if (rowType === "VoiceCall") {
             const { data } = await axios.get(endpoints.project.getCallLogs, {
               params: {
-                project_id: selectedProjectId,
+                project_id: effectiveSelectedProjectId,
                 page: 1,
                 page_size: 50,
                 filters: JSON.stringify(effectiveFilters || []),
@@ -487,7 +553,7 @@ const TracingTestMode = React.forwardRef(
 
           let endpoint;
           const params = buildTracingPreviewListParams({
-            selectedProjectId,
+            selectedProjectId: effectiveSelectedProjectId,
             effectiveFilters,
           });
 
@@ -529,10 +595,37 @@ const TracingTestMode = React.forwardRef(
         cancelled = true;
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [selectedProjectId, rowType, JSON.stringify(effectiveFilters || [])]);
+    }, [effectiveSelectedProjectId, rowType, effectiveFiltersKey]);
 
     // ── Current row ──
     const currentRow = rows[currentRowIndex] || null;
+    const normalizedInitialTraceId = initialTraceId
+      ? String(initialTraceId)
+      : "";
+    const isInitialTraceTargetLocked = Boolean(
+      normalizedInitialTraceId && rowType === "Trace",
+    );
+    const currentRowMatchesInitialTrace = useMemo(() => {
+      if (!isInitialTraceTargetLocked) return true;
+      const { traceId } = getTracingRowIdentifiers(currentRow, "Trace");
+      return String(traceId || "") === normalizedInitialTraceId;
+    }, [currentRow, isInitialTraceTargetLocked, normalizedInitialTraceId]);
+
+    useEffect(() => {
+      if (!isInitialTraceTargetLocked || !rows.length) return;
+      const targetIndex = findTracingRowIndexByTraceId(
+        rows,
+        normalizedInitialTraceId,
+      );
+      if (targetIndex >= 0 && targetIndex !== currentRowIndex) {
+        setCurrentRowIndex(targetIndex);
+      }
+    }, [
+      currentRowIndex,
+      isInitialTraceTargetLocked,
+      normalizedInitialTraceId,
+      rows,
+    ]);
 
     // ── Session drill-down queries (rowType=Session only) ──
     // The mapping dropdown is sourced from `pickerSourceColumns` (the
@@ -586,8 +679,7 @@ const TracingTestMode = React.forwardRef(
         return;
       }
 
-      const spanId = currentRow.span_id;
-      const traceId = currentRow.trace_id;
+      const { spanId, traceId } = getTracingRowIdentifiers(currentRow, rowType);
       const cacheKey =
         rowType === "Span"
           ? `Span:${traceId || ""}:${spanId || ""}`
@@ -928,15 +1020,25 @@ const TracingTestMode = React.forwardRef(
       const allMapped =
         variables.length === 0 ||
         variables.every((v) => mapping[v] && String(mapping[v]).length > 0);
-      const hasRow = !!currentRow;
+      const hasRow = !!currentRow && currentRowMatchesInitialTrace;
       onReadyChange(allMapped && hasRow, mapping);
-    }, [variables, mapping, currentRow, onReadyChange]);
+    }, [
+      variables,
+      mapping,
+      currentRow,
+      currentRowMatchesInitialTrace,
+      onReadyChange,
+    ]);
 
     // ── Run test ──
     const handleRunTest = useCallback(async () => {
       const tid = templateIdRef.current;
       if (!tid) {
         onTestResult?.(false, "No template ID — save the eval first");
+        return;
+      }
+      if (!currentRowMatchesInitialTrace) {
+        onTestResult?.(false, "Trace is still loading. Try again shortly.");
         return;
       }
       setIsRunning(true);
@@ -1048,15 +1150,18 @@ const TracingTestMode = React.forwardRef(
         // {{session}} server-side from IDs. Composite execution expects
         // the concrete context objects directly.
         const autoCtx = {};
-        const _spanId = currentRow?.span_id || currentRow?.spanId;
-        const _traceId = currentRow?.trace_id || currentRow?.traceId;
-        const _sessionId = currentRow?.session_id || currentRow?.sessionId;
-        if (rowType === "Span" && _spanId) autoCtx.span_id = _spanId;
-        if ((rowType === "Span" || rowType === "Trace") && _traceId)
-          autoCtx.trace_id = _traceId;
-        if (rowType === "Session" && _sessionId)
-          autoCtx.session_id = _sessionId;
-        if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
+        const {
+          spanId: autoSpanId,
+          traceId: autoTraceId,
+          sessionId: autoSessionId,
+        } = getTracingRowIdentifiers(currentRow, rowType);
+        if (rowType === "Span" && autoSpanId) autoCtx.span_id = autoSpanId;
+        if ((rowType === "Span" || rowType === "Trace") && autoTraceId)
+          autoCtx.trace_id = autoTraceId;
+        if (rowType === "Session" && autoSessionId)
+          autoCtx.session_id = autoSessionId;
+        if (rowType === "VoiceCall" && autoTraceId)
+          autoCtx.trace_id = autoTraceId;
 
         const compositeCtx = {};
         if (rowType === "Span" && spanDetail)
@@ -1150,6 +1255,7 @@ const TracingTestMode = React.forwardRef(
       spanDetail,
       rowFields,
       currentRow,
+      currentRowMatchesInitialTrace,
       rowType,
       onTestResult,
       errorLocalizerEnabled,
@@ -1189,14 +1295,19 @@ const TracingTestMode = React.forwardRef(
               getOptionLabel={(opt) => opt?.name || opt?.id || ""}
               value={projects.find((p) => p.id === selectedProjectId) || null}
               onChange={(_, val) => {
-
-                setSelectedProjectId(val?.id || "")
+                const nextProjectId = val?.id || "";
+                setSelectedProjectId(nextProjectId);
                 setMapping({});
                 setColumns([]);
-
-              }
-
-              }
+                if (nextProjectId) {
+                  onSourceSelected?.({
+                    rowType,
+                    sourceId: nextProjectId,
+                    sourceType: "trace_project",
+                    surface: "tracing",
+                  });
+                }
+              }}
               loading={loadingProjects}
               openOnFocus
               renderInput={(params) => (
@@ -1237,7 +1348,7 @@ const TracingTestMode = React.forwardRef(
         {/* Voice indicator — voice projects always map to voice calls, so
             the row-type tabs are replaced by a static chip that mirrors the
             "Voice Calls" label shown in the task flow's live preview. */}
-        {!rowTypeLocked && !!selectedProjectId && isVoiceProject && (
+        {!rowTypeLocked && !!effectiveSelectedProjectId && isVoiceProject && (
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
             <Typography variant="body2" fontWeight={600}>
               Row Type
@@ -1262,7 +1373,7 @@ const TracingTestMode = React.forwardRef(
             - no project selected yet (nothing to type against)
             - selected project is a voice/simulator project (always
               VoiceCall, row type isn't meaningful) */}
-        {!rowTypeLocked && !!selectedProjectId && !isVoiceProject && (
+        {!rowTypeLocked && !!effectiveSelectedProjectId && !isVoiceProject && (
           <Box>
             <Typography
               variant="caption"
@@ -1342,7 +1453,7 @@ const TracingTestMode = React.forwardRef(
           </Box>
         )}
 
-        {hostsFilter && !!selectedProjectId && (
+        {hostsFilter && !!effectiveSelectedProjectId && (
           <Box>
             <Typography
               variant="caption"
@@ -1362,7 +1473,7 @@ const TracingTestMode = React.forwardRef(
             <TaskFilterBar
               control={internalFilterForm.control}
               setValue={internalFilterForm.setValue}
-              projectId={selectedProjectId}
+              projectId={effectiveSelectedProjectId}
               isSimulator={isVoiceProject}
               rowType={rowType}
             />
@@ -1377,7 +1488,7 @@ const TracingTestMode = React.forwardRef(
         )}
 
         {/* Row navigator */}
-        {selectedProjectId &&
+        {effectiveSelectedProjectId &&
           (rows?.length ?? 0) > 0 &&
           !loading &&
           !isPendingNewFetch && (
@@ -1702,7 +1813,7 @@ const TracingTestMode = React.forwardRef(
         )}
 
         {/* Empty state */}
-        {selectedProjectId &&
+        {effectiveSelectedProjectId &&
           !loading &&
           !isPendingNewFetch &&
           totalRows === 0 && (
@@ -1963,10 +2074,12 @@ TracingTestMode.propTypes = {
   codeParams: PropTypes.object,
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
+  onSourceSelected: PropTypes.func,
   onClearResult: PropTypes.func,
   onReadyChange: PropTypes.func,
   initialProjectId: PropTypes.string,
   initialRowType: PropTypes.string,
+  initialTraceId: PropTypes.string,
   initialMapping: PropTypes.object,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,

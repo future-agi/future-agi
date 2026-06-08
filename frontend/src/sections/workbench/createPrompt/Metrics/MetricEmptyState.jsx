@@ -1,4 +1,12 @@
-import { Box, IconButton, Skeleton } from "@mui/material";
+import {
+  Box,
+  Chip,
+  IconButton,
+  Skeleton,
+  Stack,
+  Typography,
+} from "@mui/material";
+import PropTypes from "prop-types";
 import React, { useState } from "react";
 import CustomAgentTabs from "src/sections/agents/CustomAgentTabs";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -10,7 +18,7 @@ import { useQuery } from "@tanstack/react-query";
 import { copyToClipboard } from "src/utils/utils";
 import { enqueueSnackbar } from "notistack";
 
-const MetricEmptyState = () => {
+const MetricEmptyState = ({ isOnboarding = false }) => {
   const [activeTab, setActiveTab] = useState("python");
   const tabs = [
     { label: "Python", value: "python" },
@@ -22,12 +30,71 @@ const MetricEmptyState = () => {
     queryFn: () =>
       axios.get(endpoints.develop.runPrompt.promptMetricEmptyScreen()),
     select: (res) => res?.data?.result,
+    enabled: !isOnboarding,
   });
 
   const onCopy = () => {
     copyToClipboard(data?.[activeTab] || "");
     enqueueSnackbar("Copied to clipboard", { variant: "success" });
   };
+
+  if (isOnboarding) {
+    return (
+      <Box
+        data-testid="prompt-metrics-onboarding-empty"
+        sx={{
+          alignItems: "center",
+          display: "flex",
+          flex: 1,
+          justifyContent: "center",
+          minHeight: 280,
+          px: 2,
+        }}
+      >
+        <Stack
+          spacing={1.25}
+          alignItems="center"
+          sx={{ maxWidth: 520, textAlign: "center" }}
+        >
+          <Box
+            sx={{
+              width: 68,
+              height: 68,
+              borderRadius: 1,
+              border: "2px solid",
+              borderColor: "divider",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <SvgColor
+              src="/assets/icons/agent/performance_analytics.svg"
+              sx={{ width: 36, height: 36 }}
+            />
+          </Box>
+          <Box>
+            <Typography variant="subtitle2">
+              Evaluation run is queued
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              The evaluation was added to the compared prompt versions. Metrics
+              will populate here as soon as the run finishes.
+            </Typography>
+          </Box>
+          <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+            <Chip size="small" label="Evaluation added" />
+            <Chip
+              size="small"
+              variant="outlined"
+              label="Both versions queued"
+            />
+            <Chip size="small" variant="outlined" label="Metrics next" />
+          </Stack>
+        </Stack>
+      </Box>
+    );
+  }
 
   return (
     <EmptyLayout
@@ -144,6 +211,10 @@ const MetricEmptyState = () => {
       }
     />
   );
+};
+
+MetricEmptyState.propTypes = {
+  isOnboarding: PropTypes.bool,
 };
 
 export default MetricEmptyState;

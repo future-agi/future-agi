@@ -2,6 +2,7 @@ import { Box, CircularProgress } from "@mui/material";
 import React, {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   startTransition,
@@ -32,6 +33,8 @@ import { VERSION_STATUS } from "../utils/constants";
 import { useParams, useSearchParams, Navigate } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import useExecutionSync from "../hooks/useExecutionSync";
+import useAgentOnboardingRunCompletion from "../hooks/useAgentOnboardingRunCompletion";
+import { agentSetupQuickStartAttributionFromSearch } from "../agentOnboardingEvents";
 
 const SELECTION_PANEL_WIDTH = "230px";
 
@@ -162,13 +165,35 @@ export default function AgentBuilder() {
         refetchType: "none",
       });
       // Sync React Router so useSearchParams returns the draft version ID.
-      setSearchParams({ version: newVersionData.id }, { replace: true });
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("version", newVersionData.id);
+          return next;
+        },
+        { replace: true },
+      );
     },
     [updateVersion, queryClient, graphId, executionStatusRef, setSearchParams],
   );
 
   const isDrawerOpen = !!selectedNode;
   const nodeDrawerResize = useNodeDrawerResize(isDrawerOpen);
+  const onboardingMode = searchParams.get("onboarding");
+  const tourAnchor = searchParams.get("tour_anchor");
+  const agentQuickStartAttribution = useMemo(
+    () => agentSetupQuickStartAttributionFromSearch(searchParams),
+    [searchParams],
+  );
+
+  useAgentOnboardingRunCompletion({
+    agentId,
+    executionData,
+    executionId,
+    onboardingMode,
+    quickStartAttribution: agentQuickStartAttribution,
+    versionId,
+  });
 
   const hasNodes = nodes?.length > 0;
 
@@ -262,6 +287,8 @@ export default function AgentBuilder() {
           <NodeSelectionPanel
             width={SELECTION_PANEL_WIDTH}
             disabled={isLoadingTemplate || isRunning || isVersionLoading}
+            onboardingMode={onboardingMode}
+            tourAnchor={tourAnchor}
           />
           <Box
             sx={{
@@ -301,7 +328,15 @@ export default function AgentBuilder() {
                 setGlobalVariablesDrawerOpen={setGlobalVariablesDrawerOpen}
               />
             )}
-            <BuilderActions width={SELECTION_PANEL_WIDTH} hasNodes={hasNodes} />
+            <BuilderActions
+              width={SELECTION_PANEL_WIDTH}
+              hasNodes={hasNodes}
+              onboardingMode={onboardingMode}
+              rightOffset={
+                isDrawerOpen && !isLoadingTemplate ? nodeDrawerResize.width : 0
+              }
+              tourAnchor={tourAnchor}
+            />
             {/* Run Agent Panel - Shows output after workflow run */}
             {hasNodes && showOutput && !isLoadingTemplate && (
               <RunAgentPanel

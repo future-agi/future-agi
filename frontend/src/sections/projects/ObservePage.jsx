@@ -1,12 +1,20 @@
 import React, {
-  useMemo,
+  startTransition,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
-  startTransition,
+  useState,
 } from "react";
 import PropTypes from "prop-types";
-import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  Paper,
+  useTheme,
+} from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
 
 import { useObserveHeader } from "../project/context/ObserveHeaderContext";
@@ -23,6 +31,7 @@ import { useTabStoreShallow } from "./LLMTracing/tabStore";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGetSavedViews, SAVED_VIEWS_KEY } from "src/api/project/saved-views";
+import axios, { endpoints } from "src/utils/axios";
 import ReplayDrawer from "./ReplayDrawer/ReplayDrawer";
 import {
   resetReplaySessionsStore,
@@ -30,6 +39,31 @@ import {
 } from "./SessionsView/ReplaySessions/store";
 import { resetTraceGridStore } from "./LLMTracing/states";
 import { resetTabStore } from "./LLMTracing/tabStore";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import { recordActivationEvent as recordActivationEventRequest } from "src/sections/onboarding-home/api/onboarding-home-api";
+import {
+  buildEvalRunStepHref,
+  buildEvalSourceFixRerunClickedPayload,
+  buildEvalSourceFixRouteFocusPayload,
+  EVAL_FIX_RERUN_ORIGINS,
+  evalSetupQuickStartAttributionFromSearch,
+  getEvalSourceFixOnboardingCopy,
+  getEvalSourceFixOnboardingParams,
+} from "src/sections/evals/components/evalCreateOnboarding";
+import ObserveOnboardingFocusPanel from "./ObserveOnboardingFocusPanel";
+import {
+  buildObserveEvaluatorCreateHref,
+  buildObserveRouteFocusPayload,
+  buildObserveSetupHref,
+  buildObserveTraceReviewHref,
+  getObserveFirstTraceBaselineId,
+  getFirstTraceIdFromTraceListResult,
+  getObserveFirstTraceReviewTarget,
+  getObserveOnboardingCopy,
+  getObserveOnboardingParams,
+  OBSERVE_FIRST_TRACE_LOADED_EVENT,
+  OBSERVE_ONBOARDING_MODES,
+} from "./observeOnboardingRoute";
 
 // Loading component for tab content
 const TabContentLoader = () => (
@@ -76,6 +110,13 @@ const ObservePage = React.memo(() => {
   const { data: projectDetail } = useGetProjectDetails(observeId);
   const { data: savedViewsData } = useGetSavedViews(observeId);
   const queryClient = useQueryClient();
+  const { data: observeRouteActivationState, mutate: recordActivationEvent } =
+    useRecordActivationEvent();
+  const recordedObserveFocusRef = useRef(null);
+  const recordedSourceFixFocusRef = useRef(false);
+  const openedFirstTraceReviewRef = useRef(null);
+  const firstTraceBaselineRef = useRef({ key: null, traceId: undefined });
+  const [loadedTraceId, setLoadedTraceId] = useState(null);
 
   // Tab store state for modals and context menu
   const {
@@ -96,6 +137,97 @@ const ObservePage = React.memo(() => {
 
   // Active tab for the new tab system
   const [activeTab, setActiveTab] = useUrlState("tab", "traces");
+  const observeOnboardingParams = useMemo(
+    () => getObserveOnboardingParams(location.search),
+    [location.search],
+  );
+  const firstTraceBaselineId = useMemo(
+    () => getObserveFirstTraceBaselineId(location.search),
+    [location.search],
+  );
+  const activationTraceId =
+    observeRouteActivationState?.signals?.firstTraceId || null;
+  const activationObserveId =
+    observeRouteActivationState?.signals?.firstObserveId || observeId;
+  const firstTraceReviewTarget = useMemo(() => {
+    return getObserveFirstTraceReviewTarget({
+      activationObserveId,
+      activationTraceId,
+      loadedTraceId,
+      mode: observeOnboardingParams.mode,
+      observeId,
+    });
+  }, [
+    activationObserveId,
+    activationTraceId,
+    loadedTraceId,
+    observeId,
+    observeOnboardingParams.mode,
+  ]);
+  const observeOnboardingPanelMode = firstTraceReviewTarget
+    ? OBSERVE_ONBOARDING_MODES.REVIEW_FIRST_TRACE
+    : observeOnboardingParams.mode;
+  const observeOnboardingCopy = useMemo(
+    () =>
+      getObserveOnboardingCopy(observeOnboardingPanelMode, {
+        setupLanguage: observeOnboardingParams.setupLanguage,
+        setupProvider: observeOnboardingParams.setupProvider,
+      }),
+    [
+      observeOnboardingPanelMode,
+      observeOnboardingParams.setupLanguage,
+      observeOnboardingParams.setupProvider,
+    ],
+  );
+  const showObserveOnboardingFocus =
+    observeOnboardingParams.isOnboarding && Boolean(observeOnboardingCopy);
+  const isWaitingForFirstTraceOnboarding =
+    showObserveOnboardingFocus &&
+    observeOnboardingParams.mode === OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE;
+  const sourceFixOnboardingParams = useMemo(
+    () => getEvalSourceFixOnboardingParams(location.search),
+    [location.search],
+  );
+  const onboardingQuickStartAttribution = useMemo(
+    () => evalSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const sourceFixOnboardingCopy = useMemo(
+    () =>
+      getEvalSourceFixOnboardingCopy({
+        sourceType: sourceFixOnboardingParams.sourceType,
+      }),
+    [sourceFixOnboardingParams.sourceType],
+  );
+  const showEvalSourceFixBanner =
+    sourceFixOnboardingParams.isOnboarding &&
+    ["trace", "trace_project"].includes(sourceFixOnboardingParams.sourceType) &&
+    sourceFixOnboardingParams.sourceId === observeId;
+  const sourceFixRerunLabel =
+    sourceFixOnboardingParams.sourceType === "trace_project"
+      ? "Rerun quality check"
+      : "Rerun eval";
+  const sourceFixRerunHref = useMemo(() => {
+    if (!showEvalSourceFixBanner || !sourceFixOnboardingParams.evalId) {
+      return null;
+    }
+
+    return buildEvalRunStepHref({
+      evalId: sourceFixOnboardingParams.evalId,
+      previousRunId: sourceFixOnboardingParams.runId,
+      quickStartAttribution: onboardingQuickStartAttribution,
+      rerunFrom: EVAL_FIX_RERUN_ORIGINS.SOURCE_FIX,
+      setupLanguage: sourceFixOnboardingParams.setupLanguage,
+      setupProvider: sourceFixOnboardingParams.setupProvider,
+      sourceId: sourceFixOnboardingParams.sourceId,
+      sourceType: sourceFixOnboardingParams.sourceType,
+      traceId: sourceFixOnboardingParams.traceId,
+    });
+  }, [
+    onboardingQuickStartAttribution,
+    showEvalSourceFixBanner,
+    sourceFixOnboardingParams,
+  ]);
 
   // Determine if current route uses the new tab system
   const currentRouteSegment = useMemo(() => {
@@ -356,6 +488,7 @@ const ObservePage = React.memo(() => {
     }),
     [],
   );
+  const refreshObserveData = headerConfig.refreshData;
 
   useEffect(() => {
     return () => {
@@ -367,6 +500,372 @@ const ObservePage = React.memo(() => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [observeId]);
+
+  useEffect(() => {
+    if (
+      !showObserveOnboardingFocus ||
+      !observeId ||
+      !observeOnboardingParams.mode
+    ) {
+      return;
+    }
+
+    const recordKey = [
+      observeId,
+      observeOnboardingParams.mode,
+      observeOnboardingParams.setupProvider,
+      observeOnboardingParams.setupLanguage,
+    ].join(":");
+    if (recordedObserveFocusRef.current === recordKey) return;
+    recordedObserveFocusRef.current = recordKey;
+
+    recordActivationEvent?.(
+      buildObserveRouteFocusPayload({
+        observeId,
+        mode: observeOnboardingParams.mode,
+        setupLanguage: observeOnboardingParams.setupLanguage,
+        setupProvider: observeOnboardingParams.setupProvider,
+      }),
+    );
+  }, [
+    observeId,
+    observeOnboardingParams.mode,
+    observeOnboardingParams.setupLanguage,
+    observeOnboardingParams.setupProvider,
+    recordActivationEvent,
+    showObserveOnboardingFocus,
+  ]);
+
+  useEffect(() => {
+    setLoadedTraceId(null);
+    openedFirstTraceReviewRef.current = null;
+    firstTraceBaselineRef.current = { key: null, traceId: undefined };
+  }, [firstTraceBaselineId, observeId, observeOnboardingParams.mode]);
+
+  const fetchOnboardingFirstTraceId = useCallback(async () => {
+    if (!observeId) return null;
+    const params = {
+      page_number: 0,
+      page_size: 1,
+      filters: "[]",
+      project_id: observeId,
+    };
+    const response = await axios.get(
+      endpoints.project.getTracesForObserveProject(),
+      {
+        params,
+      },
+    );
+    return getFirstTraceIdFromTraceListResult(response?.data?.result);
+  }, [observeId]);
+
+  const handleFirstTraceCandidate = useCallback(
+    (traceId) => {
+      const baselineKey = [
+        observeId,
+        observeOnboardingParams.setupProvider,
+        observeOnboardingParams.setupLanguage,
+        firstTraceBaselineId,
+      ].join(":");
+      const baseline = firstTraceBaselineRef.current;
+      if (baseline.key !== baselineKey || baseline.traceId === undefined) {
+        const initialTraceId = firstTraceBaselineId || null;
+        firstTraceBaselineRef.current = {
+          key: baselineKey,
+          traceId: initialTraceId,
+        };
+        if (traceId && traceId !== initialTraceId) {
+          setLoadedTraceId(traceId);
+        }
+        return;
+      }
+      if (traceId && traceId !== baseline.traceId) {
+        setLoadedTraceId(traceId);
+      }
+    },
+    [
+      firstTraceBaselineId,
+      observeId,
+      observeOnboardingParams.setupLanguage,
+      observeOnboardingParams.setupProvider,
+    ],
+  );
+
+  const refreshOnboardingFirstTrace = useCallback(() => {
+    void fetchOnboardingFirstTraceId()
+      .then(handleFirstTraceCandidate)
+      .catch(() => undefined);
+  }, [fetchOnboardingFirstTraceId, handleFirstTraceCandidate]);
+
+  useEffect(() => {
+    if (!isWaitingForFirstTraceOnboarding || firstTraceReviewTarget) return;
+    let mounted = true;
+    const verifyFirstTrace = () => {
+      void fetchOnboardingFirstTraceId()
+        .then((traceId) => {
+          if (mounted) handleFirstTraceCandidate(traceId);
+        })
+        .catch(() => undefined);
+    };
+
+    verifyFirstTrace();
+    const intervalId = window.setInterval(verifyFirstTrace, 5000);
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    fetchOnboardingFirstTraceId,
+    firstTraceReviewTarget,
+    handleFirstTraceCandidate,
+    isWaitingForFirstTraceOnboarding,
+  ]);
+
+  useEffect(() => {
+    if (
+      !showObserveOnboardingFocus ||
+      observeOnboardingParams.mode !== OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE
+    ) {
+      return undefined;
+    }
+
+    const handleFirstTraceLoaded = (event) => {
+      const detail = event?.detail || {};
+      if (detail.projectId !== observeId || !detail.traceId) return;
+      handleFirstTraceCandidate(detail.traceId);
+    };
+
+    window.addEventListener(
+      OBSERVE_FIRST_TRACE_LOADED_EVENT,
+      handleFirstTraceLoaded,
+    );
+    return () => {
+      window.removeEventListener(
+        OBSERVE_FIRST_TRACE_LOADED_EVENT,
+        handleFirstTraceLoaded,
+      );
+    };
+  }, [
+    handleFirstTraceCandidate,
+    observeId,
+    observeOnboardingParams.mode,
+    showObserveOnboardingFocus,
+  ]);
+
+  useEffect(() => {
+    if (
+      !isWaitingForFirstTraceOnboarding ||
+      !firstTraceReviewTarget?.observeId ||
+      !firstTraceReviewTarget?.traceId
+    ) {
+      return;
+    }
+
+    const reviewKey = `${firstTraceReviewTarget.observeId}:${firstTraceReviewTarget.traceId}`;
+    if (openedFirstTraceReviewRef.current === reviewKey) return;
+    openedFirstTraceReviewRef.current = reviewKey;
+
+    navigate(
+      buildObserveTraceReviewHref({
+        ...firstTraceReviewTarget,
+        search: location.search,
+        setupLanguage: observeOnboardingParams.setupLanguage,
+        setupProvider: observeOnboardingParams.setupProvider,
+      }),
+      {
+        replace: true,
+      },
+    );
+  }, [
+    firstTraceReviewTarget,
+    isWaitingForFirstTraceOnboarding,
+    location.search,
+    navigate,
+    observeOnboardingParams.setupLanguage,
+    observeOnboardingParams.setupProvider,
+  ]);
+
+  useEffect(() => {
+    if (!showEvalSourceFixBanner || recordedSourceFixFocusRef.current) return;
+
+    recordedSourceFixFocusRef.current = true;
+    void recordActivationEventRequest(
+      buildEvalSourceFixRouteFocusPayload({
+        evalId: sourceFixOnboardingParams.evalId,
+        quickStartAttribution: onboardingQuickStartAttribution,
+        route: "observe_project",
+        runId: sourceFixOnboardingParams.runId,
+        setupLanguage: sourceFixOnboardingParams.setupLanguage,
+        setupProvider: sourceFixOnboardingParams.setupProvider,
+        sourceId: sourceFixOnboardingParams.sourceId,
+        sourceType: sourceFixOnboardingParams.sourceType,
+        traceId: sourceFixOnboardingParams.traceId,
+      }),
+    ).catch(() => undefined);
+  }, [
+    onboardingQuickStartAttribution,
+    showEvalSourceFixBanner,
+    sourceFixOnboardingParams,
+  ]);
+
+  const handleSourceFixRerun = useCallback(() => {
+    if (!sourceFixRerunHref) return;
+
+    const navigateToRerun = () => navigate(sourceFixRerunHref);
+    void recordActivationEventRequest(
+      buildEvalSourceFixRerunClickedPayload({
+        evalId: sourceFixOnboardingParams.evalId,
+        quickStartAttribution: onboardingQuickStartAttribution,
+        rerunRoute: sourceFixRerunHref,
+        route: "observe_project",
+        runId: sourceFixOnboardingParams.runId,
+        setupLanguage: sourceFixOnboardingParams.setupLanguage,
+        setupProvider: sourceFixOnboardingParams.setupProvider,
+        sourceId: sourceFixOnboardingParams.sourceId,
+        sourceType: sourceFixOnboardingParams.sourceType,
+        traceId: sourceFixOnboardingParams.traceId,
+      }),
+    ).finally(navigateToRerun);
+  }, [
+    navigate,
+    onboardingQuickStartAttribution,
+    sourceFixOnboardingParams,
+    sourceFixRerunHref,
+  ]);
+
+  const handleObservePrimaryAction = useCallback(() => {
+    if (firstTraceReviewTarget) {
+      navigate(
+        buildObserveTraceReviewHref({
+          ...firstTraceReviewTarget,
+          search: location.search,
+          setupLanguage: observeOnboardingParams.setupLanguage,
+          setupProvider: observeOnboardingParams.setupProvider,
+        }),
+      );
+      return;
+    }
+
+    if (
+      observeOnboardingParams.mode === OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR
+    ) {
+      navigate(
+        buildObserveEvaluatorCreateHref({
+          observeId,
+          search: location.search,
+          setupLanguage: observeOnboardingParams.setupLanguage,
+          setupProvider: observeOnboardingParams.setupProvider,
+          traceId: loadedTraceId,
+        }),
+      );
+      return;
+    }
+
+    if (
+      observeOnboardingParams.mode === OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE
+    ) {
+      refreshOnboardingFirstTrace();
+      refreshObserveData?.();
+      return;
+    }
+    refreshObserveData?.();
+  }, [
+    firstTraceReviewTarget,
+    location.search,
+    loadedTraceId,
+    navigate,
+    observeId,
+    observeOnboardingParams.mode,
+    observeOnboardingParams.setupLanguage,
+    observeOnboardingParams.setupProvider,
+    refreshOnboardingFirstTrace,
+    refreshObserveData,
+  ]);
+
+  const handleObserveSecondaryAction = useCallback(() => {
+    if (firstTraceReviewTarget) {
+      refreshObserveData?.();
+      return;
+    }
+
+    if (
+      observeOnboardingParams.mode === OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR
+    ) {
+      refreshObserveData?.();
+      return;
+    }
+
+    if (
+      observeOnboardingParams.mode === OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE
+    ) {
+      navigate(
+        buildObserveSetupHref({
+          search: location.search,
+          setupLanguage: observeOnboardingParams.setupLanguage,
+          setupProvider: observeOnboardingParams.setupProvider,
+        }),
+      );
+    }
+  }, [
+    firstTraceReviewTarget,
+    location.search,
+    navigate,
+    observeOnboardingParams.setupLanguage,
+    observeOnboardingParams.setupProvider,
+    observeOnboardingParams.mode,
+    refreshObserveData,
+  ]);
+
+  const observePrimaryAction = useMemo(() => {
+    if (!observeOnboardingCopy) return null;
+    const isCreateEvaluator =
+      observeOnboardingParams.mode ===
+      OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR;
+    const isReviewReady = Boolean(firstTraceReviewTarget);
+    const isWaitingForFirstTrace =
+      observeOnboardingParams.mode ===
+      OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE;
+    return {
+      label: observeOnboardingCopy.primaryLabel,
+      onClick: handleObservePrimaryAction,
+      disabled:
+        !isCreateEvaluator &&
+        !isReviewReady &&
+        !isWaitingForFirstTrace &&
+        !refreshObserveData,
+    };
+  }, [
+    firstTraceReviewTarget,
+    handleObservePrimaryAction,
+    observeOnboardingCopy,
+    observeOnboardingParams.mode,
+    refreshObserveData,
+  ]);
+
+  const observeSecondaryAction = useMemo(() => {
+    if (!observeOnboardingCopy) return null;
+    const isCreateEvaluator =
+      observeOnboardingParams.mode ===
+      OBSERVE_ONBOARDING_MODES.CREATE_EVALUATOR;
+    const isReviewReady = Boolean(firstTraceReviewTarget);
+    const isWaitingForFirstTrace =
+      observeOnboardingParams.mode ===
+      OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE;
+    return {
+      label: observeOnboardingCopy.secondaryLabel,
+      onClick: handleObserveSecondaryAction,
+      disabled:
+        (isCreateEvaluator || isReviewReady) &&
+        !isWaitingForFirstTrace &&
+        !refreshObserveData,
+    };
+  }, [
+    firstTraceReviewTarget,
+    handleObserveSecondaryAction,
+    observeOnboardingCopy,
+    observeOnboardingParams.mode,
+    refreshObserveData,
+  ]);
 
   if (!observeId) {
     return (
@@ -417,6 +916,39 @@ const ObservePage = React.memo(() => {
         id="observe-filter-chips-slot"
         sx={{ px: 2, flexShrink: 0, bgcolor: "background.paper" }}
       />
+
+      {showObserveOnboardingFocus && observeOnboardingCopy && (
+        <ObserveOnboardingFocusPanel
+          currentStep={observeOnboardingCopy.currentStep}
+          description={observeOnboardingCopy.description}
+          primaryAction={observePrimaryAction}
+          secondaryAction={observeSecondaryAction}
+          steps={observeOnboardingCopy.steps}
+          sx={{ mx: 2, mt: 1, mb: 0.5 }}
+          title={observeOnboardingCopy.title}
+          tourAnchor={observeOnboardingParams.tourAnchor}
+        />
+      )}
+
+      {showEvalSourceFixBanner && (
+        <Alert
+          action={
+            sourceFixRerunHref ? (
+              <Button
+                color="inherit"
+                size="small"
+                onClick={handleSourceFixRerun}
+              >
+                {sourceFixRerunLabel}
+              </Button>
+            ) : null
+          }
+          severity="info"
+          sx={{ mx: 2, mt: 1, mb: 0.5, flexShrink: 0 }}
+        >
+          {sourceFixOnboardingCopy.description}
+        </Alert>
+      )}
 
       {/* Content Section */}
       <Box sx={contentStyles}>

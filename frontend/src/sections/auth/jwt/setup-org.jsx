@@ -1,4 +1,11 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useCallback,
+  useRef,
+} from "react";
+import { Helmet } from "react-helmet-async";
 import {
   Box,
   Stack,
@@ -8,32 +15,80 @@ import {
   styled,
   MobileStepper,
   Button,
+  Chip,
 } from "@mui/material";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSnackbar } from "src/components/snackbar";
 import { LoadingButton } from "@mui/lab";
 import axios, { endpoints } from "src/utils/axios";
-import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
 import PropTypes from "prop-types";
-import { paths } from "src/routes/paths";
 import { FormSearchSelectFieldState } from "src/components/FromSearchSelectField";
-import RightSectionAuth from "./RightSectionAuth";
 import { Controller, useForm, useFieldArray, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import RadioField from "src/components/RadioField/RadioField";
-import { FormCheckboxField } from "src/components/FormCheckboxField";
 import { useAuthContext } from "src/auth/hooks";
-import {
-  AVAILABLE_ROLES,
-  DEFAULT_ROLES,
-  GOALS_LIST,
-  ROLE_OPTIONS,
-} from "./constants";
+import { DEFAULT_ROLES, GOALS_LIST, ROLE_OPTIONS } from "./constants";
 import { organizationSchema, userDataSchema } from "./zodSchema";
 import { generateNameFromEmail } from "./common";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import SvgColor from "src/components/svg-color";
+import Iconify from "src/components/iconify";
 import { useSearchParams } from "react-router-dom";
+import {
+  persistSetupCompletionReturnTo,
+  resolveSetupCompletionHref,
+  shouldShowInviteStepAfterProfileSave,
+} from "./setup-org-routing";
+import {
+  trackSetupOrgInvitesSaved,
+  trackSetupOrgProfileSaved,
+  trackSetupOrgQuickStartClicked,
+  trackSetupOrgQuickStartProfileSaveFailed,
+  trackSetupOrgQuickStartsViewed,
+} from "./setup-org-analytics";
+import {
+  isSetupOrgFirstSetupQuickStart,
+  persistSetupQuickStartAttribution,
+  SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS,
+} from "./setup-org-quick-starts";
+
+const QUICK_START_ROLE = "AI Builder";
+
+const SETUP_SIDE_PANEL_STEPS = [
+  {
+    label: "Choose a setup task",
+    description: "Start with the product area you want to use first.",
+  },
+  {
+    label: "Complete step 1",
+    description: "We open the product screen for the first setup action.",
+  },
+  {
+    label: "Return to Home",
+    description: "Home keeps showing the next setup action.",
+  },
+];
+
+const quickStartMinutesLabel = (option) =>
+  option?.estimatedMinutes ? `${option.estimatedMinutes} min` : null;
+
+const normalizeGoalValue = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const goalMatchesSavedValue = (goal, savedGoal) => {
+  const saved = normalizeGoalValue(savedGoal);
+  if (!saved) return false;
+  return [goal.id, goal.label, ...(goal.aliases || [])].some(
+    (candidate) => normalizeGoalValue(candidate) === saved,
+  );
+};
+
+const setupSaveFailureReason = (error) =>
+  error?.response?.data?.code ||
+  error?.response?.data?.result?.error_code ||
+  error?.code ||
+  "unknown_error";
 
 const DotsStepper = styled(MobileStepper)(({ theme }) => ({
   background: "transparent",
@@ -65,13 +120,13 @@ const MemberRow = React.memo(
     if (!editable) {
       return (
         <Stack
-          direction="row"
+          direction={{ xs: "column", sm: "row" }}
           alignItems="center"
           sx={{
             position: "relative",
-            gap: 2,
+            gap: { xs: 1, sm: 2 },
             width: "100%",
-            pr: 5,
+            pr: { xs: 0, sm: 5 },
             pt: 0,
             mt: 2,
           }}
@@ -99,13 +154,13 @@ const MemberRow = React.memo(
     }
     return (
       <Stack
-        direction="row"
+        direction={{ xs: "column", sm: "row" }}
         alignItems="flex-start"
         sx={{
           position: "relative",
-          gap: 2,
+          gap: { xs: 1, sm: 2 },
           width: "100%",
-          pr: 5,
+          pr: { xs: 0, sm: 5 },
           pt: 0,
           mt: 2,
         }}
@@ -172,7 +227,98 @@ MemberRow.propTypes = {
   onRemove: PropTypes.func,
 };
 
-const useOrganizationInitialData = (isOwner) => {
+const SetupOrgSidePanel = () => (
+  <Box
+    sx={{
+      width: "100%",
+      height: "100%",
+      minHeight: "100dvh",
+      p: 4,
+      bgcolor: "background.neutral",
+      display: "flex",
+      flexDirection: "column",
+    }}
+  >
+    <Stack direction="row" gap={0.75} alignItems="center">
+      <Box
+        component="img"
+        sx={{ height: 44, width: 44 }}
+        src="/favicon/logo.svg"
+        alt="FutureAGI"
+      />
+
+      <SvgColor
+        src="/logo/future_agi_text.svg"
+        sx={{ height: 20, width: 128, color: "text.primary" }}
+      />
+    </Stack>
+
+    <Stack
+      spacing={3}
+      sx={{
+        maxWidth: 520,
+        width: "100%",
+        mx: "auto",
+        my: "auto",
+      }}
+    >
+      <Stack spacing={1}>
+        <Typography variant="overline" color="text.secondary">
+          Setup flow
+        </Typography>
+        <Typography variant="h4">One step at a time</Typography>
+        <Typography variant="body1" color="text.secondary">
+          Choose the product area you want to set up first. After each real
+          setup action, Home moves you to the next step.
+        </Typography>
+      </Stack>
+
+      <Stack spacing={1.25}>
+        {SETUP_SIDE_PANEL_STEPS.map((step, index) => (
+          <Stack
+            key={step.label}
+            direction="row"
+            spacing={1.25}
+            alignItems="flex-start"
+            sx={{
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: 1,
+              bgcolor: "background.paper",
+              p: 1.5,
+            }}
+          >
+            <Box
+              sx={{
+                width: 34,
+                height: 34,
+                borderRadius: 1,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                bgcolor: "common.white",
+                color: "common.black",
+                flexShrink: 0,
+              }}
+            >
+              <Typography variant="subtitle2" color="inherit">
+                {index + 1}
+              </Typography>
+            </Box>
+            <Stack spacing={0.25}>
+              <Typography variant="subtitle2">{step.label}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {step.description}
+              </Typography>
+            </Stack>
+          </Stack>
+        ))}
+      </Stack>
+    </Stack>
+  </Box>
+);
+
+const useOrganizationInitialData = (isOwner, user) => {
   const { enqueueSnackbar } = useSnackbar();
   const [isLoading, setIsLoading] = useState(true);
   const [initialData, setInitialData] = useState(null);
@@ -201,8 +347,15 @@ const useOrganizationInitialData = (isOwner) => {
                 },
               ];
 
+        const organizationName =
+          orgDetails.org_name ||
+          user?.organization?.display_name ||
+          user?.organization?.name ||
+          generateNameFromEmail(user?.email) ||
+          "";
+
         setInitialData({
-          orgName: orgDetails.org_name,
+          orgName: organizationName,
           members: prefilledMembers,
         });
       } catch (error) {
@@ -210,7 +363,11 @@ const useOrganizationInitialData = (isOwner) => {
           variant: "error",
         });
         setInitialData({
-          orgName: "",
+          orgName:
+            user?.organization?.display_name ||
+            user?.organization?.name ||
+            generateNameFromEmail(user?.email) ||
+            "",
           members: [
             {
               email: "",
@@ -225,25 +382,36 @@ const useOrganizationInitialData = (isOwner) => {
       }
     };
     if (!isOwner) {
+      setIsLoading(false);
       return;
     }
 
     fetchOrgDetails();
-  }, [enqueueSnackbar]);
+  }, [
+    enqueueSnackbar,
+    isOwner,
+    user?.email,
+    user?.organization?.display_name,
+    user?.organization?.name,
+  ]);
 
   return { initialData, isLoading };
 };
 
 const SetupOrganization = ({ getStarted = false }) => {
   const queryClient = useQueryClient();
+  const quickStartOptionRef = useRef(null);
+  const quickStartsViewedRef = useRef(false);
   const [searchParams, setSearchParams] = useSearchParams();
-  const activeStep = parseInt(searchParams.get("step") || "0", 10);
-  // Where to land once org setup finishes — honor an internal `returnTo`
-  // persisted in localStorage over the default dashboard page.
-  const returnTo = (() => {
-    const rt = localStorage.getItem("redirectUrl");
-    return rt && rt.startsWith("/") && !rt.startsWith("//") ? rt : null;
-  })();
+  const rawActiveStep = parseInt(searchParams.get("step") || "0", 10);
+  const activeStep = rawActiveStep === 2 ? 2 : 0;
+  const finishSetup = useCallback((quickStartOption) => {
+    const completionHref = resolveSetupCompletionHref(quickStartOption);
+    localStorage.setItem("initial-render", "done");
+    localStorage.removeItem("redirectUrl");
+    persistSetupCompletionReturnTo(completionHref);
+    window.location.href = completionHref;
+  }, []);
 
   const setActiveStep = useCallback(
     (newStep) => {
@@ -254,10 +422,10 @@ const SetupOrganization = ({ getStarted = false }) => {
     [searchParams, setSearchParams],
   );
   const { enqueueSnackbar } = useSnackbar();
-  const { user } = useAuthContext();
+  const { updateUserData, user } = useAuthContext();
   const isOwner = user?.organization_role === "Owner";
   const { initialData, isLoading: isFetchingInitialData } =
-    useOrganizationInitialData(isOwner);
+    useOrganizationInitialData(isOwner, user);
 
   const { data: invitesData, refetch: refetchInvites } = useQuery({
     queryKey: ["owner-org-invites"],
@@ -284,8 +452,8 @@ const SetupOrganization = ({ getStarted = false }) => {
   const defaultValuesForUserForm = useCallback(() => {
     const customRole = !DEFAULT_ROLES?.includes(userOnboardingData?.role);
     const goalsArray = GOALS_LIST.map((goal) => {
-      const isSelected = userOnboardingData?.goals?.some(
-        (g) => g.toLowerCase() === goal.label.toLowerCase(),
+      const isSelected = userOnboardingData?.goals?.some((g) =>
+        goalMatchesSavedValue(goal, g),
       );
 
       return isSelected;
@@ -308,7 +476,7 @@ const SetupOrganization = ({ getStarted = false }) => {
 
       userForm.reset(newDefaults);
     }
-  }, [userOnboardingData]);
+  }, [defaultValuesForUserForm, userForm, userOnboardingData]);
 
   const { mutate: saveUserData, isPending: isSavingUserData } = useMutation({
     mutationFn: async (data) => {
@@ -318,52 +486,484 @@ const SetupOrganization = ({ getStarted = false }) => {
       errorHandled: true,
     },
     onSuccess: (data, variables) => {
+      const quickStartOption = quickStartOptionRef.current;
+      const shouldFinishQuickStart = Boolean(quickStartOption);
+      quickStartOptionRef.current = null;
       enqueueSnackbar("Profile updated successfully", { variant: "success" });
       const provider = localStorage.getItem("signupProvider");
-      trackEvent(Events.signUpCompleted, {
-        [PropertyName.email]: user?.email,
-        [PropertyName.role]: variables?.role,
-        [PropertyName.goals]: variables?.goals,
-        [PropertyName.method]: provider,
+      trackSetupOrgProfileSaved({
+        goals: variables?.goals,
+        provider,
+        quickStartGoal: quickStartOption?.goal,
+        quickStartId: quickStartOption?.id,
+        quickStartPrimaryPath: quickStartOption?.primaryPath,
+        quickStartRequested: shouldFinishQuickStart,
+        role: variables?.role,
       });
       localStorage.removeItem("signupProvider");
-      if (isOwner) {
+      if (
+        shouldShowInviteStepAfterProfileSave({
+          isOwner,
+          quickStartRequested: shouldFinishQuickStart,
+        })
+      ) {
         setActiveStep(2);
       } else {
-        // Non-owners (invited users) should go straight to dashboard
-        // They're already part of an org, no need for additional onboarding
-        if (returnTo) {
-          localStorage.setItem("initial-render", "done");
-          localStorage.removeItem("redirectUrl");
-        }
-        window.location.href = returnTo || paths.dashboard.develop;
+        updateUserData({
+          role: variables?.role,
+          goals: variables?.goals || [],
+          onboarding_completed: Boolean(
+            variables?.role && variables?.goals?.length,
+          ),
+        });
+        finishSetup(quickStartOption);
       }
     },
-    onError: (error) => {
+    onError: (error, variables) => {
+      const quickStartOption = quickStartOptionRef.current;
+      const shouldFinishQuickStart = Boolean(quickStartOption);
+      quickStartOptionRef.current = null;
+      if (shouldFinishQuickStart) {
+        trackSetupOrgQuickStartProfileSaveFailed({
+          quickStartGoal: quickStartOption.goal,
+          quickStartId: quickStartOption.id,
+          quickStartPrimaryPath: quickStartOption.primaryPath,
+          reason: setupSaveFailureReason(error),
+          status: error?.response?.status || error?.status,
+        });
+        enqueueSnackbar(
+          "Opening setup. We could not save that profile choice yet.",
+          {
+            variant: "warning",
+          },
+        );
+        updateUserData({
+          role: variables?.role,
+          goals: variables?.goals || [],
+          onboarding_completed: Boolean(
+            variables?.role && variables?.goals?.length,
+          ),
+        });
+        finishSetup(quickStartOption);
+        return;
+      }
       enqueueSnackbar(error?.message || "Failed to save profile", {
         variant: "error",
       });
     },
   });
-  const { handleSubmit: handleSubmitUserData } = userForm;
-  const onSubmitUserData = (data, isSkipped = false) => {
-    if (isSavingUserData) {
-      return;
-    }
-    const payload = {
-      role: data?.customRole || data?.role,
-      goals: isSkipped
-        ? []
-        : GOALS_LIST.filter((_, index) => data?.goals[index]).map(
-            (goal) => goal?.label,
-          ),
-    };
-
-    saveUserData(payload);
-  };
-
   const customRoleValue = userForm.watch("customRole");
   const roleValue = userForm.watch("role");
+  useEffect(() => {
+    if (activeStep !== 0 || quickStartsViewedRef.current) {
+      return;
+    }
+
+    quickStartsViewedRef.current = true;
+    trackSetupOrgQuickStartsViewed({
+      quickStarts: SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
+        isSetupOrgFirstSetupQuickStart,
+      ),
+    });
+  }, [activeStep]);
+
+  const handleProductLoopQuickStart = useCallback(
+    (option) => {
+      if (isSavingUserData || quickStartOptionRef.current) {
+        return;
+      }
+
+      quickStartOptionRef.current = option;
+      persistSetupQuickStartAttribution({
+        quickStartGoal: option.goal,
+        quickStartId: option.id,
+        quickStartPrimaryPath: option.primaryPath,
+      });
+      trackSetupOrgQuickStartClicked({
+        quickStartGoal: option.goal,
+        quickStartId: option.id,
+        quickStartPrimaryPath: option.primaryPath,
+      });
+      saveUserData({
+        role: customRoleValue || roleValue || QUICK_START_ROLE,
+        goals: [option.goal],
+      });
+    },
+    [customRoleValue, isSavingUserData, roleValue, saveUserData],
+  );
+  const handleProductLoopQuickStartPointerUp = useCallback(
+    (event, option) => {
+      if (event.pointerType === "mouse" && event.button !== 0) {
+        return;
+      }
+      handleProductLoopQuickStart(option);
+    },
+    [handleProductLoopQuickStart],
+  );
+  const quickStartLoading = (option) =>
+    isSavingUserData && quickStartOptionRef.current?.id === option.id;
+
+  const renderQuickStartSequencePreview = (option) => {
+    const sequence = option.sequencePreview;
+    if (!sequence?.length) return null;
+
+    return (
+      <Typography
+        component="span"
+        variant="caption"
+        sx={{
+          color: "text.secondary",
+          lineHeight: 1.35,
+        }}
+      >
+        Flow: {sequence.join(" -> ")}
+      </Typography>
+    );
+  };
+
+  const renderFeaturedProductLoopQuickStart = (option) => {
+    return (
+      <LoadingButton
+        key={option.id}
+        fullWidth
+        data-testid={`setup-org-quick-start-${option.id}`}
+        sx={{
+          borderRadius: 0.5,
+          minHeight: { xs: 178, sm: 190 },
+          height: "auto",
+          alignItems: "flex-start",
+          justifyContent: "flex-start",
+          px: { xs: 1.75, sm: 2 },
+          py: { xs: 1.5, sm: 2 },
+          textAlign: "left",
+          whiteSpace: "normal",
+          textTransform: "none",
+          color: "text.primary",
+          bgcolor: "action.hover",
+          borderColor: "primary.main",
+          "&:hover": {
+            bgcolor: "action.selected",
+            borderColor: "primary.main",
+          },
+          "& .MuiButton-startIcon": {
+            mt: 0.2,
+          },
+          "& .MuiButton-endIcon": {
+            alignSelf: "flex-start",
+          },
+        }}
+        variant="outlined"
+        loading={quickStartLoading(option)}
+        disabled={isSavingUserData}
+        aria-label={option.buttonLabel}
+        onClick={() => handleProductLoopQuickStart(option)}
+        onPointerUp={(event) =>
+          handleProductLoopQuickStartPointerUp(event, option)
+        }
+        color="primary"
+        endIcon={
+          <Iconify
+            icon="mdi:arrow-right"
+            width={18}
+            sx={{ flexShrink: 0, mt: 0.25 }}
+          />
+        }
+      >
+        <Stack
+          component="span"
+          spacing={0.75}
+          sx={{ display: "flex", minWidth: 0, width: "100%" }}
+        >
+          <Stack
+            component="span"
+            direction="row"
+            spacing={0.75}
+            flexWrap="wrap"
+            sx={{ display: "flex" }}
+          >
+            <Chip size="small" label={option.surfaceLabel} />
+            {quickStartMinutesLabel(option) ? (
+              <Chip size="small" label={quickStartMinutesLabel(option)} />
+            ) : null}
+            <Chip size="small" color="primary" label="Recommended" />
+          </Stack>
+          <Stack
+            component="span"
+            direction="row"
+            spacing={0.75}
+            alignItems="center"
+            sx={{ display: "flex", minWidth: 0 }}
+          >
+            {option.icon ? (
+              <Iconify icon={option.icon} width={24} sx={{ flexShrink: 0 }} />
+            ) : null}
+            <Typography component="span" variant="h5" sx={{ lineHeight: 1.15 }}>
+              {option.buttonLabel}
+            </Typography>
+          </Stack>
+          <Typography
+            component="span"
+            variant="body2"
+            sx={{ color: "text.secondary", lineHeight: 1.45 }}
+          >
+            {option.shortDescription}
+          </Typography>
+          <Typography
+            component="span"
+            variant="body2"
+            sx={{
+              color: "text.primary",
+              fontWeight: "fontWeightMedium",
+            }}
+          >
+            Step 1: {option.firstActionLabel}
+          </Typography>
+          {option.outcomePreview ? (
+            <Typography
+              component="span"
+              variant="body2"
+              sx={{
+                color: "text.primary",
+                lineHeight: 1.35,
+              }}
+            >
+              Finish with: {option.outcomePreview}
+            </Typography>
+          ) : null}
+          {renderQuickStartSequencePreview(option)}
+          <Typography
+            component="span"
+            variant="button"
+            sx={{
+              alignSelf: "flex-start",
+              color: "primary.main",
+              mt: 0.25,
+            }}
+          >
+            Start setup
+          </Typography>
+        </Stack>
+      </LoadingButton>
+    );
+  };
+
+  const renderAlternativeProductLoopQuickStart = (option) => {
+    return (
+      <LoadingButton
+        key={option.id}
+        fullWidth
+        data-testid={`setup-org-quick-start-${option.id}`}
+        sx={{
+          borderRadius: 0.5,
+          minHeight: 118,
+          height: "auto",
+          alignItems: "flex-start",
+          justifyContent: "flex-start",
+          px: 1.5,
+          py: 1.25,
+          textAlign: "left",
+          whiteSpace: "normal",
+          textTransform: "none",
+          color: "text.primary",
+          bgcolor: "background.paper",
+          borderColor: "divider",
+          "&:hover": {
+            bgcolor: "action.hover",
+            borderColor: "text.primary",
+          },
+          "& .MuiButton-endIcon": {
+            alignSelf: "flex-start",
+            mt: 0.25,
+          },
+        }}
+        variant="outlined"
+        loading={quickStartLoading(option)}
+        disabled={isSavingUserData}
+        aria-label={option.buttonLabel}
+        onClick={() => handleProductLoopQuickStart(option)}
+        onPointerUp={(event) =>
+          handleProductLoopQuickStartPointerUp(event, option)
+        }
+        color="primary"
+        endIcon={<Iconify icon="mdi:arrow-right" width={18} />}
+      >
+        <Stack
+          component="span"
+          spacing={0.35}
+          sx={{ display: "flex", minWidth: 0, width: "100%" }}
+        >
+          <Stack
+            component="span"
+            direction="row"
+            spacing={0.75}
+            alignItems="center"
+            sx={{ display: "flex", minWidth: 0 }}
+          >
+            {option.icon ? (
+              <Iconify icon={option.icon} width={18} sx={{ flexShrink: 0 }} />
+            ) : null}
+            <Typography
+              component="span"
+              variant="subtitle2"
+              sx={{ lineHeight: 1.2 }}
+            >
+              {option.buttonLabel}
+            </Typography>
+          </Stack>
+          <Stack
+            component="span"
+            direction="row"
+            spacing={0.5}
+            flexWrap="wrap"
+            sx={{ display: "flex" }}
+          >
+            <Chip size="small" label={option.surfaceLabel} />
+            {quickStartMinutesLabel(option) ? (
+              <Chip size="small" label={quickStartMinutesLabel(option)} />
+            ) : null}
+          </Stack>
+          <Typography
+            component="span"
+            variant="caption"
+            sx={{ color: "text.secondary", lineHeight: 1.3 }}
+          >
+            Step 1: {option.firstActionLabel}
+          </Typography>
+          {option.outcomePreview ? (
+            <Typography
+              component="span"
+              variant="caption"
+              sx={{ color: "text.primary", lineHeight: 1.3 }}
+            >
+              Finish with: {option.outcomePreview}
+            </Typography>
+          ) : null}
+          {renderQuickStartSequencePreview(option)}
+          <Typography
+            component="span"
+            variant="caption"
+            sx={{ color: "text.secondary", lineHeight: 1.3 }}
+          >
+            {option.shortDescription}
+          </Typography>
+        </Stack>
+      </LoadingButton>
+    );
+  };
+
+  const renderMobileSetupSteps = () => (
+    <Stack
+      data-testid="setup-org-mobile-steps"
+      spacing={1}
+      sx={{
+        display: { xs: "flex", md: "none" },
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: 1,
+        bgcolor: "background.neutral",
+        p: 1.5,
+      }}
+    >
+      <Typography variant="overline" color="text.secondary">
+        Setup flow
+      </Typography>
+      {SETUP_SIDE_PANEL_STEPS.map((step, index) => (
+        <Stack
+          key={step.label}
+          direction="row"
+          spacing={1.25}
+          alignItems="flex-start"
+        >
+          <Box
+            sx={{
+              width: 26,
+              height: 26,
+              borderRadius: 1,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              bgcolor: "common.white",
+              color: "common.black",
+              flexShrink: 0,
+            }}
+          >
+            <Typography variant="caption" color="inherit">
+              {index + 1}
+            </Typography>
+          </Box>
+          <Stack spacing={0.25}>
+            <Typography variant="subtitle2">{step.label}</Typography>
+            <Typography variant="body2" color="text.secondary">
+              {step.description}
+            </Typography>
+          </Stack>
+        </Stack>
+      ))}
+    </Stack>
+  );
+
+  const renderProductLoopQuickStarts = () => {
+    const productQuickStarts = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.filter(
+      (option) => isSetupOrgFirstSetupQuickStart(option),
+    );
+    const featuredQuickStart =
+      productQuickStarts.find((option) => option.featured) ||
+      productQuickStarts[0];
+    const alternativeQuickStarts = productQuickStarts.filter(
+      (option) => option.id !== featuredQuickStart?.id,
+    );
+
+    return (
+      <Stack spacing={2}>
+        {featuredQuickStart
+          ? renderFeaturedProductLoopQuickStart(featuredQuickStart)
+          : null}
+
+        {alternativeQuickStarts.length ? (
+          <Stack spacing={1}>
+            <Typography variant="subtitle2" color="text.secondary">
+              Other starting points
+            </Typography>
+            <Box
+              data-testid="setup-org-product-quick-starts"
+              sx={{
+                display: "grid",
+                gridTemplateColumns: {
+                  xs: "1fr",
+                  sm: "repeat(2, minmax(0, 1fr))",
+                },
+                gap: 1,
+              }}
+            >
+              {alternativeQuickStarts.map(
+                renderAlternativeProductLoopQuickStart,
+              )}
+            </Box>
+          </Stack>
+        ) : null}
+
+        <Box
+          data-testid="setup-org-sample-note"
+          sx={{
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: 1,
+            p: 1.25,
+            bgcolor: "background.paper",
+          }}
+        >
+          <Stack direction="row" spacing={1} alignItems="flex-start">
+            <Iconify icon="mdi:database-eye-outline" width={20} />
+            <Typography variant="body2" color="text.secondary">
+              Sample traces are available later for preview. They do not mark
+              setup complete.
+            </Typography>
+          </Stack>
+        </Box>
+      </Stack>
+    );
+  };
+
   const orgForm = useForm({
     resolver: zodResolver(organizationSchema),
     mode: "onChange",
@@ -403,13 +1003,13 @@ const SetupOrganization = ({ getStarted = false }) => {
     if (customRoleValue) {
       userForm.setValue("role", "");
     }
-  }, [customRoleValue]);
+  }, [customRoleValue, userForm]);
 
   useEffect(() => {
     if (roleValue) {
       userForm.setValue("customRole", "");
     }
-  }, [roleValue]);
+  }, [roleValue, userForm]);
 
   const addMember = useCallback(() => {
     append({
@@ -418,7 +1018,7 @@ const SetupOrganization = ({ getStarted = false }) => {
       organization_role: "Member",
       disabled: false,
     });
-  }, [append, getStarted, memberToadd?.length, enqueueSnackbar]);
+  }, [append]);
 
   const removeMember = useCallback(
     (index) => {
@@ -437,11 +1037,11 @@ const SetupOrganization = ({ getStarted = false }) => {
     mutationFn: async (data) => {
       const membersToSend = data.members
         .map((m, i) => ({ ...m, originalIndex: i }))
-        .filter((m) => !m.disabled && m.email.trim())
+        .filter((m) => !m.disabled && (m.email || "").trim())
         .map((m) => ({
           index: m.originalIndex,
           email: m.email,
-          name: m.name || generateNameFromEmail(m.email),
+          name: m.name || generateNameFromEmail(m.email || ""),
           organization_role: m.organization_role,
         }));
 
@@ -483,36 +1083,13 @@ const SetupOrganization = ({ getStarted = false }) => {
 
     onSuccess: (_, variables) => {
       refetchInvites();
-      const membersToTrack = variables?.members?.filter(
-        (m) => !m?.disabled && m?.email?.trim(),
-      );
-
-      trackEvent(Events.setupOrganizationClicked, {
-        [PropertyName.click]: true,
-        [PropertyName.email_list]: membersToTrack,
-      });
-
-      trackEvent(Events.pageView, {
-        [PropertyName.click]: {
-          org_name: variables?.orgName,
-          members_added: membersToTrack?.length,
-          roles_assigned: [
-            ...new Set(membersToTrack.map((m) => m?.organization_role)),
-          ],
-          create_org_clicked: true,
-        },
-        [PropertyName.count]: membersToTrack.length,
-      });
+      trackSetupOrgInvitesSaved({ members: variables?.members });
 
       orgForm.reset();
 
       if (!getStarted) {
-        // After creating org during onboarding, redirect to get-started
-        if (returnTo) {
-          localStorage.setItem("initial-render", "done");
-          localStorage.removeItem("redirectUrl");
-        }
-        window.location.href = returnTo || paths.dashboard.getstarted;
+        updateUserData({ onboarding_completed: true });
+        finishSetup();
       }
     },
 
@@ -583,7 +1160,7 @@ const SetupOrganization = ({ getStarted = false }) => {
       ...data,
       members: data?.members.map((member) => ({
         ...member,
-        name: member.name || generateNameFromEmail(member.email),
+        name: member.name || generateNameFromEmail(member.email || ""),
       })),
     };
     createOrg(processedData);
@@ -611,7 +1188,7 @@ const SetupOrganization = ({ getStarted = false }) => {
           )}
 
           <Typography variant="m2" fontWeight="fontWeightMedium">
-            Invite people to collaborate in FutureAGI
+            This is optional. You can add teammates later.
           </Typography>
 
           <Box
@@ -681,33 +1258,26 @@ const SetupOrganization = ({ getStarted = false }) => {
             })}
 
             <Box sx={{ mt: 2 }}>
-              <Typography
-                variant={getStarted ? "body2" : "s1.2"}
+              <Button
+                variant="outlined"
+                size="small"
                 sx={{
-                  color: "primary.main",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  border: "1px solid",
-                  borderColor: "primary.main",
                   borderRadius: getStarted ? 1 : 0.5,
-                  padding: "4px 10px",
-                  transition: "all 0.2s",
+                  minHeight: 32,
                   fontWeight: !getStarted && 500,
-                  "&:hover": { bgcolor: "action.hover" },
                 }}
                 onClick={addMember}
-                disable={!getStarted && memberToadd?.length > 3}
+                disabled={!getStarted && memberToadd?.length > 3}
+                startIcon={
+                  <SvgColor
+                    src="/assets/icons/ic_add.svg"
+                    width={15}
+                    height={15}
+                  />
+                }
               >
-                <SvgColor
-                  src="/assets/icons/ic_add.svg"
-                  width={15}
-                  height={15}
-                  sx={{ mr: 1 }}
-                />
-
-                {getStarted ? "Add members" : "Add"}
-              </Typography>
+                {getStarted ? "Add members" : "Add teammate"}
+              </Button>
             </Box>
           </Box>
 
@@ -724,27 +1294,8 @@ const SetupOrganization = ({ getStarted = false }) => {
               maxWidth: "100%",
             }}
           >
-            Continue
+            {getStarted ? "Save invites" : "Continue setup"}
           </LoadingButton>
-
-          {/* {!getStarted && (
-            <Typography
-              textAlign="center"
-              onClick={() => {
-                router.push(paths.dashboard.getstarted);
-              }}
-              sx={{
-                cursor: isCreating ? "not-allowed" : "pointer",
-                opacity: isCreating ? 0.6 : 1,
-                width: "414px",
-              }}
-              color="primary.main"
-              fontSize={"15px"}
-              fontWeight="fontWeightMedium"
-            >
-              Skip for now
-            </Typography>
-          )} */}
         </Stack>
       </form>
     </Box>
@@ -754,7 +1305,7 @@ const SetupOrganization = ({ getStarted = false }) => {
     switch (activeStep) {
       case 0:
         return (
-          <Stack spacing={2} width="440px">
+          <Stack spacing={2} sx={{ width: "100%" }}>
             <Box>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -765,138 +1316,24 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                What&apos;s your role
+                Set up FutureAGI
               </Typography>
               <Typography
-                fontWeight={"fontWeightSemiBold"}
+                variant="body1"
                 sx={{
-                  fontSize: "28px",
                   color: "text.secondary",
-                  fontFamily: "Inter",
-                  lineHeight: "36px",
+                  mt: 1,
+                  maxWidth: 520,
                 }}
               >
-                Select the job title you most identify with
+                What are you trying to improve first? We will open the first
+                screen for it, then Home will keep showing the next step.
               </Typography>
             </Box>
 
-            <RadioField
-              custom
-              control={userForm.control}
-              fieldName="role"
-              optionColor="text.primary"
-              labelColor="text.primary"
-              label={undefined}
-              groupSx={{ padding: 0, marginLeft: -1 }}
-              options={AVAILABLE_ROLES}
-            />
+            {renderMobileSetupSteps()}
 
-            <Typography variant="M3" fontWeight={"fontWeightMedium"}>
-              Don&apos;t see your role?
-            </Typography>
-
-            <Controller
-              name="customRole"
-              control={userForm.control}
-              render={({ field, fieldState: { error } }) => (
-                <TextField
-                  {...field}
-                  fullWidth
-                  size="small"
-                  placeholder="Tell us about your role"
-                  variant="outlined"
-                  error={!!error}
-                  helperText={error?.message}
-                  sx={{
-                    backgroundColor: "background.neutral",
-                    borderRadius: 0.5,
-                  }}
-                />
-              )}
-            />
-
-            <Button
-              variant="contained"
-              disabled={!roleValue && !customRoleValue}
-              onClick={() => setActiveStep(1)}
-              color="primary"
-            >
-              Continue
-            </Button>
-          </Stack>
-        );
-
-      case 1:
-        return (
-          <Stack spacing={2} width="440px">
-            <Box>
-              <Typography
-                fontWeight={"fontWeightSemiBold"}
-                sx={{
-                  fontSize: "28px",
-                  color: "text.primary",
-                  fontFamily: "Inter",
-                  lineHeight: "36px",
-                }}
-              >
-                Let&apos;s get started
-              </Typography>
-              <Typography
-                fontWeight={"fontWeightSemiBold"}
-                sx={{
-                  fontSize: "28px",
-                  color: "text.secondary",
-                  fontFamily: "Inter",
-                  lineHeight: "36px",
-                }}
-              >
-                Tell us about your goals
-              </Typography>
-            </Box>
-
-            <Stack spacing={1}>
-              {GOALS_LIST.map((goal, index) => (
-                <FormCheckboxField
-                  key={goal.id}
-                  isCustom={true}
-                  labelPlacement="end"
-                  control={userForm.control}
-                  fieldName={`goals.${index}`}
-                  label={goal.label}
-                  helperText={goal.description}
-                />
-              ))}
-            </Stack>
-            <LoadingButton
-              sx={{ borderRadius: 0.5 }}
-              variant="contained"
-              loading={isSavingUserData}
-              disabled={isSavingUserData || (!roleValue && !customRoleValue)}
-              onClick={handleSubmitUserData((data) =>
-                onSubmitUserData(data, false),
-              )}
-              color="primary"
-            >
-              Continue
-            </LoadingButton>
-
-            <Typography
-              textAlign="center"
-              onClick={
-                !isSavingUserData
-                  ? handleSubmitUserData((data) => onSubmitUserData(data, true))
-                  : undefined
-              }
-              sx={{
-                cursor: isSavingUserData ? "not-allowed" : "pointer",
-                opacity: isSavingUserData ? 0.6 : 1,
-              }}
-              color="primary.main"
-              variant="s1.2"
-              fontWeight={"fontWeightMedium"}
-            >
-              Skip for now
-            </Typography>
+            {renderProductLoopQuickStarts()}
           </Stack>
         );
 
@@ -916,7 +1353,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Collaborate with your team
+                Invite teammates, or continue alone
               </Typography>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -927,7 +1364,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Make the collaboration seamless
+                This step is optional. Continue setup when you are ready.
               </Typography>
             </Box>
             {renderOrgSetup()}
@@ -949,7 +1386,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Collaborate with your team
+                Invite teammates, or continue alone
               </Typography>
               <Typography
                 fontWeight={"fontWeightSemiBold"}
@@ -960,7 +1397,7 @@ const SetupOrganization = ({ getStarted = false }) => {
                   lineHeight: "36px",
                 }}
               >
-                Make the collaboration seamless
+                This step is optional. Continue setup when you are ready.
               </Typography>
             </Box>
             {renderOrgSetup()}
@@ -974,50 +1411,58 @@ const SetupOrganization = ({ getStarted = false }) => {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
-      <Box
-        sx={{
-          width: "50%",
-          height: "100vh",
-          bgcolor: "background.paper",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          overflowY: "auto",
-        }}
-      >
+    <>
+      <Helmet>
+        <title>Choose first setup | FutureAGI</title>
+      </Helmet>
+      <Box sx={{ width: "100%", minHeight: "100dvh", display: "flex" }}>
         <Box
           sx={{
-            maxWidth: "640px",
-            width: "100%",
-            px: 10,
-            paddingY: "100px",
+            width: { xs: "100%", md: "64%" },
+            minHeight: "100dvh",
+            bgcolor: "background.paper",
             display: "flex",
             flexDirection: "column",
-            gap: 2,
-            height: "fit-content",
+            alignItems: "center",
+            overflowY: "auto",
           }}
         >
-          <DotsStepper
-            variant="dots"
-            steps={isOwner ? 3 : 2}
-            position="static"
-            activeStep={activeStep}
-          />
-          {renderContent()}
+          <Box
+            sx={{
+              maxWidth: "920px",
+              width: "100%",
+              px: { xs: 3, sm: 6, md: 8 },
+              py: { xs: 4, md: "100px" },
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+              height: "fit-content",
+            }}
+          >
+            {activeStep > 0 ? (
+              <DotsStepper
+                variant="dots"
+                steps={isOwner ? 3 : 2}
+                position="static"
+                activeStep={activeStep}
+              />
+            ) : null}
+            {renderContent()}
+          </Box>
+        </Box>
+
+        <Box
+          sx={{
+            width: "36%",
+            minHeight: "100dvh",
+            display: { xs: "none", md: "block" },
+            backgroundColor: "background.neutral",
+          }}
+        >
+          <SetupOrgSidePanel />
         </Box>
       </Box>
-
-      <Box
-        sx={{
-          width: "50%",
-          height: "100%",
-          backgroundColor: "background.neutral",
-        }}
-      >
-        <RightSectionAuth />
-      </Box>
-    </Box>
+    </>
   );
 };
 

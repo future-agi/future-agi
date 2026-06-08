@@ -8,6 +8,8 @@ import pytest
 from rest_framework import status
 from rest_framework.test import APIClient
 
+from accounts.utils import BUSINESS_EMAIL_REQUIRED_MESSAGE
+
 
 def assert_unknown_field(response, field_name):
     assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -122,6 +124,77 @@ class TestSignupAPI:
             status.HTTP_201_CREATED,
             status.HTTP_400_BAD_REQUEST,
         ]
+
+    def test_signup_with_password_allows_immediate_login(self, api_client, db):
+        """User-created signup password can be used for the first login."""
+        email = "new-onboarding-user@futureagi.com"
+        password = "SecurePass123!"
+
+        response = api_client.post(
+            "/accounts/signup/",
+            {
+                "email": email,
+                "full_name": "New Onboarding User",
+                "password": password,
+                "allow_email": True,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["result"]["message"] == "User Created Successfully"
+
+        login_response = api_client.post(
+            "/accounts/token/",
+            {
+                "email": email,
+                "password": password,
+                "remember_me": True,
+                "recaptcha_response": "",
+            },
+            format="json",
+        )
+
+        assert login_response.status_code == status.HTTP_200_OK
+        body = login_response.json()
+        assert body["access"]
+        assert body["refresh"]
+        assert body.get("requires_org_setup") is not True
+
+    def test_signup_rejects_free_email_with_actionable_message(
+        self, api_client, db, monkeypatch
+    ):
+        monkeypatch.setenv("ALLOW_ANY_EMAIL", "false")
+
+        response = api_client.post(
+            "/accounts/signup/",
+            {
+                "email": "first-time-user@gmail.com",
+                "full_name": "First Time User",
+                "password": "SecurePass123!",
+                "allow_email": True,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        body = response.json()
+        assert body["message"] == BUSINESS_EMAIL_REQUIRED_MESSAGE
+        assert body["message"] != "An error occurred during signup."
+
+    def test_signup_rejects_weak_user_created_password(self, api_client, db):
+        response = api_client.post(
+            "/accounts/signup/",
+            {
+                "email": "weak-password-user@futureagi.com",
+                "full_name": "Weak Password User",
+                "password": "short",
+                "allow_email": True,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_signup_with_existing_email(self, api_client, user):
         """Signup fails with already registered email."""
@@ -278,7 +351,9 @@ class TestPasswordResetAPI:
             status.HTTP_404_NOT_FOUND,
         ]
 
-    def test_password_reset_confirm_rejects_unknown_request_fields(self, api_client, db):
+    def test_password_reset_confirm_rejects_unknown_request_fields(
+        self, api_client, db
+    ):
         response = api_client.post(
             "/accounts/password-reset-confirm/invalid-uid/invalid-token/",
             {
@@ -493,7 +568,9 @@ class TestDeleteUsersAPI:
 class TestUpdateUserRoles:
     """Tests for role updates in /accounts/update-user/ endpoint."""
 
-    def test_update_user_rejects_unknown_request_fields(self, owner_client, second_user):
+    def test_update_user_rejects_unknown_request_fields(
+        self, owner_client, second_user
+    ):
         response = owner_client.post(
             "/accounts/update-user/",
             {

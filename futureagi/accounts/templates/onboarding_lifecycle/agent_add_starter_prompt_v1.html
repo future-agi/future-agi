@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Give your agent something to run{% endblock %}
+{% block heading %}Add the first step so your agent can act{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, the agent shell exists in {{ workspace_name }}, but it has nothing to run yet.</p>
+  <p style="margin:0;">Add one prompt step with a model and a sample input. That is all it takes for the first scenario to produce real output you can trace, review, and improve.</p>
+{% endblock %}

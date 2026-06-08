@@ -1,20 +1,30 @@
-import { Box, Button, Typography, useTheme } from "@mui/material";
+import { Box, Button, Chip, Stack, Typography, useTheme } from "@mui/material";
 import React from "react";
 import SvgColor from "src/components/svg-color";
 import SwitchComponent from "src/components/Switch/SwitchComponent";
 import EvaluationDrawer from "src/sections/common/EvaluationDrawer/EvaluationDrawer";
 import { useWorkbenchEvaluationContext } from "./context/WorkbenchEvaluationContext";
 import AddEvalsComparison from "./AddEvalsComparison";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
+import { useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  buildPromptEditorHref,
+  getPromptOnboardingRouteParams,
+  getSelectedPromptVersionsFromSearch,
+  isPromptFailureCaptureOnboarding,
+  PROMPT_ONBOARDING_MODES,
+} from "../promptActions/promptOnboardingRoute";
 
 const EvaluationActions = () => {
   const { role } = useAuthContext();
   const theme = useTheme();
   const { id } = useParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
   const {
     versions,
@@ -29,6 +39,15 @@ const EvaluationActions = () => {
   const handleCloseEvalsDrawer = () => {
     setIsEvaluationDrawerOpen(false);
   };
+  const canUpdatePrompts = RolePermission.PROMPTS[PERMISSIONS.UPDATE][role];
+  const promptOnboardingParams = getPromptOnboardingRouteParams(searchParams);
+  const isFailureCaptureOnboarding = isPromptFailureCaptureOnboarding({
+    mode: promptOnboardingParams.mode,
+    source: promptOnboardingParams.isOnboarding
+      ? "onboarding"
+      : searchParams.get("source"),
+  });
+  const handleOpenEvaluationDrawer = () => setIsEvaluationDrawerOpen(true);
   const variableKeys = Object.keys(variables ?? {}).reduce((acc, curr) => {
     return [...acc, { headerName: curr, field: curr }];
   }, []);
@@ -41,6 +60,64 @@ const EvaluationActions = () => {
 
   return (
     <>
+      {isFailureCaptureOnboarding ? (
+        <Box
+          data-testid="prompt-failure-capture-focus"
+          sx={{
+            border: "1px solid",
+            borderColor: "primary.main",
+            borderRadius: 1,
+            bgcolor: "background.paper",
+            p: 1.5,
+          }}
+        >
+          <Stack
+            direction={{ xs: "column", md: "row" }}
+            spacing={1.5}
+            justifyContent="space-between"
+            alignItems={{ xs: "flex-start", md: "center" }}
+          >
+            <Stack spacing={0.75} sx={{ minWidth: 0 }}>
+              <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                <Chip size="small" label="Prompt setup" />
+                <Chip size="small" variant="outlined" label="Evaluation" />
+                <Chip size="small" variant="outlined" label="Step 6 of 6" />
+              </Stack>
+              <Box>
+                <Typography variant="subtitle2">
+                  Capture the prompt failure
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Add an evaluation that checks the comparison issue, then run
+                  it on the saved versions.
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                <Chip size="small" variant="outlined" label="Issue" />
+                <Chip size="small" variant="outlined" label="Evaluation" />
+                <Chip size="small" label="Next loop" />
+              </Stack>
+            </Stack>
+            <Button
+              variant="contained"
+              disabled={!canUpdatePrompts}
+              onClick={handleOpenEvaluationDrawer}
+              startIcon={
+                <SvgColor
+                  src="/assets/icons/action_buttons/ic_add.svg"
+                  sx={{
+                    height: theme.spacing(2),
+                    width: theme.spacing(2),
+                  }}
+                />
+              }
+              sx={{ flexShrink: 0 }}
+            >
+              Add Evaluation
+            </Button>
+          </Stack>
+        </Box>
+      ) : null}
       <Box display={"flex"} justifyContent={"space-between"}>
         <Box display={"flex"} gap={theme.spacing(2)} alignItems={"center"}>
           <Box
@@ -83,10 +160,10 @@ const EvaluationActions = () => {
           </Box>
         </Box>
         <Button
-          onClick={() => setIsEvaluationDrawerOpen(true)}
+          onClick={handleOpenEvaluationDrawer}
           variant="outlined"
           color="primary"
-          disabled={!RolePermission.PROMPTS[PERMISSIONS.UPDATE][role]}
+          disabled={!canUpdatePrompts}
           startIcon={
             <SvgColor
               src="/assets/icons/action_buttons/ic_add.svg"
@@ -127,6 +204,18 @@ const EvaluationActions = () => {
           enqueueSnackbar({
             message: "Evaluation added",
           });
+          if (isFailureCaptureOnboarding) {
+            navigate(
+              buildPromptEditorHref({
+                promptId: id,
+                mode: PROMPT_ONBOARDING_MODES.METRICS,
+                search: searchParams,
+                selectedVersions:
+                  getSelectedPromptVersionsFromSearch(searchParams),
+              }),
+              { replace: true },
+            );
+          }
         }}
         id={id}
         refreshGrid={() => {

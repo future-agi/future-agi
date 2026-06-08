@@ -71,9 +71,18 @@ export const EMPTY_MESSAGE = {
     icon: "/assets/icons/ic_scratch.svg",
   },
   prompt: {
-    title: "Add your prompt",
+    title: "Create your first prompt",
     description:
-      "Manage datasets across your development lifecycle—create, update, and use them to evaluate prompts and workflows.",
+      "Write or generate a prompt, run it with a focused input, and save versions as you improve the output.",
+    icon: "/assets/icons/ic_prompt_message.svg",
+  },
+};
+
+export const ONBOARDING_EMPTY_MESSAGE = {
+  prompt: {
+    title: "Start your first prompt loop",
+    description:
+      "Create one prompt, run it against an example, save the baseline, then compare the next version.",
     icon: "/assets/icons/ic_prompt_message.svg",
   },
 };

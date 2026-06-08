@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Test one scenario before your users do{% endblock %}
+{% block heading %}Run one scenario and see how your agent behaves{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, your agent in {{ workspace_name }} is built but has never been tested.</p>
+  <p style="margin:0;">Run one scripted scenario and FutureAGI shows you the full trace: the tool calls it made, the latency, where it failed, and a first quality score, so you find problems before real users do.</p>
+{% endblock %}

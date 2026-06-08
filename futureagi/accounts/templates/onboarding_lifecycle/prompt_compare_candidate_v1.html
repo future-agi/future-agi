@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}See whether your next prompt edit is better{% endblock %}
+{% block heading %}Compare your edit against the baseline{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, version 1 is saved in {{ workspace_name }}. Now you can stop guessing whether an edit helped.</p>
+  <p style="margin:0;">Run a comparison on the same input and see the two versions side by side, with the change in quality, latency, and cost called out so you know whether to keep the edit or roll it back.</p>
+{% endblock %}

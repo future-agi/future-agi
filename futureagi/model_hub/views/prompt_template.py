@@ -1,4 +1,6 @@
+import atexit
 import base64
+import concurrent.futures
 import json  # Add this import at the top of the file
 import re
 import time
@@ -25,7 +27,7 @@ except ImportError:
     PromptSuggestionGenerator = _ee_stub("PromptSuggestionGenerator")
     SyntheticDataAgent = _ee_stub("SyntheticDataAgent")
 from django.core.cache import cache
-from django.db import close_old_connections, models, transaction
+from django.db import close_old_connections, connection, models, transaction
 from django.db.models import Case, IntegerField, Prefetch, Q, Value, When
 from django.db.models.functions import Cast, Substr
 from django.forms.models import model_to_dict
@@ -41,13 +43,6 @@ from rest_framework.views import APIView
 
 from accounts.models import User
 from accounts.models.organization import Organization
-
-logger = structlog.get_logger(__name__)
-import atexit
-import concurrent.futures
-
-from django.db import connection
-
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from analytics.utils import (
@@ -121,6 +116,7 @@ from model_hub.utils.websocket_manager import (
     get_websocket_manager,
 )
 from model_hub.views.eval_runner import EvaluationRunner
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.settings.settings import BASE_URL
 from tfc.temporal import temporal_activity
 from tfc.utils.api_contracts import validated_request
@@ -140,6 +136,17 @@ from tfc.utils.storage import (
     upload_document_to_s3,
     upload_image_to_s3,
 )
+
+try:
+    from ee.usage.utils.usage_entries import (
+        count_text_tokens,
+        log_and_deduct_cost_for_api_request,
+    )
+except ImportError:
+    count_text_tokens = None
+    log_and_deduct_cost_for_api_request = None
+
+logger = structlog.get_logger(__name__)
 
 # Module-level ThreadPoolExecutor for background tasks that use instance methods
 # These can't be migrated to Temporal as they require 'self' context
@@ -166,16 +173,24 @@ def _safe_background_task(func, *args, **kwargs):
     return wrapped
 
 
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-
-try:
-    from ee.usage.utils.usage_entries import (
-        count_text_tokens,
-        log_and_deduct_cost_for_api_request,
+def _fallback_token_usage_properties(token_usage):
+    if not isinstance(token_usage, dict):
+        return {}
+    prompt_tokens = int(
+        token_usage.get("prompt_tokens") or token_usage.get("input_tokens") or 0
     )
-except ImportError:
-    count_text_tokens = None
-    log_and_deduct_cost_for_api_request = None
+    completion_tokens = int(
+        token_usage.get("completion_tokens") or token_usage.get("output_tokens") or 0
+    )
+    total_tokens = int(token_usage.get("total_tokens") or 0)
+    if total_tokens <= 0:
+        total_tokens = prompt_tokens + completion_tokens
+    return {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+
 
 MIME_TO_EXT = {
     # Documents
@@ -468,6 +483,97 @@ def _request_organization_id(request):
     return _coerce_organization_id(
         getattr(request, "organization", None) or request.user.organization
     )
+
+
+def _prompt_onboarding_stage(event_name):
+    return {
+        "prompt_created": "start_prompt",
+        "prompt_test_run_completed": "run_prompt_test",
+        "prompt_version_created": "save_prompt_version",
+        "prompt_comparable_version_created": "create_second_prompt_version",
+        "prompt_comparison_completed": "compare_prompt_versions",
+    }.get(event_name, "")
+
+
+def _prompt_version_has_output(version):
+    return version.output not in (None, "", [], {})
+
+
+def _prompt_has_comparable_committed_versions(template):
+    comparable_count = 0
+    versions = PromptVersion.no_workspace_objects.filter(
+        original_template=template,
+        deleted=False,
+        is_draft=False,
+    ).only("output", "commit_message", "is_default")
+    for version in versions:
+        if not (version.commit_message or version.is_default):
+            continue
+        if not _prompt_version_has_output(version):
+            continue
+        comparable_count += 1
+        if comparable_count > 1:
+            return True
+    return False
+
+
+def _record_prompt_onboarding_event(
+    request,
+    template,
+    event_name,
+    *,
+    version=None,
+    metadata=None,
+    idempotency_suffix=None,
+):
+    try:
+        from accounts.services.onboarding.activation_events import record_event
+
+        organization = (
+            getattr(request, "organization", None)
+            or template.organization
+            or request.user.organization
+        )
+        workspace = getattr(request, "workspace", None) or template.workspace
+        if not organization or not workspace:
+            return None
+        event_metadata = {
+            "template_id": str(template.id),
+            **(metadata or {}),
+        }
+        if version is not None:
+            event_metadata.update(
+                {
+                    "version_id": str(version.id),
+                    "version_name": version.template_version,
+                }
+            )
+        idempotency_key = ":".join(
+            str(part)
+            for part in (
+                "prompt_onboarding",
+                event_name,
+                template.id,
+                getattr(version, "id", None),
+                idempotency_suffix,
+            )
+            if part
+        )
+        return record_event(
+            user=request.user,
+            organization=organization,
+            workspace=workspace,
+            event_name=event_name,
+            source="prompt_template",
+            product_path="prompt",
+            activation_stage=_prompt_onboarding_stage(event_name),
+            is_sample=bool(template.is_sample),
+            metadata=event_metadata,
+            idempotency_key=idempotency_key,
+        )
+    except Exception:
+        logger.exception("Failed to record prompt onboarding event")
+        return None
 
 
 # Add this helper method after the replace_ids_with_column_name function
@@ -1028,11 +1134,23 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             version,
                             is_run,
                             workspace=request.workspace,
+                            user=request.user,
                         )
                     )
 
                 # Serialize response
                 response.append(PromptHistoryExecutionSerializer(obj).data)
+
+            _record_prompt_onboarding_event(
+                request,
+                parent_template,
+                "prompt_comparison_completed",
+                metadata={
+                    "versions": versions,
+                    "run_requested": bool(is_run),
+                },
+                idempotency_suffix="-".join(versions),
+            )
 
             return self._gm.success_response(
                 {"data": response, "next_version": f"v{len(execution_objs) + 1}"}
@@ -1223,6 +1341,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 description=description,
                 organization=getattr(self.request, "organization", None)
                 or self.request.user.organization,
+                workspace=getattr(self.request, "workspace", None),
                 variable_names=variable_names,
                 prompt_folder=prompt_folder,
                 created_by=request.user,
@@ -1254,6 +1373,13 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     user=request.user, prompt_template=draft_template
                 )
                 track_mixpanel_event(MixpanelEvents.SDK_PROMPT_CREATE.value, properties)
+
+            _record_prompt_onboarding_event(
+                request,
+                draft_template,
+                "prompt_created",
+                version=version_obj,
+            )
 
             return self._gm.success_response(response)
 
@@ -1491,6 +1617,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             None,
                             run_index,
                             request.workspace,
+                            user=request.user,
                         )
 
                         return self._gm.success_response(
@@ -1780,6 +1907,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         run_index=None,
         workspace=None,
         ws_manager=None,
+        user=None,
     ):
         try:
             close_old_connections()
@@ -1969,12 +2097,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                                 except ImportError:
                                     emit = None
 
-                                if (
-                                    emit is not None
-                                    and UsageEvent is not None
-                                    and BillingEventType is not None
-                                ):
-
+                                if emit is not None and UsageEvent is not None:
                                     emit(
                                         UsageEvent(
                                             org_id=str(organization.id),
@@ -2044,6 +2167,42 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 ws_manager.send_all_completed_message(
                     template_id=str(template.id), version=execution.template_version
                 )
+
+            if is_run == "prompt" and any(value_infos):
+                try:
+                    from accounts.services.onboarding.activation_events import (
+                        record_event,
+                    )
+
+                    record_event(
+                        user=user or template.created_by,
+                        organization=organization,
+                        workspace=workspace or template.workspace,
+                        event_name="prompt_test_run_completed",
+                        source="prompt_template",
+                        product_path="prompt",
+                        activation_stage="run_prompt_test",
+                        is_sample=bool(template.is_sample),
+                        metadata={
+                            "template_id": str(template.id),
+                            "version_id": str(execution.id),
+                            "version_name": execution.template_version,
+                            "run_index": run_index,
+                            "result_count": len([item for item in value_infos if item]),
+                        },
+                        idempotency_key=":".join(
+                            str(part)
+                            for part in (
+                                "prompt_onboarding",
+                                "prompt_test_run_completed",
+                                template.id,
+                                execution.id,
+                                run_index if run_index is not None else "all",
+                            )
+                        ),
+                    )
+                except Exception:
+                    logger.exception("Failed to record prompt run onboarding event")
 
             return {"result": all_evaluations}
 
@@ -2388,14 +2547,14 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             except (TypeError, ValueError):
                 return self._gm.bad_request("Invalid evaluation configuration id.")
 
-            existing_eval_configs = set(
+            existing_eval_configs = {
                 str(config_id)
                 for config_id in PromptEvalConfig.objects.filter(
                     id__in=prompt_eval_config_ids,
                     prompt_template=template,
                     deleted=False,
                 ).values_list("id", flat=True)
-            )
+            }
             missing_eval_configs = [
                 config_id
                 for config_id in prompt_eval_config_ids
@@ -2475,9 +2634,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                             ]
                             for result in results:
                                 result["status"] = StatusType.RUNNING.value
-                            eval_results[str(prompt_eval_config_id)][
-                                "results"
-                            ] = results
+                            eval_results[str(prompt_eval_config_id)]["results"] = (
+                                results
+                            )
 
                     execution.evaluation_results = eval_results
                     execution.save(update_fields=["evaluation_results"])
@@ -2722,14 +2881,13 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     from ee.usage.utils.event_properties import token_usage_properties
                 except ImportError:
-                    token_usage_properties = lambda token_usage: {}
+                    token_usage_properties = _fallback_token_usage_properties
 
                 if (
                     emit is not None
                     and UsageEvent is not None
                     and BillingEventType is not None
                 ):
-
                     emit(
                         UsageEvent(
                             org_id=str(org.id),
@@ -2853,9 +3011,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 )
 
             # Update the specific result
-            eval_results[str(prompt_eval_config_id)]["results"][
-                result_index
-            ] = result_data
+            eval_results[str(prompt_eval_config_id)]["results"][result_index] = (
+                result_data
+            )
 
             # Save atomically
             execution.evaluation_results = eval_results
@@ -3295,6 +3453,28 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 )
                 track_mixpanel_event(MixpanelEvents.SDK_PROMPT_COMMIT.value, properties)
 
+            _record_prompt_onboarding_event(
+                request,
+                template,
+                "prompt_version_created",
+                version=version_obj,
+                metadata={
+                    "set_default": bool(validated_data.get("set_default")),
+                },
+            )
+            if _prompt_version_has_output(
+                version_obj
+            ) and _prompt_has_comparable_committed_versions(template):
+                _record_prompt_onboarding_event(
+                    request,
+                    template,
+                    "prompt_comparable_version_created",
+                    version=version_obj,
+                    metadata={
+                        "set_default": bool(validated_data.get("set_default")),
+                    },
+                )
+
             return self._gm.success_response(
                 f"Commit for {template.name} {version_obj.template_version} has been added"
             )
@@ -3372,7 +3552,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     from ee.usage.utils.event_properties import token_usage_properties
                 except ImportError:
-                    token_usage_properties = lambda token_usage: {}
+                    token_usage_properties = _fallback_token_usage_properties
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
@@ -3382,7 +3562,6 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     and UsageEvent is not None
                     and BillingEventType is not None
                 ):
-
                     emit(
                         UsageEvent(
                             org_id=str(_org.id),
@@ -3511,7 +3690,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 try:
                     from ee.usage.utils.event_properties import token_usage_properties
                 except ImportError:
-                    token_usage_properties = lambda token_usage: {}
+                    token_usage_properties = _fallback_token_usage_properties
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
@@ -3521,7 +3700,6 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     and UsageEvent is not None
                     and BillingEventType is not None
                 ):
-
                     emit(
                         UsageEvent(
                             org_id=str(_org.id),

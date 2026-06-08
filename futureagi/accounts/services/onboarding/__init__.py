@@ -1,0 +1,1 @@
+"""Onboarding activation contract helpers."""

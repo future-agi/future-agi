@@ -19,6 +19,7 @@ import type {
   AcceptInvitationPreviewResponseApi,
   AcceptInvitationRequestApi,
   AccountsAccessTokenResponseApi,
+  AccountsActivationStateListParams,
   AccountsAwsMarketplaceLaunchSoftwareCreateBody,
   AccountsAwsMarketplaceVerifyTokenCreateBody,
   AccountsBulkUserMutationItemApi,
@@ -26,6 +27,7 @@ import type {
   AccountsEmptyRequestApi,
   AccountsErrorResponseApi,
   AccountsMessageResponseApi,
+  AccountsOnboardingLifecycleDigestPreviewsListParams,
   AccountsOrganizationMembersListParams,
   AccountsPaginatedUserResponseApi,
   AccountsRedisDeleteResponseApi,
@@ -36,6 +38,11 @@ import type {
   AccountsUserProfileResponseApi,
   AccountsWorkspaceListListParams,
   AccountsWorkspaceMembersListParams,
+  ActivationEventRequestApi,
+  ActivationEventResponseApi,
+  ActivationGoalConflictResponseApi,
+  ActivationGoalRequestApi,
+  ActivationStateApiResponseApi,
   AddApiColumnRequestApi,
   AddAsNewDatasetRequestApi,
   AddEvalConfigsRequestApi,
@@ -374,6 +381,7 @@ import type {
   EELicenseListResponseApi,
   EELicenseRevokeRequestApi,
   EELicenseRevokeResponseApi,
+  EditEvalTaskApi,
   EditRunPromptColumnApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
@@ -407,6 +415,8 @@ import type {
   EvalSummaryTemplateMutationRequestApi,
   EvalSummaryTemplateResponseApi,
   EvalTaskApi,
+  EvalTaskDeleteRequestApi,
+  EvalTaskMessageResponseApi,
   EvalTemplateApi,
   EvalTemplateBulkDeleteRequestApi,
   EvalTemplateBulkDeleteResponseApi,
@@ -544,7 +554,6 @@ import type {
   IntegrationConnectionCreateApi,
   IntegrationConnectionDetailApi,
   IntegrationConnectionDetailResponseApi,
-  IntegrationConnectionListApi,
   IntegrationConnectionListResponseApi,
   IntegrationConnectionUpdateApi,
   IntegrationEmptyRequestApi,
@@ -740,6 +749,9 @@ import type {
   NodeExecutionDetailResponseApi,
   NodeReadApi,
   NodeTemplateDetailApi,
+  NotificationChannelTestResponseApi,
+  NotificationSettingsPatchRequestApi,
+  NotificationSettingsResponseApi,
   OTLPHTTPErrorResponseApi,
   OTLPHTTPTraceResponseApi,
   OTLPHealthResponseApi,
@@ -749,6 +761,11 @@ import type {
   ObservationSpanApi,
   ObserveGraphDataRequestApi,
   ObserveGraphDataResponseApi,
+  OnboardingActivationFactReceiptApiResponseApi,
+  OnboardingActivationFactReceiptRequestApi,
+  OnboardingLifecycleDigestPromotionRequestApi,
+  OnboardingLifecycleDigestPromotionResponseApi,
+  OnboardingLifecycleDigestReviewResponseApi,
   OperationConfigResponseApi,
   OptimiserAnalysisRefreshResponseApi,
   OptimiserAnalysisResponseApi,
@@ -954,6 +971,9 @@ import type {
   Saml2AuthMicrosoftCallbackListParams,
   Saml2AuthMicrosoftReadParams,
   Saml2AuthReadParams,
+  SampleProjectApiResponseApi,
+  SampleProjectHideRequestApi,
+  SampleProjectRequestApi,
   SavedViewDetailResponseApi,
   SavedViewListApi,
   SavedViewListResponseApi,
@@ -1076,6 +1096,8 @@ import type {
   TestExecutionRerunResponseApi,
   TestExecutionStatusApi,
   TestExecutionTranscriptsResponseApi,
+  TestTraceApiResponseApi,
+  TestTraceRequestApi,
   TimezoneRequestApi,
   TimezoneResponseApi,
   TokenRefreshRequestApi,
@@ -1111,13 +1133,9 @@ import type {
   TracerDashboardWidgetsListParams,
   TracerDatasetList200,
   TracerDatasetListParams,
-  TracerEvalTaskGetEvalDetails200,
   TracerEvalTaskGetEvalDetailsParams,
-  TracerEvalTaskGetEvalTaskLogs200,
   TracerEvalTaskGetEvalTaskLogsParams,
-  TracerEvalTaskGetUsage200,
   TracerEvalTaskGetUsageParams,
-  TracerEvalTaskList200,
   TracerEvalTaskListEvalTasksParams,
   TracerEvalTaskListEvalTasksWithProjectNameParams,
   TracerEvalTaskListParams,
@@ -1216,8 +1234,6 @@ import type {
   TracerUserAlertLogsListAll200,
   TracerUserAlertLogsListAllParams,
   TracerUserAlertLogsListParams,
-  TracerUserAlertsList200,
-  TracerUserAlertsListMonitors200,
   TracerUserAlertsListMonitorsParams,
   TracerUserAlertsListParams,
   TracerUserAlertsMetricOptionsParams,
@@ -1277,6 +1293,7 @@ import type {
   UsageWorkspaceBreakdownResponseApi,
   UsageWorkspaceEvalSummaryListParams,
   UsageWorkspaceUsageSummaryListParams,
+  UserAlertBulkMuteRequestApi,
   UserAlertMonitorApi,
   UserAlertMonitorDuplicateApi,
   UserAlertMonitorDuplicateResponseApi,
@@ -2199,6 +2216,148 @@ export const accountsAcceptInvitationCreate = async (uidb64: string,
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       acceptInvitationRequestApi,)
+  }
+);}
+
+
+
+export type accountsActivationEventsCreateResponse200 = {
+  data: ActivationEventResponseApi
+  status: 200
+}
+
+export type accountsActivationEventsCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsActivationEventsCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsActivationEventsCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsActivationEventsCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsActivationEventsCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsActivationEventsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsActivationEventsCreateResponseSuccess = (accountsActivationEventsCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsActivationEventsCreateResponseError = (accountsActivationEventsCreateResponse400 | accountsActivationEventsCreateResponse401 | accountsActivationEventsCreateResponse403 | accountsActivationEventsCreateResponse404 | accountsActivationEventsCreateResponse500 | accountsActivationEventsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsActivationEventsCreateResponse = (accountsActivationEventsCreateResponseSuccess | accountsActivationEventsCreateResponseError)
+
+export const getAccountsActivationEventsCreateUrl = () => {
+
+
+
+
+  return `/accounts/activation-events/`
+}
+
+export const accountsActivationEventsCreate = async (activationEventRequestApi: ActivationEventRequestApi, options?: RequestInit): Promise<accountsActivationEventsCreateResponse> => {
+
+  return apiMutator<accountsActivationEventsCreateResponse>(getAccountsActivationEventsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      activationEventRequestApi,)
+  }
+);}
+
+
+
+export type accountsActivationStateListResponse200 = {
+  data: ActivationStateApiResponseApi
+  status: 200
+}
+
+export type accountsActivationStateListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsActivationStateListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsActivationStateListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsActivationStateListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsActivationStateListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsActivationStateListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsActivationStateListResponseSuccess = (accountsActivationStateListResponse200) & {
+  headers: Headers;
+};
+export type accountsActivationStateListResponseError = (accountsActivationStateListResponse400 | accountsActivationStateListResponse401 | accountsActivationStateListResponse403 | accountsActivationStateListResponse404 | accountsActivationStateListResponse500 | accountsActivationStateListResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsActivationStateListResponse = (accountsActivationStateListResponseSuccess | accountsActivationStateListResponseError)
+
+export const getAccountsActivationStateListUrl = (params?: AccountsActivationStateListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/accounts/activation-state/?${stringifiedParams}` : `/accounts/activation-state/`
+}
+
+export const accountsActivationStateList = async (params?: AccountsActivationStateListParams, options?: RequestInit): Promise<accountsActivationStateListResponse> => {
+
+  return apiMutator<accountsActivationStateListResponse>(getAccountsActivationStateListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
@@ -3572,6 +3731,204 @@ export const accountsMeTimezoneCreate = async (timezoneRequestApi: TimezoneReque
 
 
 
+export type accountsNotificationChannelsTestCreateResponse200 = {
+  data: NotificationChannelTestResponseApi
+  status: 200
+}
+
+export type accountsNotificationChannelsTestCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsNotificationChannelsTestCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsNotificationChannelsTestCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsNotificationChannelsTestCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsNotificationChannelsTestCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsNotificationChannelsTestCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsNotificationChannelsTestCreateResponseSuccess = (accountsNotificationChannelsTestCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsNotificationChannelsTestCreateResponseError = (accountsNotificationChannelsTestCreateResponse400 | accountsNotificationChannelsTestCreateResponse401 | accountsNotificationChannelsTestCreateResponse403 | accountsNotificationChannelsTestCreateResponse404 | accountsNotificationChannelsTestCreateResponse500 | accountsNotificationChannelsTestCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsNotificationChannelsTestCreateResponse = (accountsNotificationChannelsTestCreateResponseSuccess | accountsNotificationChannelsTestCreateResponseError)
+
+export const getAccountsNotificationChannelsTestCreateUrl = (channelId: string,) => {
+
+
+
+
+  return `/accounts/notification-channels/${channelId}/test/`
+}
+
+export const accountsNotificationChannelsTestCreate = async (channelId: string,
+    accountsEmptyRequestApi: AccountsEmptyRequestApi, options?: RequestInit): Promise<accountsNotificationChannelsTestCreateResponse> => {
+
+  return apiMutator<accountsNotificationChannelsTestCreateResponse>(getAccountsNotificationChannelsTestCreateUrl(channelId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      accountsEmptyRequestApi,)
+  }
+);}
+
+
+
+export type accountsNotificationPreferencesListResponse200 = {
+  data: NotificationSettingsResponseApi
+  status: 200
+}
+
+export type accountsNotificationPreferencesListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsNotificationPreferencesListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsNotificationPreferencesListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsNotificationPreferencesListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsNotificationPreferencesListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsNotificationPreferencesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsNotificationPreferencesListResponseSuccess = (accountsNotificationPreferencesListResponse200) & {
+  headers: Headers;
+};
+export type accountsNotificationPreferencesListResponseError = (accountsNotificationPreferencesListResponse400 | accountsNotificationPreferencesListResponse401 | accountsNotificationPreferencesListResponse403 | accountsNotificationPreferencesListResponse404 | accountsNotificationPreferencesListResponse500 | accountsNotificationPreferencesListResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsNotificationPreferencesListResponse = (accountsNotificationPreferencesListResponseSuccess | accountsNotificationPreferencesListResponseError)
+
+export const getAccountsNotificationPreferencesListUrl = () => {
+
+
+
+
+  return `/accounts/notification-preferences/`
+}
+
+export const accountsNotificationPreferencesList = async ( options?: RequestInit): Promise<accountsNotificationPreferencesListResponse> => {
+
+  return apiMutator<accountsNotificationPreferencesListResponse>(getAccountsNotificationPreferencesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type accountsNotificationPreferencesPartialUpdateResponse200 = {
+  data: NotificationSettingsResponseApi
+  status: 200
+}
+
+export type accountsNotificationPreferencesPartialUpdateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsNotificationPreferencesPartialUpdateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsNotificationPreferencesPartialUpdateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsNotificationPreferencesPartialUpdateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsNotificationPreferencesPartialUpdateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsNotificationPreferencesPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsNotificationPreferencesPartialUpdateResponseSuccess = (accountsNotificationPreferencesPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type accountsNotificationPreferencesPartialUpdateResponseError = (accountsNotificationPreferencesPartialUpdateResponse400 | accountsNotificationPreferencesPartialUpdateResponse401 | accountsNotificationPreferencesPartialUpdateResponse403 | accountsNotificationPreferencesPartialUpdateResponse404 | accountsNotificationPreferencesPartialUpdateResponse500 | accountsNotificationPreferencesPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsNotificationPreferencesPartialUpdateResponse = (accountsNotificationPreferencesPartialUpdateResponseSuccess | accountsNotificationPreferencesPartialUpdateResponseError)
+
+export const getAccountsNotificationPreferencesPartialUpdateUrl = () => {
+
+
+
+
+  return `/accounts/notification-preferences/`
+}
+
+export const accountsNotificationPreferencesPartialUpdate = async (notificationSettingsPatchRequestApi: NotificationSettingsPatchRequestApi, options?: RequestInit): Promise<accountsNotificationPreferencesPartialUpdateResponse> => {
+
+  return apiMutator<accountsNotificationPreferencesPartialUpdateResponse>(getAccountsNotificationPreferencesPartialUpdateUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      notificationSettingsPatchRequestApi,)
+  }
+);}
+
+
+
 export type accountsNotificationsSnoozeListResponse200 = {
   data: string
   status: 200
@@ -3840,6 +4197,285 @@ export const accountsOnboardingCreate = async (userOnboardingApi: UserOnboarding
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       userOnboardingApi,)
+  }
+);}
+
+
+
+export type accountsOnboardingActivationFactsCreateResponse200 = {
+  data: OnboardingActivationFactReceiptApiResponseApi
+  status: 200
+}
+
+export type accountsOnboardingActivationFactsCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOnboardingActivationFactsCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOnboardingActivationFactsCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOnboardingActivationFactsCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOnboardingActivationFactsCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOnboardingActivationFactsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsOnboardingActivationFactsCreateResponseSuccess = (accountsOnboardingActivationFactsCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsOnboardingActivationFactsCreateResponseError = (accountsOnboardingActivationFactsCreateResponse400 | accountsOnboardingActivationFactsCreateResponse401 | accountsOnboardingActivationFactsCreateResponse403 | accountsOnboardingActivationFactsCreateResponse404 | accountsOnboardingActivationFactsCreateResponse500 | accountsOnboardingActivationFactsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsOnboardingActivationFactsCreateResponse = (accountsOnboardingActivationFactsCreateResponseSuccess | accountsOnboardingActivationFactsCreateResponseError)
+
+export const getAccountsOnboardingActivationFactsCreateUrl = () => {
+
+
+
+
+  return `/accounts/onboarding/activation-facts/`
+}
+
+export const accountsOnboardingActivationFactsCreate = async (onboardingActivationFactReceiptRequestApi: OnboardingActivationFactReceiptRequestApi, options?: RequestInit): Promise<accountsOnboardingActivationFactsCreateResponse> => {
+
+  return apiMutator<accountsOnboardingActivationFactsCreateResponse>(getAccountsOnboardingActivationFactsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      onboardingActivationFactReceiptRequestApi,)
+  }
+);}
+
+
+
+export type accountsOnboardingGoalCreateResponse200 = {
+  data: ActivationStateApiResponseApi
+  status: 200
+}
+
+export type accountsOnboardingGoalCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOnboardingGoalCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOnboardingGoalCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOnboardingGoalCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOnboardingGoalCreateResponse409 = {
+  data: ActivationGoalConflictResponseApi
+  status: 409
+}
+
+export type accountsOnboardingGoalCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOnboardingGoalCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 409 | 500>
+}
+
+export type accountsOnboardingGoalCreateResponseSuccess = (accountsOnboardingGoalCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsOnboardingGoalCreateResponseError = (accountsOnboardingGoalCreateResponse400 | accountsOnboardingGoalCreateResponse401 | accountsOnboardingGoalCreateResponse403 | accountsOnboardingGoalCreateResponse404 | accountsOnboardingGoalCreateResponse409 | accountsOnboardingGoalCreateResponse500 | accountsOnboardingGoalCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsOnboardingGoalCreateResponse = (accountsOnboardingGoalCreateResponseSuccess | accountsOnboardingGoalCreateResponseError)
+
+export const getAccountsOnboardingGoalCreateUrl = () => {
+
+
+
+
+  return `/accounts/onboarding/goal/`
+}
+
+export const accountsOnboardingGoalCreate = async (activationGoalRequestApi: ActivationGoalRequestApi, options?: RequestInit): Promise<accountsOnboardingGoalCreateResponse> => {
+
+  return apiMutator<accountsOnboardingGoalCreateResponse>(getAccountsOnboardingGoalCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      activationGoalRequestApi,)
+  }
+);}
+
+
+
+export type accountsOnboardingLifecycleDigestPreviewsListResponse200 = {
+  data: OnboardingLifecycleDigestReviewResponseApi
+  status: 200
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsListResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsListResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsListResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsListResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsListResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsListResponseSuccess = (accountsOnboardingLifecycleDigestPreviewsListResponse200) & {
+  headers: Headers;
+};
+export type accountsOnboardingLifecycleDigestPreviewsListResponseError = (accountsOnboardingLifecycleDigestPreviewsListResponse400 | accountsOnboardingLifecycleDigestPreviewsListResponse401 | accountsOnboardingLifecycleDigestPreviewsListResponse403 | accountsOnboardingLifecycleDigestPreviewsListResponse404 | accountsOnboardingLifecycleDigestPreviewsListResponse500 | accountsOnboardingLifecycleDigestPreviewsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsOnboardingLifecycleDigestPreviewsListResponse = (accountsOnboardingLifecycleDigestPreviewsListResponseSuccess | accountsOnboardingLifecycleDigestPreviewsListResponseError)
+
+export const getAccountsOnboardingLifecycleDigestPreviewsListUrl = (params?: AccountsOnboardingLifecycleDigestPreviewsListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/accounts/onboarding/lifecycle/digest-previews/?${stringifiedParams}` : `/accounts/onboarding/lifecycle/digest-previews/`
+}
+
+export const accountsOnboardingLifecycleDigestPreviewsList = async (params?: AccountsOnboardingLifecycleDigestPreviewsListParams, options?: RequestInit): Promise<accountsOnboardingLifecycleDigestPreviewsListResponse> => {
+
+  return apiMutator<accountsOnboardingLifecycleDigestPreviewsListResponse>(getAccountsOnboardingLifecycleDigestPreviewsListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse200 = {
+  data: OnboardingLifecycleDigestPromotionResponseApi
+  status: 200
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseSuccess = (accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseError = (accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse400 | accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse401 | accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse403 | accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse404 | accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse500 | accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse = (accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseSuccess | accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseError)
+
+export const getAccountsOnboardingLifecycleDigestPreviewsPromoteCreateUrl = () => {
+
+
+
+
+  return `/accounts/onboarding/lifecycle/digest-previews/promote/`
+}
+
+export const accountsOnboardingLifecycleDigestPreviewsPromoteCreate = async (onboardingLifecycleDigestPromotionRequestApi: OnboardingLifecycleDigestPromotionRequestApi, options?: RequestInit): Promise<accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse> => {
+
+  return apiMutator<accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse>(getAccountsOnboardingLifecycleDigestPreviewsPromoteCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      onboardingLifecycleDigestPromotionRequestApi,)
   }
 );}
 
@@ -5800,6 +6436,138 @@ export const accountsResendInvitationEmailsCreate = async (userIdsRequestApi: Us
 
 
 
+export type accountsSampleProjectCreateResponse200 = {
+  data: SampleProjectApiResponseApi
+  status: 200
+}
+
+export type accountsSampleProjectCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsSampleProjectCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsSampleProjectCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsSampleProjectCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsSampleProjectCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsSampleProjectCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsSampleProjectCreateResponseSuccess = (accountsSampleProjectCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsSampleProjectCreateResponseError = (accountsSampleProjectCreateResponse400 | accountsSampleProjectCreateResponse401 | accountsSampleProjectCreateResponse403 | accountsSampleProjectCreateResponse404 | accountsSampleProjectCreateResponse500 | accountsSampleProjectCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsSampleProjectCreateResponse = (accountsSampleProjectCreateResponseSuccess | accountsSampleProjectCreateResponseError)
+
+export const getAccountsSampleProjectCreateUrl = () => {
+
+
+
+
+  return `/accounts/sample-project/`
+}
+
+export const accountsSampleProjectCreate = async (sampleProjectRequestApi: SampleProjectRequestApi, options?: RequestInit): Promise<accountsSampleProjectCreateResponse> => {
+
+  return apiMutator<accountsSampleProjectCreateResponse>(getAccountsSampleProjectCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      sampleProjectRequestApi,)
+  }
+);}
+
+
+
+export type accountsSampleProjectHideCreateResponse200 = {
+  data: SampleProjectApiResponseApi
+  status: 200
+}
+
+export type accountsSampleProjectHideCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsSampleProjectHideCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsSampleProjectHideCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsSampleProjectHideCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsSampleProjectHideCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsSampleProjectHideCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsSampleProjectHideCreateResponseSuccess = (accountsSampleProjectHideCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsSampleProjectHideCreateResponseError = (accountsSampleProjectHideCreateResponse400 | accountsSampleProjectHideCreateResponse401 | accountsSampleProjectHideCreateResponse403 | accountsSampleProjectHideCreateResponse404 | accountsSampleProjectHideCreateResponse500 | accountsSampleProjectHideCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsSampleProjectHideCreateResponse = (accountsSampleProjectHideCreateResponseSuccess | accountsSampleProjectHideCreateResponseError)
+
+export const getAccountsSampleProjectHideCreateUrl = () => {
+
+
+
+
+  return `/accounts/sample-project/hide/`
+}
+
+export const accountsSampleProjectHideCreate = async (sampleProjectHideRequestApi: SampleProjectHideRequestApi, options?: RequestInit): Promise<accountsSampleProjectHideCreateResponse> => {
+
+  return apiMutator<accountsSampleProjectHideCreateResponse>(getAccountsSampleProjectHideCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      sampleProjectHideRequestApi,)
+  }
+);}
+
+
+
 export type accountsSignupCreateResponse200 = {
   data: AccountsMessageResponseApi
   status: 200
@@ -6123,6 +6891,72 @@ export const accountsTeamUsersRead = async (memberId: string, options?: RequestI
     method: 'GET'
 
 
+  }
+);}
+
+
+
+export type accountsTestTraceCreateResponse200 = {
+  data: TestTraceApiResponseApi
+  status: 200
+}
+
+export type accountsTestTraceCreateResponse400 = {
+  data: AccountsErrorResponseApi
+  status: 400
+}
+
+export type accountsTestTraceCreateResponse401 = {
+  data: AccountsErrorResponseApi
+  status: 401
+}
+
+export type accountsTestTraceCreateResponse403 = {
+  data: AccountsErrorResponseApi
+  status: 403
+}
+
+export type accountsTestTraceCreateResponse404 = {
+  data: AccountsErrorResponseApi
+  status: 404
+}
+
+export type accountsTestTraceCreateResponse500 = {
+  data: AccountsErrorResponseApi
+  status: 500
+}
+
+export type accountsTestTraceCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 403 | 404 | 500>
+}
+
+export type accountsTestTraceCreateResponseSuccess = (accountsTestTraceCreateResponse200) & {
+  headers: Headers;
+};
+export type accountsTestTraceCreateResponseError = (accountsTestTraceCreateResponse400 | accountsTestTraceCreateResponse401 | accountsTestTraceCreateResponse403 | accountsTestTraceCreateResponse404 | accountsTestTraceCreateResponse500 | accountsTestTraceCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type accountsTestTraceCreateResponse = (accountsTestTraceCreateResponseSuccess | accountsTestTraceCreateResponseError)
+
+export const getAccountsTestTraceCreateUrl = () => {
+
+
+
+
+  return `/accounts/test-trace/`
+}
+
+export const accountsTestTraceCreate = async (testTraceRequestApi: TestTraceRequestApi, options?: RequestInit): Promise<accountsTestTraceCreateResponse> => {
+
+  return apiMutator<accountsTestTraceCreateResponse>(getAccountsTestTraceCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      testTraceRequestApi,)
   }
 );}
 
@@ -19427,7 +20261,7 @@ export const integrationsConnectionsRead = async (id: string, options?: RequestI
 
 
 export type integrationsConnectionsUpdateResponse200 = {
-  data: IntegrationConnectionListApi
+  data: IntegrationConnectionDetailResponseApi
   status: 200
 }
 
@@ -19472,7 +20306,7 @@ export const getIntegrationsConnectionsUpdateUrl = (id: string,) => {
  * API endpoints for managing integration connections.
  */
 export const integrationsConnectionsUpdate = async (id: string,
-    integrationConnectionListApi: NonReadonly<IntegrationConnectionListApi>, options?: RequestInit): Promise<integrationsConnectionsUpdateResponse> => {
+    integrationConnectionUpdateApi: IntegrationConnectionUpdateApi, options?: RequestInit): Promise<integrationsConnectionsUpdateResponse> => {
 
   return apiMutator<integrationsConnectionsUpdateResponse>(getIntegrationsConnectionsUpdateUrl(id),
   {
@@ -19480,7 +20314,7 @@ export const integrationsConnectionsUpdate = async (id: string,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      integrationConnectionListApi,)
+      integrationConnectionUpdateApi,)
   }
 );}
 
@@ -33780,7 +34614,11 @@ export const getModelHubEvalGroupsListUrl = (params?: ModelHubEvalGroupsListPara
 }
 
 /**
- * List all eval groups for the user's organization
+ * Pure routing: three independent bulk reads in this method (main
+EvalGroup queryset, EvalGroup.eval_templates through-table, and
+EvalTemplate) all route to DATABASE_FOR_EVAL_GROUP_LIST when
+"feature:eval_group_list" is opted in. No query semantics change.
+ * @summary List all eval groups for the user's organization.
  */
 export const modelHubEvalGroupsList = async (params?: ModelHubEvalGroupsListParams, options?: RequestInit): Promise<modelHubEvalGroupsListResponse> => {
 
@@ -40786,19 +41624,44 @@ export const modelHubKbUpdate = async (id: string,
 
 
 export type modelHubKbPartialUpdateResponse200 = {
-  data: KnowledgeBaseApi
+  data: KnowledgeBaseResponseApi
   status: 200
+}
+
+export type modelHubKbPartialUpdateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKbPartialUpdateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKbPartialUpdateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKbPartialUpdateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKbPartialUpdateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKbPartialUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
 export type modelHubKbPartialUpdateResponseSuccess = (modelHubKbPartialUpdateResponse200) & {
   headers: Headers;
 };
-export type modelHubKbPartialUpdateResponseError = (modelHubKbPartialUpdateResponseDefault) & {
+export type modelHubKbPartialUpdateResponseError = (modelHubKbPartialUpdateResponse400 | modelHubKbPartialUpdateResponse403 | modelHubKbPartialUpdateResponse404 | modelHubKbPartialUpdateResponse409 | modelHubKbPartialUpdateResponse500 | modelHubKbPartialUpdateResponseDefault) & {
   headers: Headers;
 };
 
@@ -40813,7 +41676,8 @@ export const getModelHubKbPartialUpdateUrl = (id: string,) => {
 }
 
 /**
- * ViewSet for handling KnowledgeBase operations.
+ * Partially update a knowledge base.
+ * @summary Partially update a knowledge base.
  */
 export const modelHubKbPartialUpdate = async (id: string,
     knowledgeBaseApi: NonReadonly<KnowledgeBaseApi>, options?: RequestInit): Promise<modelHubKbPartialUpdateResponse> => {
@@ -59971,7 +60835,7 @@ export const tracerDatasetDelete = async (id: string, options?: RequestInit): Pr
 
 
 export type tracerEvalTaskListResponse200 = {
-  data: TracerEvalTaskList200
+  data: void
   status: 200
 }
 
@@ -60063,7 +60927,7 @@ export const tracerEvalTaskCreate = async (evalTaskApi: NonReadonly<EvalTaskApi>
 
 
 export type tracerEvalTaskGetEvalDetailsResponse200 = {
-  data: TracerEvalTaskGetEvalDetails200
+  data: void
   status: 200
 }
 
@@ -60114,7 +60978,7 @@ export const tracerEvalTaskGetEvalDetails = async (params?: TracerEvalTaskGetEva
 
 
 export type tracerEvalTaskGetEvalTaskLogsResponse200 = {
-  data: TracerEvalTaskGetEvalTaskLogs200
+  data: void
   status: 200
 }
 
@@ -60165,7 +61029,7 @@ export const tracerEvalTaskGetEvalTaskLogs = async (params?: TracerEvalTaskGetEv
 
 
 export type tracerEvalTaskGetUsageResponse200 = {
-  data: TracerEvalTaskGetUsage200
+  data: void
   status: 200
 }
 
@@ -60216,7 +61080,7 @@ export const tracerEvalTaskGetUsage = async (params?: TracerEvalTaskGetUsagePara
 
 
 export type tracerEvalTaskListEvalTasksResponse200 = {
-  data: EvalTaskApi[]
+  data: void
   status: 200
 }
 
@@ -60270,7 +61134,7 @@ export const tracerEvalTaskListEvalTasks = async (params?: TracerEvalTaskListEva
 
 
 export type tracerEvalTaskListEvalTasksWithProjectNameResponse200 = {
-  data: EvalTaskApi[]
+  data: void
   status: 200
 }
 
@@ -60324,7 +61188,7 @@ export const tracerEvalTaskListEvalTasksWithProjectName = async (params?: Tracer
 
 
 export type tracerEvalTaskMarkEvalTasksDeletedResponse201 = {
-  data: EvalTaskApi
+  data: EvalTaskDeleteRequestApi
   status: 201
 }
 
@@ -60350,7 +61214,7 @@ export const getTracerEvalTaskMarkEvalTasksDeletedUrl = () => {
   return `/tracer/eval-task/mark_eval_tasks_deleted/`
 }
 
-export const tracerEvalTaskMarkEvalTasksDeleted = async (evalTaskApi: NonReadonly<EvalTaskApi>, options?: RequestInit): Promise<tracerEvalTaskMarkEvalTasksDeletedResponse> => {
+export const tracerEvalTaskMarkEvalTasksDeleted = async (evalTaskDeleteRequestApi: EvalTaskDeleteRequestApi, options?: RequestInit): Promise<tracerEvalTaskMarkEvalTasksDeletedResponse> => {
 
   return apiMutator<tracerEvalTaskMarkEvalTasksDeletedResponse>(getTracerEvalTaskMarkEvalTasksDeletedUrl(),
   {
@@ -60358,23 +61222,23 @@ export const tracerEvalTaskMarkEvalTasksDeleted = async (evalTaskApi: NonReadonl
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      evalTaskApi,)
+      evalTaskDeleteRequestApi,)
   }
 );}
 
 
 
-export type tracerEvalTaskPauseEvalTaskResponse201 = {
-  data: EvalTaskApi
-  status: 201
+export type tracerEvalTaskPauseEvalTaskResponse200 = {
+  data: EvalTaskMessageResponseApi
+  status: 200
 }
 
 export type tracerEvalTaskPauseEvalTaskResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type tracerEvalTaskPauseEvalTaskResponseSuccess = (tracerEvalTaskPauseEvalTaskResponse201) & {
+export type tracerEvalTaskPauseEvalTaskResponseSuccess = (tracerEvalTaskPauseEvalTaskResponse200) & {
   headers: Headers;
 };
 export type tracerEvalTaskPauseEvalTaskResponseError = (tracerEvalTaskPauseEvalTaskResponseDefault) & {
@@ -60391,7 +61255,7 @@ export const getTracerEvalTaskPauseEvalTaskUrl = () => {
   return `/tracer/eval-task/pause_eval_task/`
 }
 
-export const tracerEvalTaskPauseEvalTask = async (evalTaskApi: NonReadonly<EvalTaskApi>, options?: RequestInit): Promise<tracerEvalTaskPauseEvalTaskResponse> => {
+export const tracerEvalTaskPauseEvalTask = async (emptyRequestApi: EmptyRequestApi, options?: RequestInit): Promise<tracerEvalTaskPauseEvalTaskResponse> => {
 
   return apiMutator<tracerEvalTaskPauseEvalTaskResponse>(getTracerEvalTaskPauseEvalTaskUrl(),
   {
@@ -60399,23 +61263,23 @@ export const tracerEvalTaskPauseEvalTask = async (evalTaskApi: NonReadonly<EvalT
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      evalTaskApi,)
+      emptyRequestApi,)
   }
 );}
 
 
 
-export type tracerEvalTaskUnpauseEvalTaskResponse201 = {
-  data: EvalTaskApi
-  status: 201
+export type tracerEvalTaskUnpauseEvalTaskResponse200 = {
+  data: EvalTaskMessageResponseApi
+  status: 200
 }
 
 export type tracerEvalTaskUnpauseEvalTaskResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type tracerEvalTaskUnpauseEvalTaskResponseSuccess = (tracerEvalTaskUnpauseEvalTaskResponse201) & {
+export type tracerEvalTaskUnpauseEvalTaskResponseSuccess = (tracerEvalTaskUnpauseEvalTaskResponse200) & {
   headers: Headers;
 };
 export type tracerEvalTaskUnpauseEvalTaskResponseError = (tracerEvalTaskUnpauseEvalTaskResponseDefault) & {
@@ -60432,7 +61296,7 @@ export const getTracerEvalTaskUnpauseEvalTaskUrl = () => {
   return `/tracer/eval-task/unpause_eval_task/`
 }
 
-export const tracerEvalTaskUnpauseEvalTask = async (evalTaskApi: NonReadonly<EvalTaskApi>, options?: RequestInit): Promise<tracerEvalTaskUnpauseEvalTaskResponse> => {
+export const tracerEvalTaskUnpauseEvalTask = async (emptyRequestApi: EmptyRequestApi, options?: RequestInit): Promise<tracerEvalTaskUnpauseEvalTaskResponse> => {
 
   return apiMutator<tracerEvalTaskUnpauseEvalTaskResponse>(getTracerEvalTaskUnpauseEvalTaskUrl(),
   {
@@ -60440,14 +61304,14 @@ export const tracerEvalTaskUnpauseEvalTask = async (evalTaskApi: NonReadonly<Eva
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      evalTaskApi,)
+      emptyRequestApi,)
   }
 );}
 
 
 
 export type tracerEvalTaskUpdateEvalTaskResponse200 = {
-  data: EvalTaskApi
+  data: EditEvalTaskApi
   status: 200
 }
 
@@ -60478,7 +61342,7 @@ export const getTracerEvalTaskUpdateEvalTaskUrl = () => {
 Edit & Re-run: Preserves existing results and only runs missing evaluations
  * @summary Update an evaluation task with either fresh run or edit & re-run logic.
  */
-export const tracerEvalTaskUpdateEvalTask = async (evalTaskApi: NonReadonly<EvalTaskApi>, options?: RequestInit): Promise<tracerEvalTaskUpdateEvalTaskResponse> => {
+export const tracerEvalTaskUpdateEvalTask = async (editEvalTaskApi: EditEvalTaskApi, options?: RequestInit): Promise<tracerEvalTaskUpdateEvalTaskResponse> => {
 
   return apiMutator<tracerEvalTaskUpdateEvalTaskResponse>(getTracerEvalTaskUpdateEvalTaskUrl(),
   {
@@ -60486,14 +61350,14 @@ export const tracerEvalTaskUpdateEvalTask = async (evalTaskApi: NonReadonly<Eval
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      evalTaskApi,)
+      editEvalTaskApi,)
   }
 );}
 
 
 
 export type tracerEvalTaskReadResponse200 = {
-  data: EvalTaskApi
+  data: void
   status: 200
 }
 
@@ -68195,7 +69059,7 @@ export const tracerUserAlertLogsListForAlert = async (id: string, options?: Requ
 
 
 export type tracerUserAlertsListResponse200 = {
-  data: TracerUserAlertsList200
+  data: void
   status: 200
 }
 
@@ -68294,7 +69158,7 @@ export const tracerUserAlertsCreate = async (userAlertMonitorApi: NonReadonly<Us
 
 
 export type tracerUserAlertsBulkMuteResponse201 = {
-  data: UserAlertMonitorApi
+  data: UserAlertBulkMuteRequestApi
   status: 201
 }
 
@@ -68320,7 +69184,7 @@ export const getTracerUserAlertsBulkMuteUrl = () => {
   return `/tracer/user-alerts/bulk-mute/`
 }
 
-export const tracerUserAlertsBulkMute = async (userAlertMonitorApi: NonReadonly<UserAlertMonitorApi>, options?: RequestInit): Promise<tracerUserAlertsBulkMuteResponse> => {
+export const tracerUserAlertsBulkMute = async (userAlertBulkMuteRequestApi: UserAlertBulkMuteRequestApi, options?: RequestInit): Promise<tracerUserAlertsBulkMuteResponse> => {
 
   return apiMutator<tracerUserAlertsBulkMuteResponse>(getTracerUserAlertsBulkMuteUrl(),
   {
@@ -68328,7 +69192,7 @@ export const tracerUserAlertsBulkMute = async (userAlertMonitorApi: NonReadonly<
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      userAlertMonitorApi,)
+      userAlertBulkMuteRequestApi,)
   }
 );}
 
@@ -68391,7 +69255,7 @@ export const tracerUserAlertsDuplicate = async (userAlertMonitorDuplicateApi: Us
 
 
 export type tracerUserAlertsListMonitorsResponse200 = {
-  data: TracerUserAlertsListMonitors200
+  data: void
   status: 200
 }
 
@@ -68553,7 +69417,7 @@ export const tracerUserAlertsPreviewGraph = async (userAlertMonitorApi: NonReado
 
 
 export type tracerUserAlertsReadResponse200 = {
-  data: UserAlertMonitorApi
+  data: void
   status: 200
 }
 
@@ -68717,7 +69581,7 @@ export const tracerUserAlertsDelete = async (id: string, options?: RequestInit):
 
 
 export type tracerUserAlertsMonitorDetailsResponse200 = {
-  data: UserAlertMonitorApi
+  data: void
   status: 200
 }
 
@@ -68757,7 +69621,7 @@ export const tracerUserAlertsMonitorDetails = async (id: string, options?: Reque
 
 
 export type tracerUserAlertsGraphDataResponse200 = {
-  data: UserAlertMonitorApi
+  data: void
   status: 200
 }
 

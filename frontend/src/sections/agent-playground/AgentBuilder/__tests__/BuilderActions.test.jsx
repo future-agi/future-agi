@@ -80,7 +80,7 @@ describe("BuilderActions", () => {
         currentAgent: { is_draft: false, version_id: "v1" },
       });
       render(<BuilderActions width="300px" hasNodes={true} />);
-      expect(screen.getByText("Run Agent Workflow")).toBeInTheDocument();
+      expect(screen.getByText("Run workflow")).toBeInTheDocument();
     });
 
     it("opens save dialog when isDraft and clicked", () => {
@@ -88,7 +88,7 @@ describe("BuilderActions", () => {
         currentAgent: { is_draft: true },
       });
       render(<BuilderActions width="300px" hasNodes={true} />);
-      const button = screen.getByText("Run Agent Workflow");
+      const button = screen.getByText("Save and run");
       expect(button.closest("button")).not.toBeDisabled();
       fireEvent.click(button);
       expect(useAgentPlaygroundStore.getState().openSaveAgentDialog).toBe(true);
@@ -100,7 +100,7 @@ describe("BuilderActions", () => {
         currentAgent: { is_draft: true },
       });
       render(<BuilderActions width="300px" hasNodes={true} />);
-      fireEvent.click(screen.getByText("Run Agent Workflow"));
+      fireEvent.click(screen.getByText("Save and run"));
       expect(mockRunWorkflow).not.toHaveBeenCalled();
     });
 
@@ -109,25 +109,111 @@ describe("BuilderActions", () => {
         currentAgent: { is_draft: false, version_id: "v1" },
       });
       render(<BuilderActions width="300px" hasNodes={true} />);
-      fireEvent.click(screen.getByText("Run Agent Workflow"));
+      fireEvent.click(screen.getByText("Run workflow"));
       expect(mockRunWorkflow).toHaveBeenCalled();
     });
 
     it("hidden when hasNodes=false", () => {
       render(<BuilderActions width="300px" hasNodes={false} />);
-      expect(screen.queryByText("Run Agent Workflow")).not.toBeInTheDocument();
+      expect(screen.queryByText("Run workflow")).not.toBeInTheDocument();
     });
 
     it("hidden when isLoadingTemplate=true", () => {
       useTemplateLoadingStore.setState({ isLoadingTemplate: true });
       render(<BuilderActions width="300px" hasNodes={true} />);
-      expect(screen.queryByText("Run Agent Workflow")).not.toBeInTheDocument();
+      expect(screen.queryByText("Run workflow")).not.toBeInTheDocument();
     });
 
     it("hidden when isRunning=true", () => {
       useWorkflowRunStore.getState().setWorkflowState(WORKFLOW_STATE.RUNNING);
       render(<BuilderActions width="300px" hasNodes={true} />);
-      expect(screen.queryByText("Run Agent Workflow")).not.toBeInTheDocument();
+      expect(screen.queryByText("Run workflow")).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Onboarding focus", () => {
+    it("renders run-scenario guidance and reuses the run action", () => {
+      useAgentPlaygroundStore.setState({
+        currentAgent: { is_draft: false, version_id: "v1" },
+      });
+
+      render(
+        <BuilderActions
+          width="300px"
+          hasNodes={true}
+          onboardingMode="run-scenario"
+        />,
+      );
+
+      expect(screen.getByTestId("agent-onboarding-focus")).toBeInTheDocument();
+      expect(screen.getByText("Run one test scenario")).toBeVisible();
+
+      fireEvent.click(screen.getByRole("button", { name: /^run workflow$/i }));
+
+      expect(mockRunWorkflow).toHaveBeenCalled();
+    });
+
+    it("uses explicit save-and-run copy for draft agent setup", () => {
+      useAgentPlaygroundStore.setState({
+        currentAgent: { is_draft: true, version_id: "v1" },
+      });
+
+      render(
+        <BuilderActions
+          width="300px"
+          hasNodes={true}
+          onboardingMode="run-scenario"
+        />,
+      );
+
+      expect(screen.getByText("Save this version first")).toBeVisible();
+
+      fireEvent.click(
+        screen.getByRole("button", { name: /save agent and run scenario/i }),
+      );
+
+      expect(useAgentPlaygroundStore.getState().openSaveAgentDialog).toBe(true);
+      expect(useAgentPlaygroundStore.getState().pendingRunAfterSave).toBe(true);
+    });
+
+    it("leaves missing-node guidance to the node selection panel", () => {
+      render(
+        <BuilderActions
+          width="300px"
+          hasNodes={false}
+          onboardingMode="run-scenario"
+        />,
+      );
+
+      expect(screen.queryByTestId("agent-onboarding-focus")).toBeNull();
+      expect(screen.queryByText("Add one node first")).not.toBeInTheDocument();
+    });
+
+    it("renders eval coverage run guidance after the eval node is added", () => {
+      useAgentPlaygroundStore.setState({
+        currentAgent: { is_draft: true, version_id: "v1" },
+      });
+
+      render(
+        <BuilderActions
+          width="300px"
+          hasNodes={true}
+          onboardingMode="add-eval"
+        />,
+      );
+
+      expect(screen.getByTestId("agent-onboarding-focus")).toBeInTheDocument();
+      expect(screen.getByText("Run the agent eval coverage")).toBeVisible();
+      expect(screen.getByText("Save this eval coverage first")).toBeVisible();
+
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: /save and run eval coverage/i,
+        }),
+      );
+
+      expect(useAgentPlaygroundStore.getState().openSaveAgentDialog).toBe(true);
+      expect(useAgentPlaygroundStore.getState().pendingRunAfterSave).toBe(true);
     });
   });
 

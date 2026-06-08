@@ -10,6 +10,7 @@ import CompareOutputs from "./CompareOutputs";
 import CompareInputs from "./CompareInputs";
 import { ShowComponent } from "src/components/show";
 import Evaluation from "../Evaluation";
+import Metrics from "../Metrics/Metrics";
 
 const CompareContainer = () => {
   const {
@@ -88,6 +89,9 @@ const CompareContainer = () => {
       </ShowComponent>
       <ShowComponent condition={currentTab === "Evaluation"}>
         <Evaluation />
+      </ShowComponent>
+      <ShowComponent condition={currentTab === "Metrics"}>
+        <Metrics />
       </ShowComponent>
     </Box>
   );

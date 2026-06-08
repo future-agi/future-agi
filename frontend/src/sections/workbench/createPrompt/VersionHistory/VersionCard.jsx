@@ -170,6 +170,10 @@ const VersionCard = ({
                         checked={checked}
                         onChange={setChecked}
                         disabled={disableCheckbox}
+                        inputProps={{
+                          "aria-label": `Select prompt version ${version?.template_version || "unknown"} for comparison`,
+                          "data-testid": `prompt-version-compare-checkbox-${version?.template_version || version?.id || "unknown"}`,
+                        }}
                         sx={{
                           padding: "0px",
                           margin: "0px",

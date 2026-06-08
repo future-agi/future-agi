@@ -99,11 +99,7 @@ export default function InviteAcceptedPage() {
     onSuccess: async (response) => {
       try {
         await login(response);
-        if (response?.data?.is_first_login) {
-          navigate(paths.auth.jwt.setup_org);
-        } else {
-          navigate(paths.dashboard.root);
-        }
+        navigate(paths.dashboard.root);
       } catch {
         enqueueSnackbar("Password set successfully. Please log in.", {
           variant: "success",

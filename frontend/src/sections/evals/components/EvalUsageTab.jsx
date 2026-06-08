@@ -1,6 +1,7 @@
 /* eslint-disable react/prop-types */
 import {
   Box,
+  Button,
   ButtonBase,
   Chip,
   IconButton,
@@ -12,15 +13,21 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
-import React, { useCallback, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Editor from "@monaco-editor/react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "react-router";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
 import { useDebounce } from "src/hooks/use-debounce";
-import axios, { endpoints } from "src/utils/axios";
 import DateTimeRangePicker from "src/sections/projects/DateTimeRangePicker";
 import AddEvalsFeedbackDrawer from "src/sections/evals/EvalDetails/EvalsFeedback/AddEvalsFeedbackDrawer";
 
@@ -31,6 +38,29 @@ import PartialInputWarningDetails, {
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
 import { isEditableElement } from "src/utils/keyboardUtils";
 import UsageChart from "./UsageChart";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  buildEvalFailuresReviewedPayload,
+  buildEvalFailureActionCreatedPayload,
+  buildEvalFixRerunReviewedPayload,
+  buildEvalScorerEditCtaClickedPayload,
+  buildEvalScorerEditHref,
+  buildEvalSourceFixCtaClickedPayload,
+  buildEvalSourceFixHref,
+  EVAL_FIX_RERUN_ORIGINS,
+  EVAL_REVIEW_ACTIONS,
+  evalSetupQuickStartAttributionFromSearch,
+  evalUsageLogMatchesRun,
+  getEvalReviewActionKind,
+  getEvalUsageLogId,
+  getEvalUsageReviewOutcome,
+  getEvalFailureActionOnboardingParams,
+} from "./evalCreateOnboarding";
+import {
+  EVAL_REVIEW_RUN_POLL_INTERVAL_MS,
+  EVAL_REVIEW_RUN_POLL_TIMEOUT_MS,
+  shouldPollEvalOnboardingReviewRun,
+} from "./evalUsageOnboarding";
 
 // ── Inline stat ──
 const StatPill = ({ label, value, color }) => (
@@ -383,10 +413,15 @@ const EvalUsageTab = ({
   templateId,
   outputType = "pass_fail",
   evalType = "llm",
+  onReviewActionPreferenceChange,
+  onReviewComplete,
 }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
 
   const [dateOption, setDateOption] = useState("30D");
   const [dateFilter, setDateFilter] = useState(null);
@@ -394,9 +429,98 @@ const EvalUsageTab = ({
   const [pageSize, setPageSize] = useState(25);
   const [searchQuery, setSearchQuery] = useState("");
   const [detailIndex, setDetailIndex] = useState(null); // index in filteredLogs
+  const [reviewRunRecoveryRunId, setReviewRunRecoveryRunId] = useState(null);
+  const autoOpenedReviewRunRef = useRef(null);
+  const recordedReviewedRowsRef = useRef(new Set());
   const debouncedSearch = useDebounce(searchQuery.trim(), 400);
 
   const period = DATE_OPTION_TO_PERIOD[dateOption] || "30d";
+  const failureActionOnboardingParams = useMemo(
+    () => getEvalFailureActionOnboardingParams(location.search),
+    [location.search],
+  );
+  const onboardingQuickStartAttribution = useMemo(
+    () => evalSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const sourceFixHref = useMemo(() => {
+    if (
+      !failureActionOnboardingParams.isOnboarding ||
+      failureActionOnboardingParams.step !== "review"
+    ) {
+      return null;
+    }
+    return buildEvalSourceFixHref({
+      evalId: templateId,
+      quickStartAttribution: onboardingQuickStartAttribution,
+      runId: failureActionOnboardingParams.runId,
+      setupLanguage: failureActionOnboardingParams.setupLanguage,
+      setupProvider: failureActionOnboardingParams.setupProvider,
+      sourceId: failureActionOnboardingParams.sourceId,
+      sourceType: failureActionOnboardingParams.sourceType,
+      traceId: failureActionOnboardingParams.traceId,
+    });
+  }, [
+    failureActionOnboardingParams.isOnboarding,
+    failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.setupLanguage,
+    failureActionOnboardingParams.setupProvider,
+    failureActionOnboardingParams.sourceId,
+    failureActionOnboardingParams.sourceType,
+    failureActionOnboardingParams.step,
+    failureActionOnboardingParams.traceId,
+    onboardingQuickStartAttribution,
+    templateId,
+  ]);
+  const scorerEditHref = useMemo(() => {
+    if (
+      !failureActionOnboardingParams.isOnboarding ||
+      failureActionOnboardingParams.step !== "review" ||
+      !templateId
+    ) {
+      return null;
+    }
+
+    return buildEvalScorerEditHref({
+      evalId: templateId,
+      previousRunId: failureActionOnboardingParams.runId,
+      quickStartAttribution: onboardingQuickStartAttribution,
+      rerunFrom: EVAL_FIX_RERUN_ORIGINS.SCORER_EDIT,
+      setupLanguage: failureActionOnboardingParams.setupLanguage,
+      setupProvider: failureActionOnboardingParams.setupProvider,
+      sourceId: failureActionOnboardingParams.sourceId,
+      sourceType: failureActionOnboardingParams.sourceType,
+      traceId: failureActionOnboardingParams.traceId,
+    });
+  }, [
+    failureActionOnboardingParams.isOnboarding,
+    failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.setupLanguage,
+    failureActionOnboardingParams.setupProvider,
+    failureActionOnboardingParams.sourceId,
+    failureActionOnboardingParams.sourceType,
+    failureActionOnboardingParams.step,
+    failureActionOnboardingParams.traceId,
+    onboardingQuickStartAttribution,
+    templateId,
+  ]);
+  const isRepairReviewOnboarding = Boolean(
+    failureActionOnboardingParams.isOnboarding &&
+      failureActionOnboardingParams.step === "review" &&
+      failureActionOnboardingParams.rerunFrom,
+  );
+  const isReviewRunTargeted = Boolean(
+    failureActionOnboardingParams.isOnboarding &&
+      failureActionOnboardingParams.step === "review" &&
+      failureActionOnboardingParams.runId,
+  );
+  const shouldPollForOnboardingReviewRun = shouldPollEvalOnboardingReviewRun({
+    autoOpenedRunId: autoOpenedReviewRunRef.current,
+    isOnboarding: failureActionOnboardingParams.isOnboarding,
+    recoveryRunId: reviewRunRecoveryRunId,
+    runId: failureActionOnboardingParams.runId,
+    step: failureActionOnboardingParams.step,
+  });
 
   // Split queries
   const { data: chartData, isLoading: chartLoading } = useEvalUsageChart(
@@ -407,11 +531,18 @@ const EvalUsageTab = ({
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useEvalUsageLogs(templateId, { page, pageSize, period });
+  } = useEvalUsageLogs(templateId, {
+    page,
+    pageSize,
+    period,
+    refetchInterval: shouldPollForOnboardingReviewRun
+      ? EVAL_REVIEW_RUN_POLL_INTERVAL_MS
+      : false,
+  });
 
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
-  const logItems = logsData?.items || [];
+  const logItems = useMemo(() => logsData?.items || [], [logsData?.items]);
   const totalLogs = logsData?.total || 0;
 
   const filteredLogs = useMemo(() => {
@@ -436,12 +567,342 @@ const EvalUsageTab = ({
   );
 
   const detailRow = detailIndex !== null ? filteredLogs[detailIndex] : null;
+  const detailRowMatchesReviewRun = useMemo(() => {
+    if (!failureActionOnboardingParams.runId) return true;
+    if (!detailRow) return false;
+    return evalUsageLogMatchesRun(
+      detailRow,
+      failureActionOnboardingParams.runId,
+    );
+  }, [detailRow, failureActionOnboardingParams.runId]);
+  const hasOnboardingReviewRun = useMemo(() => {
+    const runId = failureActionOnboardingParams.runId;
+    if (!runId) return false;
+    return logItems.some((log) => evalUsageLogMatchesRun(log, runId));
+  }, [failureActionOnboardingParams.runId, logItems]);
+  const isWaitingForOnboardingReviewRun = Boolean(
+    isReviewRunTargeted && !hasOnboardingReviewRun && detailIndex === null,
+  );
+  const isRecoveringOnboardingReviewRun = Boolean(
+    isWaitingForOnboardingReviewRun &&
+      reviewRunRecoveryRunId === failureActionOnboardingParams.runId,
+  );
+
+  useEffect(() => {
+    const runId = failureActionOnboardingParams.runId;
+    if (!isReviewRunTargeted || !runId) {
+      setReviewRunRecoveryRunId(null);
+      return undefined;
+    }
+
+    if (hasOnboardingReviewRun || autoOpenedReviewRunRef.current === runId) {
+      setReviewRunRecoveryRunId((current) =>
+        current === runId ? null : current,
+      );
+      return undefined;
+    }
+
+    if (reviewRunRecoveryRunId === runId) {
+      return undefined;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setReviewRunRecoveryRunId(runId);
+    }, EVAL_REVIEW_RUN_POLL_TIMEOUT_MS);
+
+    return () => window.clearTimeout(timeout);
+  }, [
+    failureActionOnboardingParams.runId,
+    hasOnboardingReviewRun,
+    isReviewRunTargeted,
+    reviewRunRecoveryRunId,
+  ]);
+
+  const handleReviewRunCheckAgain = useCallback(() => {
+    setReviewRunRecoveryRunId(null);
+    queryClient.invalidateQueries({
+      queryKey: ["evals", "usage-logs", templateId],
+    });
+  }, [queryClient, templateId]);
+
+  useEffect(() => {
+    if (!onReviewActionPreferenceChange) return undefined;
+
+    if (
+      !failureActionOnboardingParams.isOnboarding ||
+      failureActionOnboardingParams.step !== "review" ||
+      !detailRow ||
+      !detailRowMatchesReviewRun
+    ) {
+      onReviewActionPreferenceChange(null);
+      return undefined;
+    }
+
+    const reviewOutcome = getEvalUsageReviewOutcome(detailRow);
+    onReviewActionPreferenceChange({
+      actionKind: getEvalReviewActionKind({
+        canComplete: Boolean(onReviewComplete),
+        log: detailRow,
+        scorerEditHref,
+        sourceFixHref,
+      }),
+      evalLogId: getEvalUsageLogId(detailRow),
+      reviewOutcome,
+      runId: failureActionOnboardingParams.runId,
+    });
+
+    return undefined;
+  }, [
+    detailRow,
+    detailRowMatchesReviewRun,
+    failureActionOnboardingParams.isOnboarding,
+    failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.step,
+    onReviewActionPreferenceChange,
+    onReviewComplete,
+    scorerEditHref,
+    sourceFixHref,
+  ]);
+
+  useEffect(() => {
+    const runId = failureActionOnboardingParams.runId;
+    if (
+      !failureActionOnboardingParams.isOnboarding ||
+      !runId ||
+      autoOpenedReviewRunRef.current === runId
+    ) {
+      return;
+    }
+
+    const reviewLog = logItems.find((log) =>
+      evalUsageLogMatchesRun(log, runId),
+    );
+    if (!reviewLog) return;
+
+    const reviewLogIndex = filteredLogs.findIndex((log) =>
+      evalUsageLogMatchesRun(log, runId),
+    );
+    if (reviewLogIndex < 0) {
+      if (searchQuery) setSearchQuery("");
+      return;
+    }
+
+    autoOpenedReviewRunRef.current = runId;
+    setDetailIndex(reviewLogIndex);
+  }, [
+    failureActionOnboardingParams.isOnboarding,
+    failureActionOnboardingParams.runId,
+    filteredLogs,
+    logItems,
+    searchQuery,
+  ]);
+
+  useEffect(() => {
+    if (
+      !failureActionOnboardingParams.isOnboarding ||
+      failureActionOnboardingParams.step !== "review" ||
+      !detailRow ||
+      !detailRowMatchesReviewRun
+    ) {
+      return;
+    }
+
+    const evalLogId = getEvalUsageLogId(detailRow);
+    const eventKey = `${failureActionOnboardingParams.runId || "no-run"}:${
+      evalLogId || detailIndex
+    }`;
+    if (recordedReviewedRowsRef.current.has(eventKey)) return;
+    recordedReviewedRowsRef.current.add(eventKey);
+
+    const reviewOutcome = getEvalUsageReviewOutcome(detailRow);
+
+    recordActivationEvent?.(
+      buildEvalFailuresReviewedPayload({
+        evalId: templateId,
+        evalLogId,
+        quickStartAttribution: onboardingQuickStartAttribution,
+        reviewOutcome,
+        rowSource: detailRow.source,
+        runId: failureActionOnboardingParams.runId,
+        setupLanguage: failureActionOnboardingParams.setupLanguage,
+        setupProvider: failureActionOnboardingParams.setupProvider,
+        sourceId: failureActionOnboardingParams.sourceId,
+        sourceType: failureActionOnboardingParams.sourceType,
+        traceId: failureActionOnboardingParams.traceId,
+      }),
+    );
+    if (failureActionOnboardingParams.rerunFrom) {
+      recordActivationEvent?.(
+        buildEvalFixRerunReviewedPayload({
+          evalId: templateId,
+          evalLogId,
+          previousRunId: failureActionOnboardingParams.previousRunId,
+          quickStartAttribution: onboardingQuickStartAttribution,
+          rerunFrom: failureActionOnboardingParams.rerunFrom,
+          reviewOutcome,
+          rowSource: detailRow.source,
+          runId: failureActionOnboardingParams.runId,
+          setupLanguage: failureActionOnboardingParams.setupLanguage,
+          setupProvider: failureActionOnboardingParams.setupProvider,
+          sourceId: failureActionOnboardingParams.sourceId,
+          sourceType: failureActionOnboardingParams.sourceType,
+          traceId: failureActionOnboardingParams.traceId,
+        }),
+      );
+    }
+  }, [
+    detailIndex,
+    detailRow,
+    detailRowMatchesReviewRun,
+    failureActionOnboardingParams.isOnboarding,
+    failureActionOnboardingParams.previousRunId,
+    failureActionOnboardingParams.rerunFrom,
+    failureActionOnboardingParams.runId,
+    failureActionOnboardingParams.setupLanguage,
+    failureActionOnboardingParams.setupProvider,
+    failureActionOnboardingParams.sourceId,
+    failureActionOnboardingParams.sourceType,
+    failureActionOnboardingParams.step,
+    failureActionOnboardingParams.traceId,
+    onboardingQuickStartAttribution,
+    recordActivationEvent,
+    templateId,
+  ]);
 
   const handleFeedbackSubmitted = useCallback(() => {
     queryClient.invalidateQueries({
       queryKey: ["evals", "usage-logs", templateId],
     });
   }, [queryClient, templateId]);
+  const handleFailureActionSubmitted = useCallback(
+    ({ actionType, feedbackId, logId, row } = {}) => {
+      if (!failureActionOnboardingParams.isOnboarding) return;
+      if (
+        failureActionOnboardingParams.runId &&
+        !evalUsageLogMatchesRun(row, failureActionOnboardingParams.runId)
+      ) {
+        return;
+      }
+
+      recordActivationEvent?.(
+        buildEvalFailureActionCreatedPayload({
+          actionType,
+          evalId: templateId,
+          evalLogId: logId || row?.id,
+          feedbackId,
+          fixRoute: sourceFixHref,
+          quickStartAttribution: onboardingQuickStartAttribution,
+          rowSource: row?.source,
+          runId: failureActionOnboardingParams.runId,
+          setupLanguage: failureActionOnboardingParams.setupLanguage,
+          setupProvider: failureActionOnboardingParams.setupProvider,
+          sourceId: failureActionOnboardingParams.sourceId,
+          sourceType: failureActionOnboardingParams.sourceType,
+          step: failureActionOnboardingParams.step,
+          traceId: failureActionOnboardingParams.traceId,
+        }),
+      );
+    },
+    [
+      failureActionOnboardingParams,
+      onboardingQuickStartAttribution,
+      recordActivationEvent,
+      sourceFixHref,
+      templateId,
+    ],
+  );
+  const handleSourceFixClicked = useCallback(
+    ({ row } = {}) => {
+      if (!sourceFixHref) return;
+      if (
+        failureActionOnboardingParams.runId &&
+        !evalUsageLogMatchesRun(row, failureActionOnboardingParams.runId)
+      ) {
+        return;
+      }
+
+      const navigateToFix = () => navigate(sourceFixHref);
+      if (recordActivationEvent) {
+        recordActivationEvent(
+          buildEvalSourceFixCtaClickedPayload({
+            evalId: templateId,
+            evalLogId: getEvalUsageLogId(row),
+            fixRoute: sourceFixHref,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            rowSource: row?.source,
+            runId: failureActionOnboardingParams.runId,
+            setupLanguage: failureActionOnboardingParams.setupLanguage,
+            setupProvider: failureActionOnboardingParams.setupProvider,
+            sourceId: failureActionOnboardingParams.sourceId,
+            sourceType: failureActionOnboardingParams.sourceType,
+            traceId: failureActionOnboardingParams.traceId,
+          }),
+          { onSettled: navigateToFix },
+        );
+      } else {
+        navigateToFix();
+      }
+    },
+    [
+      failureActionOnboardingParams.runId,
+      failureActionOnboardingParams.setupLanguage,
+      failureActionOnboardingParams.setupProvider,
+      failureActionOnboardingParams.sourceId,
+      failureActionOnboardingParams.sourceType,
+      failureActionOnboardingParams.traceId,
+      navigate,
+      onboardingQuickStartAttribution,
+      recordActivationEvent,
+      sourceFixHref,
+      templateId,
+    ],
+  );
+  const handleScorerEditClicked = useCallback(
+    ({ row } = {}) => {
+      if (!scorerEditHref) return;
+      if (
+        failureActionOnboardingParams.runId &&
+        !evalUsageLogMatchesRun(row, failureActionOnboardingParams.runId)
+      ) {
+        return;
+      }
+
+      const navigateToScorer = () => navigate(scorerEditHref);
+      if (recordActivationEvent) {
+        recordActivationEvent(
+          buildEvalScorerEditCtaClickedPayload({
+            editRoute: scorerEditHref,
+            evalId: templateId,
+            evalLogId: getEvalUsageLogId(row),
+            quickStartAttribution: onboardingQuickStartAttribution,
+            rowSource: row?.source,
+            runId: failureActionOnboardingParams.runId,
+            setupLanguage: failureActionOnboardingParams.setupLanguage,
+            setupProvider: failureActionOnboardingParams.setupProvider,
+            sourceId: failureActionOnboardingParams.sourceId,
+            sourceType: failureActionOnboardingParams.sourceType,
+            traceId: failureActionOnboardingParams.traceId,
+          }),
+          { onSettled: navigateToScorer },
+        );
+      } else {
+        navigateToScorer();
+      }
+    },
+    [
+      failureActionOnboardingParams.runId,
+      failureActionOnboardingParams.setupLanguage,
+      failureActionOnboardingParams.setupProvider,
+      failureActionOnboardingParams.sourceId,
+      failureActionOnboardingParams.sourceType,
+      failureActionOnboardingParams.traceId,
+      navigate,
+      onboardingQuickStartAttribution,
+      recordActivationEvent,
+      scorerEditHref,
+      templateId,
+    ],
+  );
 
   // Keyboard shortcuts for prev/next when panel is open
   React.useEffect(() => {
@@ -595,6 +1056,58 @@ const EvalUsageTab = ({
             flexDirection: "column",
           }}
         >
+          {isWaitingForOnboardingReviewRun ? (
+            <Box
+              data-testid="eval-review-run-waiting"
+              sx={{
+                mb: 1,
+                border: "1px solid",
+                borderColor: "primary.main",
+                borderRadius: "6px",
+                bgcolor: (t) => alpha(t.palette.primary.main, 0.06),
+                px: 1.25,
+                py: 1,
+                display: "flex",
+                gap: 1,
+                alignItems: "center",
+                justifyContent: "space-between",
+                flexShrink: 0,
+              }}
+            >
+              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <Iconify
+                  icon={
+                    isRecoveringOnboardingReviewRun
+                      ? "mdi:alert-circle-outline"
+                      : "mdi:progress-clock"
+                  }
+                  width={18}
+                />
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" fontWeight={600}>
+                    {isRecoveringOnboardingReviewRun
+                      ? "Run log is still syncing"
+                      : "Opening first eval result"}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {isRecoveringOnboardingReviewRun
+                      ? "We could not find this run yet. You can check again without staying in a loading state."
+                      : "Waiting for the run log to appear."}
+                  </Typography>
+                </Box>
+              </Box>
+              {isRecoveringOnboardingReviewRun ? (
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleReviewRunCheckAgain}
+                  sx={{ flexShrink: 0 }}
+                >
+                  Check again
+                </Button>
+              ) : null}
+            </Box>
+          ) : null}
           <Box
             sx={{
               display: "flex",
@@ -626,7 +1139,7 @@ const EvalUsageTab = ({
               />
             </Box>
           </Box>
-          <Box sx={{ flex: 1,overflowY: "auto", minHeight: 0 }}>
+          <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
             <DataTable
               columns={columns}
               data={filteredLogs}
@@ -779,7 +1292,24 @@ const EvalUsageTab = ({
               isDark={isDark}
               templateId={templateId}
               evalType={evalType}
+              isRepairReview={isRepairReviewOnboarding}
+              isReviewRowMatched={detailRowMatchesReviewRun}
               onFeedbackSubmitted={handleFeedbackSubmitted}
+              onFailureActionSubmitted={handleFailureActionSubmitted}
+              onReviewCompleteClick={
+                onReviewComplete && detailRowMatchesReviewRun
+                  ? () => onReviewComplete({ row: detailRow })
+                  : undefined
+              }
+              onSourceFixClick={() =>
+                handleSourceFixClicked({ row: detailRow })
+              }
+              onScorerEditClick={() =>
+                handleScorerEditClicked({ row: detailRow })
+              }
+              scorerEditHref={scorerEditHref}
+              sourceFixHref={sourceFixHref}
+              sourceType={failureActionOnboardingParams.sourceType}
             />
           )}
         </Box>
@@ -788,21 +1318,77 @@ const EvalUsageTab = ({
   );
 };
 
-
 // ── Detail panel content with Formatted/JSON tabs + feedback ──
 const DetailPanelContent = ({
   row,
   isDark,
   templateId,
   evalType = "llm",
+  isRepairReview = false,
+  isReviewRowMatched = true,
+  onFailureActionSubmitted,
   onFeedbackSubmitted,
+  onReviewCompleteClick,
+  onScorerEditClick,
+  onSourceFixClick,
+  scorerEditHref,
+  sourceFixHref,
+  sourceType,
 }) => {
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
-  const detail = row.detail || {};
+  const detail = useMemo(() => row.detail || {}, [row.detail]);
   const warnings = row.warnings || detail.warnings || [];
   const json = useMemo(() => JSON.stringify(detail, null, 2), [detail]);
+  const reviewOutcome = getEvalUsageReviewOutcome(row);
+  const nextActionKind = isReviewRowMatched
+    ? getEvalReviewActionKind({
+        canComplete: Boolean(onReviewCompleteClick),
+        log: row,
+        scorerEditHref,
+        sourceFixHref,
+      })
+    : null;
+  const shouldContinueToHome =
+    nextActionKind === EVAL_REVIEW_ACTIONS.COMPLETE &&
+    Boolean(onReviewCompleteClick);
+  const nextAction = shouldContinueToHome
+    ? {
+        buttonLabel: "Continue to Home",
+        description: isRepairReview
+          ? "The rerun is ready. Continue to Home and keep reviewing product signals."
+          : "The first quality-check run is ready. Continue to Home and keep the setup checklist moving.",
+        icon: "mingcute:chart-line-line",
+        onClick: onReviewCompleteClick,
+      }
+    : nextActionKind === EVAL_REVIEW_ACTIONS.SOURCE_FIX
+      ? {
+          buttonLabel:
+            sourceType === "trace_project"
+              ? "Fix trace source"
+              : "Fix source and rerun",
+          description:
+            sourceType === "trace_project"
+              ? "Review the traces that produced this result, adjust the source behavior, then rerun the quality check."
+              : "Fix the dataset, simulation, or source tied to this result, then rerun the quality check.",
+          icon: "mingcute:external-link-line",
+          onClick: onSourceFixClick,
+        }
+      : nextActionKind === EVAL_REVIEW_ACTIONS.SCORER_EDIT
+        ? {
+            buttonLabel:
+              reviewOutcome === "result_summary_reviewed"
+                ? "Tune scorer"
+                : "Edit scorer",
+            description:
+              reviewOutcome === "result_summary_reviewed"
+                ? "Tighten the scorer, then rerun the eval on the same source."
+                : "Edit the scorer, then rerun the eval on the same source.",
+            icon: "mingcute:edit-line",
+            onClick: onScorerEditClick,
+          }
+        : null;
 
   return (
     <Box
@@ -1027,6 +1613,61 @@ const DetailPanelContent = ({
           <CompositeChildrenSection row={row} />
         ) : (
           <>
+            {nextAction && (
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 1.5,
+                  borderTop: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Typography
+                  variant="caption"
+                  fontWeight={600}
+                  sx={{ mb: 0.5, display: "block" }}
+                >
+                  Next action
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ mb: 1.5, display: "block", lineHeight: 1.5 }}
+                >
+                  {nextAction.description}
+                </Typography>
+                <Box
+                  component="button"
+                  onClick={nextAction.onClick}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    px: 2,
+                    py: 0.75,
+                    border: "1px solid",
+                    borderColor: "primary.main",
+                    borderRadius: "8px",
+                    backgroundColor: "transparent",
+                    color: "primary.main",
+                    cursor: "pointer",
+                    fontSize: "12px",
+                    fontWeight: 600,
+                    width: "100%",
+                    "&:hover": {
+                      backgroundColor: (t) =>
+                        t.palette.mode === "dark"
+                          ? "rgba(124,77,255,0.08)"
+                          : "rgba(124,77,255,0.05)",
+                    },
+                  }}
+                >
+                  <Iconify icon={nextAction.icon} width={14} />
+                  {nextAction.buttonLabel}
+                </Box>
+              </Box>
+            )}
+
             {/* Feedback section — hidden for code evals (deterministic, no few-shot learning) */}
             {evalType !== "code" && (
               <Box
@@ -1212,6 +1853,9 @@ const DetailPanelContent = ({
                   setFeedbackOpen(false);
                   if (submitted) onFeedbackSubmitted?.();
                 }}
+                onSubmitted={(submission) =>
+                  onFailureActionSubmitted?.({ ...submission, row })
+                }
                 selectedAddFeedback={{ id: row.id }}
                 output={{ reason: row.reason || "" }}
                 evalsId={templateId}
@@ -1413,6 +2057,10 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
 );
 
 EvalUsageTab.propTypes = {
+  evalType: PropTypes.string,
+  onReviewActionPreferenceChange: PropTypes.func,
+  onReviewComplete: PropTypes.func,
+  outputType: PropTypes.string,
   templateId: PropTypes.string.isRequired,
 };
 

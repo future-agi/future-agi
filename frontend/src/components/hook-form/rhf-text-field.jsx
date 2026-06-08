@@ -172,7 +172,7 @@ export default function RHFTextField({
 
 RHFTextField.propTypes = {
   autoComplete: PropTypes.string,
-  helperText: PropTypes.object,
+  helperText: PropTypes.node,
   InputLabelProps: PropTypes.object,
   InputProps: PropTypes.object,
   name: PropTypes.string,

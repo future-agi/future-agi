@@ -535,7 +535,7 @@ async function findAnnotationLabelByName(apiBase, accessToken, name) {
 
 async function runSettingsLabelsCrud({ page, apiBase, accessToken }) {
   const suffix = Date.now().toString(36);
-  const name = `codex lifecycle label ${suffix}`;
+  const name = `qa lifecycle label ${suffix}`;
   const renamed = `${name} renamed`;
 
   const created = await apiPost(apiBase, accessToken, apiPath("/model-hub/annotations-labels/"), {
@@ -603,7 +603,7 @@ async function runSettingsLabelsCrud({ page, apiBase, accessToken }) {
 }
 
 async function runMultiConditionEdit({ page, apiBase, accessToken }) {
-  const ruleName = `codex lifecycle edit reorder ${Date.now().toString(36)}`;
+  const ruleName = `qa lifecycle edit reorder ${Date.now().toString(36)}`;
   const created = await apiPost(
     apiBase,
     accessToken,
@@ -686,7 +686,7 @@ async function runMultiConditionEdit({ page, apiBase, accessToken }) {
 }
 
 async function runDatetimeRoundtrip({ page, apiBase, accessToken }) {
-  const ruleName = `codex lifecycle datetime ${Date.now().toString(36)}`;
+  const ruleName = `qa lifecycle datetime ${Date.now().toString(36)}`;
   const value = ["2020-01-01T00:00", "2099-01-01T00:00"];
   const created = await apiPost(
     apiBase,

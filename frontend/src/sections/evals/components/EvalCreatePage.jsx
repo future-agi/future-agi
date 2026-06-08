@@ -14,10 +14,17 @@ import {
   Typography,
 } from "@mui/material";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
-import { useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useSnackbar } from "notistack";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
@@ -33,13 +40,36 @@ import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
 import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys";
-import CodeEvalEditor, {
-  PYTHON_CODE_TEMPLATE,
-} from "./CodeEvalEditor";
+import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import { extractVariables } from "src/utils/utils";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import EvalOnboardingFocusPanel from "./EvalOnboardingFocusPanel";
+import {
+  buildEvalCreateDraftHref,
+  buildEvalFixRerunCompletedPayload,
+  buildEvalReviewStepHref,
+  buildEvalRouteFocusPayload,
+  buildEvalRunCompletedPayload,
+  buildEvalRunClickedPayload,
+  buildEvalRunStepHref,
+  buildEvalScorerCreatedPayload,
+  buildEvalScorerSourceHref,
+  buildEvalSourceSelectedPayload,
+  buildEvalSourceSetupHref,
+  EVAL_CREATE_ONBOARDING_STEPS,
+  evalSetupQuickStartAttributionFromSearch,
+  getEvalCreateInitialSourceTab,
+  getEvalCreateOnboardingCopy,
+  getEvalCreateOnboardingParams,
+  getEvalOnboardingSourceSummary,
+  getEvalRunResultId,
+  getEvalStarterScorer,
+  shouldAutoConfirmEvalOnboardingSource,
+  shouldAutoSaveEvalOnboardingStarterScorer,
+} from "./evalCreateOnboarding";
 
 const EVAL_TYPE_TABS = [
   { value: "agent", label: "Agents" },
@@ -137,12 +167,82 @@ const resolveContextOptions = (dataInjection) => {
 
 const EvalCreatePage = () => {
   const { draftId: urlDraftId } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const testPlaygroundRef = useRef(null);
+  const recordedOnboardingFocusRef = useRef(new Set());
+  const recordedSourceSelectionRef = useRef(new Set());
+  const autoConfirmedSourceRef = useRef(new Set());
+  const autoSavedStarterScorerRef = useRef(new Set());
+  const onboardingParams = useMemo(
+    () => getEvalCreateOnboardingParams(location.search),
+    [location.search],
+  );
+  const isTraceProjectOnboarding =
+    onboardingParams.isOnboarding &&
+    onboardingParams.sourceType === "trace_project";
+  const isTraceProjectQualityCheckOnboarding =
+    isTraceProjectOnboarding &&
+    [
+      EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+      EVAL_CREATE_ONBOARDING_STEPS.RUN,
+    ].includes(onboardingParams.step);
+  const onboardingQuickStartAttribution = useMemo(
+    () => evalSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const onboardingCopy = useMemo(
+    () => getEvalCreateOnboardingCopy(onboardingParams),
+    [onboardingParams],
+  );
+  const onboardingInitialSourceTab = useMemo(
+    () => getEvalCreateInitialSourceTab(onboardingParams),
+    [onboardingParams],
+  );
+  const onboardingSourceSummary = useMemo(
+    () => getEvalOnboardingSourceSummary(onboardingParams),
+    [onboardingParams],
+  );
+  const shouldAutoConfirmOnboardingSource = useMemo(
+    () => shouldAutoConfirmEvalOnboardingSource(onboardingParams),
+    [onboardingParams],
+  );
+  const shouldAutoSaveOnboardingStarterScorer = useMemo(
+    () => shouldAutoSaveEvalOnboardingStarterScorer(onboardingParams),
+    [onboardingParams],
+  );
+  const onboardingSourceSetupHref = useMemo(() => {
+    if (
+      onboardingParams.isOnboarding &&
+      onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.DATA
+    ) {
+      return buildEvalSourceSetupHref({
+        quickStartAttribution: onboardingQuickStartAttribution,
+      });
+    }
+    return null;
+  }, [onboardingParams, onboardingQuickStartAttribution]);
+  const onboardingTraceProjectId = useMemo(() => {
+    if (
+      onboardingParams.isOnboarding &&
+      onboardingParams.sourceType === "trace_project" &&
+      onboardingParams.sourceId
+    ) {
+      return onboardingParams.sourceId;
+    }
+    return null;
+  }, [onboardingParams]);
+  const onboardingTraceId =
+    onboardingParams.isOnboarding && onboardingParams.traceId
+      ? onboardingParams.traceId
+      : null;
+  const onboardingTraceRowType = onboardingTraceProjectId ? "Trace" : null;
 
   // Mode: single or composite
   const [mode, setMode] = useState("single");
@@ -150,6 +250,9 @@ const EvalCreatePage = () => {
   // --- Single eval state ---
   const [name, setName] = useState("");
   const [evalType, setEvalType] = useState("agent");
+  const persistedEvalType = isTraceProjectQualityCheckOnboarding
+    ? "code"
+    : evalType;
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
@@ -186,11 +289,6 @@ const EvalCreatePage = () => {
   // {{var}} tokens stay red even after the user binds them in the test
   // panel.
   const [playgroundMapping, setPlaygroundMapping] = useState({});
-  const handlePlaygroundReadyChange = useCallback((_ready, mapping) => {
-    if (mapping && typeof mapping === "object") {
-      setPlaygroundMapping(mapping);
-    }
-  }, []);
 
   // --- Composite eval state ---
   const [compositeName, setCompositeName] = useState("");
@@ -211,8 +309,17 @@ const EvalCreatePage = () => {
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
   const [draftId, setDraftId] = useState(urlDraftId || null);
+  const [draftLoadComplete, setDraftLoadComplete] = useState(!urlDraftId);
   const [isTesting, setIsTesting] = useState(false);
+  const [isPlaygroundReady, setIsPlaygroundReady] = useState(false);
+  const [autoSavingOnboardingStarter, setAutoSavingOnboardingStarter] =
+    useState(false);
+  const isDraftDetailsLoading = Boolean(urlDraftId && !draftLoadComplete);
   const draftCreating = useRef(false);
+  const autoSaveTimer = useRef(null);
+  const autoSaveSkipFirst = useRef(!!urlDraftId);
+  const skipNextAutoSaveRef = useRef(false);
+  const appliedStarterScorerRef = useRef(null);
 
   // Warn before switching modes if there's in-flight work we'd lose.
   const [pendingMode, setPendingMode] = useState(null);
@@ -227,19 +334,102 @@ const EvalCreatePage = () => {
   // Hook for updating the draft template
   const updateDraft = useUpdateEval(draftId);
 
-  const handleTestResult = useCallback((success, result) => {
-    // Stale result from a test that was invalidated by a mode switch — drop it.
-    if (activeTestEpochRef.current !== testEpochRef.current) return;
-    setTestPassed(true);
-    setTestError(
-      success
-        ? null
-        : typeof result === "string"
-          ? result
-          : JSON.stringify(result),
-    );
-    setIsTesting(false);
-  }, []);
+  useEffect(() => {
+    if (isTraceProjectQualityCheckOnboarding && evalType !== "code") {
+      setEvalType("code");
+    }
+  }, [evalType, isTraceProjectQualityCheckOnboarding]);
+
+  const handleTestResult = useCallback(
+    (success, result) => {
+      // Stale result from a test that was invalidated by a mode switch — drop it.
+      if (activeTestEpochRef.current !== testEpochRef.current) return;
+      setTestPassed(true);
+      setTestError(
+        success
+          ? null
+          : typeof result === "string"
+            ? result
+            : JSON.stringify(result),
+      );
+      setIsTesting(false);
+
+      if (
+        success &&
+        onboardingParams.isOnboarding &&
+        onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.RUN
+      ) {
+        const completedRunId =
+          getEvalRunResultId(result) || onboardingParams.runId;
+        void queryClient.invalidateQueries({
+          queryKey: ["evals", "usage-chart", draftId],
+        });
+        void queryClient.invalidateQueries({
+          queryKey: ["evals", "usage-logs", draftId],
+        });
+        recordActivationEvent?.(
+          buildEvalRunCompletedPayload({
+            evalId: draftId,
+            evalType: mode === "composite" ? "composite" : persistedEvalType,
+            isComposite: mode === "composite",
+            mode,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            result,
+            runId: completedRunId,
+            setupLanguage: onboardingParams.setupLanguage,
+            setupProvider: onboardingParams.setupProvider,
+            sourceId: onboardingParams.sourceId,
+            sourceType: onboardingParams.sourceType,
+            traceId: onboardingParams.traceId,
+          }),
+        );
+        if (onboardingParams.rerunFrom) {
+          recordActivationEvent?.(
+            buildEvalFixRerunCompletedPayload({
+              evalId: draftId,
+              evalType: mode === "composite" ? "composite" : persistedEvalType,
+              isComposite: mode === "composite",
+              mode,
+              previousRunId: onboardingParams.previousRunId,
+              quickStartAttribution: onboardingQuickStartAttribution,
+              rerunFrom: onboardingParams.rerunFrom,
+              result,
+              runId: completedRunId,
+              setupLanguage: onboardingParams.setupLanguage,
+              setupProvider: onboardingParams.setupProvider,
+              sourceId: onboardingParams.sourceId,
+              sourceType: onboardingParams.sourceType,
+              traceId: onboardingParams.traceId,
+            }),
+          );
+        }
+        navigate(
+          buildEvalReviewStepHref({
+            evalId: draftId,
+            previousRunId: onboardingParams.previousRunId,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            rerunFrom: onboardingParams.rerunFrom,
+            runId: completedRunId,
+            setupLanguage: onboardingParams.setupLanguage,
+            setupProvider: onboardingParams.setupProvider,
+            sourceId: onboardingParams.sourceId,
+            sourceType: onboardingParams.sourceType,
+            traceId: onboardingParams.traceId,
+          }),
+        );
+      }
+    },
+    [
+      draftId,
+      persistedEvalType,
+      mode,
+      navigate,
+      onboardingParams,
+      onboardingQuickStartAttribution,
+      queryClient,
+      recordActivationEvent,
+    ],
+  );
 
   // Load existing draft from URL, or create a new one
   const draftLoaded = useRef(false);
@@ -295,6 +485,8 @@ const EvalCreatePage = () => {
         } catch {
           // Draft not found — create a new one
           setDraftId(null);
+        } finally {
+          setDraftLoadComplete(true);
         }
       })();
       return;
@@ -318,7 +510,9 @@ const EvalCreatePage = () => {
           const id = data?.result?.id;
           if (id) {
             setDraftId(id);
-            navigate(`/dashboard/evaluations/create/${id}`, { replace: true });
+            navigate(buildEvalCreateDraftHref(id, location.search), {
+              replace: true,
+            });
           }
         } catch {
           // ignore — user can retry
@@ -327,9 +521,208 @@ const EvalCreatePage = () => {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const handleOnboardingFocusViewed = useCallback(() => {
+    if (!onboardingParams.isOnboarding) {
+      return;
+    }
+    const focusKey = [
+      onboardingParams.step,
+      onboardingParams.sourceType || "source",
+      onboardingParams.sourceId || draftId || "route",
+    ].join(":");
+    if (recordedOnboardingFocusRef.current.has(focusKey)) return;
+    recordedOnboardingFocusRef.current.add(focusKey);
+    recordActivationEvent?.(
+      buildEvalRouteFocusPayload({
+        draftId,
+        previousRunId: onboardingParams.previousRunId,
+        quickStartAttribution: onboardingQuickStartAttribution,
+        rerunFrom: onboardingParams.rerunFrom,
+        runId: onboardingParams.runId,
+        setupLanguage: onboardingParams.setupLanguage,
+        setupProvider: onboardingParams.setupProvider,
+        sourceId: onboardingParams.sourceId,
+        sourceType: onboardingParams.sourceType,
+        step: onboardingParams.step,
+        traceId: onboardingParams.traceId,
+      }),
+    );
+  }, [
+    draftId,
+    onboardingParams,
+    onboardingQuickStartAttribution,
+    recordActivationEvent,
+  ]);
+
+  const handleOnboardingSourceSelected = useCallback(
+    ({ rowType, sourceId, sourceType, surface } = {}) => {
+      if (!onboardingParams.isOnboarding || !sourceId || !sourceType) return;
+      if (
+        ![
+          EVAL_CREATE_ONBOARDING_STEPS.DATA,
+          EVAL_CREATE_ONBOARDING_STEPS.RUN,
+        ].includes(onboardingParams.step)
+      ) {
+        return;
+      }
+
+      const selectionKey = `${sourceType}:${sourceId}`;
+      if (recordedSourceSelectionRef.current.has(selectionKey)) return;
+      recordedSourceSelectionRef.current.add(selectionKey);
+
+      recordActivationEvent?.(
+        buildEvalSourceSelectedPayload({
+          draftId,
+          quickStartAttribution: onboardingQuickStartAttribution,
+          rowType,
+          setupLanguage: onboardingParams.setupLanguage,
+          setupProvider: onboardingParams.setupProvider,
+          sourceId,
+          sourceType,
+          step: onboardingParams.step,
+          surface,
+          traceId: onboardingParams.traceId,
+        }),
+      );
+    },
+    [
+      draftId,
+      onboardingParams,
+      onboardingQuickStartAttribution,
+      recordActivationEvent,
+    ],
+  );
+
+  const handleConfirmOnboardingSource = useCallback(() => {
+    if (
+      !onboardingParams.isOnboarding ||
+      onboardingParams.step !== EVAL_CREATE_ONBOARDING_STEPS.DATA ||
+      !onboardingParams.sourceId ||
+      !onboardingParams.sourceType
+    ) {
+      return;
+    }
+
+    handleOnboardingSourceSelected({
+      rowType: onboardingParams.sourceType === "trace_project" ? "Trace" : null,
+      sourceId: onboardingParams.sourceId,
+      sourceType: onboardingParams.sourceType,
+      surface:
+        onboardingParams.sourceType === "trace_project" ? "tracing" : "route",
+    });
+    navigate(
+      buildEvalScorerSourceHref({
+        evalId: draftId,
+        quickStartAttribution: onboardingQuickStartAttribution,
+        setupLanguage: onboardingParams.setupLanguage,
+        setupProvider: onboardingParams.setupProvider,
+        sourceId: onboardingParams.sourceId,
+        sourceType: onboardingParams.sourceType,
+        traceId: onboardingParams.traceId,
+      }),
+    );
+  }, [
+    draftId,
+    handleOnboardingSourceSelected,
+    navigate,
+    onboardingParams,
+    onboardingQuickStartAttribution,
+  ]);
+
+  useEffect(() => {
+    if (!draftId || !shouldAutoConfirmOnboardingSource) return;
+
+    const autoConfirmKey = [
+      draftId,
+      onboardingParams.sourceType,
+      onboardingParams.sourceId,
+    ].join(":");
+    if (autoConfirmedSourceRef.current.has(autoConfirmKey)) return;
+    autoConfirmedSourceRef.current.add(autoConfirmKey);
+
+    handleOnboardingFocusViewed();
+    handleConfirmOnboardingSource();
+  }, [
+    draftId,
+    handleConfirmOnboardingSource,
+    handleOnboardingFocusViewed,
+    onboardingParams.sourceId,
+    onboardingParams.sourceType,
+    shouldAutoConfirmOnboardingSource,
+  ]);
+
+  const handleUseStarterScorer = useCallback(() => {
+    if (
+      !onboardingParams.isOnboarding ||
+      onboardingParams.step !== EVAL_CREATE_ONBOARDING_STEPS.SCORER
+    ) {
+      return;
+    }
+
+    const starter = getEvalStarterScorer({
+      sourceId: onboardingParams.sourceId,
+      sourceType: onboardingParams.sourceType,
+    });
+    if (autoSaveTimer.current) {
+      clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+    }
+    skipNextAutoSaveRef.current = true;
+    setMode("single");
+    setEvalType(starter.evalType);
+    setName(starter.name);
+    setDescription(starter.description);
+    setCode(starter.code);
+    setCodeLanguage(starter.codeLanguage);
+    setOutputType(starter.outputType);
+    setPassThreshold(starter.passThreshold);
+    setTestPassed(false);
+    setTestError(null);
+  }, [onboardingParams]);
+
+  useEffect(() => {
+    const shouldApplyStarter =
+      draftLoadComplete &&
+      onboardingParams.isOnboarding &&
+      onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.SCORER &&
+      onboardingParams.sourceId &&
+      onboardingParams.sourceType &&
+      !name.trim() &&
+      (isTraceProjectQualityCheckOnboarding || evalType === "agent") &&
+      code === PYTHON_CODE_TEMPLATE &&
+      !description.trim();
+
+    if (!shouldApplyStarter) return;
+
+    const starterKey = `${onboardingParams.sourceType}:${onboardingParams.sourceId}`;
+    if (appliedStarterScorerRef.current === starterKey) return;
+
+    appliedStarterScorerRef.current = starterKey;
+    handleUseStarterScorer();
+  }, [
+    code,
+    description,
+    draftLoadComplete,
+    evalType,
+    handleUseStarterScorer,
+    isTraceProjectQualityCheckOnboarding,
+    name,
+    onboardingParams,
+  ]);
+
+  const handleCreateOnboardingSource = useCallback(() => {
+    if (!onboardingSourceSetupHref) return;
+    navigate(onboardingSourceSetupHref);
+  }, [navigate, onboardingSourceSetupHref]);
+
+  const handlePlaygroundReadyChange = useCallback((ready, mapping) => {
+    setIsPlaygroundReady(Boolean(ready));
+    if (mapping && typeof mapping === "object") {
+      setPlaygroundMapping(mapping);
+    }
+  }, []);
+
   // Auto-save config to draft (debounced, skip initial load)
-  const autoSaveTimer = useRef(null);
-  const autoSaveSkipFirst = useRef(!!urlDraftId); // skip first trigger when loading existing draft
   const buildUpdatePayload = useCallback(() => {
     const dataInjection = buildDataInjection(contextOptions);
 
@@ -341,17 +734,17 @@ const EvalCreatePage = () => {
     const tools = buildToolsPayload(connectorIds);
 
     return {
-      eval_type: evalType,
+      eval_type: persistedEvalType,
       instructions:
-        evalType === "code"
-          ? ""
-          : evalType === "llm"
+        persistedEvalType === "code"
+          ? undefined
+          : persistedEvalType === "llm"
             ? instructions ||
               messages.find((m) => m.role === "system")?.content ||
               undefined
             : instructions || undefined,
-      code: evalType === "code" ? code : undefined,
-      code_language: evalType === "code" ? codeLanguage : undefined,
+      code: persistedEvalType === "code" ? code : undefined,
+      code_language: persistedEvalType === "code" ? codeLanguage : undefined,
       model,
       output_type: outputType,
       pass_threshold: passThreshold,
@@ -359,22 +752,24 @@ const EvalCreatePage = () => {
         Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
       multi_choice: multiChoice,
       check_internet: checkInternet,
-      mode: evalType === "agent" ? agentMode : undefined,
-      tools: evalType === "agent" ? tools : undefined,
-      knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
-      data_injection: evalType === "agent" ? dataInjection : undefined,
-      summary: evalType === "agent" ? summary : undefined,
+      mode: persistedEvalType === "agent" ? agentMode : undefined,
+      tools: persistedEvalType === "agent" ? tools : undefined,
+      knowledge_bases:
+        persistedEvalType === "agent" ? knowledgeBaseIds : undefined,
+      data_injection:
+        persistedEvalType === "agent" ? dataInjection : undefined,
+      summary: persistedEvalType === "agent" ? summary : undefined,
       error_localizer_enabled: errorLocalizerEnabled,
-      messages: evalType === "llm" ? messages : undefined,
+      messages: persistedEvalType === "llm" ? messages : undefined,
       // Send [] for LLM evals so the BE can persist a user-cleared list.
       few_shot_examples:
-        evalType === "llm"
+        persistedEvalType === "llm"
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
     };
   }, [
-    evalType,
+    persistedEvalType,
     instructions,
     code,
     codeLanguage,
@@ -398,8 +793,17 @@ const EvalCreatePage = () => {
 
   useEffect(() => {
     if (!draftId) return;
+    if (urlDraftId && !draftLoadComplete) return;
     if (autoSaveSkipFirst.current) {
       autoSaveSkipFirst.current = false;
+      return;
+    }
+    if (skipNextAutoSaveRef.current) {
+      skipNextAutoSaveRef.current = false;
+      if (autoSaveTimer.current) {
+        clearTimeout(autoSaveTimer.current);
+        autoSaveTimer.current = null;
+      }
       return;
     }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -409,7 +813,7 @@ const EvalCreatePage = () => {
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [draftId, buildUpdatePayload]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draftId, draftLoadComplete, buildUpdatePayload, urlDraftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Draft cleanup: drafts with visible_ui=False are hidden from the list.
   // No auto-delete — stale drafts can be cleaned up by a backend cron.
@@ -417,14 +821,14 @@ const EvalCreatePage = () => {
 
   // --- Save handlers ---
   const handleSaveSingle = useCallback(async () => {
-    if (isOSS && evalType === "agent") {
+    if (isOSS && persistedEvalType === "agent") {
       enqueueSnackbar(
         "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (isOSS && persistedEvalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
@@ -433,6 +837,12 @@ const EvalCreatePage = () => {
     }
     if (!draftId) {
       enqueueSnackbar("Draft not ready yet, please try again", {
+        variant: "warning",
+      });
+      return;
+    }
+    if (isDraftDetailsLoading) {
+      enqueueSnackbar("Quality check is still loading, please wait", {
         variant: "warning",
       });
       return;
@@ -448,7 +858,40 @@ const EvalCreatePage = () => {
       });
       publishedRef.current = true;
       enqueueSnackbar("Evaluation saved successfully", { variant: "success" });
-      navigate(`/dashboard/evaluations/${draftId}`);
+      const shouldContinueToRunStep =
+        onboardingParams.isOnboarding &&
+        onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.SCORER;
+
+      if (shouldContinueToRunStep) {
+        recordActivationEvent?.(
+          buildEvalScorerCreatedPayload({
+            evalId: draftId,
+            evalType: persistedEvalType,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            setupLanguage: onboardingParams.setupLanguage,
+            setupProvider: onboardingParams.setupProvider,
+            sourceId: onboardingParams.sourceId,
+            sourceType: onboardingParams.sourceType,
+            step: onboardingParams.step,
+            traceId: onboardingParams.traceId,
+          }),
+        );
+      }
+      navigate(
+        shouldContinueToRunStep
+          ? buildEvalRunStepHref({
+              evalId: draftId,
+              previousRunId: onboardingParams.previousRunId,
+              quickStartAttribution: onboardingQuickStartAttribution,
+              rerunFrom: onboardingParams.rerunFrom,
+              setupLanguage: onboardingParams.setupLanguage,
+              setupProvider: onboardingParams.setupProvider,
+              sourceId: onboardingParams.sourceId,
+              sourceType: onboardingParams.sourceType,
+              traceId: onboardingParams.traceId,
+            })
+          : `/dashboard/evaluations/${draftId}`,
+      );
     } catch (error) {
       const message =
         error?.response?.data?.result ||
@@ -471,8 +914,73 @@ const EvalCreatePage = () => {
     enqueueSnackbar,
     navigate,
     isOSS,
-    evalType,
+    isDraftDetailsLoading,
+    persistedEvalType,
     model,
+    onboardingParams,
+    recordActivationEvent,
+    onboardingQuickStartAttribution,
+  ]);
+
+  useEffect(() => {
+    if (
+      !draftId ||
+      !draftLoadComplete ||
+      !shouldAutoSaveOnboardingStarterScorer ||
+      autoSavingOnboardingStarter ||
+      mode !== "single" ||
+      persistedEvalType !== "code"
+    ) {
+      return;
+    }
+
+    const starter = getEvalStarterScorer({
+      sourceId: onboardingParams.sourceId,
+      sourceType: onboardingParams.sourceType,
+    });
+    const starterKey = [
+      draftId,
+      onboardingParams.sourceType,
+      onboardingParams.sourceId,
+    ].join(":");
+
+    const starterIsUnchanged =
+      name === starter.name &&
+      description === starter.description &&
+      code === starter.code &&
+      codeLanguage === starter.codeLanguage &&
+      outputType === starter.outputType &&
+      passThreshold === starter.passThreshold;
+
+    if (
+      !starterIsUnchanged ||
+      publishedRef.current ||
+      autoSavedStarterScorerRef.current.has(starterKey)
+    ) {
+      return;
+    }
+
+    autoSavedStarterScorerRef.current.add(starterKey);
+    setAutoSavingOnboardingStarter(true);
+    handleSaveSingle().finally(() => {
+      setAutoSavingOnboardingStarter(false);
+    });
+  }, [
+    autoSavingOnboardingStarter,
+    code,
+    codeLanguage,
+    description,
+    draftId,
+    draftLoadComplete,
+    handleSaveSingle,
+    mode,
+    name,
+    onboardingParams.sourceId,
+    onboardingParams.sourceType,
+    outputType,
+    passThreshold,
+    persistedEvalType,
+    shouldAutoSaveOnboardingStarterScorer,
   ]);
 
   const handleSaveComposite = useCallback(async () => {
@@ -507,6 +1015,25 @@ const EvalCreatePage = () => {
       enqueueSnackbar("Composite evaluation created successfully", {
         variant: "success",
       });
+      if (
+        onboardingParams.isOnboarding &&
+        onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.SCORER
+      ) {
+        recordActivationEvent?.(
+          buildEvalScorerCreatedPayload({
+            evalId: result.id,
+            evalType: "composite",
+            isComposite: true,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            setupLanguage: onboardingParams.setupLanguage,
+            setupProvider: onboardingParams.setupProvider,
+            sourceId: onboardingParams.sourceId,
+            sourceType: onboardingParams.sourceType,
+            step: onboardingParams.step,
+            traceId: onboardingParams.traceId,
+          }),
+        );
+      }
       navigate(`/dashboard/evaluations/${result.id}`);
     } catch (error) {
       const message =
@@ -531,6 +1058,9 @@ const EvalCreatePage = () => {
     createComposite,
     enqueueSnackbar,
     navigate,
+    onboardingParams,
+    onboardingQuickStartAttribution,
+    recordActivationEvent,
   ]);
 
   // Test Evaluation: draft is always auto-saved, just run it
@@ -545,6 +1075,12 @@ const EvalCreatePage = () => {
       });
       return;
     }
+    if (mode === "single" && isDraftDetailsLoading) {
+      enqueueSnackbar("Quality check is still loading, please wait", {
+        variant: "warning",
+      });
+      return;
+    }
     // Arm a fresh epoch for this test. If an older test is still in flight,
     // its late result will compare against this new epoch and be ignored.
     testEpochRef.current += 1;
@@ -554,7 +1090,62 @@ const EvalCreatePage = () => {
     setTestPassed(false);
 
     try {
+      if (
+        onboardingParams.isOnboarding &&
+        onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.RUN &&
+        !onboardingParams.rerunFrom
+      ) {
+        recordActivationEvent?.(
+          buildEvalRunClickedPayload({
+            evalId: draftId,
+            evalType: mode === "composite" ? "composite" : persistedEvalType,
+            isComposite: mode === "composite",
+            mode,
+            previousRunId: onboardingParams.previousRunId,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            rerunFrom: onboardingParams.rerunFrom,
+            setupLanguage: onboardingParams.setupLanguage,
+            setupProvider: onboardingParams.setupProvider,
+            sourceId: onboardingParams.sourceId,
+            sourceType: onboardingParams.sourceType,
+            traceId: onboardingParams.traceId,
+          }),
+        );
+      }
       if (mode === "single") {
+        if (
+          onboardingParams.isOnboarding &&
+          onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.RUN &&
+          onboardingParams.sourceType === "trace_project" &&
+          onboardingParams.traceId
+        ) {
+          try {
+            await updateDraft.mutateAsync(buildUpdatePayload());
+          } catch {
+            // The draft is autosaved before this step; do not block the first
+            // trace-project run if the final debounce save races in local setup.
+          }
+          const { data } = await axios.post(
+            endpoints.develop.eval.evalPlayground,
+            {
+              template_id: draftId,
+              model: persistedEvalType === "code" ? "" : model,
+              error_localizer: errorLocalizerEnabled,
+              config: {
+                mapping: {
+                  output: "output",
+                },
+              },
+              trace_id: onboardingParams.traceId,
+            },
+          );
+          if (data?.status) {
+            handleTestResult(true, data.result);
+          } else {
+            handleTestResult(false, data?.result || "Evaluation failed");
+          }
+          return;
+        }
         await updateDraft.mutateAsync(buildUpdatePayload());
         testPlaygroundRef.current?.runTest?.(draftId);
       } else {
@@ -574,6 +1165,13 @@ const EvalCreatePage = () => {
     updateDraft,
     handleTestResult,
     enqueueSnackbar,
+    isDraftDetailsLoading,
+    errorLocalizerEnabled,
+    persistedEvalType,
+    model,
+    onboardingParams,
+    onboardingQuickStartAttribution,
+    recordActivationEvent,
   ]);
 
   const isLoading =
@@ -588,13 +1186,14 @@ const EvalCreatePage = () => {
   const handleModeChange = useCallback(
     (_, val) => {
       if (val === mode) return;
+      if (isTraceProjectOnboarding) return;
       if (hasProgressToDiscard) {
         setPendingMode(val);
         return;
       }
       setMode(val);
     },
-    [mode, hasProgressToDiscard],
+    [mode, hasProgressToDiscard, isTraceProjectOnboarding],
   );
 
   const handleConfirmModeSwitch = useCallback(() => {
@@ -622,12 +1221,107 @@ const EvalCreatePage = () => {
     extractVariables(instructions, templateFormat).length > 0;
   const canSaveSingle =
     !!name.trim() &&
-    (evalType === "code" ? !!code.trim() : singleHasInstructionVariables);
+    (persistedEvalType === "code"
+      ? !!code.trim()
+      : singleHasInstructionVariables);
   const canSaveComposite = compositeName.trim() && selectedChildren.length > 0;
   // Single evals require a successful test run before save. Composites
   // don't have a test flow in the create page — their children already exist
   // and can be tested individually.
   const canSave = mode === "single" ? canSaveSingle : canSaveComposite;
+  const canRunTraceProjectDirectly =
+    onboardingParams.isOnboarding &&
+    onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.RUN &&
+    onboardingParams.sourceType === "trace_project" &&
+    Boolean(onboardingParams.traceId);
+
+  const onboardingPrimaryAction = useMemo(() => {
+    if (
+      !onboardingParams.isOnboarding ||
+      !onboardingParams.sourceId ||
+      !onboardingParams.sourceType
+    ) {
+      return null;
+    }
+
+    if (onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.SCORER) {
+      return {
+        disabled:
+          autoSavingOnboardingStarter ||
+          isDraftDetailsLoading ||
+          !draftId ||
+          isLoading ||
+          !canSave,
+        label: autoSavingOnboardingStarter
+          ? "Preparing first run"
+          : onboardingParams.sourceType === "trace_project"
+            ? "Create quality check"
+            : "Save starter scorer",
+        onClick: mode === "single" ? handleSaveSingle : handleSaveComposite,
+      };
+    }
+
+    if (onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.RUN) {
+      const isTraceProjectRun = onboardingParams.sourceType === "trace_project";
+      const runLabel = onboardingParams.rerunFrom
+        ? isTesting
+          ? isTraceProjectRun
+            ? "Rerunning quality check"
+            : "Rerunning eval"
+          : isTraceProjectRun
+            ? "Rerun quality check"
+            : "Rerun eval"
+        : isTesting
+          ? isTraceProjectRun
+            ? "Running quality check"
+            : "Running first eval"
+          : isTraceProjectRun
+            ? "Run quality check"
+            : "Run first eval";
+      return {
+        disabled:
+          !draftId ||
+          isDraftDetailsLoading ||
+          isTesting ||
+          (!isPlaygroundReady && !canRunTraceProjectDirectly),
+        label: runLabel,
+        onClick: handleTestEvaluation,
+      };
+    }
+
+    if (onboardingParams.step !== EVAL_CREATE_ONBOARDING_STEPS.DATA) {
+      return null;
+    }
+
+    if (shouldAutoConfirmOnboardingSource) {
+      return null;
+    }
+
+    return {
+      disabled: !draftId,
+      label:
+        onboardingParams.sourceType === "trace_project"
+          ? "Use trace project"
+          : "Use source",
+      onClick: handleConfirmOnboardingSource,
+    };
+  }, [
+    canSave,
+    canRunTraceProjectDirectly,
+    autoSavingOnboardingStarter,
+    draftId,
+    isDraftDetailsLoading,
+    handleConfirmOnboardingSource,
+    handleSaveComposite,
+    handleSaveSingle,
+    handleTestEvaluation,
+    isPlaygroundReady,
+    isTesting,
+    isLoading,
+    mode,
+    onboardingParams,
+    shouldAutoConfirmOnboardingSource,
+  ]);
 
   return (
     <Box
@@ -684,6 +1378,18 @@ const EvalCreatePage = () => {
         </Box>
       </Box>
 
+      <EvalOnboardingFocusPanel
+        currentStep={onboardingCopy.currentStep}
+        description={onboardingCopy.description}
+        hidden={!onboardingParams.isOnboarding}
+        onViewed={handleOnboardingFocusViewed}
+        primaryAction={onboardingPrimaryAction}
+        sourceSummary={onboardingSourceSummary}
+        steps={onboardingCopy.steps}
+        title={onboardingCopy.title}
+        tourAnchor={onboardingParams.tourAnchor}
+      />
+
       {/* Two-panel layout — resizable, fills remaining height */}
       <Box sx={{ flex: 1, minHeight: 0 }}>
         <ResizablePanels
@@ -714,80 +1420,91 @@ const EvalCreatePage = () => {
                 <Typography variant="subtitle1" fontWeight={600}>
                   Eval details
                 </Typography>
-                <Tabs
-                  value={mode}
-                  onChange={handleModeChange}
-                  TabIndicatorProps={{ style: { display: "none" } }}
-                  sx={{
-                    minHeight: 28,
-                    "& .MuiTab-root": {
+                {isTraceProjectOnboarding ? (
+                  <Chip
+                    size="small"
+                    color="primary"
+                    variant="outlined"
+                    label="Trace quality check"
+                  />
+                ) : (
+                  <Tabs
+                    value={mode}
+                    onChange={handleModeChange}
+                    TabIndicatorProps={{ style: { display: "none" } }}
+                    sx={{
                       minHeight: 28,
-                      px: 1.5,
-                      py: 0,
-                      mr: "0px !important",
-                      textTransform: "none",
-                      fontSize: "13px",
-                      borderRadius: "6px",
-                    },
-                    border: "1px solid",
-                    borderColor: "divider",
-                    p: "2px",
-                    borderRadius: "8px",
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "background.neutral",
-                  }}
-                >
-                  <Tab
-                    value="single"
-                    label="Single"
-                    sx={{
-                      bgcolor:
-                        mode === "single"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        mode === "single"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: mode === "single" ? 600 : 400,
-                      color:
-                        mode === "single" ? "text.primary" : "text.disabled",
+                      "& .MuiTab-root": {
+                        minHeight: 28,
+                        px: 1.5,
+                        py: 0,
+                        mr: "0px !important",
+                        textTransform: "none",
+                        fontSize: "13px",
+                        borderRadius: "6px",
+                      },
+                      border: "1px solid",
+                      borderColor: "divider",
+                      p: "2px",
+                      borderRadius: "8px",
+                      bgcolor: (theme) =>
+                        theme.palette.mode === "dark"
+                          ? "rgba(255,255,255,0.04)"
+                          : "background.neutral",
                     }}
-                  />
-                  <Tab
-                    value="composite"
-                    label="Composite"
-                    sx={{
-                      bgcolor:
-                        mode === "composite"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "rgba(255,255,255,0.12)"
-                                : "background.paper"
-                          : "transparent",
-                      boxShadow:
-                        mode === "composite"
-                          ? (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "none"
-                                : "0 1px 3px rgba(0,0,0,0.08)"
-                          : "none",
-                      borderRadius: "6px",
-                      fontWeight: mode === "composite" ? 600 : 400,
-                      color:
-                        mode === "composite" ? "text.primary" : "text.disabled",
-                    }}
-                  />
-                </Tabs>
+                  >
+                    <Tab
+                      value="single"
+                      label="Single"
+                      sx={{
+                        bgcolor:
+                          mode === "single"
+                            ? (theme) =>
+                                theme.palette.mode === "dark"
+                                  ? "rgba(255,255,255,0.12)"
+                                  : "background.paper"
+                            : "transparent",
+                        boxShadow:
+                          mode === "single"
+                            ? (theme) =>
+                                theme.palette.mode === "dark"
+                                  ? "none"
+                                  : "0 1px 3px rgba(0,0,0,0.08)"
+                            : "none",
+                        borderRadius: "6px",
+                        fontWeight: mode === "single" ? 600 : 400,
+                        color:
+                          mode === "single" ? "text.primary" : "text.disabled",
+                      }}
+                    />
+                    <Tab
+                      value="composite"
+                      label="Composite"
+                      sx={{
+                        bgcolor:
+                          mode === "composite"
+                            ? (theme) =>
+                                theme.palette.mode === "dark"
+                                  ? "rgba(255,255,255,0.12)"
+                                  : "background.paper"
+                            : "transparent",
+                        boxShadow:
+                          mode === "composite"
+                            ? (theme) =>
+                                theme.palette.mode === "dark"
+                                  ? "none"
+                                  : "0 1px 3px rgba(0,0,0,0.08)"
+                            : "none",
+                        borderRadius: "6px",
+                        fontWeight: mode === "composite" ? 600 : 400,
+                        color:
+                          mode === "composite"
+                            ? "text.primary"
+                            : "text.disabled",
+                      }}
+                    />
+                  </Tabs>
+                )}
               </Box>
 
               {mode === "single" ? (
@@ -800,7 +1517,13 @@ const EvalCreatePage = () => {
                       fontWeight={600}
                       sx={{ mb: 0.5 }}
                     >
-                      Eval Name<Box component="span" sx={{ color: "error.main", ml: 0.25 }}>*</Box>
+                      Eval Name
+                      <Box
+                        component="span"
+                        sx={{ color: "error.main", ml: 0.25 }}
+                      >
+                        *
+                      </Box>
                     </Typography>
                     <TextField
                       fullWidth
@@ -820,8 +1543,12 @@ const EvalCreatePage = () => {
 
                   {/* Eval Type Toggle — pill tabs (same as EvalAccordion Text/Image/Audio) */}
                   <Tabs
-                    value={evalType}
-                    onChange={(_, val) => setEvalType(val)}
+                    value={persistedEvalType}
+                    onChange={(_, val) => {
+                      if (!isTraceProjectQualityCheckOnboarding) {
+                        setEvalType(val);
+                      }
+                    }}
                     variant="standard"
                     scrollButtons={false}
                     TabIndicatorProps={{ style: { display: "none" } }}
@@ -855,25 +1582,31 @@ const EvalCreatePage = () => {
                         label={tab.label}
                         sx={{
                           bgcolor:
-                            evalType === tab.value
+                            persistedEvalType === tab.value
                               ? (theme) =>
                                   theme.palette.mode === "dark"
                                     ? "rgba(255,255,255,0.12)"
                                     : "background.paper"
                               : "transparent",
                           boxShadow:
-                            evalType === tab.value
+                            persistedEvalType === tab.value
                               ? (theme) =>
                                   theme.palette.mode === "dark"
                                     ? "none"
                                     : "0 1px 3px rgba(0,0,0,0.08)"
                               : "none",
                           borderRadius: "6px",
-                          fontWeight: evalType === tab.value ? 600 : 400,
+                          fontWeight:
+                            persistedEvalType === tab.value ? 600 : 400,
                           color:
-                            evalType === tab.value
+                            persistedEvalType === tab.value
                               ? "text.primary"
                               : "text.disabled",
+                          opacity:
+                            isTraceProjectQualityCheckOnboarding &&
+                            tab.value !== "code"
+                              ? 0.45
+                              : 1,
                         }}
                       />
                     ))}
@@ -882,7 +1615,7 @@ const EvalCreatePage = () => {
                   {/* ═══ Tab-specific content ═══ */}
 
                   {/* Agents tab — instruction editor with model bar inside */}
-                  {evalType === "agent" && (
+                  {persistedEvalType === "agent" && (
                     <InstructionEditor
                       value={instructions}
                       onChange={setInstructions}
@@ -912,7 +1645,7 @@ const EvalCreatePage = () => {
 
                   {/* LLM-As-A-Judge tab — message editor (with model +
                       template format in its top bar) and few-shot. */}
-                  {evalType === "llm" && (
+                  {persistedEvalType === "llm" && (
                     <>
                       {/* Message editor with Falcon AI. Model + template
                           format render inline in LLMPromptEditor's top
@@ -941,7 +1674,7 @@ const EvalCreatePage = () => {
                   )}
 
                   {/* Code tab — Monaco editor with Falcon AI */}
-                  {evalType === "code" && (
+                  {persistedEvalType === "code" && (
                     <CodeEvalEditor
                       code={code}
                       setCode={setCode}
@@ -952,7 +1685,7 @@ const EvalCreatePage = () => {
                   )}
 
                   {/* Output Type — Code evals only have scoring (0-1) with pass threshold */}
-                  {evalType === "code" ? (
+                  {persistedEvalType === "code" ? (
                     <Box>
                       <Typography
                         variant="body2"
@@ -1019,7 +1752,7 @@ const EvalCreatePage = () => {
 
                   {/* Error Localization — LLM/Agent only. Code evals don't
                       produce model traces for the localizer to introspect. */}
-                  {evalType !== "code" && (
+                  {persistedEvalType !== "code" && (
                     <Box>
                       <FormControlLabel
                         control={
@@ -1210,15 +1943,15 @@ const EvalCreatePage = () => {
                   key={mode}
                   ref={testPlaygroundRef}
                   templateId={draftId}
-                  model={model}
+                  model={persistedEvalType === "code" ? "" : model}
                   instructions={
-                    mode === "composite" || evalType === "code"
+                    mode === "composite" || persistedEvalType === "code"
                       ? ""
-                      : evalType === "llm"
+                      : persistedEvalType === "llm"
                         ? messages.map((m) => m.content || "").join("\n")
                         : instructions
                   }
-                  evalType={mode === "composite" ? "llm" : evalType}
+                  evalType={mode === "composite" ? "llm" : persistedEvalType}
                   code={code}
                   codeLanguage={codeLanguage}
                   requiredKeys={
@@ -1247,11 +1980,21 @@ const EvalCreatePage = () => {
                   showVersions={false}
                   onTestResult={handleTestResult}
                   onColumnsLoaded={handleColumnsLoaded}
+                  onCreateSourceClick={
+                    onboardingSourceSetupHref
+                      ? handleCreateOnboardingSource
+                      : undefined
+                  }
                   onReadyChange={handlePlaygroundReadyChange}
                   errorLocalizerEnabled={
                     mode === "composite" ? false : errorLocalizerEnabled
                   }
+                  initialSourceTab={onboardingInitialSourceTab}
+                  onSourceSelected={handleOnboardingSourceSelected}
                   templateFormat={templateFormat}
+                  initialTraceProjectId={onboardingTraceProjectId}
+                  initialTraceRowType={onboardingTraceRowType}
+                  initialTraceId={onboardingTraceId}
                 />
               </Box>
 
@@ -1319,34 +2062,38 @@ const EvalCreatePage = () => {
                   const hasTestInput =
                     mode === "composite"
                       ? hasCompositeChildren
-                      : evalType === "code"
-                        ? hasCode
-                        : instructionsReady;
-                  const testDisabled = isTesting || !hasTestInput;
+                    : persistedEvalType === "code"
+                      ? hasCode
+                      : instructionsReady;
+                  const testDisabled =
+                    isDraftDetailsLoading || isTesting || !hasTestInput;
 
                   let testDisabledReason = "";
-                  if (isTesting) {
+                  if (isDraftDetailsLoading) {
+                    testDisabledReason =
+                      "Quality check is still loading, please wait.";
+                  } else if (isTesting) {
                     testDisabledReason = "Test is already running.";
                   } else if (mode === "composite" && !hasCompositeChildren) {
                     testDisabledReason =
                       "Add at least one child evaluation to run a test.";
                   } else if (
                     mode !== "composite" &&
-                    evalType === "code" &&
+                    persistedEvalType === "code" &&
                     !hasCode
                   ) {
                     testDisabledReason =
                       "Write some code before running a test.";
                   } else if (
                     mode !== "composite" &&
-                    evalType !== "code" &&
+                    persistedEvalType !== "code" &&
                     !hasInstructions
                   ) {
                     testDisabledReason =
                       "Add instructions before running a test.";
                   } else if (
                     mode !== "composite" &&
-                    evalType !== "code" &&
+                    persistedEvalType !== "code" &&
                     !hasInstructionVariables
                   ) {
                     testDisabledReason =
@@ -1387,9 +2134,19 @@ const EvalCreatePage = () => {
                   );
                 })()}
                 {(() => {
-                  const saveDisabled = isLoading || !canSave;
+                  const saveDisabled =
+                    autoSavingOnboardingStarter ||
+                    isDraftDetailsLoading ||
+                    isLoading ||
+                    !canSave;
                   let saveDisabledReason = "";
-                  if (isLoading) {
+                  if (autoSavingOnboardingStarter) {
+                    saveDisabledReason =
+                      "Starter scorer is being prepared for the first run.";
+                  } else if (isDraftDetailsLoading) {
+                    saveDisabledReason =
+                      "Quality check is still loading, please wait.";
+                  } else if (isLoading) {
                     saveDisabledReason = "Save is already in progress.";
                   } else if (mode === "composite") {
                     if (!compositeName.trim()) {
@@ -1402,12 +2159,15 @@ const EvalCreatePage = () => {
                   } else if (!name.trim()) {
                     saveDisabledReason =
                       "Give this evaluation a name before saving.";
-                  } else if (evalType === "code" && !code.trim()) {
+                  } else if (persistedEvalType === "code" && !code.trim()) {
                     saveDisabledReason = "Write some code before saving.";
-                  } else if (evalType !== "code" && !instructions.trim()) {
+                  } else if (
+                    persistedEvalType !== "code" &&
+                    !instructions.trim()
+                  ) {
                     saveDisabledReason = "Add instructions before saving.";
                   } else if (
-                    evalType !== "code" &&
+                    persistedEvalType !== "code" &&
                     !singleHasInstructionVariables
                   ) {
                     saveDisabledReason =
@@ -1441,7 +2201,9 @@ const EvalCreatePage = () => {
                           }
                           sx={{ textTransform: "none" }}
                         >
-                          {isLoading ? "Saving..." : "Save Evaluation"}
+                          {isLoading || autoSavingOnboardingStarter
+                            ? "Saving..."
+                            : "Save Evaluation"}
                         </Button>
                       </span>
                     </CustomTooltip>

@@ -453,7 +453,6 @@ const EvalsListView = () => {
                 variant="s1"
 
                 noWrap
-               
               >
                 {name}
               </Typography>

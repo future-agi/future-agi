@@ -52,7 +52,7 @@ CH_HOST = os.environ.get("CH25_HOST", "127.0.0.1")
 CH_PORT = int(os.environ.get("CH25_HTTP_PORT", "19001"))
 
 
-# NOTE (codex P3 finding 2026-05-26): the previous implementation called
+# NOTE (review P3 finding 2026-05-26): the previous implementation called
 # `_ch_available()` during collection via `pytest.mark.skipif`. That opened
 # a CH client BEFORE any test ran, so `pytest --collect-only` and
 # unrelated discovery (e.g. CI test sharding, IDE test discovery) had to
@@ -293,7 +293,7 @@ def test_spans_table_attributes_extra_is_string(ch_client):
 # Full schema contract guard. attributes_extra MUST be String (schema 013,
 # exact match — this is the load-bearing fix). The other two typed-JSON
 # columns store metadata without nested-array numerics — they keep typed-
-# JSON for path-access via system.json indexes. Per codex P3 finding
+# JSON for path-access via system.json indexes. Per review P3 finding
 # 2026-05-26, those two are matched as "any JSON(...)" rather than the
 # exact rendered type string, so the test survives CH 25.x patch versions
 # that re-canonicalize the JSON column DDL.

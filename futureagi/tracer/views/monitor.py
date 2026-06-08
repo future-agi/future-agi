@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 import structlog
 from django.db.models import Count, Exists, Max, OuterRef, Q
 from django.utils import timezone
-from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
@@ -28,6 +27,7 @@ from tracer.models.monitor import (
 )
 from tracer.models.project import Project
 from tracer.serializers.monitor import (
+    UserAlertBulkMuteRequestSerializer,
     UserAlertMonitorDetailSerializer,
     UserAlertMonitorDuplicateResponseSerializer,
     UserAlertMonitorDuplicateSerializer,
@@ -48,7 +48,8 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
     def _current_organization(self):
         return (
-            getattr(self.request, "organization", None) or self.request.user.organization
+            getattr(self.request, "organization", None)
+            or self.request.user.organization
         )
 
     def _workspace_scope_q(self, field_name="workspace"):
@@ -161,9 +162,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         "page_number": page_number,
                         "page_size": page_size,
                         "total_pages": (
-                            math.ceil(total_records / page_size)
-                            if page_size > 0
-                            else 0
+                            math.ceil(total_records / page_size) if page_size > 0 else 0
                         ),
                     },
                 }
@@ -278,6 +277,11 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 f"Error occurred while deleting User Alerts: {str(e)}"
             )
 
+    @validated_request(
+        request_serializer=UserAlertMonitorSerializer,
+        strict_request_validation=False,
+        partial_request_validation=True,
+    )
     def partial_update(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
@@ -350,6 +354,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
         return trend_data
 
+    @validated_request(
+        request_serializer=UserAlertBulkMuteRequestSerializer,
+        strict_request_validation=False,
+    )
     @action(detail=False, methods=["post"], url_path="bulk-mute")
     def bulk_mute(self, request, *args, **kwargs):
         try:
@@ -454,6 +462,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.info(f"Error occurred while fetching monitors list: {str(e)}")
             return self._gm.bad_request(f"error fetching the monitors list {str(e)}")
 
+    @validated_request(
+        request_serializer=UserAlertMonitorSerializer,
+        strict_request_validation=False,
+    )
     def create(self, request, *args, **kwargs):
         from tfc.ee_gating import EEResource, check_ee_can_create
         from tracer.models.monitor import UserAlertMonitor
@@ -497,6 +509,13 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.internal_server_error_response(str(e))
 
     @validated_request(
+        request_serializer=UserAlertMonitorSerializer,
+        strict_request_validation=False,
+    )
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @validated_request(
         request_serializer=UserAlertMonitorDuplicateSerializer,
         responses={
             200: UserAlertMonitorDuplicateResponseSerializer,
@@ -518,10 +537,14 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             return self._gm.not_found(get_error_message("MONITOR_NOT_FOUND"))
 
         new_name = data["name"]
-        if self._base_monitor_queryset().filter(
-            project=monitor.project,
-            name=new_name,
-        ).exists():
+        if (
+            self._base_monitor_queryset()
+            .filter(
+                project=monitor.project,
+                name=new_name,
+            )
+            .exists()
+        ):
             return self._gm.bad_request(
                 {"name": f"An alert with the name '{new_name}' already exists."}
             )
@@ -561,7 +584,7 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             }
         )
 
-    @swagger_auto_schema(
+    @validated_request(
         responses={
             200: UserAlertMonitorMetricOptionsResponseSerializer,
             400: ApiErrorResponseSerializer,
@@ -615,6 +638,10 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             logger.error(f"Failed to get monitor metric options: {e}", exc_info=True)
             return self._gm.bad_request(get_error_message("FAILED_TO_GET_MONITOR"))
 
+    @validated_request(
+        request_serializer=UserAlertMonitorSerializer,
+        strict_request_validation=False,
+    )
     @action(detail=False, methods=["post"], url_path="preview-graph")
     def preview_graph(self, request, *args, **kwargs):
         """
@@ -732,7 +759,7 @@ class UserAlertMonitorLogView(BaseModelViewSetMixin, ModelViewSet):
             .filter(
                 self._workspace_scope_q(),
                 alert__organization=getattr(self.request, "organization", None)
-                or self.request.user.organization
+                or self.request.user.organization,
             )
         )
         return queryset

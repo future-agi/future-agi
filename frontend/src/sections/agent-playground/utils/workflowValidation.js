@@ -129,7 +129,9 @@ function hasValidUserContent(message) {
 
 // Validate a single node for save-time (type-specific checks)
 export function validateNodeForSave(node) {
-  const config = node.data?.config;
+  const config = node.data?._initialConfig
+    ? { ...node.data?.config, ...node.data._initialConfig }
+    : node.data?.config;
 
   switch (node.type) {
     case NODE_TYPES.LLM_PROMPT: {

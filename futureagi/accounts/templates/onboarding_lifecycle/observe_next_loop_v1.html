@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Score your traces automatically{% endblock %}
+{% block heading %}Let FutureAGI score new traces as they arrive{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, you have reviewed your first trace in {{ workspace_name }} and seen what to look for. Reviewing each one by hand will not scale.</p>
+  <p style="margin:0;">Attach one evaluator and FutureAGI scores new traces the moment they land, turning raw production traffic into quality signals you can watch instead of read.</p>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}See your prompt produce its first output{% endblock %}
+{% block heading %}Run your prompt once to see what it produces{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, your prompt is written in {{ workspace_name }} but has not produced anything yet.</p>
+  <p style="margin:0;">Add one sample input and run it. You will see the model's actual output for that case, which becomes the baseline every future edit gets measured against.</p>
+{% endblock %}

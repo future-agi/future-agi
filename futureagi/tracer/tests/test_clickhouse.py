@@ -572,7 +572,7 @@ class TestClickHouseFilterBuilder:
         %(project_ids)s``, even for a single-element list. Earlier the
         single-element case fell through to ``project_id = %(project_id)s``
         which fails at execution because the outer query only binds
-        ``project_ids``. Regression guard for the Codex P1 finding.
+        ``project_ids``.
         """
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,

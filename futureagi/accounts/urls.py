@@ -9,6 +9,28 @@ from accounts.views.aws_marketplace import (
 )
 from accounts.views.config import public_config
 from accounts.views.keys import GetKeysView, SecretKeyAPIViewSet
+from accounts.views.onboarding import (
+    ActivationEventView,
+    ActivationStateView,
+    OnboardingActivationFactReceiptView,
+    OnboardingGoalView,
+    SampleProjectHideView,
+    SampleProjectView,
+    TestTraceView,
+)
+from accounts.views.onboarding_lifecycle_clicks import OnboardingLifecycleClickView
+from accounts.views.onboarding_lifecycle_digest_review import (
+    OnboardingLifecycleDigestPreviewPromotionView,
+    OnboardingLifecycleDigestPreviewReviewView,
+)
+from accounts.views.onboarding_lifecycle_preferences import (
+    OnboardingLifecycleSnoozeView,
+    OnboardingLifecycleUnsubscribeView,
+)
+from accounts.views.onboarding_notifications import (
+    NotificationChannelTestView,
+    NotificationSettingsView,
+)
 from accounts.views.organization_selection import (
     OrganizationSelectionView,
     SwitchOrganizationView,
@@ -132,7 +154,61 @@ signup_urls = [
 user_urls = [
     path("user-info/", get_user_info, name="user-info"),
     path("first-checks/", FirstChecksView.as_view(), name="first-checks"),
+    path("activation-state/", ActivationStateView.as_view(), name="activation-state"),
+    path(
+        "activation-events/",
+        ActivationEventView.as_view(),
+        name="activation-events",
+    ),
+    path(
+        "onboarding/activation-facts/",
+        OnboardingActivationFactReceiptView.as_view(),
+        name="onboarding-activation-facts",
+    ),
+    path("sample-project/", SampleProjectView.as_view(), name="sample-project"),
+    path(
+        "sample-project/hide/",
+        SampleProjectHideView.as_view(),
+        name="sample-project-hide",
+    ),
+    path("test-trace/", TestTraceView.as_view(), name="test-trace"),
     path("onboarding/", user_onboarding, name="user-onboarding"),
+    path("onboarding/goal/", OnboardingGoalView.as_view(), name="onboarding-goal"),
+    path(
+        "notification-preferences/",
+        NotificationSettingsView.as_view(),
+        name="notification-preferences",
+    ),
+    path(
+        "notification-channels/<uuid:channel_id>/test/",
+        NotificationChannelTestView.as_view(),
+        name="notification-channel-test",
+    ),
+    path(
+        "onboarding/lifecycle/click/",
+        OnboardingLifecycleClickView.as_view(),
+        name="onboarding-lifecycle-click",
+    ),
+    path(
+        "onboarding/lifecycle/digest-previews/",
+        OnboardingLifecycleDigestPreviewReviewView.as_view(),
+        name="onboarding-lifecycle-digest-previews",
+    ),
+    path(
+        "onboarding/lifecycle/digest-previews/promote/",
+        OnboardingLifecycleDigestPreviewPromotionView.as_view(),
+        name="onboarding-lifecycle-digest-preview-promote",
+    ),
+    path(
+        "onboarding/lifecycle/unsubscribe/",
+        OnboardingLifecycleUnsubscribeView.as_view(),
+        name="onboarding-lifecycle-unsubscribe",
+    ),
+    path(
+        "onboarding/lifecycle/snooze/",
+        OnboardingLifecycleSnoozeView.as_view(),
+        name="onboarding-lifecycle-snooze",
+    ),
     path(
         "me/timezone/",
         __import__(

@@ -2,7 +2,7 @@
 -- 005 — Fix Nullable hot-key columns to actually return NULL on absent keys
 -- =============================================================================
 --
--- Rationale (codex P2 finding on 002_spans_v2.sql:230-233):
+-- Rationale (review P2 finding on 002_spans_v2.sql:230-233):
 --   The original ADD COLUMN definitions for `streaming`, `temperature`, `top_p`,
 --   `max_tokens` declared the columns Nullable but defined the MATERIALIZED
 --   expression as `attrs_X['key']`. ClickHouse Map element access returns the

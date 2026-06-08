@@ -10,9 +10,15 @@ import {
 import { styled } from "@mui/material/styles";
 import LoadingButton from "@mui/lab/LoadingButton";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import React, { useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import axios, { endpoints } from "src/utils/axios";
-import { useLocation } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { Helmet } from "react-helmet-async";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import axiosInstance from "src/utils/axios";
@@ -28,6 +34,23 @@ import ProjectExperimentContextProvider from "./context/ProjectExperimentContext
 import ProjectRightSection from "./RightSection/ProjectRightSection";
 import ProjectFtux from "./ProjectFtux";
 import ProjectFilterPanel from "./ProjectFilterPanel";
+import NewProjectDrawer from "./NewProject/NewProjectDrawer";
+import { canOpenSample } from "src/sections/onboarding-home/activation-state-utils";
+import { useActivationState } from "src/sections/onboarding-home/hooks/useActivationState";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import { useSampleProject } from "src/sections/onboarding-home/hooks/useSampleProject";
+import ObserveOnboardingFocusPanel from "src/sections/projects/ObserveOnboardingFocusPanel";
+import {
+  buildObserveProjectOnboardingHref,
+  buildObserveRouteFocusPayload,
+  buildObserveTraceReviewHref,
+  getFirstTraceIdFromTraceListResult,
+  getObserveOnboardingCopy,
+  getObserveSetupPackageLabel,
+  getObserveSetupOnboardingParams,
+  OBSERVE_ONBOARDING_MODES,
+  OBSERVE_ONBOARDING_SOURCES,
+} from "src/sections/projects/observeOnboardingRoute";
 
 export const SearchFieldBox = styled(Box)(({ theme }) => ({
   display: "flex",
@@ -46,11 +69,46 @@ const ProjectWrapperView = () => {
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [observeFilters, setObserveFilters] = useState(null);
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [setupDrawerOpen, setSetupDrawerOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const gridRef = useRef(null);
+  const recordedObserveSetupFocusRef = useRef(false);
+  const autoOpenedObserveSetupDrawerRef = useRef(false);
+  const autoEnteredTraceWaitRef = useRef(null);
+  const autoOpenedTraceReviewRef = useRef(null);
+  const observeSetupTraceBaselineRef = useRef({
+    key: null,
+    traceId: undefined,
+  });
+  const sawEmptyObserveSetupRef = useRef(false);
   const currentTab = location.pathname.split("/").pop();
   const { enqueueSnackbar } = useSnackbar();
   const queryClient = useQueryClient();
+  const observeSetupOnboardingParams = useMemo(
+    () => getObserveSetupOnboardingParams(location.search),
+    [location.search],
+  );
+  const showObserveSetupFocus =
+    currentTab === "observe" &&
+    observeSetupOnboardingParams.mode ===
+      OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE;
+  const isSampleReviewReturn =
+    observeSetupOnboardingParams.source ===
+    OBSERVE_ONBOARDING_SOURCES.SAMPLE_TRACE_REVIEW;
+  const { data: observeSetupFocusState, mutate: recordActivationEvent } =
+    useRecordActivationEvent();
+  const { state: observeActivationState } = useActivationState({
+    enabled: showObserveSetupFocus,
+    requireWorkspaceContext: false,
+    source: observeSetupOnboardingParams.source,
+  });
+  const {
+    openSampleProject: {
+      isPending: isOpeningSampleTrace,
+      mutateAsync: openSampleProject,
+    },
+  } = useSampleProject();
   const { data, isLoading } = useQuery({
     queryKey: [`project-${currentTab}-list`],
     queryFn: () =>
@@ -65,6 +123,7 @@ const ProjectWrapperView = () => {
         },
       ),
     select: (data) => data.data,
+    refetchInterval: showObserveSetupFocus ? 5000 : false,
   });
 
   const theme = useTheme();
@@ -73,6 +132,453 @@ const ProjectWrapperView = () => {
     currentTab === "observe"
       ? data?.result?.metadata?.total_rows > 0
       : data?.result?.projects?.length > 0;
+  const observeProjectRows =
+    data?.result?.table?.length > 0
+      ? data.result.table
+      : data?.result?.projects || [];
+  const activationFirstObserveProjectId =
+    observeSetupFocusState?.signals?.firstObserveId ||
+    observeSetupFocusState?.signals?.first_observe_id ||
+    observeActivationState?.signals?.firstObserveId ||
+    observeActivationState?.signals?.first_observe_id ||
+    null;
+  const firstObserveProjectId =
+    currentTab === "observe"
+      ? observeProjectRows.find(
+          (project) =>
+            activationFirstObserveProjectId &&
+            String(project?.id) === String(activationFirstObserveProjectId),
+        )?.id ||
+        observeProjectRows.find((project) => project?.id)?.id ||
+        null
+      : null;
+
+  const observeSetupCopy = useMemo(
+    () =>
+      showObserveSetupFocus
+        ? getObserveOnboardingCopy(OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE, {
+            credentialsCopied: observeSetupOnboardingParams.credentialsCopied,
+            setupLanguage: observeSetupOnboardingParams.setupLanguage,
+            setupProvider: observeSetupOnboardingParams.setupProvider,
+            source: observeSetupOnboardingParams.source,
+          })
+        : null,
+    [
+      observeSetupOnboardingParams.credentialsCopied,
+      observeSetupOnboardingParams.setupLanguage,
+      observeSetupOnboardingParams.setupProvider,
+      observeSetupOnboardingParams.source,
+      showObserveSetupFocus,
+    ],
+  );
+  const observeSetupPackageLabel = useMemo(
+    () =>
+      getObserveSetupPackageLabel({
+        setupLanguage: observeSetupOnboardingParams.setupLanguage,
+        setupProvider: observeSetupOnboardingParams.setupProvider,
+      }),
+    [
+      observeSetupOnboardingParams.setupLanguage,
+      observeSetupOnboardingParams.setupProvider,
+    ],
+  );
+  const canOpenObserveSetupSample =
+    !isSampleReviewReturn &&
+    canOpenSample(
+      observeSetupFocusState?.sampleProject ||
+        observeActivationState?.sampleProject,
+    );
+  const observeKnownTraceCount =
+    observeSetupFocusState?.signals?.traces ??
+    observeSetupFocusState?.signals?.trace_count ??
+    observeActivationState?.signals?.traces ??
+    observeActivationState?.signals?.trace_count;
+  const traceCountWasKnownEmpty =
+    observeKnownTraceCount !== undefined &&
+    Number(observeKnownTraceCount) === 0;
+
+  useEffect(() => {
+    if (!showObserveSetupFocus) return;
+    const recordKey = [
+      observeSetupOnboardingParams.credentialStep,
+      observeSetupOnboardingParams.source,
+      observeSetupOnboardingParams.setupProvider,
+      observeSetupOnboardingParams.setupLanguage,
+    ].join(":");
+    if (recordedObserveSetupFocusRef.current === recordKey) return;
+    recordedObserveSetupFocusRef.current = recordKey;
+    recordActivationEvent?.(
+      buildObserveRouteFocusPayload({
+        credentialStep: observeSetupOnboardingParams.credentialStep,
+        mode: OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE,
+        setupLanguage: observeSetupOnboardingParams.setupLanguage,
+        setupProvider: observeSetupOnboardingParams.setupProvider,
+        setupSource: observeSetupOnboardingParams.source,
+      }),
+    );
+  }, [
+    observeSetupOnboardingParams.credentialStep,
+    observeSetupOnboardingParams.setupLanguage,
+    observeSetupOnboardingParams.setupProvider,
+    observeSetupOnboardingParams.source,
+    recordActivationEvent,
+    showObserveSetupFocus,
+  ]);
+
+  useEffect(() => {
+    if (
+      !showObserveSetupFocus ||
+      isLoading ||
+      !isProjectCount ||
+      autoOpenedObserveSetupDrawerRef.current
+    ) {
+      return;
+    }
+    autoOpenedObserveSetupDrawerRef.current = true;
+    setSetupDrawerOpen(true);
+  }, [isLoading, isProjectCount, showObserveSetupFocus]);
+
+  useEffect(() => {
+    if (!showObserveSetupFocus || isLoading) return;
+    if (!isProjectCount) {
+      sawEmptyObserveSetupRef.current = true;
+      return;
+    }
+    if (!firstObserveProjectId || !sawEmptyObserveSetupRef.current) return;
+    navigate(
+      buildObserveProjectOnboardingHref({
+        observeId: firstObserveProjectId,
+        mode: OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
+        search: location.search,
+        setupLanguage: observeSetupOnboardingParams.setupLanguage,
+        setupProvider: observeSetupOnboardingParams.setupProvider,
+      }),
+      { replace: true },
+    );
+  }, [
+    firstObserveProjectId,
+    isLoading,
+    isProjectCount,
+    navigate,
+    location.search,
+    observeSetupOnboardingParams.setupLanguage,
+    observeSetupOnboardingParams.setupProvider,
+    observeSetupOnboardingParams.source,
+    showObserveSetupFocus,
+  ]);
+
+  useEffect(() => {
+    if (
+      !showObserveSetupFocus ||
+      isLoading ||
+      !isProjectCount ||
+      !firstObserveProjectId ||
+      !observeSetupOnboardingParams.credentialsCopied
+    ) {
+      return;
+    }
+
+    const waitKey = [
+      firstObserveProjectId,
+      observeSetupOnboardingParams.setupProvider,
+      observeSetupOnboardingParams.setupLanguage,
+      observeSetupOnboardingParams.credentialStep,
+    ].join(":");
+    if (autoEnteredTraceWaitRef.current === waitKey) return;
+    autoEnteredTraceWaitRef.current = waitKey;
+
+    navigate(
+      buildObserveProjectOnboardingHref({
+        observeId: firstObserveProjectId,
+        mode: OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
+        search: location.search,
+        setupLanguage: observeSetupOnboardingParams.setupLanguage,
+        setupProvider: observeSetupOnboardingParams.setupProvider,
+        baselineTraceId: observeSetupTraceBaselineRef.current.traceId || null,
+      }),
+      { replace: true },
+    );
+  }, [
+    firstObserveProjectId,
+    isLoading,
+    isProjectCount,
+    navigate,
+    location.search,
+    observeSetupOnboardingParams.credentialStep,
+    observeSetupOnboardingParams.credentialsCopied,
+    observeSetupOnboardingParams.setupLanguage,
+    observeSetupOnboardingParams.setupProvider,
+    observeSetupOnboardingParams.source,
+    showObserveSetupFocus,
+  ]);
+
+  const fetchOnboardingFirstTraceId = useCallback(async () => {
+    if (!firstObserveProjectId) return null;
+
+    const response = await axios.get(
+      endpoints.project.getTracesForObserveProject(),
+      {
+        params: {
+          page_number: 0,
+          page_size: 1,
+          filters: "[]",
+          project_id: firstObserveProjectId,
+        },
+      },
+    );
+    return getFirstTraceIdFromTraceListResult(response?.data?.result);
+  }, [firstObserveProjectId]);
+
+  useEffect(() => {
+    if (
+      !showObserveSetupFocus ||
+      isLoading ||
+      !isProjectCount ||
+      !firstObserveProjectId
+    ) {
+      return undefined;
+    }
+
+    let mounted = true;
+    const baselineKey = [
+      firstObserveProjectId,
+      observeSetupOnboardingParams.setupProvider,
+      observeSetupOnboardingParams.setupLanguage,
+      observeSetupOnboardingParams.source,
+    ].join(":");
+    if (observeSetupTraceBaselineRef.current.key !== baselineKey) {
+      observeSetupTraceBaselineRef.current = {
+        key: baselineKey,
+        traceId: undefined,
+      };
+    }
+
+    const verifyFirstTrace = () => {
+      void fetchOnboardingFirstTraceId()
+        .then((traceId) => {
+          if (!mounted) return;
+          const baseline = observeSetupTraceBaselineRef.current;
+          if (baseline.key !== baselineKey) return;
+          if (baseline.traceId === undefined) {
+            baseline.traceId = traceId || null;
+            if (!traceId || !traceCountWasKnownEmpty) return;
+          } else {
+            if (!traceId) return;
+            if (traceId === baseline.traceId) return;
+          }
+          const reviewKey = `${firstObserveProjectId}:${traceId}`;
+          if (autoOpenedTraceReviewRef.current === reviewKey) return;
+          autoOpenedTraceReviewRef.current = reviewKey;
+          navigate(
+            buildObserveTraceReviewHref({
+              observeId: firstObserveProjectId,
+              search: location.search,
+              setupLanguage: observeSetupOnboardingParams.setupLanguage,
+              setupProvider: observeSetupOnboardingParams.setupProvider,
+              traceId,
+            }),
+            { replace: true },
+          );
+        })
+        .catch(() => undefined);
+    };
+
+    verifyFirstTrace();
+    const intervalId = window.setInterval(verifyFirstTrace, 5000);
+    return () => {
+      mounted = false;
+      window.clearInterval(intervalId);
+    };
+  }, [
+    fetchOnboardingFirstTraceId,
+    firstObserveProjectId,
+    isLoading,
+    isProjectCount,
+    location.search,
+    navigate,
+    observeSetupOnboardingParams.setupLanguage,
+    observeSetupOnboardingParams.setupProvider,
+    observeSetupOnboardingParams.source,
+    traceCountWasKnownEmpty,
+    showObserveSetupFocus,
+  ]);
+
+  const resolveCurrentTraceBaselineId = useCallback(async () => {
+    if (!firstObserveProjectId) return null;
+    const currentBaseline = observeSetupTraceBaselineRef.current.traceId;
+    if (currentBaseline !== undefined) return currentBaseline || null;
+    try {
+      const traceId = await fetchOnboardingFirstTraceId();
+      observeSetupTraceBaselineRef.current.traceId = traceId || null;
+      return traceId || null;
+    } catch {
+      observeSetupTraceBaselineRef.current.traceId = null;
+      return null;
+    }
+  }, [fetchOnboardingFirstTraceId, firstObserveProjectId]);
+
+  const handleObserveSetupPrimaryAction = useCallback(async () => {
+    if (firstObserveProjectId) {
+      const baselineTraceId = await resolveCurrentTraceBaselineId();
+      navigate(
+        buildObserveProjectOnboardingHref({
+          baselineTraceId,
+          observeId: firstObserveProjectId,
+          mode: OBSERVE_ONBOARDING_MODES.SEND_FIRST_TRACE,
+          search: location.search,
+          setupLanguage: observeSetupOnboardingParams.setupLanguage,
+          setupProvider: observeSetupOnboardingParams.setupProvider,
+        }),
+      );
+      return;
+    }
+
+    if (isProjectCount) {
+      setSetupDrawerOpen(true);
+      return;
+    }
+    document
+      .getElementById("observe-setup-instructions")
+      ?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, [
+    firstObserveProjectId,
+    isProjectCount,
+    location.search,
+    navigate,
+    observeSetupOnboardingParams.setupLanguage,
+    observeSetupOnboardingParams.setupProvider,
+    resolveCurrentTraceBaselineId,
+  ]);
+  const handleOpenObserveSetupDrawer = useCallback(() => {
+    setSetupDrawerOpen(true);
+  }, []);
+
+  const handleOpenSampleTrace = useCallback(async () => {
+    try {
+      const nextState = await openSampleProject({
+        path: "observe",
+        source: "observe_setup_onboarding",
+        reason: "setup_observe",
+        openAfterCreate: true,
+      });
+      const entryRoute =
+        nextState?.sampleProject?.entryRoute ||
+        nextState?.sampleProject?.entryRoutes?.[0];
+      if (entryRoute) {
+        navigate(entryRoute);
+        return;
+      }
+      enqueueSnackbar(
+        "Sample trace is not available yet. Continue with setup.",
+        {
+          variant: "info",
+        },
+      );
+    } catch {
+      enqueueSnackbar(
+        "Sample trace is not available yet. Continue with setup.",
+        {
+          variant: "error",
+        },
+      );
+    }
+  }, [enqueueSnackbar, navigate, openSampleProject]);
+
+  const reviewObserveSetupAction = useMemo(() => {
+    if (!observeSetupCopy) return null;
+    return {
+      label: firstObserveProjectId
+        ? observeSetupPackageLabel
+          ? `Check for ${observeSetupPackageLabel} trace`
+          : "Check for trace"
+        : isProjectCount
+          ? "Open package setup"
+          : observeSetupCopy.primaryLabel,
+      onClick: handleObserveSetupPrimaryAction,
+    };
+  }, [
+    firstObserveProjectId,
+    handleObserveSetupPrimaryAction,
+    isProjectCount,
+    observeSetupCopy,
+    observeSetupPackageLabel,
+  ]);
+
+  const openSampleTraceAction = useMemo(() => {
+    if (!observeSetupCopy || !canOpenObserveSetupSample) return null;
+    return {
+      disabled: isOpeningSampleTrace,
+      label: isOpeningSampleTrace ? "Opening sample..." : "Open sample trace",
+      onClick: handleOpenSampleTrace,
+    };
+  }, [
+    canOpenObserveSetupSample,
+    handleOpenSampleTrace,
+    isOpeningSampleTrace,
+    observeSetupCopy,
+  ]);
+
+  const observeSetupPrimaryAction = reviewObserveSetupAction;
+
+  const observeSetupSecondaryAction = useMemo(() => {
+    if (observeSetupCopy && showObserveSetupFocus && firstObserveProjectId) {
+      return {
+        label: observeSetupCopy.primaryLabel || "Open package setup",
+        onClick: handleOpenObserveSetupDrawer,
+      };
+    }
+    if (
+      !observeSetupCopy ||
+      !showObserveSetupFocus ||
+      !canOpenObserveSetupSample ||
+      !openSampleTraceAction
+    ) {
+      return null;
+    }
+    return openSampleTraceAction;
+  }, [
+    canOpenObserveSetupSample,
+    firstObserveProjectId,
+    handleOpenObserveSetupDrawer,
+    observeSetupCopy,
+    openSampleTraceAction,
+    showObserveSetupFocus,
+  ]);
+
+  const observeSetupVerification = useMemo(() => {
+    if (!observeSetupCopy || !showObserveSetupFocus) {
+      return null;
+    }
+    const hasObserveProject = Boolean(firstObserveProjectId);
+    const waitLabel = observeSetupPackageLabel
+      ? `Check for ${observeSetupPackageLabel} trace`
+      : "Check for trace";
+    return {
+      description: hasObserveProject
+        ? observeSetupPackageLabel
+          ? `Run one ${observeSetupPackageLabel} request after pasting the setup. Keep this setup open; Future AGI opens review when the trace arrives, then guides the first quality check.`
+          : "Run one request after pasting the setup. Keep this setup open; Future AGI opens review when the trace arrives, then guides the first quality check."
+        : "Keep this page open after running your app. Future AGI checks every few seconds, opens trace review when data arrives, then guides the first quality check.",
+      primaryAction: hasObserveProject
+        ? {
+            label: waitLabel,
+            onClick: handleObserveSetupPrimaryAction,
+          }
+        : undefined,
+      status: "waiting",
+      title: hasObserveProject
+        ? observeSetupPackageLabel
+          ? `Waiting for ${observeSetupPackageLabel} trace`
+          : "Waiting for first trace"
+        : "Checking for your first trace",
+    };
+  }, [
+    firstObserveProjectId,
+    handleObserveSetupPrimaryAction,
+    observeSetupCopy,
+    observeSetupPackageLabel,
+    showObserveSetupFocus,
+  ]);
 
   const handleSearchChange = (e) => {
     setSearchQuery(e.target.value);
@@ -160,7 +666,15 @@ const ProjectWrapperView = () => {
   }
 
   if (!isProjectCount) {
-    return <ProjectFtux />;
+    return (
+      <ProjectFtux
+        observeSetupCopy={observeSetupCopy}
+        observeSetupPrimaryAction={observeSetupPrimaryAction}
+        observeSetupSecondaryAction={observeSetupSecondaryAction}
+        observeSetupTourAnchor={observeSetupOnboardingParams.tourAnchor}
+        observeSetupVerification={observeSetupVerification}
+      />
+    );
   }
 
   return (
@@ -179,6 +693,18 @@ const ProjectWrapperView = () => {
             gap: (theme) => theme.spacing(2),
           }}
         >
+          {showObserveSetupFocus && observeSetupCopy ? (
+            <ObserveOnboardingFocusPanel
+              currentStep={observeSetupCopy.currentStep}
+              description={observeSetupCopy.description}
+              primaryAction={observeSetupPrimaryAction}
+              secondaryAction={observeSetupSecondaryAction}
+              steps={observeSetupCopy.steps}
+              sx={{ mb: 0 }}
+              title={observeSetupCopy.title}
+              tourAnchor={observeSetupOnboardingParams.tourAnchor}
+            />
+          ) : null}
           <Box
             sx={{
               display: "flex",
@@ -368,6 +894,11 @@ const ProjectWrapperView = () => {
                 </Typography>
               </LoadingButton>
             }
+          />
+          <NewProjectDrawer
+            open={setupDrawerOpen}
+            onClose={() => setSetupDrawerOpen(false)}
+            observeSetupVerification={observeSetupVerification}
           />
         </Box>
       </ProjectObserveContextProvider>

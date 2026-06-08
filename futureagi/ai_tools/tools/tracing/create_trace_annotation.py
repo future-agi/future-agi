@@ -130,7 +130,7 @@ class CreateTraceAnnotationTool(BaseTool):
 
         # Check for existing TraceAnnotation (duplicate detection) — update
         # instead of creating duplicate.
-        # Codex wave-2 P1 (2026-05-26): `span` is now a CHSpan dataclass
+        # Review wave-2 P1 (2026-05-26): `span` is now a CHSpan dataclass
         # (not a Django ObservationSpan instance). Django FK *_id fields
         # accept the raw id string directly; the bare-FK form
         # (`observation_span=span`) is invalid model usage. Use
@@ -200,7 +200,7 @@ class CreateTraceAnnotationTool(BaseTool):
         )
 
         # Create/update span notes if provided.
-        # Codex wave-2 P1: `span` is a CHSpan; SpanNotes.span is a Django FK
+        # Review wave-2 P1: `span` is a CHSpan; SpanNotes.span is a Django FK
         # to PG ObservationSpan. Use the *_id form. Guard against missing
         # PG row (CH-only span) — span notes are annotator commentary, not
         # load-bearing; degrade gracefully so the score/annotation write

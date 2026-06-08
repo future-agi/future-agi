@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box,
   Stack,
@@ -23,6 +24,17 @@ import RequestTable from "./RequestTable";
 import RequestDetailDrawer from "./RequestDetailDrawer";
 import FilterPanel from "./FilterPanel";
 import SessionExplorer from "./SessionExplorer";
+import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
+import {
+  GATEWAY_LOG_ONBOARDING_MODES,
+  getGatewayLogOnboardingCopy,
+  isGatewayLogOnboardingMode,
+} from "./gatewayLogOnboarding";
+import {
+  buildGatewayPolicyConfigHref,
+  gatewaySetupQuickStartAttributionFromSearch,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
 
 // ---------------------------------------------------------------------------
 // Quick filter definitions
@@ -57,12 +69,15 @@ function activeQuickFilter(filters) {
 // ---------------------------------------------------------------------------
 
 const RequestExplorerSection = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   // --- URL-synced filters ---------------------------------------------------
   const { filters, setFilter, setFilters, clearFilters, activeFilterCount } =
     useFilters();
 
   // --- Local UI state -------------------------------------------------------
   const [selectedLogId, setSelectedLogId] = useState(null);
+  const [requestRows, setRequestRows] = useState([]);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [searchValue, setSearchValue] = useState(filters.search || "");
   const [exportAnchor, setExportAnchor] = useState(null);
@@ -87,6 +102,67 @@ const RequestExplorerSection = () => {
 
   // --- View tab -------------------------------------------------------------
   const currentView = filters.view || "requests";
+  const gatewayOnboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const gatewayQuickStartAttribution = useMemo(
+    () => gatewaySetupQuickStartAttributionFromSearch(searchParams),
+    [searchParams],
+  );
+  const onboardingMode = gatewayOnboardingParams.mode || null;
+  const onboardingRequestId = gatewayOnboardingParams.requestId || null;
+  const isLogOnboardingMode = isGatewayLogOnboardingMode(onboardingMode);
+  const onboardingCopy = getGatewayLogOnboardingCopy(onboardingMode);
+  const onboardingTargetRow = useMemo(
+    () =>
+      requestRows.find(
+        (item) =>
+          String(item.request_id || "") === String(onboardingRequestId) ||
+          String(item.id || "") === String(onboardingRequestId),
+      ),
+    [onboardingRequestId, requestRows],
+  );
+  const hasMatchingRequest = Boolean(onboardingTargetRow?.id || selectedLogId);
+
+  useEffect(() => {
+    if (!isLogOnboardingMode) return;
+    if (!onboardingRequestId || selectedLogId) return;
+    if (onboardingTargetRow?.id) {
+      setSelectedLogId(onboardingTargetRow.id);
+    }
+  }, [
+    isLogOnboardingMode,
+    onboardingRequestId,
+    onboardingTargetRow,
+    selectedLogId,
+  ]);
+
+  const handleOpenOnboardingRequest = useCallback(() => {
+    if (onboardingTargetRow?.id) {
+      setSelectedLogId(onboardingTargetRow.id);
+    }
+  }, [onboardingTargetRow]);
+
+  const handleOpenFallbacks = useCallback(() => {
+    navigate(
+      buildGatewayPolicyConfigHref({
+        isFailureRepair:
+          onboardingMode === GATEWAY_LOG_ONBOARDING_MODES.FIX_FAILURE,
+        policyType: "fallback",
+        quickStartAttribution: gatewayQuickStartAttribution,
+        requestId: onboardingRequestId,
+        tourAnchor: "gateway_policy_button",
+      }),
+    );
+  }, [
+    gatewayQuickStartAttribution,
+    navigate,
+    onboardingMode,
+    onboardingRequestId,
+  ]);
+
+  const handleShowAllLogs = useCallback(() => {
+    clearFilters();
+    setSelectedLogId(null);
+  }, [clearFilters]);
 
   const handleViewChange = useCallback(
     (_event, newValue) => {
@@ -232,6 +308,41 @@ const RequestExplorerSection = () => {
         </Menu>
       </SectionHeader>
 
+      <GatewayOnboardingFocusPanel
+        currentStep={onboardingCopy.currentStep}
+        description={onboardingCopy.description}
+        hidden={!isLogOnboardingMode}
+        blocker={!onboardingRequestId ? "Missing request ID" : null}
+        primaryAction={{
+          label: onboardingCopy.primaryLabel,
+          onClick: handleOpenOnboardingRequest,
+          disabled: !onboardingTargetRow?.id,
+        }}
+        secondaryAction={{
+          label: onboardingCopy.secondaryLabel,
+          onClick:
+            onboardingMode === GATEWAY_LOG_ONBOARDING_MODES.FIX_FAILURE
+              ? handleOpenFallbacks
+              : handleShowAllLogs,
+        }}
+        singleActionFocus={isLogOnboardingMode}
+        steps={[
+          { label: "Request", complete: Boolean(onboardingRequestId) },
+          { label: "Log", complete: hasMatchingRequest },
+          {
+            label:
+              onboardingMode === GATEWAY_LOG_ONBOARDING_MODES.FIX_FAILURE
+                ? "Fix"
+                : "Review",
+            complete:
+              onboardingMode === GATEWAY_LOG_ONBOARDING_MODES.REVIEW_REQUEST &&
+              hasMatchingRequest,
+          },
+        ]}
+        title={onboardingCopy.title}
+        tourAnchor={gatewayOnboardingParams.tourAnchor}
+      />
+
       {/* ---- Search + Filters button ---- */}
       <Stack direction="row" spacing={2} alignItems="center" mb={2}>
         <TextField
@@ -297,6 +408,7 @@ const RequestExplorerSection = () => {
           setFilter={setFilter}
           setFilters={setFilters}
           onSelectLog={(logId) => setSelectedLogId(logId)}
+          onRowsLoaded={setRequestRows}
         />
       ) : (
         <SessionExplorer
@@ -308,6 +420,8 @@ const RequestExplorerSection = () => {
       {/* ---- Detail drawer ---- */}
       <RequestDetailDrawer
         logId={selectedLogId}
+        quickStartAttribution={gatewayQuickStartAttribution}
+        onboardingMode={onboardingMode}
         open={Boolean(selectedLogId)}
         onClose={() => setSelectedLogId(null)}
       />

@@ -23,7 +23,7 @@
 --     the table via the `CH25_EVAL_LOGGER_TABLE` env var so the rename is
 --     a config flip.
 --
--- Backfill path (codex P2 finding 2026-05-26 — TWO corrections vs. prior
+-- Backfill path (review P2 finding 2026-05-26 — TWO corrections vs. prior
 -- version of this header):
 --
 --   1. EXPLICIT target column list. The positional `INSERT ... SELECT` form
@@ -134,7 +134,7 @@ SETTINGS index_granularity = 8192, allow_nullable_key = 1;
 --      tracer_eval_logger as part of P6.
 -- =============================================================================
 
--- NOTE (codex P1 finding 2026-05-26): `output_bool` and `output_float` are
+-- NOTE (review P1 finding 2026-05-26): `output_bool` and `output_float` are
 -- Nullable; the target `eval_per_config` declares aggregate states over
 -- NON-nullable arguments (sumIf<UInt64, UInt8>, quantilesTDigest<Float64>).
 -- Without coalescing/filtering, CH rejects inserts of nullable-state
@@ -149,7 +149,7 @@ SETTINGS index_granularity = 8192, allow_nullable_key = 1;
 --     from the percentile state without polluting it with zeros.
 --   • `error` is non-nullable (DEFAULT 0), no change needed.
 --
--- NOTE (codex follow-up P1 finding 2026-05-26): an earlier version of this
+-- NOTE (review follow-up P1 finding 2026-05-26): an earlier version of this
 -- file used `CREATE MATERIALIZED VIEW IF NOT EXISTS eval_per_config_mv`,
 -- which means CH skips the DDL on any cluster that already created the
 -- previous (buggy) MV. The fix above is then a no-op on follow-up upgrades —

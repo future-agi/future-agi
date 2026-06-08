@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Give your first eval something to judge{% endblock %}
+{% block heading %}Add the examples your eval will score{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, you came to FutureAGI to evaluate quality, and {{ workspace_name }} is ready for the data to evaluate.</p>
+  <p style="margin:0;">Import a CSV, pull in traces, or generate a sample dataset. Once you have a source, you can attach a scorer and get your first pass-fail picture of where quality stands.</p>
+{% endblock %}

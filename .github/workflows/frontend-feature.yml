@@ -4,8 +4,8 @@ on:
   push:
     branches: [feat/*, fix/*, chore/*, docs/*, refactor/*, test/*, perf/*]
     paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend-feature.yml'
+      - "frontend/**"
+      - ".github/workflows/frontend-feature.yml"
 
 jobs:
   # Branch name validation

@@ -13,7 +13,18 @@ import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
 import { trackTwitterSignup } from "src/utils/twitterAds";
 import { ROLES } from "src/utils/rolePermissionMapping";
-import { usePostLoginPath } from "src/hooks/useDeploymentMode";
+import { usePostLoginDestination } from "src/sections/onboarding-home/hooks/usePostLoginDestination";
+import {
+  OnboardingHomeEvents,
+  trackOnboardingHomeEvent,
+} from "src/sections/onboarding-home/analytics/onboarding-events";
+import { isSetupCompletionHandoff } from "src/sections/auth/jwt/setup-org-routing";
+import { routeForAnalytics } from "src/sections/onboarding-home/utils/post-login-routing";
+import {
+  buildCurrentFlowContext,
+  CurrentFlowEvents,
+  trackCurrentFlow,
+} from "src/utils/analytics/currentFlow";
 
 // ----------------------------------------------------------------------
 
@@ -39,7 +50,21 @@ function Container({ children }) {
   const router = useRouter();
 
   const { authenticated, method, user } = useAuthContext();
-  const postLoginPath = usePostLoginPath();
+  const currentPath = `${window.location.pathname}${window.location.search}`;
+  const postLoginReturnTo = localStorage.getItem("redirectUrl");
+  const {
+    activationState: postLoginActivationState,
+    activationStateError: postLoginActivationStateError,
+    deploymentMode: postLoginDeploymentMode,
+    destination: postLoginDestination,
+    fallbackDestination: postLoginPath,
+    flags: postLoginFlags,
+    isResolving: isPostLoginDestinationResolving,
+  } = usePostLoginDestination({
+    currentPath,
+    returnTo: postLoginReturnTo,
+    user,
+  });
 
   const [checked, setChecked] = useState(false);
 
@@ -56,7 +81,6 @@ function Container({ children }) {
     const refreshToken = queryParams.get("refresh_token");
     const isNewOAuthUser = queryParams.get("is_new_user") === "true";
     const returnTo = localStorage.getItem("redirectUrl");
-
 
     if (!authenticated) {
       if (sso_token) {
@@ -104,14 +128,74 @@ function Container({ children }) {
     check();
   }, [check]);
 
-  // Handle initial-render redirect (get-started vs develop) — runs once
-  // when user data first becomes available. Also fires the Google Ads
-  // signup conversion for new OAuth/SSO users (email signups are fired
-  // from jwt-register-view.jsx at API-success time).
+  // Handle initial-render redirect once user data first becomes available.
+  // Also fires the Google Ads signup conversion for new OAuth/SSO users
+  // (email signups are fired from jwt-register-view.jsx at API-success time).
   useEffect(() => {
     // Skip redirect logic for standalone pages (e.g. MCP OAuth consent)
     if (window.location.pathname.startsWith("/mcp/")) return;
     if (!user) return;
+    const trackPostLoginDecision = (decisionBranch, targetRoute) => {
+      trackCurrentFlow(
+        CurrentFlowEvents.currentFlowPostLoginDecisionResolved,
+        {
+          ...buildCurrentFlowContext({
+            user,
+            route: window.location.pathname,
+            postLoginPath,
+          }),
+          event_source: "auth_guard",
+          decision_branch: decisionBranch,
+          target_route: targetRoute,
+        },
+        {
+          onceKeyParts: [
+            "postLoginDecision",
+            user?.default_workspace_id,
+            user?.id,
+            decisionBranch,
+          ],
+        },
+      );
+    };
+    const trackPostLoginDestination = (destination, targetRoute) => {
+      trackOnboardingHomeEvent(
+        OnboardingHomeEvents.postLoginDestinationResolved,
+        {
+          destination: routeForAnalytics(targetRoute),
+          fallback_destination: routeForAnalytics(postLoginPath),
+          reason: destination?.reason || "unknown",
+          current_path: routeForAnalytics(currentPath),
+          had_return_to: Boolean(postLoginReturnTo),
+          used_return_to: Boolean(destination?.usedReturnTo),
+          deployment_mode: postLoginDeploymentMode,
+          onboarding_home_flag: Boolean(
+            postLoginFlags?.onboarding_first_run_home,
+          ),
+          internal_release_flag: Boolean(
+            postLoginFlags?.onboarding_release_0_internal,
+          ),
+          onboarding_home_kill_switch: Boolean(
+            postLoginFlags?.onboarding_first_run_home_kill,
+          ),
+          activation_api_flag: Boolean(
+            postLoginFlags?.onboarding_activation_state_api,
+          ),
+          activation_stage:
+            destination?.activationStage ||
+            postLoginActivationState?.stage ||
+            null,
+          is_activated: Boolean(postLoginActivationState?.isActivated),
+          permission_limited: Boolean(
+            postLoginActivationState?.permissions?.permissionLimited,
+          ),
+          activation_state_error: Boolean(
+            postLoginActivationStateError || destination?.activationStateError,
+          ),
+        },
+      );
+    };
+
     const isNewOAuthSignup = localStorage.getItem("isNewOAuthSignup") === "1";
     if (isNewOAuthSignup) {
       const stampedAt = Number(localStorage.getItem("isNewOAuthSignupAt") || 0);
@@ -144,6 +228,7 @@ function Container({ children }) {
     // New user to platform (requires_org_setup) — redirect to org-setup
     // flow and, for OAuth/SSO paths, fire ad-platform signup conversions.
     if (user?.requires_org_setup) {
+      trackPostLoginDecision("requires_org_setup", paths.auth.jwt.org_removed);
       // Default to "oauth" so SSO / deep-link / unknown paths are still
       // counted. "email" is excluded because the register view fires it
       // directly at API-success time.
@@ -175,23 +260,85 @@ function Container({ children }) {
       return;
     }
 
-    // Onboarding not finished — let the setup-org effect below handle routing.
-    if (!user?.onboarding_completed) return;
+    // Onboarding not finished: keep users on setup unless the workspace has
+    // already completed first setup.
+    if (!user?.onboarding_completed) {
+      if (isSetupCompletionHandoff(currentPath)) {
+        localStorage.removeItem("redirectUrl");
+        return;
+      }
+      if (isPostLoginDestinationResolving) return;
+
+      const targetRoute =
+        postLoginDestination?.href || paths.auth.jwt.setup_org;
+      trackPostLoginDecision(
+        postLoginDestination?.reason || "onboarding_incomplete",
+        targetRoute,
+      );
+      trackPostLoginDestination(postLoginDestination, targetRoute);
+      if (postLoginDestination?.shouldClearReturnTo) {
+        localStorage.removeItem("redirectUrl");
+      }
+      if (postLoginDestination?.shouldReplace !== false) {
+        router.replace(targetRoute);
+      }
+      return;
+    }
+
+    if (window.location.pathname === paths.auth.jwt.setup_org) {
+      if (isPostLoginDestinationResolving) return;
+      const targetRoute =
+        postLoginDestination?.href || postLoginPath || paths.dashboard.home;
+      trackPostLoginDecision("setup_org_completed_user", targetRoute);
+      trackPostLoginDestination(postLoginDestination, targetRoute);
+      if (postLoginDestination?.shouldClearReturnTo) {
+        localStorage.removeItem("redirectUrl");
+      }
+      if (postLoginDestination?.shouldReplace !== false) {
+        router.replace(targetRoute);
+      }
+      return;
+    }
 
     const initial = localStorage.getItem("initial-render");
 
     if (initial !== "done") {
       // If user has an organization_role, they're already part of an org (invited or owner)
-      // Skip onboarding and go straight to dashboard
+      // Resolve the first dashboard destination through the post-login router.
       if (user?.organization_role) {
-        router.replace(postLoginPath);
+        if (isPostLoginDestinationResolving) return;
+        const targetRoute = postLoginDestination?.href || postLoginPath;
+        trackPostLoginDecision(postLoginDestination?.reason, targetRoute);
+        trackPostLoginDestination(postLoginDestination, targetRoute);
+        if (postLoginDestination?.shouldClearReturnTo) {
+          localStorage.removeItem("redirectUrl");
+        }
+        if (postLoginDestination?.shouldReplace !== false) {
+          router.replace(targetRoute);
+        }
       } else {
-        router.replace("/dashboard/get-started");
+        trackPostLoginDecision(
+          "no_org_role_setup_org",
+          paths.auth.jwt.setup_org,
+        );
+        router.replace(paths.auth.jwt.setup_org);
       }
       localStorage.setItem("initial-render", "done");
       localStorage.removeItem("redirectUrl");
     }
-  }, [postLoginPath, user, router]);
+  }, [
+    currentPath,
+    isPostLoginDestinationResolving,
+    postLoginActivationState,
+    postLoginActivationStateError,
+    postLoginDeploymentMode,
+    postLoginDestination,
+    postLoginFlags,
+    postLoginPath,
+    postLoginReturnTo,
+    router,
+    user,
+  ]);
 
   // Gate "no org → setup-org" redirect on isOrgReady to avoid false
   // redirects while org context is still hydrating.

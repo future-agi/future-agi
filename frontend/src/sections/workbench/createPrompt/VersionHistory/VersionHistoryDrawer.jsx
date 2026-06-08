@@ -9,7 +9,8 @@ import {
 import React, { useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
+import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 import { ShowComponent } from "src/components/show";
@@ -24,9 +25,29 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import CustomAgentTabs from "src/sections/agents/CustomAgentTabs";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  buildPromptComparisonCompletedPayload,
+  buildPromptEditorHref,
+  countCommittedPromptVersions,
+  getPromptOnboardingRouteParams,
+  PROMPT_ONBOARDING_MODES,
+  shouldAdvancePromptCompareOnboarding,
+} from "../promptActions/promptOnboardingRoute";
 
 const LIMIT_CHECKBOX_MESSAGE =
   "Compare limit is upto 3 version only, Deselect other options to select this one";
+
+const toSelectedPromptVersion = (version, promptId) => ({
+  isDraft: version?.is_draft,
+  version: version?.template_version,
+  lastSaved: version?.updated_at,
+  isDefault: version?.is_default,
+  labels: version?.labels || [],
+  originalTemplate: version?.original_template || promptId,
+  templateVersion: version?.template_version,
+  id: version?.id,
+});
 
 const usePromptVersions = (id, activeTab) => {
   const sendCommit = activeTab === "commit_history";
@@ -66,7 +87,10 @@ const tabs = [
 
 const VersionHistoryChild = ({ onClose }) => {
   const { id } = useParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState("history");
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const { versions, fetchNextPage, isPending, isFetchingNextPage } =
     usePromptVersions(id, activeTab);
 
@@ -84,6 +108,67 @@ const VersionHistoryChild = ({ onClose }) => {
   const [compareSelectedVersions, setCompareSelectedVersions] = useState([]);
 
   const { role: userRole } = useAuthContext();
+  const promptOnboardingParams = useMemo(
+    () => getPromptOnboardingRouteParams(searchParams),
+    [searchParams],
+  );
+  const onboardingSource = promptOnboardingParams.isOnboarding
+    ? "onboarding"
+    : searchParams.get("source");
+
+  const handleCompare = () => {
+    const baseVersionName =
+      selectedVersions?.[0]?.version || selectedVersions?.[0]?.templateVersion;
+    const baseVersion = versions.find(
+      (version) => version.template_version === baseVersionName,
+    );
+    const nextCompareVersions = [
+      ...(baseVersion ? [baseVersion] : []),
+      ...compareSelectedVersions.filter(
+        (version) => version.template_version !== baseVersionName,
+      ),
+    ];
+    const comparedVersions = nextCompareVersions
+      .map((version) => version.template_version)
+      .filter(Boolean);
+    const committedVersionCount = countCommittedPromptVersions(versions);
+
+    applyCompare(nextCompareVersions);
+
+    if (
+      shouldAdvancePromptCompareOnboarding({
+        mode: promptOnboardingParams.mode,
+        committedVersionCount,
+        selectedVersionCount: comparedVersions.length,
+        source: onboardingSource,
+      })
+    ) {
+      recordActivationEvent?.(
+        buildPromptComparisonCompletedPayload({
+          promptId: id,
+          search: searchParams,
+          versions: comparedVersions,
+        }),
+      );
+      navigate(
+        buildPromptEditorHref({
+          promptId: id,
+          mode: PROMPT_ONBOARDING_MODES.ADD_FAILURE,
+          search: searchParams,
+          selectedVersions: nextCompareVersions.map((version) =>
+            toSelectedPromptVersion(version, id),
+          ),
+        }),
+        { replace: true },
+      );
+    }
+
+    onClose();
+    trackEvent(Events.promptCompareClicked, {
+      [PropertyName.promptId]: id,
+      [PropertyName.type]: "version history",
+    });
+  };
 
   return (
     <Box
@@ -234,14 +319,7 @@ const VersionHistoryChild = ({ onClose }) => {
             variant="contained"
             color="primary"
             sx={{ width: "200px" }}
-            onClick={() => {
-              applyCompare(compareSelectedVersions);
-              onClose();
-              trackEvent(Events.promptCompareClicked, {
-                [PropertyName.promptId]: id,
-                [PropertyName.type]: "version history",
-              });
-            }}
+            onClick={handleCompare}
           >
             Compare
           </Button>

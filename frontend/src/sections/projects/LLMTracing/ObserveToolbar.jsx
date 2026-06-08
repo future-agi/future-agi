@@ -19,7 +19,6 @@ import DisplayPanel from "./DisplayPanel";
 import TraceFilterPanel from "./TraceFilterPanel";
 import BulkActionsBar from "./BulkActionsBar";
 import { useTabStoreShallow } from "./tabStore";
-import { ID_ONLY_FIELDS } from "./idFields";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
 import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";

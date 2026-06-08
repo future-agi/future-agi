@@ -15,7 +15,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import { useMutation } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import axiosInstance, { endpoints } from "src/utils/axios";
 import { useGatewayContext } from "./context/useGatewayContext";
@@ -28,8 +28,19 @@ import { GATEWAY_ICONS } from "./constants/gatewayIcons";
 import SectionHeader from "./components/SectionHeader";
 import PageErrorState from "./components/PageErrorState";
 import GettingStartedCard from "./components/GettingStartedCard";
+import GatewayOnboardingFocusPanel from "./components/GatewayOnboardingFocusPanel";
 import { useApiKeys } from "./keys/hooks/useApiKeys";
 import SvgColor from "src/components/svg-color";
+import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
+import {
+  appendGatewayOnboardingAttributionToHref,
+  buildGatewayRequestReviewHref,
+  buildGatewayRequestSeenPayload,
+  GATEWAY_ONBOARDING_MODES,
+  gatewayPlaygroundRequestId,
+  gatewaySetupQuickStartAttributionFromSearch,
+  getGatewayOnboardingRouteParams,
+} from "./gatewayOnboardingEvents";
 
 const STATUS_COLORS = {
   healthy: "success",
@@ -84,6 +95,7 @@ const QUICK_LINKS = [
 
 const GatewayOverviewSection = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { gateway, gatewayId, isLoading, error, refreshGateways } =
     useGatewayContext();
   const [copied, setCopied] = useState(false);
@@ -101,15 +113,45 @@ const GatewayOverviewSection = () => {
     gatewayId,
   });
   const { data: apiKeys } = useApiKeys(gatewayId);
+  const gatewayQuickStartAttribution = useMemo(
+    () => gatewaySetupQuickStartAttributionFromSearch(searchParams),
+    [searchParams],
+  );
+  const gatewayOnboardingHref = useMemo(
+    () => (href) =>
+      appendGatewayOnboardingAttributionToHref(
+        href,
+        gatewayQuickStartAttribution,
+      ),
+    [gatewayQuickStartAttribution],
+  );
+
+  const providerList = useMemo(() => {
+    const providers = providerHealth?.providers;
+    if (Array.isArray(providers)) {
+      return providers.map((p) => ({
+        ...p,
+        name: p.name || p.provider_name || p.id,
+      }));
+    }
+    if (providers && typeof providers === "object") {
+      return Object.entries(providers).map(([name, info]) => ({
+        name,
+        ...(typeof info === "object" ? info : {}),
+      }));
+    }
+    return [];
+  }, [providerHealth]);
 
   const completionState = useMemo(
     () => ({
       gatewayConnected: Boolean(gateway),
-      hasProviders: (gateway?.providerCount ?? 0) > 0,
+      hasProviders:
+        (gateway?.providerCount ?? 0) > 0 || providerList.length > 0,
       hasKeys: Array.isArray(apiKeys) && apiKeys.length > 0,
       hasRequests: Number(val(overview?.total_requests) ?? 0) > 0,
     }),
-    [gateway, apiKeys, overview],
+    [gateway, apiKeys, overview, providerList.length],
   );
 
   const healthCheckMutation = useMutation({
@@ -126,20 +168,49 @@ const GatewayOverviewSection = () => {
     },
   });
 
-  // Provider summary
-  const providers = providerHealth?.providers;
-  let providerList = [];
-  if (Array.isArray(providers)) {
-    providerList = providers.map((p) => ({
-      ...p,
-      name: p.name || p.provider_name || p.id,
-    }));
-  } else if (providers && typeof providers === "object") {
-    providerList = Object.entries(providers).map(([name, info]) => ({
-      name,
-      ...(typeof info === "object" ? info : {}),
-    }));
-  }
+  const firstRequestMutation = useMutation({
+    mutationFn: async () => {
+      const { data } = await axiosInstance.post(
+        endpoints.gateway.testPlayground(gatewayId),
+        {
+          prompt:
+            "Send a short gateway onboarding request and reply with one sentence.",
+        },
+      );
+      const result = data.result || data;
+      const eventPayload = buildGatewayRequestSeenPayload({
+        gatewayId,
+        quickStartAttribution: gatewayQuickStartAttribution,
+        result,
+      });
+      let nextState = null;
+      try {
+        nextState = await recordActivationEvent(eventPayload);
+      } catch {
+        // Keep the first request review path available if tracking is unavailable.
+      }
+      return { nextState, result };
+    },
+    onSuccess: ({ nextState, result }) => {
+      refreshGateways();
+      enqueueSnackbar("Gateway request sent", { variant: "success" });
+      const nextHref =
+        nextState?.recommendedAction?.href ||
+        buildGatewayRequestReviewHref({
+          quickStartAttribution: gatewayQuickStartAttribution,
+          requestId: gatewayPlaygroundRequestId(result),
+        });
+      navigate(gatewayOnboardingHref(nextHref));
+    },
+    onError: (requestError) => {
+      enqueueSnackbar(
+        requestError?.response?.data?.message ||
+          requestError?.message ||
+          "Gateway request failed",
+        { variant: "error" },
+      );
+    },
+  });
 
   const handleCopyUrl = () => {
     if (gateway?.baseUrl) {
@@ -149,6 +220,58 @@ const GatewayOverviewSection = () => {
       setTimeout(() => setCopied(false), 2000);
     }
   };
+
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const isOnboardingRequestMode =
+    onboardingParams.mode === GATEWAY_ONBOARDING_MODES.TEST_REQUEST ||
+    (onboardingParams.isOnboarding && !onboardingParams.mode);
+
+  const gatewayFocusPrimaryAction = (() => {
+    if (!completionState.hasProviders) {
+      return {
+        label: "Add provider",
+        onClick: () =>
+          navigate(
+            gatewayOnboardingHref(
+              "/dashboard/gateway/providers?source=onboarding",
+            ),
+          ),
+      };
+    }
+    if (!completionState.hasKeys) {
+      return {
+        label: "Create key",
+        onClick: () =>
+          navigate(
+            gatewayOnboardingHref("/dashboard/gateway/keys?source=onboarding"),
+          ),
+      };
+    }
+    if (!completionState.hasRequests) {
+      return {
+        label: firstRequestMutation.isPending
+          ? "Sending..."
+          : "Send test request",
+        onClick: () => firstRequestMutation.mutate(),
+        disabled: firstRequestMutation.isPending,
+      };
+    }
+    return {
+      label: "Open logs",
+      onClick: () => navigate(gatewayOnboardingHref("/dashboard/gateway/logs")),
+    };
+  })();
+
+  const gatewayFocusSecondaryAction =
+    completionState.hasProviders && completionState.hasKeys
+      ? {
+          label: "Copy endpoint",
+          onClick: handleCopyUrl,
+        }
+      : {
+          label: "Open overview",
+          onClick: () => navigate(gatewayOnboardingHref("/dashboard/gateway")),
+        };
 
   if (isLoading) {
     return (
@@ -230,6 +353,22 @@ const GatewayOverviewSection = () => {
           </Typography>
         </Button>
       </SectionHeader>
+
+      <GatewayOnboardingFocusPanel
+        currentStep="Request"
+        description="Finish the gateway loop by routing one request through a provider-backed key, then review the first log."
+        hidden={!isOnboardingRequestMode}
+        primaryAction={gatewayFocusPrimaryAction}
+        secondaryAction={gatewayFocusSecondaryAction}
+        singleActionFocus={isOnboardingRequestMode}
+        steps={[
+          { label: "Provider", complete: completionState.hasProviders },
+          { label: "API key", complete: completionState.hasKeys },
+          { label: "Request", complete: completionState.hasRequests },
+        ]}
+        title="Send the first gateway request"
+        tourAnchor={onboardingParams.tourAnchor}
+      />
 
       {/* Gateway Endpoint URL */}
       <Card sx={{ mb: 3 }}>

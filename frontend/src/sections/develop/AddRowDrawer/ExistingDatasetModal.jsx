@@ -148,6 +148,7 @@ FieldSelectionSkeleton.propTypes = {
 const ExistingDatasetModal = ({
   open,
   onClose,
+  onDatasetCreated,
   refreshGrid,
   datasetId,
   ...rest
@@ -348,8 +349,15 @@ const ExistingDatasetModal = ({
           [PropertyName.name]: datasetName,
         });
 
-        if (result?.datasetId) {
-          navigate(`/dashboard/develop/${result.datasetId}?tab=data`);
+        const createdDatasetId = result?.datasetId || result?.dataset_id;
+        if (createdDatasetId) {
+          const nextHref = onDatasetCreated?.({
+            datasetId: createdDatasetId,
+            sourceMethod: "existing_dataset",
+          });
+          navigate(
+            nextHref || `/dashboard/develop/${createdDatasetId}?tab=data`,
+          );
         }
       },
       onError: (error) => {
@@ -822,6 +830,7 @@ const ExistingDatasetModal = ({
 ExistingDatasetModal.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
+  onDatasetCreated: PropTypes.func,
   refreshGrid: PropTypes.func,
   datasetId: PropTypes.string,
 };

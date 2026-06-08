@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       branch:
-        description: 'Branch to deploy'
+        description: "Branch to deploy"
         required: false
-        default: 'main'
+        default: "main"
 
 jobs:
   deploy-eu:

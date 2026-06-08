@@ -7,17 +7,25 @@ import checker from "vite-plugin-checker";
 
 // ----------------------------------------------------------------------
 
+const isTest = process.env.VITEST === "true" || process.env.NODE_ENV === "test";
+
 export default defineConfig({
   base: "/",
-  plugins: [react(), checker({
-    overlay: false,
-    eslint: {
-      lintCommand: 'eslint "./src/**/*.{js,jsx,ts,tsx}"',
-    },
-  }), sentryVitePlugin({
-    org: "future-agi",
-    project: "frontend"
-  })],
+  plugins: [
+    react(),
+    !isTest &&
+      checker({
+        overlay: false,
+        eslint: {
+          lintCommand: 'eslint "./src/**/*.{js,jsx,ts,tsx}"',
+        },
+      }),
+    !isTest &&
+      sentryVitePlugin({
+        org: "future-agi",
+        project: "frontend",
+      }),
+  ].filter(Boolean),
   resolve: {
     alias: [
       {
@@ -40,29 +48,49 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // Ensure consistent file hashing for cache busting
-        entryFileNames: 'assets/[name]-[hash].js',
-        chunkFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]',
+        entryFileNames: "assets/[name]-[hash].js",
+        chunkFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash].[ext]",
         // Split vendor chunks to reduce memory usage
         manualChunks: {
-          vendor: ['react', 'react-dom'],
-          mui: ['@mui/material', '@mui/lab', '@mui/x-data-grid', '@mui/x-date-pickers'],
-          utils: ['lodash', 'date-fns', 'numeral'],
-          charts: ['apexcharts', 'react-apexcharts'],
+          vendor: ["react", "react-dom"],
+          mui: [
+            "@mui/material",
+            "@mui/lab",
+            "@mui/x-data-grid",
+            "@mui/x-date-pickers",
+          ],
+          utils: ["lodash", "date-fns", "numeral"],
+          charts: ["apexcharts", "react-apexcharts"],
           // recharts + victory only used on 2-3 niche pages — let Vite split them
           // into separate chunks so they don't load for everyone
-          editor: ['quill', 'react-quill', 'quill-mention'],
-          grid: ['ag-grid-enterprise', 'ag-grid-react'],
-          threejs: ['three', 'scatter-gl'],
-          flow: ['@xyflow/react', '@dagrejs/dagre'],
-          sentry: ['@sentry/react'],
-          media: ['swiper', 'wavesurfer.js', 'wavesurfer-multitrack', 'react-player'],
-          pdf: ['pdfjs-dist', '@react-pdf-viewer/core', '@react-pdf-viewer/default-layout'],
-          markdown: ['react-markdown', 'react-syntax-highlighter', 'rehype-raw', 'rehype-sanitize', 'remark-gfm']
-        }
+          editor: ["quill", "react-quill", "quill-mention"],
+          grid: ["ag-grid-enterprise", "ag-grid-react"],
+          threejs: ["three", "scatter-gl"],
+          flow: ["@xyflow/react", "@dagrejs/dagre"],
+          sentry: ["@sentry/react"],
+          media: [
+            "swiper",
+            "wavesurfer.js",
+            "wavesurfer-multitrack",
+            "react-player",
+          ],
+          pdf: [
+            "pdfjs-dist",
+            "@react-pdf-viewer/core",
+            "@react-pdf-viewer/default-layout",
+          ],
+          markdown: [
+            "react-markdown",
+            "react-syntax-highlighter",
+            "rehype-raw",
+            "rehype-sanitize",
+            "remark-gfm",
+          ],
+        },
       },
       // Reduce memory usage during build
-      maxParallelFileOps: 2
+      maxParallelFileOps: 2,
     },
     // Disable source maps in production to save memory unless needed for debugging
     sourcemap: false,
@@ -71,10 +99,10 @@ export default defineConfig({
     // Enable minification
     minify: true,
     // Enable tree shaking
-    target: 'esnext'
+    target: "esnext",
   },
   optimizeDeps: {
-    include: ['apexcharts', 'react-apexcharts'],
+    include: ["apexcharts", "react-apexcharts"],
   },
   server: {
     port: 3031,

@@ -1,0 +1,2260 @@
+schema_version: activation-flow-2026-05-27.v1
+default_goal_id: monitor_production_ai_app
+
+product_loop_steps:
+  build:
+    label: Build
+    description: Create or connect the AI surface.
+  test:
+    label: Test
+    description: Run a focused check before shipping.
+  observe:
+    label: Observe
+    description: Inspect real traces and outcomes.
+  ship:
+    label: Ship
+    description: Move the workflow toward production.
+  improve:
+    label: Improve
+    description: Turn findings into a repeatable guardrail.
+
+goals:
+  monitor_production_ai_app:
+    primary_path: observe
+    label: Connect your agent
+    description: Connect traces from an AI app or agent.
+    outcome_preview: A real trace reviewed and a quality check ready to add.
+    estimated_minutes: 5
+  improve_prompts:
+    primary_path: prompt
+    label: Test prompts or agent prompts
+    description: Run prompt tests and compare output changes.
+    outcome_preview: A tested prompt version with a comparison baseline.
+    estimated_minutes: 6
+  build_ai_agent:
+    primary_path: agent
+    label: Prototype agent
+    description: Run a first scenario and inspect the agent trace.
+    outcome_preview: A scenario run you can inspect and turn into coverage.
+    estimated_minutes: 8
+  control_model_traffic:
+    primary_path: gateway
+    label: Set up gateway
+    description: Add a provider, create a key, and send a gateway request.
+    outcome_preview: A gateway request log ready for routing or policy review.
+    estimated_minutes: 7
+  evaluate_quality:
+    primary_path: evals
+    label: Test AI with Simulation / Evals
+    description: Choose a source, run a quality check, and fix or finish from the first result.
+    outcome_preview: A reviewed quality result with the right next fix or completion path.
+    estimated_minutes: 7
+  connect_voice_ai_agent:
+    primary_path: voice
+    label: Connect a voice AI agent
+    description: Run or review a call with clear success criteria.
+    outcome_preview: A test call transcript with success criteria to add.
+    estimated_minutes: 8
+  explore_sample_data:
+    primary_path: sample
+    label: Preview sample trace
+    description: Inspect a sample trace while real setup is pending.
+    outcome_preview: A sample trace reviewed before connecting real data.
+    estimated_minutes: 2
+
+goal_aliases:
+  test_and_improve_prompts: improve_prompts
+  build_or_prototype_agent: build_ai_agent
+  route_llm_traffic_safely: control_model_traffic
+  evaluate_quality_on_data_or_traces: evaluate_quality
+  Test and improve prompts: improve_prompts
+  Test prompts or agent prompts: improve_prompts
+  Build or prototype an AI agent: build_ai_agent
+  Prototype agent: build_ai_agent
+  Route LLM traffic safely: control_model_traffic
+  Setup gateway: control_model_traffic
+  Set up gateway: control_model_traffic
+  Evaluate quality on data or traces: evaluate_quality
+  Test AI using simulation: evaluate_quality
+  Connect a voice AI agent: connect_voice_ai_agent
+  Monitor a production AI app: monitor_production_ai_app
+  Connect your agent: monitor_production_ai_app
+  Monitor LLMs and Agents: monitor_production_ai_app
+  Analyze System Health: monitor_production_ai_app
+  Run Evaluations: evaluate_quality
+  Simulate Voice or Chat Interactions: connect_voice_ai_agent
+  Annotate and Improve Data: evaluate_quality
+  Optimize AI Agents: build_ai_agent
+  Explore with sample data: explore_sample_data
+  Preview sample trace: explore_sample_data
+
+paths:
+  prompt:
+    label: Test prompts or agent prompts
+    description: Create, test, and compare prompt versions.
+    lifecycle_reactivation_label: prompt quality
+    first_action_id: create_prompt
+    requires_permission: prompt:write
+  agent:
+    label: Prototype agent
+    description: Create an agent and review its first scenario.
+    lifecycle_reactivation_label: agent behavior
+    first_action_id: create_agent
+    requires_permission: agent:write
+  observe:
+    label: Connect your agent
+    description: Connect traces and inspect trace quality.
+    lifecycle_reactivation_label: trace quality
+    first_action_id: create_observe_project
+    requires_permission: observe:write
+  gateway:
+    label: Set up gateway
+    description: Configure model routing and production policies.
+    lifecycle_reactivation_label: gateway traffic
+    first_action_id: gateway_add_provider
+    requires_permission: gateway:write
+  voice:
+    label: Connect a voice AI agent
+    description: Review calls and success criteria.
+    lifecycle_reactivation_label: voice calls
+    first_action_id: create_voice_agent
+    requires_permission: voice:write
+  evals:
+    label: Test AI with Simulation / Evals
+    description: Choose sources, run quality checks, and review the first result.
+    lifecycle_reactivation_label: eval results
+    first_action_id: create_eval_dataset
+    requires_permission: evals:write
+  dashboards:
+    label: Build quality dashboards
+    description: Track quality, cost, latency, and failures.
+    first_action_id:
+    requires_permission: dashboards:write
+  sample:
+    label: Preview sample trace
+    description: Inspect a sample trace while real setup is pending.
+    lifecycle_reactivation_label: sample trace
+    first_action_id: open_sample_trace
+    requires_permission:
+
+path_aliases:
+  prompts: prompt
+  workbench: prompt
+  agents: agent
+  simulate_agent: agent
+  observability: observe
+  traces: observe
+  model_gateway: gateway
+  voice_ai: voice
+  eval: evals
+  evaluations: evals
+  dashboard: dashboards
+  sample_project: sample
+
+tour_anchors:
+  - observe_create_project_button
+  - observe_send_trace_button
+  - observe_trace_review_link
+  - observe_evaluator_button
+  - sample_project_button
+  - sample_trace_link
+  - sample_connect_real_data_button
+  - prompt_create_button
+  - prompt_run_test_button
+  - prompt_save_version_button
+  - prompt_create_second_version_button
+  - prompt_compare_versions_button
+  - prompt_add_example_button
+  - agent_create_button
+  - agent_add_node_button
+  - agent_run_scenario_button
+  - agent_trace_review_link
+  - agent_save_eval_button
+  - agent_create_eval_button
+  - gateway_provider_button
+  - gateway_key_button
+  - gateway_request_button
+  - gateway_log_review_link
+  - gateway_failure_button
+  - gateway_policy_button
+  - eval_dataset_button
+  - eval_scorer_button
+  - eval_run_button
+  - eval_failure_review_link
+  - eval_next_loop_button
+  - voice_agent_button
+  - voice_test_call_button
+  - voice_call_review_link
+  - voice_success_criteria_button
+  - voice_monitor_button
+
+journeys:
+  observe_first_run:
+    primary_path: observe
+    eyebrow: Observe setup
+    title: Connect your agent
+    description: Connect traces, review the first trace, then create a quality check.
+    chips:
+      - observe
+      - quality
+    steps:
+      - id: connect_observability
+        stage: connect_observability
+        action_id: create_observe_project
+        success_event: observe_project_created
+        tour_anchor: observe_create_project_button
+        label: Create Observe project
+        description: Choose your package, create a project, and send one trace.
+      - id: send_first_trace
+        stage: waiting_for_first_trace
+        active_stages:
+          - waiting_for_first_trace_sample_available
+        action_id: send_first_trace
+        success_event: trace_received
+        tour_anchor: observe_send_trace_button
+        label: Send trace
+        description: Send one production or test trace.
+      - id: review_first_trace
+        stage: review_first_trace
+        action_id: review_first_trace
+        success_event: trace_reviewed
+        tour_anchor: observe_trace_review_link
+        label: Review first trace
+        description: Inspect inputs, outputs, latency, cost, and errors.
+      - id: create_trace_evaluator
+        stage: create_trace_evaluator
+        action_id: create_trace_evaluator
+        success_event: first_quality_loop_completed
+        tour_anchor: observe_evaluator_button
+        label: Create quality check
+        description: Turn the reviewed trace into a repeatable quality check.
+  sample_first_run:
+    primary_path: sample
+    eyebrow: Sample data
+    title: Explore sample data
+    description: Open a sample trace first, then connect real data when ready.
+    chips:
+      - sample
+      - trace
+    steps:
+      - id: open_sample_project
+        stage: open_sample_project
+        action_id: open_sample_trace
+        success_event: sample_trace_available
+        tour_anchor: sample_project_button
+        lifecycle_policy: sample_only
+        label: Open sample
+        description: Use a ready-made trace while setup is pending.
+      - id: review_sample_signal
+        stage: review_sample_signal
+        action_id: open_sample_trace
+        success_event: sample_signal_viewed
+        tour_anchor: sample_trace_link
+        lifecycle_policy: sample_only
+        label: Review issue
+        description: Inspect the quality issue in the sample trace.
+      - id: connect_real_data
+        stage: connect_real_data
+        action_id: create_observe_project
+        success_event: observe_project_created
+        tour_anchor: sample_connect_real_data_button
+        lifecycle_policy: sample_only
+        label: Connect real data
+        description: Move from sample data to one real trace.
+  prompt_first_run:
+    primary_path: prompt
+    eyebrow: Prompt setup
+    title: Test prompts and compare versions
+    description: Create one prompt, test it, save a baseline, and compare the next version.
+    chips:
+      - prompt
+      - versioning
+    steps:
+      - id: create_prompt
+        stage: start_prompt
+        action_id: create_prompt
+        success_event: prompt_created
+        tour_anchor: prompt_create_button
+        label: Create prompt
+        description: Start with one prompt the team can test.
+      - id: run_prompt_test
+        stage: run_prompt_test
+        action_id: run_prompt_test
+        success_event: prompt_test_run_completed
+        tour_anchor: prompt_run_test_button
+        label: Run test
+        description: Run one focused example before saving.
+      - id: save_prompt_version
+        stage: save_prompt_version
+        action_id: save_prompt_version
+        success_event: prompt_version_created
+        tour_anchor: prompt_save_version_button
+        label: Save version
+        description: Create the baseline for future edits.
+      - id: create_second_prompt_version
+        stage: create_second_prompt_version
+        action_id: create_second_prompt_version
+        success_event: prompt_comparable_version_created
+        tour_anchor: prompt_create_second_version_button
+        label: Second version
+        description: Edit, run, and save one more version before comparing.
+      - id: compare_prompt_versions
+        stage: compare_prompt_versions
+        action_id: compare_prompt_versions
+        success_event: prompt_comparison_completed
+        tour_anchor: prompt_compare_versions_button
+        label: Compare
+        description: Review how the edited version changed behavior.
+      - id: prompt_next_loop
+        stage: prompt_next_loop
+        action_id: add_prompt_failure_example
+        success_event: dataset_example_added
+        tour_anchor: prompt_add_example_button
+        label: Improve
+        description: Turn the result into a reusable example or check.
+  agent_first_run:
+    primary_path: agent
+    eyebrow: Agent setup
+    title: Prototype an agent with eval coverage
+    description: Create an agent, add one step, run a scenario, inspect the run, then save coverage.
+    chips:
+      - agent
+      - scenario
+    steps:
+      - id: create_agent
+        stage: create_agent
+        action_id: create_agent
+        success_event: agent_created
+        tour_anchor: agent_create_button
+        label: Create agent
+        description: Start with one runnable agent.
+      - id: add_agent_node
+        stage: add_agent_node
+        action_id: add_agent_node
+        success_event: agent_node_added
+        tour_anchor: agent_add_node_button
+        label: Add step
+        description: Add one prompt step so the agent has something to run.
+      - id: run_agent_scenario
+        stage: run_agent_scenario
+        action_id: run_agent_scenario
+        success_event: agent_prototype_run_completed
+        tour_anchor: agent_run_scenario_button
+        label: Run scenario
+        description: Exercise the agent on one task.
+      - id: review_agent_trace
+        stage: review_agent_trace
+        action_id: review_agent_trace
+        success_event: agent_trace_reviewed
+        tour_anchor: agent_trace_review_link
+        label: Review run
+        description: Inspect the run and identify the first improvement.
+      - id: save_agent_eval
+        stage: save_agent_eval
+        action_id: save_agent_eval
+        success_event: agent_scenario_saved_as_eval
+        tour_anchor: agent_save_eval_button
+        label: Save coverage
+        description: Turn the reviewed run into repeatable coverage.
+      - id: agent_create_eval
+        stage: agent_create_eval
+        action_id: create_agent_eval
+        success_event: agent_eval_created
+        tour_anchor: agent_create_eval_button
+        label: Create eval
+        description: Keep the agent behavior measurable.
+  gateway_first_run:
+    primary_path: gateway
+    eyebrow: Gateway setup
+    title: Route one request safely
+    description: Configure a provider, create a key, send one request, and turn the log into control.
+    chips:
+      - gateway
+      - traffic
+    steps:
+      - id: configure_gateway_provider
+        stage: configure_gateway_provider
+        action_id: gateway_add_provider
+        success_event: gateway_provider_added
+        tour_anchor: gateway_provider_button
+        label: Add model provider
+        description: Connect the model provider to route traffic.
+      - id: create_gateway_key
+        stage: create_gateway_key
+        action_id: gateway_create_key
+        success_event: gateway_key_created
+        tour_anchor: gateway_key_button
+        label: Create key
+        description: Create the key for the first request.
+      - id: run_gateway_request
+        stage: run_gateway_request
+        action_id: gateway_send_first_request
+        success_event: gateway_request_seen
+        tour_anchor: gateway_request_button
+        label: Send request
+        description: Send one request through the gateway.
+      - id: review_gateway_log
+        stage: review_gateway_log
+        action_id: gateway_review_request
+        success_event: gateway_log_opened
+        tour_anchor: gateway_log_review_link
+        label: Review log
+        description: Inspect status, latency, cost, and routing.
+      - id: fix_gateway_failure
+        stage: fix_gateway_failure
+        action_id: gateway_fix_failed_request
+        success_event: gateway_failure_resolved
+        tour_anchor: gateway_failure_button
+        label: Fix issue
+        description: Resolve the first failure if one appears.
+      - id: add_gateway_policy
+        stage: add_gateway_policy
+        action_id: gateway_add_policy
+        success_event: gateway_policy_created
+        tour_anchor: gateway_policy_button
+        label: Add policy
+        description: Create a guardrail for future requests.
+  evals_first_run:
+    primary_path: evals
+    eyebrow: Simulation / Evals
+    title: Test AI and act on the first result
+    description: Choose a small dataset, simulation, or trace source, add a quality check, run it, and fix what failed.
+    chips:
+      - evals
+      - quality
+    steps:
+      - id: create_eval_dataset
+        stage: create_eval_dataset
+        action_id: create_eval_dataset
+        success_event: eval_dataset_created
+        tour_anchor: eval_dataset_button
+        label: Choose source
+        description: Start with focused examples, a simulation, or traces.
+      - id: add_eval_scorer
+        stage: add_eval_scorer
+        action_id: add_eval_scorer
+        success_event: eval_scorer_created
+        tour_anchor: eval_scorer_button
+        label: Add check
+        description: Define what good output should satisfy.
+      - id: run_eval
+        stage: run_eval
+        action_id: run_eval
+        success_event: eval_run_completed
+        tour_anchor: eval_run_button
+        label: Run check
+        description: Run it once and open the result.
+      - id: review_eval_failures
+        stage: review_eval_failures
+        action_id: review_eval_failures
+        success_event: eval_failures_reviewed
+        tour_anchor: eval_failure_review_link
+        label: Review result
+        description: Inspect the first result and pick the right next action.
+      - id: eval_next_loop
+        stage: eval_next_loop
+        action_id: fix_eval_source
+        success_event: eval_failure_action_created
+        tour_anchor: eval_next_loop_button
+        label: Fix or finish
+        description: Fix the source or tune the check, then rerun.
+  voice_first_run:
+    primary_path: voice
+    eyebrow: Voice setup
+    title: Connect a voice AI agent
+    description: Create or connect a voice AI agent, run one call, review it, and add success criteria.
+    chips:
+      - voice
+      - call
+    steps:
+      - id: create_voice_agent
+        stage: create_voice_agent
+        action_id: create_voice_agent
+        success_event: voice_agent_created
+        tour_anchor: voice_agent_button
+        label: Create voice agent
+        description: Start with one voice agent.
+      - id: run_voice_test_call
+        stage: run_voice_test_call
+        action_id: run_voice_test_call
+        success_event: voice_test_call_completed
+        tour_anchor: voice_test_call_button
+        label: Run call
+        description: Run a test call so there is a transcript to review.
+      - id: review_voice_call
+        stage: review_voice_call
+        action_id: review_voice_call
+        success_event: voice_call_reviewed
+        tour_anchor: voice_call_review_link
+        label: Review call
+        description: Inspect the transcript and outcome.
+      - id: add_voice_success_criteria
+        stage: add_voice_success_criteria
+        action_id: add_voice_success_criteria
+        success_event: voice_success_criteria_added
+        tour_anchor: voice_success_criteria_button
+        label: Add criteria
+        description: Define what a good call means.
+      - id: voice_monitor_calls
+        stage: voice_monitor_calls
+        action_id: voice_monitor_calls
+        success_event: voice_call_monitor_opened
+        tour_anchor: voice_monitor_button
+        lifecycle_policy: post_activation
+        label: Monitor
+        description: Keep watching live calls after setup.
+
+action_kinds:
+  - choose_goal
+  - setup
+  - send_signal
+  - review
+  - improve
+  - sample_project
+  - request_access
+  - fallback
+  - daily_quality
+  - adjacent_loop
+
+actions:
+  open_get_started:
+    kind: fallback
+    title: Open Get Started
+    description: Use the existing setup checklist.
+    route_key: get_started
+    cta_label: Open Get Started
+    priority: 10
+    fallback_route_key: get_started
+    source: fallback
+  open_workspace_list:
+    kind: fallback
+    title: Choose a workspace
+    description: Open workspace settings to choose or create a workspace.
+    route_key: workspace_list
+    cta_label: Open workspaces
+    priority: 100
+    fallback_route_key: get_started
+    source: workspace_missing
+  request_workspace_access:
+    kind: request_access
+    title: Request workspace access
+    description: Ask an admin for access before making onboarding changes.
+    route_key: workspace_list
+    cta_label: Request access
+    priority: 90
+    fallback_route_key: get_started
+    source: permission_limited
+  choose_onboarding_goal:
+    kind: choose_goal
+    title: Choose your first goal
+    description: Pick the job you want FutureAGI to help with first.
+    route_key: choose_goal
+    cta_label: Choose goal
+    priority: 100
+    fallback_route_key: get_started
+    target_path:
+  create_prompt:
+    kind: setup
+    title: Create a prompt
+    description: Create one prompt before running a focused test.
+    route_key: prompt_create
+    cta_label: Create prompt
+    priority: 100
+    estimated_minutes: 2
+    requires_permission: prompt:write
+    completion_event: prompt_created
+    target_path: prompt
+    fallback_route_key: prompt_workbench
+  run_prompt_test:
+    kind: send_signal
+    title: Run prompt test
+    description: Run the prompt on one example before saving a baseline.
+    route_key: prompt_run_test
+    cta_label: Run test
+    priority: 100
+    estimated_minutes: 2
+    requires_permission: prompt:write
+    completion_event: prompt_test_run_completed
+    target_path: prompt
+    fallback_route_key: prompt_workbench
+  save_prompt_version:
+    kind: improve
+    title: Save baseline version
+    description: Save a baseline so later edits can be compared.
+    route_key: prompt_save_version
+    cta_label: Save baseline
+    priority: 100
+    estimated_minutes: 2
+    requires_permission: prompt:write
+    completion_event: prompt_version_created
+    target_path: prompt
+    fallback_route_key: prompt_workbench
+  create_second_prompt_version:
+    kind: improve
+    title: Create a second version
+    description: Edit the baseline, run the prompt again, and save one more version.
+    route_key: prompt_compare_versions
+    cta_label: Create second version
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: prompt:write
+    completion_event: prompt_comparable_version_created
+    target_path: prompt
+    fallback_route_key: prompt_workbench
+  compare_prompt_versions:
+    kind: review
+    title: Compare prompt versions
+    description: Compare the baseline against an edit on the same example.
+    route_key: prompt_compare_versions
+    cta_label: Compare versions
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: prompt:write
+    completion_event: prompt_comparison_completed
+    target_path: prompt
+    fallback_route_key: prompt_workbench
+  add_prompt_failure_example:
+    kind: adjacent_loop
+    title: Add a failing example
+    description: Turn the comparison into a reusable example or evaluator.
+    route_key: prompt_add_failure
+    cta_label: Add example
+    priority: 90
+    estimated_minutes: 4
+    requires_permission: prompt:write
+    completion_event: dataset_example_added
+    target_path: prompt
+    fallback_route_key: prompt_workbench
+  open_prompt_metrics:
+    kind: review
+    title: Open prompt metrics
+    description: Review prompt metrics and continue improving.
+    route_key: prompt_metrics
+    cta_label: Open prompt metrics
+    priority: 80
+    target_path: prompt
+    fallback_route_key: prompt_workbench
+  open_prompt_workbench:
+    kind: fallback
+    title: Open prompt workbench
+    description: Open the prompt workbench.
+    route_key: prompt_workbench
+    cta_label: Open workbench
+    priority: 20
+    target_path: prompt
+    fallback_route_key: get_started
+  create_agent:
+    kind: setup
+    title: Create an agent
+    description: Create one agent before running a first scenario.
+    route_key: agent_create
+    cta_label: Create agent
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: agent:write
+    completion_event: agent_created
+    target_path: agent
+    fallback_route_key: agent_list
+  add_agent_node:
+    kind: setup
+    title: Add an agent step
+    description: Add one prompt step before running the first scenario.
+    route_key: agent_add_node
+    cta_label: Add step
+    priority: 100
+    estimated_minutes: 2
+    requires_permission: agent:write
+    completion_event: agent_node_added
+    target_path: agent
+    fallback_route_key: agent_list
+  run_agent_scenario:
+    kind: send_signal
+    title: Run one scenario
+    description: Run the agent once before reviewing the execution.
+    route_key: agent_run_scenario
+    cta_label: Run scenario
+    priority: 100
+    estimated_minutes: 4
+    requires_permission: agent:write
+    completion_event: agent_prototype_run_completed
+    target_path: agent
+    fallback_route_key: agent_list
+  review_agent_trace:
+    kind: review
+    title: Review what happened
+    description: Inspect the agent run and identify the first improvement.
+    route_key: agent_review_trace
+    cta_label: Review run
+    priority: 100
+    estimated_minutes: 3
+    completion_event: agent_trace_reviewed
+    target_path: agent
+    fallback_route_key: agent_list
+  save_agent_eval:
+    kind: improve
+    title: Save this as coverage
+    description: Turn the reviewed run into repeatable eval coverage.
+    route_key: agent_save_eval
+    cta_label: Save as eval
+    priority: 100
+    estimated_minutes: 4
+    requires_permission: agent:write
+    completion_event: agent_scenario_saved_as_eval
+    target_path: agent
+    fallback_route_key: agent_list
+  create_agent_eval:
+    kind: improve
+    title: Create eval coverage
+    description: Add an eval that keeps the agent behavior measurable.
+    route_key: agent_create_eval
+    cta_label: Create eval
+    priority: 95
+    estimated_minutes: 4
+    requires_permission: agent:write
+    completion_event: agent_eval_created
+    target_path: agent
+    fallback_route_key: agent_list
+  open_agent_quality:
+    kind: review
+    title: Open agent quality
+    description: Review agent executions and continue improving coverage.
+    route_key: agent_quality
+    cta_label: Open agent quality
+    priority: 80
+    target_path: agent
+    fallback_route_key: agent_list
+  open_agent_playground:
+    kind: fallback
+    title: Open agents
+    description: Open the agent workspace.
+    route_key: agent_list
+    cta_label: Open agents
+    priority: 20
+    target_path: agent
+    fallback_route_key: get_started
+  gateway_add_provider:
+    kind: setup
+    title: Add model provider
+    description: Add one provider before sending model traffic through the gateway.
+    route_key: gateway_provider
+    cta_label: Add model provider
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: gateway:write
+    completion_event: gateway_provider_added
+    target_path: gateway
+    fallback_route_key: gateway_overview
+  gateway_create_key:
+    kind: setup
+    title: Create gateway key
+    description: Create one key for the first routed request.
+    route_key: gateway_key
+    cta_label: Create key
+    priority: 100
+    estimated_minutes: 2
+    requires_permission: gateway:write
+    completion_event: gateway_key_created
+    target_path: gateway
+    fallback_route_key: gateway_overview
+  gateway_send_first_request:
+    kind: send_signal
+    title: Send first gateway request
+    description: Send one request so the gateway loop has a real request to inspect.
+    route_key: gateway_request
+    cta_label: Send request
+    priority: 100
+    estimated_minutes: 4
+    requires_permission: gateway:write
+    completion_event: gateway_request_seen
+    target_path: gateway
+    fallback_route_key: gateway_overview
+  gateway_review_request:
+    kind: review
+    title: Review gateway request
+    description: Inspect the first request log for status, latency, and routing context.
+    route_key: gateway_log_review
+    cta_label: Review log
+    priority: 100
+    estimated_minutes: 3
+    completion_event: gateway_log_opened
+    target_path: gateway
+    fallback_route_key: gateway_overview
+  gateway_fix_failed_request:
+    kind: review
+    title: Review gateway failure
+    description: Inspect the failed request and choose the first repair path.
+    route_key: gateway_failure
+    cta_label: Review failure
+    priority: 100
+    estimated_minutes: 4
+    completion_event: gateway_failure_resolved
+    target_path: gateway
+    fallback_route_key: gateway_log_review
+  gateway_add_policy:
+    kind: improve
+    title: Add gateway control
+    description: Add a guardrail, fallback, or budget control for the first request path.
+    route_key: gateway_policy
+    cta_label: Add control
+    priority: 100
+    estimated_minutes: 4
+    requires_permission: gateway:write
+    completion_event: gateway_policy_created
+    target_path: gateway
+    fallback_route_key: gateway_overview
+  open_gateway_logs:
+    kind: review
+    title: Open gateway logs
+    description: Review the gateway request history.
+    route_key: gateway_log_review
+    cta_label: Open logs
+    priority: 80
+    target_path: gateway
+    fallback_route_key: gateway_overview
+  open_gateway_overview:
+    kind: fallback
+    title: Open gateway
+    description: Open the model gateway workspace.
+    route_key: gateway_overview
+    cta_label: Open gateway
+    priority: 20
+    target_path: gateway
+    fallback_route_key: get_started
+  create_eval_dataset:
+    kind: setup
+    title: Choose what to test
+    description: Choose the first dataset, simulation, or trace source for the quality loop.
+    route_key: eval_create_data
+    cta_label: Choose source
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: evals:write
+    completion_event: eval_dataset_created
+    target_path: evals
+    fallback_route_key: eval_list
+  add_eval_scorer:
+    kind: improve
+    title: Add quality check
+    description: Add the check that decides whether the output is good.
+    route_key: eval_add_scorer
+    cta_label: Add check
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: evals:write
+    completion_event: eval_scorer_created
+    target_path: evals
+    fallback_route_key: eval_list
+  run_eval:
+    kind: send_signal
+    title: Run quality check
+    description: Run the check once before reviewing the result.
+    route_key: eval_run_first
+    cta_label: Run check
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: evals:write
+    completion_event: eval_run_completed
+    target_path: evals
+    fallback_route_key: eval_list
+  review_eval_failures:
+    kind: review
+    title: Review quality result
+    description: Inspect the result and choose whether to fix the source or tune the quality check.
+    route_key: eval_review_failures
+    cta_label: Review result
+    priority: 100
+    estimated_minutes: 4
+    completion_event: eval_failures_reviewed
+    target_path: evals
+    fallback_route_key: eval_list
+  fix_eval_source:
+    kind: adjacent_loop
+    title: Fix the source
+    description: Use the review to update the source or expected behavior, then rerun.
+    route_key: eval_next_loop
+    cta_label: Fix source
+    priority: 95
+    estimated_minutes: 5
+    requires_permission: evals:write
+    completion_event: eval_failure_action_created
+    target_path: evals
+    fallback_route_key: eval_review_failures
+  open_eval_usage:
+    kind: review
+    title: Open eval results
+    description: Review eval usage, failures, and quality trends.
+    route_key: eval_review_failures
+    cta_label: Open results
+    priority: 80
+    target_path: evals
+    fallback_route_key: eval_list
+  open_evals:
+    kind: fallback
+    title: Open evaluations
+    description: Open the evaluations workspace.
+    route_key: eval_list
+    cta_label: Open evaluations
+    priority: 20
+    target_path: evals
+    fallback_route_key: get_started
+  create_voice_agent:
+    kind: setup
+    title: Create voice agent
+    description: Create or connect one voice agent before the first test call.
+    route_key: voice_create_agent
+    cta_label: Create voice agent
+    priority: 100
+    estimated_minutes: 3
+    requires_permission: voice:write
+    completion_event: voice_agent_created
+    target_path: voice
+    fallback_route_key: voice_list
+  run_voice_test_call:
+    kind: send_signal
+    title: Run test call
+    description: Run one safe call or simulation before reviewing the result.
+    route_key: voice_run_test_call
+    cta_label: Run call
+    priority: 100
+    estimated_minutes: 4
+    requires_permission: voice:write
+    completion_event: voice_test_call_completed
+    target_path: voice
+    fallback_route_key: voice_list
+  review_voice_call:
+    kind: review
+    title: Review voice call
+    description: Review transcript, audio, latency, and interruptions.
+    route_key: voice_review_call
+    cta_label: Review call
+    priority: 100
+    estimated_minutes: 4
+    completion_event: voice_call_reviewed
+    target_path: voice
+    fallback_route_key: voice_list
+  add_voice_success_criteria:
+    kind: improve
+    title: Add success criteria
+    description: Add criteria so future voice calls can be judged.
+    route_key: voice_add_success_criteria
+    cta_label: Add criteria
+    priority: 100
+    estimated_minutes: 4
+    requires_permission: voice:write
+    completion_event: voice_success_criteria_added
+    target_path: voice
+    fallback_route_key: voice_review_call
+  voice_monitor_calls:
+    kind: review
+    title: Monitor voice calls
+    description: Review voice call quality against the saved criteria.
+    route_key: voice_monitor_calls
+    cta_label: Monitor calls
+    priority: 80
+    target_path: voice
+    fallback_route_key: voice_list
+  open_voice_agents:
+    kind: fallback
+    title: Open voice agents
+    description: Open the voice agent workspace.
+    route_key: voice_list
+    cta_label: Open agents
+    priority: 20
+    target_path: voice
+    fallback_route_key: get_started
+  create_observe_project:
+    kind: setup
+    title: Connect your agent
+    description: Choose your package, create an Observe project, and send one request.
+    route_key: observe_setup
+    cta_label: Create Observe project
+    priority: 100
+    estimated_minutes: 5
+    requires_permission: observe:write
+    completion_event: observe_project_created
+    target_path: observe
+    fallback_route_key: get_started
+  send_first_trace:
+    kind: send_signal
+    title: Send your first trace
+    description: Send one production or test trace so it can be reviewed.
+    route_key: observe_send_first_trace
+    cta_label: Send trace
+    priority: 100
+    estimated_minutes: 5
+    requires_permission: observe:write
+    completion_event: trace_received
+    target_path: observe
+    fallback_route_key: get_started
+  review_first_trace:
+    kind: review
+    title: First trace received
+    description: Review inputs, outputs, latency, cost, and errors.
+    route_key: observe_trace_detail
+    cta_label: Review trace
+    priority: 100
+    estimated_minutes: 3
+    completion_event: trace_reviewed
+    target_path: observe
+    fallback_route_key: get_started
+  create_trace_evaluator:
+    kind: improve
+    title: Create a quality check
+    description: Turn the reviewed trace into a repeatable quality check.
+    route_key: observe_create_trace_evaluator
+    cta_label: Create quality check
+    priority: 100
+    estimated_minutes: 5
+    requires_permission: observe:write
+    completion_event: first_quality_loop_completed
+    target_path: observe
+    fallback_route_key: get_started
+  open_observe_dashboard:
+    kind: review
+    title: Open observe dashboard
+    description: Review the current workflow.
+    route_key: observe_dashboard
+    cta_label: Open observe
+    priority: 80
+    target_path: observe
+    fallback_route_key: get_started
+  open_observe_dashboard_fallback:
+    kind: review
+    title: Open observe dashboard
+    description: Review current observability data.
+    route_key: observe_dashboard
+    cta_label: Open observe
+    priority: 20
+    target_path: observe
+    fallback_route_key: get_started
+  open_observe_setup_fallback:
+    kind: fallback
+    title: Open observe setup
+    description: Return to the observe setup path and send the first trace.
+    route_key: observe_setup
+    cta_label: Start with observe
+    priority: 20
+    requires_permission: observe:write
+    target_path: observe
+    fallback_route_key: observe_dashboard
+  review_daily_quality:
+    kind: daily_quality
+    title: Review today's quality item
+    description: Open the daily quality view and resolve the top item.
+    route_key: daily_quality_home
+    cta_label: Review item
+    priority: 100
+    estimated_minutes: 4
+    completion_event: daily_quality_item_reviewed
+    target_path: observe
+    fallback_route_key: get_started
+  open_sample_trace:
+    kind: sample_project
+    title: Open sample trace
+    description: Review a sample trace while real data is pending.
+    route_key: sample_trace
+    cta_label: Open sample trace
+    priority: 30
+    estimated_minutes: 2
+    completion_event: sample_signal_viewed
+    is_sample: true
+    target_path: sample
+    fallback_route_key: get_started
+  choose_available_path:
+    kind: fallback
+    title: Choose an available path
+    description: Start with the observe path while this path is unavailable.
+    route_key: observe_setup
+    cta_label: Start with observe
+    priority: 80
+    requires_permission: observe:write
+    target_path: observe
+    fallback_route_key: get_started
+
+stage_defaults:
+  home_mode: first_run
+  copy:
+    eyebrow: Setup
+    title: Open Get Started
+    description: The existing setup checklist is available.
+  progress:
+    build: selected
+    test: available
+    observe: available
+    ship: available
+    improve: available
+  recommended_action: choose_available_path
+  fallback_action: open_observe_setup_fallback
+  next: []
+
+stages:
+  feature_disabled:
+    home_mode: fallback
+    copy:
+      eyebrow: Setup
+      title: Start with the setup checklist
+      description: The existing checklist is available for this workspace.
+    progress:
+      build: not_started
+      test: available
+      observe: not_started
+      ship: available
+      improve: available
+    recommended_action: open_get_started
+    fallback_action: open_get_started
+    next: []
+  workspace_missing:
+    home_mode: fallback
+    copy:
+      eyebrow: Workspace
+      title: Choose a workspace
+      description: Select a workspace before starting a product loop.
+    progress:
+      build: not_started
+      test: available
+      observe: not_started
+      ship: available
+      improve: available
+    recommended_action: open_workspace_list
+    fallback_action: open_get_started
+    next:
+      - choose_goal
+  permission_limited:
+    home_mode: fallback
+    copy:
+      eyebrow: Access
+      title: Request access for setup
+      description: This workspace needs write access before setup can continue.
+    recommended_action: request_workspace_access
+    fallback_action: open_observe_dashboard_fallback
+    requires_write: false
+    next:
+      - connect_observability
+  choose_goal:
+    home_mode: first_run
+    copy:
+      eyebrow: Setup
+      title: Choose what to set up first
+      description: Pick one product area. Home will open the first setup step and keep the next step ready.
+    progress:
+      build: not_started
+      test: available
+      observe: not_started
+      ship: available
+      improve: available
+    recommended_action: choose_onboarding_goal
+    fallback_action: open_observe_setup_fallback
+    requires_write: true
+    next:
+      - connect_observability
+      - selected_path_unavailable
+  selected_path_unavailable:
+    home_mode: fallback
+    copy:
+      eyebrow: Path unavailable
+      title: Start with an available path
+      description: This selected path is not available in the product yet.
+    recommended_action: choose_available_path
+    fallback_action: open_observe_setup_fallback
+    next:
+      - connect_observability
+  activated:
+    home_mode: first_run
+    copy:
+      eyebrow: First setup complete
+      title: Your first workflow is live
+      description: Review daily quality next and keep improving the workflow from real traces.
+    progress:
+      build: complete
+      test: available
+      observe: complete
+      ship: available
+      improve: complete
+    recommended_action: open_observe_dashboard
+    fallback_action: open_observe_dashboard_fallback
+    next:
+      - daily_review
+  daily_review:
+    home_mode: daily_quality
+    copy:
+      eyebrow: Daily quality
+      title: Review today's quality item
+      description: Open the latest item and keep the loop fresh.
+    progress:
+      build: complete
+      test: available
+      observe: complete
+      ship: available
+      improve: complete
+    recommended_action: review_daily_quality
+    fallback_action: open_observe_dashboard_fallback
+    next: []
+  connect_observability:
+    home_mode: first_run
+    copy:
+      eyebrow: Observe
+      title: Connect your agent
+      description: Choose your package, create an Observe project, and send one trace.
+    progress:
+      build: selected
+      test: available
+      observe: not_started
+      ship: available
+      improve: available
+    recommended_action: create_observe_project
+    fallback_action: open_observe_setup_fallback
+    flagged_fallback_actions:
+      onboarding_sample_project: open_sample_trace
+    requires_write: true
+    next:
+      - waiting_for_first_trace
+      - waiting_for_first_trace_sample_available
+  waiting_for_first_trace:
+    home_mode: first_run
+    copy:
+      eyebrow: Waiting
+      title: Waiting for the first trace
+      description: Keep the trace page open, run one request, and we will open the trace when it appears.
+    progress:
+      build: selected
+      test: available
+      observe: in_progress
+      ship: available
+      improve: available
+    recommended_action: send_first_trace
+    fallback_action: open_observe_dashboard_fallback
+    flagged_fallback_actions:
+      onboarding_sample_project: open_sample_trace
+    requires_write: true
+    next:
+      - review_first_trace
+  waiting_for_first_trace_sample_available:
+    home_mode: first_run
+    copy:
+      eyebrow: Waiting
+      title: Waiting for real data
+      description: Use a sample trace while the first real trace is pending.
+    progress:
+      build: selected
+      test: available
+      observe: in_progress
+      ship: available
+      improve: available
+    recommended_action: send_first_trace
+    fallback_action: open_sample_trace
+    requires_write: true
+    next:
+      - review_first_trace
+  review_first_trace:
+    home_mode: first_run
+    copy:
+      eyebrow: First trace
+      title: First trace received
+      description: Review the trace to inspect inputs, outputs, latency, cost, and errors.
+    progress:
+      build: selected
+      test: available
+      observe: in_progress
+      ship: available
+      improve: available
+    recommended_action: review_first_trace
+    fallback_action: open_observe_dashboard_fallback
+    next:
+      - create_trace_evaluator
+  create_trace_evaluator:
+    home_mode: first_run
+    copy:
+      eyebrow: Quality check
+      title: Create a quality check
+      description: Turn the reviewed trace into a repeatable quality check.
+    progress:
+      build: selected
+      test: available
+      observe: complete
+      ship: available
+      improve: in_progress
+    recommended_action: create_trace_evaluator
+    fallback_action: open_observe_dashboard_fallback
+    requires_write: true
+    next:
+      - activated
+  review_sample_signal:
+    home_mode: first_run
+    copy:
+      eyebrow: Sample data
+      title: Review a sample trace
+      description: Inspect the sample trace while real workspace data is pending.
+    recommended_action: open_sample_trace
+    fallback_action: open_observe_setup_fallback
+    next:
+      - connect_real_data
+  start_prompt:
+    progress:
+      build: selected
+      test: not_started
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: create_prompt
+    fallback_action: open_prompt_workbench
+    requires_write: true
+    copy:
+      eyebrow: Prompt
+      title: Start a prompt loop
+      description: Create or open a prompt before running a focused test.
+    next:
+      - run_prompt_test
+  run_prompt_test:
+    progress:
+      build: complete
+      test: in_progress
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: run_prompt_test
+    fallback_action: open_prompt_workbench
+    requires_write: true
+    copy:
+      eyebrow: Prompt test
+      title: Run a prompt test
+      description: Run a test case before saving a prompt version.
+    next:
+      - save_prompt_version
+  save_prompt_version:
+    progress:
+      build: complete
+      test: complete
+      observe: available
+      ship: available
+      improve: in_progress
+    recommended_action: save_prompt_version
+    fallback_action: open_prompt_workbench
+    requires_write: true
+    copy:
+      eyebrow: Prompt version
+      title: Save the prompt version
+      description: Save the working version so it can be compared later.
+    next:
+      - create_second_prompt_version
+  create_second_prompt_version:
+    progress:
+      build: complete
+      test: complete
+      observe: available
+      ship: available
+      improve: in_progress
+    recommended_action: create_second_prompt_version
+    fallback_action: open_prompt_workbench
+    requires_write: true
+    copy:
+      eyebrow: Prompt version
+      title: Create a second prompt version
+      description: Edit, run, and save one more version before comparing behavior.
+    next:
+      - compare_prompt_versions
+  compare_prompt_versions:
+    progress:
+      build: complete
+      test: complete
+      observe: available
+      ship: available
+      improve: in_progress
+    recommended_action: compare_prompt_versions
+    fallback_action: open_prompt_workbench
+    requires_write: true
+    copy:
+      eyebrow: Prompt compare
+      title: Compare prompt versions
+      description: Compare output changes and pick the safer version.
+    next:
+      - prompt_next_loop
+  prompt_next_loop:
+    progress:
+      build: complete
+      test: complete
+      observe: available
+      ship: available
+      improve: selected
+    recommended_action: add_prompt_failure_example
+    fallback_action: open_prompt_workbench
+    requires_write: true
+    copy:
+      eyebrow: Prompt setup
+      title: Continue prompt setup
+      description: Turn the latest comparison into the next improvement.
+    next: []
+  create_agent:
+    progress:
+      build: selected
+      test: not_started
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: create_agent
+    fallback_action: open_agent_playground
+    requires_write: true
+    copy:
+      eyebrow: Agent
+      title: Create an agent
+      description: Create the first agent before running a scenario.
+    next:
+      - add_agent_node
+  add_agent_node:
+    progress:
+      build: in_progress
+      test: not_started
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: add_agent_node
+    fallback_action: open_agent_playground
+    requires_write: true
+    copy:
+      eyebrow: Agent step
+      title: Add the first agent step
+      description: Add one prompt step so the agent has something to run.
+    next:
+      - run_agent_scenario
+  run_agent_scenario:
+    progress:
+      build: complete
+      test: in_progress
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: run_agent_scenario
+    fallback_action: open_agent_playground
+    requires_write: true
+    copy:
+      eyebrow: Agent scenario
+      title: Run a scenario
+      description: Run one scenario and inspect what the agent did.
+    next:
+      - review_agent_trace
+  review_agent_trace:
+    progress:
+      build: complete
+      test: complete
+      observe: in_progress
+      ship: available
+      improve: available
+    recommended_action: review_agent_trace
+    fallback_action: open_agent_playground
+    copy:
+      eyebrow: Agent trace
+      title: Review the agent trace
+      description: Inspect the trace and identify the first improvement.
+    next:
+      - save_agent_eval
+  save_agent_eval:
+    progress:
+      build: complete
+      test: complete
+      observe: complete
+      ship: available
+      improve: in_progress
+    recommended_action: save_agent_eval
+    fallback_action: open_agent_playground
+    requires_write: true
+    copy:
+      eyebrow: Agent eval
+      title: Save an agent eval
+      description: Convert the observed behavior into a repeatable eval.
+    next:
+      - agent_create_eval
+  agent_create_eval:
+    progress:
+      build: complete
+      test: complete
+      observe: complete
+      ship: available
+      improve: selected
+    recommended_action: create_agent_eval
+    fallback_action: open_agent_playground
+    requires_write: true
+    copy:
+      eyebrow: Agent quality
+      title: Create the first agent eval
+      description: Create the eval that keeps the agent behavior measurable.
+    next: []
+  create_trace_dashboard:
+    copy:
+      eyebrow: Observe dashboard
+      title: Create a trace dashboard
+      description: Group important trace metrics into a dashboard.
+    next:
+      - activated
+  create_trace_alert:
+    copy:
+      eyebrow: Observe alert
+      title: Create a trace alert
+      description: Add an alert for the trace metric that matters most.
+    next:
+      - activated
+  configure_gateway_provider:
+    progress:
+      build: selected
+      test: not_started
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: gateway_add_provider
+    fallback_action: open_gateway_overview
+    requires_write: true
+    copy:
+      eyebrow: Gateway
+      title: Configure a model provider
+      description: Add a provider before routing model traffic.
+    next:
+      - create_gateway_key
+  create_gateway_key:
+    progress:
+      build: complete
+      test: not_started
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: gateway_create_key
+    fallback_action: open_gateway_overview
+    requires_write: true
+    copy:
+      eyebrow: Gateway key
+      title: Create a gateway key
+      description: Create a key for the first routed request.
+    next:
+      - run_gateway_request
+  run_gateway_request:
+    progress:
+      build: complete
+      test: in_progress
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: gateway_send_first_request
+    fallback_action: open_gateway_overview
+    requires_write: true
+    copy:
+      eyebrow: Gateway request
+      title: Run a gateway request
+      description: Send one request and inspect the first log.
+    next:
+      - review_gateway_log
+  review_gateway_log:
+    progress:
+      build: complete
+      test: complete
+      observe: in_progress
+      ship: available
+      improve: available
+    recommended_action: gateway_review_request
+    fallback_action: open_gateway_overview
+    requires_write: false
+    copy:
+      eyebrow: Gateway log
+      title: Review the gateway log
+      description: Inspect the first log for cost, latency, and failures.
+    next:
+      - fix_gateway_failure
+  fix_gateway_failure:
+    progress:
+      build: complete
+      test: complete
+      observe: blocked
+      ship: available
+      improve: in_progress
+    recommended_action: gateway_fix_failed_request
+    fallback_action: open_gateway_logs
+    requires_write: false
+    copy:
+      eyebrow: Gateway quality
+      title: Fix the first gateway failure
+      description: Turn the first failure into a routing or provider change.
+    next:
+      - add_gateway_policy
+  add_gateway_policy:
+    progress:
+      build: complete
+      test: complete
+      observe: complete
+      ship: available
+      improve: in_progress
+    recommended_action: gateway_add_policy
+    fallback_action: open_gateway_logs
+    requires_write: true
+    copy:
+      eyebrow: Gateway policy
+      title: Add a gateway policy
+      description: Add a policy that keeps the request path controlled.
+    next: []
+  create_voice_agent:
+    progress:
+      build: selected
+      test: not_started
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: create_voice_agent
+    fallback_action: open_voice_agents
+    requires_write: true
+    copy:
+      eyebrow: Voice
+      title: Create a voice agent
+      description: Create the agent before running a first call.
+    next:
+      - run_voice_test_call
+  run_voice_test_call:
+    progress:
+      build: complete
+      test: in_progress
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: run_voice_test_call
+    fallback_action: open_voice_agents
+    requires_write: true
+    copy:
+      eyebrow: Voice test
+      title: Run a test call
+      description: Run one call so there is a transcript to review.
+    next:
+      - review_voice_call
+  review_voice_call:
+    progress:
+      build: complete
+      test: complete
+      observe: in_progress
+      ship: available
+      improve: available
+    recommended_action: review_voice_call
+    fallback_action: open_voice_agents
+    requires_write: false
+    copy:
+      eyebrow: Voice review
+      title: Review the voice call
+      description: Review transcript, latency, and task completion.
+    next:
+      - add_voice_success_criteria
+  add_voice_success_criteria:
+    progress:
+      build: complete
+      test: complete
+      observe: complete
+      ship: available
+      improve: in_progress
+    recommended_action: add_voice_success_criteria
+    fallback_action: open_voice_agents
+    requires_write: true
+    copy:
+      eyebrow: Voice criteria
+      title: Add success criteria
+      description: Define what a good voice interaction must satisfy.
+    next:
+      - voice_monitor_calls
+  voice_monitor_calls:
+    progress:
+      build: complete
+      test: complete
+      observe: complete
+      ship: available
+      improve: selected
+    recommended_action: voice_monitor_calls
+    fallback_action: open_voice_agents
+    requires_write: false
+    copy:
+      eyebrow: Voice monitor
+      title: Monitor voice calls
+      description: Keep reviewing calls against the success criteria.
+    next: []
+  create_eval_dataset:
+    progress:
+      build: selected
+      test: not_started
+      observe: available
+      ship: available
+      improve: available
+    recommended_action: create_eval_dataset
+    fallback_action: open_evals
+    requires_write: true
+    copy:
+      eyebrow: Simulation / Evals
+      title: Choose what to test
+      description: Choose examples, a simulation, or traces that define expected behavior.
+    next:
+      - add_eval_scorer
+  add_eval_scorer:
+    progress:
+      build: complete
+      test: not_started
+      observe: available
+      ship: available
+      improve: in_progress
+    recommended_action: add_eval_scorer
+    fallback_action: open_evals
+    requires_write: true
+    copy:
+      eyebrow: Quality check
+      title: Add a quality check
+      description: Add the check that decides whether an output is good.
+    next:
+      - run_eval
+  run_eval:
+    progress:
+      build: complete
+      test: in_progress
+      observe: available
+      ship: available
+      improve: in_progress
+    recommended_action: run_eval
+    fallback_action: open_evals
+    requires_write: true
+    copy:
+      eyebrow: Quality run
+      title: Run a quality check
+      description: Run the check and collect the first result.
+    next:
+      - review_eval_failures
+  review_eval_failures:
+    progress:
+      build: complete
+      test: complete
+      observe: in_progress
+      ship: available
+      improve: available
+    recommended_action: review_eval_failures
+    fallback_action: open_evals
+    requires_write: false
+    copy:
+      eyebrow: Result review
+      title: Review the first result
+      description: Inspect the result and choose whether to fix the source or tune the quality check.
+    next:
+      - eval_next_loop
+  eval_next_loop:
+    progress:
+      build: complete
+      test: complete
+      observe: complete
+      ship: available
+      improve: selected
+    recommended_action: fix_eval_source
+    fallback_action: open_eval_usage
+    requires_write: true
+    copy:
+      eyebrow: Fix or finish
+      title: Fix from the result
+      description: Use the result to fix the source, then rerun.
+    next: []
+  open_sample_project:
+    copy:
+      eyebrow: Sample data
+      title: Open a sample project
+      description: Use a sample project while real data is pending.
+    recommended_action: open_sample_trace
+    next:
+      - review_sample_signal
+  connect_real_data:
+    copy:
+      eyebrow: Real data
+      title: Connect real data
+      description: Move from sample data to one real production trace.
+    recommended_action: create_observe_project
+    next:
+      - waiting_for_first_trace
+
+stage_rules:
+  - stage: feature_disabled
+    when:
+      flag_disabled: onboarding_activation_state_api
+  - stage: workspace_missing
+    when:
+      missing_any:
+        - organization
+        - workspace
+  - stage: choose_goal
+    when:
+      missing: selected_goal
+  - stage: selected_path_unavailable
+    when:
+      all:
+        - context_not_equals:
+            primary_path: observe
+        - not:
+            any:
+              - all:
+                  - context_equals:
+                      primary_path: prompt
+                  - flag_enabled: onboarding_prompt_path
+              - all:
+                  - context_equals:
+                      primary_path: agent
+                  - flag_enabled: onboarding_agent_path
+              - all:
+                  - context_equals:
+                      primary_path: gateway
+                  - flag_enabled: onboarding_gateway_path
+              - all:
+                  - context_equals:
+                      primary_path: evals
+                  - flag_enabled: onboarding_eval_path
+              - all:
+                  - context_equals:
+                      primary_path: voice
+                  - flag_enabled: onboarding_voice_path
+              - all:
+                  - context_equals:
+                      primary_path: sample
+                  - flag_enabled: onboarding_sample_project
+  - stage: connect_real_data
+    when:
+      all:
+        - context_equals:
+            primary_path: sample
+        - signal: sample_signal_viewed
+  - stage: review_sample_signal
+    when:
+      all:
+        - context_equals:
+            primary_path: sample
+        - signal: sample_trace_available
+  - stage: open_sample_project
+    when:
+      context_equals:
+        primary_path: sample
+  - stage: daily_review
+    when:
+      all:
+        - context_equals:
+            primary_path: observe
+        - signal: first_loop_completed
+        - flag_enabled: onboarding_daily_quality_home
+        - signal: useful_daily_signal
+  - stage: activated
+    when:
+      all:
+        - context_equals:
+            primary_path: observe
+        - signal: first_loop_completed
+  - stage: daily_review
+    when:
+      all:
+        - context_equals:
+            primary_path: prompt
+        - signal: prompt_first_loop_completed
+        - flag_enabled: onboarding_daily_quality_home
+  - stage: activated
+    when:
+      all:
+        - context_equals:
+            primary_path: prompt
+        - signal: prompt_first_loop_completed
+  - stage: prompt_next_loop
+    when:
+      all:
+        - context_equals:
+            primary_path: prompt
+        - signal: prompt_comparable_versions_exist
+        - signal: prompt_comparison_completed
+        - signal_not: prompt_next_loop_action_exists
+  - stage: compare_prompt_versions
+    when:
+      all:
+        - context_equals:
+            primary_path: prompt
+        - signal: prompt_comparable_versions_exist
+        - signal_not: prompt_comparison_completed
+  - stage: create_second_prompt_version
+    when:
+      all:
+        - context_equals:
+            primary_path: prompt
+        - signal: prompt_committed_version_exists
+        - signal_not: prompt_comparable_versions_exist
+  - stage: save_prompt_version
+    when:
+      all:
+        - context_equals:
+            primary_path: prompt
+        - signal: prompt_run_exists
+        - signal_not: prompt_committed_version_exists
+  - stage: run_prompt_test
+    when:
+      all:
+        - context_equals:
+            primary_path: prompt
+        - signal: latest_prompt_id
+        - signal_not: prompt_run_exists
+  - stage: start_prompt
+    when:
+      context_equals:
+        primary_path: prompt
+  - stage: daily_review
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_first_loop_completed
+        - flag_enabled: onboarding_daily_quality_home
+  - stage: activated
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_first_loop_completed
+  - stage: agent_create_eval
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_has_review
+        - signal_not: agent_has_eval_coverage
+        - signal: agent_multiple_scenarios
+  - stage: save_agent_eval
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_has_review
+        - signal_not: agent_has_eval_coverage
+  - stage: review_agent_trace
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_has_run
+        - signal_not: agent_has_review
+  - stage: run_agent_scenario
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_has_agent
+        - signal: agent_has_step
+        - signal_not: agent_has_run
+  - stage: add_agent_node
+    when:
+      all:
+        - context_equals:
+            primary_path: agent
+        - signal: agent_has_agent
+        - signal_not: agent_has_step
+        - signal_not: agent_has_run
+  - stage: create_agent
+    when:
+      context_equals:
+        primary_path: agent
+  - stage: daily_review
+    when:
+      all:
+        - context_equals:
+            primary_path: gateway
+        - signal: gateway_first_loop_completed
+        - flag_enabled: onboarding_daily_quality_home
+  - stage: activated
+    when:
+      all:
+        - context_equals:
+            primary_path: gateway
+        - signal: gateway_first_loop_completed
+  - stage: fix_gateway_failure
+    when:
+      all:
+        - context_equals:
+            primary_path: gateway
+        - signal: gateway_has_request
+        - signal: gateway_request_is_error
+        - signal_not: gateway_has_review
+  - stage: fix_gateway_failure
+    when:
+      all:
+        - context_equals:
+            primary_path: gateway
+        - signal: gateway_request_is_error
+        - signal_not: gateway_has_failure_repair
+        - signal_not: gateway_has_policy
+  - stage: add_gateway_policy
+    when:
+      all:
+        - context_equals:
+            primary_path: gateway
+        - signal: gateway_has_review
+        - signal_not: gateway_has_policy
+  - stage: review_gateway_log
+    when:
+      all:
+        - context_equals:
+            primary_path: gateway
+        - signal: gateway_has_request
+        - signal_not: gateway_has_review
+  - stage: run_gateway_request
+    when:
+      all:
+        - context_equals:
+            primary_path: gateway
+        - signal: gateway_has_key
+        - signal_not: gateway_has_request
+  - stage: create_gateway_key
+    when:
+      all:
+        - context_equals:
+            primary_path: gateway
+        - signal: gateway_has_provider
+        - signal_not: gateway_has_key
+  - stage: configure_gateway_provider
+    when:
+      context_equals:
+        primary_path: gateway
+  - stage: eval_next_loop
+    when:
+      all:
+        - context_equals:
+            primary_path: evals
+        - signal: eval_has_review
+        - signal: eval_has_failures
+        - signal_not: eval_has_failure_action
+  - stage: daily_review
+    when:
+      all:
+        - context_equals:
+            primary_path: evals
+        - signal: eval_first_loop_completed
+        - flag_enabled: onboarding_daily_quality_home
+  - stage: activated
+    when:
+      all:
+        - context_equals:
+            primary_path: evals
+        - signal: eval_first_loop_completed
+  - stage: review_eval_failures
+    when:
+      all:
+        - context_equals:
+            primary_path: evals
+        - signal: eval_has_completed_run
+        - signal_not: eval_has_review
+  - stage: run_eval
+    when:
+      all:
+        - context_equals:
+            primary_path: evals
+        - signal: eval_has_scorer
+        - signal_not: eval_has_completed_run
+  - stage: add_eval_scorer
+    when:
+      all:
+        - context_equals:
+            primary_path: evals
+        - signal: eval_has_source
+        - signal_not: eval_has_scorer
+  - stage: create_eval_dataset
+    when:
+      context_equals:
+        primary_path: evals
+  - stage: daily_review
+    when:
+      all:
+        - context_equals:
+            primary_path: voice
+        - signal: voice_first_loop_completed
+        - flag_enabled: onboarding_daily_quality_home
+  - stage: activated
+    when:
+      all:
+        - context_equals:
+            primary_path: voice
+        - signal: voice_first_loop_completed
+  - stage: run_voice_test_call
+    when:
+      all:
+        - context_equals:
+            primary_path: voice
+        - signal: voice_call_failed
+        - signal: voice_has_review
+        - signal: voice_has_success_criteria
+  - stage: add_voice_success_criteria
+    when:
+      all:
+        - context_equals:
+            primary_path: voice
+        - signal: voice_has_review
+        - signal_not: voice_has_success_criteria
+  - stage: review_voice_call
+    when:
+      all:
+        - context_equals:
+            primary_path: voice
+        - signal: voice_has_call
+        - signal_not: voice_has_review
+  - stage: run_voice_test_call
+    when:
+      all:
+        - context_equals:
+            primary_path: voice
+        - signal: voice_has_agent
+        - signal_not: voice_has_completed_call
+  - stage: create_voice_agent
+    when:
+      context_equals:
+        primary_path: voice
+  - stage: connect_observability
+    when:
+      signal_not: observe_project_exists
+  - stage: waiting_for_first_trace_sample_available
+    when:
+      all:
+        - signal: observe_project_exists
+        - signal_not: trace_exists
+        - flag_enabled: onboarding_sample_project
+  - stage: waiting_for_first_trace
+    when:
+      all:
+        - signal: observe_project_exists
+        - signal_not: trace_exists
+  - stage: review_first_trace
+    when:
+      all:
+        - signal: trace_exists
+        - signal_not: trace_reviewed
+  - stage: create_trace_evaluator
+    when:
+      all:
+        - signal: trace_reviewed
+        - not:
+            any:
+              - signal: evaluator_exists
+              - signal: dashboard_exists
+              - signal: alert_exists
+              - signal: saved_view_exists
+  - stage: activated
+    when:
+      always: true
+
+activation_events:
+  names:
+    - onboarding_transition_viewed
+    - onboarding_home_viewed
+    - onboarding_goal_selected
+    - onboarding_goal_changed
+    - onboarding_recommended_action_viewed
+    - onboarding_recommended_action_clicked
+    - onboarding_path_card_clicked
+    - onboarding_blocked_state_viewed
+    - onboarding_diagnostics_opened
+    - onboarding_sample_project_opened
+    - onboarding_fallback_action_clicked
+    - sample_trace_available
+    - sample_signal_viewed
+    - sample_to_real_setup_clicked
+    - first_quality_loop_completed
+    - daily_quality_home_viewed
+    - daily_quality_top_signal_shown
+    - daily_quality_top_change_reviewed
+    - daily_quality_item_reviewed
+    - daily_quality_action_created
+    - daily_quality_action_opened
+    - daily_quality_action_assigned
+    - daily_quality_action_completed
+    - daily_quality_action_dismissed
+    - daily_quality_no_signal_viewed
+    - daily_quality_empty_state_viewed
+    - daily_quality_digest_destination_opened
+    - daily_quality_route_fallback_used
+    - weekly_quality_review_opened
+    - weekly_quality_action_assigned
+    - weekly_quality_action_completed
+    - weekly_quality_review_completed
+    - weekly_quality_digest_sent
+    - weekly_quality_digest_suppressed
+    - lifecycle_email_send_queued
+    - lifecycle_email_sent
+    - lifecycle_email_send_failed
+    - lifecycle_email_send_suppressed
+    - lifecycle_email_clicked
+    - lifecycle_email_unsubscribed
+    - lifecycle_email_snoozed
+    - lifecycle_email_completed
+    - reactivation_reason_clicked
+    - observe_project_created
+    - onboarding_observe_package_selected
+    - onboarding_observe_route_focus_viewed
+    - trace_received
+    - trace_reviewed
+    - trace_detail_opened
+    - prompt_created
+    - prompt_test_input_added
+    - prompt_test_run_completed
+    - prompt_version_created
+    - prompt_comparable_version_created
+    - prompt_comparison_completed
+    - dataset_example_added
+    - eval_dataset_created
+    - eval_scorer_created
+    - eval_run_started
+    - eval_run_completed
+    - eval_failures_reviewed
+    - eval_failure_action_created
+    - eval_group_created
+    - onboarding_eval_source_selected
+    - onboarding_eval_route_focus_viewed
+    - onboarding_eval_run_clicked
+    - onboarding_eval_failure_detail_opened
+    - onboarding_eval_source_fix_cta_clicked
+    - onboarding_eval_source_fix_route_viewed
+    - onboarding_eval_source_fix_rerun_clicked
+    - onboarding_eval_scorer_edit_cta_clicked
+    - onboarding_eval_fix_rerun_completed
+    - onboarding_eval_fix_rerun_reviewed
+    - onboarding_eval_sample_viewed
+    - voice_agent_created
+    - voice_scenario_created
+    - voice_test_call_started
+    - voice_test_call_completed
+    - voice_call_reviewed
+    - voice_success_criteria_added
+    - voice_call_monitor_opened
+    - onboarding_voice_route_focus_viewed
+    - onboarding_voice_call_detail_opened
+    - onboarding_voice_success_criteria_cta_clicked
+    - onboarding_voice_sample_viewed
+    - prompt_version_promoted
+    - agent_created
+    - agent_node_added
+    - agent_scenario_created
+    - agent_prototype_run_completed
+    - agent_trace_reviewed
+    - agent_scenario_saved_as_eval
+    - agent_eval_created
+    - agent_live_trace_received
+    - gateway_provider_added
+    - gateway_key_created
+    - gateway_test_request_sent
+    - gateway_request_seen
+    - gateway_log_opened
+    - gateway_failure_resolved
+    - gateway_policy_created
+    - gateway_dashboard_created
+    - team_member_invited
+    - trace_failure_detected
+  aliases:
+    goal_selected: onboarding_goal_selected
+    goal_changed: onboarding_goal_changed
+    sample_project_opened: onboarding_sample_project_opened
+    sample_trace_detail_opened: sample_signal_viewed
+    quality_dashboard_viewed: weekly_quality_review_opened
+    trace_ingested: trace_received
+    trace_detail_opened: trace_reviewed
+    prompt_test_run: prompt_test_run_completed
+    SDK_prompt_run_template: prompt_test_run_completed
+    SDK_prompt_commit: prompt_version_created
+    agent_simulation_run: agent_prototype_run_completed
+    agent_tool_call_reviewed: agent_trace_reviewed
+    agent_scenario_saved: agent_scenario_saved_as_eval
+    run_test_executed: agent_prototype_run_completed
+    graph_execution_completed: agent_prototype_run_completed
+    gateway_request_succeeded: gateway_request_seen
+    gateway_request_reviewed: gateway_log_opened
+    evaluation_created: eval_scorer_created
+    evaluation_run_completed: eval_run_completed
+    eval_result_reviewed: eval_failures_reviewed
+    voice_call_completed: voice_test_call_completed
+    voice_call_detail_opened: voice_call_reviewed
+    simulation_voice_call_completed: voice_test_call_completed

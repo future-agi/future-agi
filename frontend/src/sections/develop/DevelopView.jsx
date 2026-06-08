@@ -1,12 +1,12 @@
 /* eslint-disable react/prop-types */
 import { Box, Button, Divider, Tooltip, Typography } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import { ShowComponent } from "src/components/show";
@@ -26,6 +26,12 @@ import DeleteDataset from "./DeleteDataset/DeleteDataset";
 import DerivedDatasetsDrawer from "./DerivedDatasetsDrawer/DerivedDatasetsDrawer";
 import BaseColumnDrawer from "../develop-detail/BaseColumnsDrawer";
 import { useDatasetsList } from "./hooks/useDatasetsList";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  buildEvalDatasetCreatedPayload,
+  buildEvalScorerSourceHref,
+  evalSetupQuickStartAttributionFromSearch,
+} from "../evals/components/evalCreateOnboarding";
 
 // ── Derived datasets cell ──
 const DerivedDatasetsCell = ({ datasetId, datasetName, count }) => {
@@ -178,7 +184,9 @@ const SORT_FIELD_MAP = {
 
 const DevelopView = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const { role } = useAuthContext();
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -191,6 +199,18 @@ const DevelopView = () => {
   const [openDuplicate, setOpenDuplicate] = useState(false);
   const [openDelete, setOpenDelete] = useState(false);
   const [baseColumnDrawerVisible, setBaseColumnDrawerVisible] = useState(false);
+  const openedOnboardingDrawerRef = useRef(false);
+  const onboardingDatasetParams = useMemo(
+    () => new URLSearchParams(location.search),
+    [location.search],
+  );
+  const isEvalDatasetOnboarding =
+    onboardingDatasetParams.get("source") === "onboarding" &&
+    onboardingDatasetParams.get("action") === "create-eval-dataset";
+  const onboardingQuickStartAttribution = useMemo(
+    () => evalSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
 
@@ -207,6 +227,36 @@ const DevelopView = () => {
 
   const items = data?.items || [];
   const total = data?.total || 0;
+
+  useEffect(() => {
+    if (!isEvalDatasetOnboarding || openedOnboardingDrawerRef.current) return;
+    openedOnboardingDrawerRef.current = true;
+    setAddDatasetDrawerOpen(true);
+  }, [isEvalDatasetOnboarding]);
+
+  const handleOnboardingDatasetCreated = useCallback(
+    ({ datasetId, sourceMethod } = {}) => {
+      if (!isEvalDatasetOnboarding || !datasetId) return null;
+
+      recordActivationEvent?.(
+        buildEvalDatasetCreatedPayload({
+          datasetId,
+          quickStartAttribution: onboardingQuickStartAttribution,
+          sourceMethod,
+        }),
+      );
+
+      return buildEvalScorerSourceHref({
+        quickStartAttribution: onboardingQuickStartAttribution,
+        sourceId: datasetId,
+      });
+    },
+    [
+      isEvalDatasetOnboarding,
+      onboardingQuickStartAttribution,
+      recordActivationEvent,
+    ],
+  );
 
   // Selected rows
   const selectedItems = useMemo(() => {
@@ -359,6 +409,12 @@ const DevelopView = () => {
         <AddDatasetDrawer
           open={addDatasetDrawerOpen}
           onClose={() => setAddDatasetDrawerOpen(false)}
+          onDatasetCreated={
+            isEvalDatasetOnboarding ? handleOnboardingDatasetCreated : undefined
+          }
+          onboardingContext={
+            isEvalDatasetOnboarding ? "eval_source" : undefined
+          }
           refreshGrid={refreshGrid}
         />
       </Box>
@@ -470,6 +526,10 @@ const DevelopView = () => {
       <AddDatasetDrawer
         open={addDatasetDrawerOpen}
         onClose={() => setAddDatasetDrawerOpen(false)}
+        onDatasetCreated={
+          isEvalDatasetOnboarding ? handleOnboardingDatasetCreated : undefined
+        }
+        onboardingContext={isEvalDatasetOnboarding ? "eval_source" : undefined}
         refreshGrid={refreshGrid}
       />
       <DuplicateDataset

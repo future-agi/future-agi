@@ -235,6 +235,21 @@ class UserAlertMonitorDuplicateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
 
 
+class UserAlertBulkMuteRequestSerializer(StrictInputSerializer):
+    ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    is_mute = serializers.BooleanField(required=False, default=True)
+    select_all = serializers.BooleanField(required=False, default=False)
+    exclude_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+
 class UserAlertMonitorDuplicateResultSerializer(serializers.Serializer):
     id = serializers.UUIDField()
     message = serializers.CharField()
@@ -324,6 +339,8 @@ class FetchGraphMetricConfigField(serializers.Field):
 class FetchGraphSerializer(StrictInputSerializer):
     interval = serializers.CharField()
     filters = filter_list_field(required=False, default=list)
-    property = serializers.CharField(required=False, allow_blank=True, default="average")
+    property = serializers.CharField(
+        required=False, allow_blank=True, default="average"
+    )
     req_data_config = FetchGraphMetricConfigField()
     project_id = serializers.UUIDField()

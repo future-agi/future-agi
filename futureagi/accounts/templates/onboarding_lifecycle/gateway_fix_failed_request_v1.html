@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Find out why your request failed{% endblock %}
+{% block heading %}Open the failed request and fix the cause{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, your first gateway request in {{ workspace_name }} did not succeed, and the full log is waiting.</p>
+  <p style="margin:0;">Open it to see the status, provider response, and where the call broke down. The details point you to the fix, whether that is a credential, a model setting, or a routing change.</p>
+{% endblock %}

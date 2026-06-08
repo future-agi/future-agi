@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
@@ -25,10 +25,13 @@ import {
   Card,
   CardContent,
 } from "@mui/material";
+import { useNavigate } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import useRequestDetail from "./hooks/useRequestDetail";
 import FeedbackWidget from "../guardrails/FeedbackWidget";
 import { formatCost } from "../utils/formatters";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import { buildGatewayPolicyConfigHref } from "../gatewayOnboardingEvents";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -63,6 +66,56 @@ function formatFullTimestamp(iso) {
     return "N/A";
   }
 }
+
+function isGatewayLogFailure(log) {
+  const statusCode = Number(log?.status_code);
+  return Boolean(
+    log?.is_error || (Number.isFinite(statusCode) && statusCode >= 400),
+  );
+}
+
+function gatewayPolicyHandoffCopy(log, onboardingMode) {
+  if (log?.guardrail_triggered) {
+    return {
+      currentStep: "Control",
+      description:
+        "This request already hit a guardrail. Tune the rule first, then use fallback or budget controls if traffic needs more recovery or cost protection.",
+      primaryType: "guardrail",
+      title: "Turn the reviewed request into a guardrail",
+    };
+  }
+  if (onboardingMode === "fix-failure" || isGatewayLogFailure(log)) {
+    return {
+      currentStep: "Fix",
+      description:
+        "Use the failed request evidence to add recovery behavior before sending more traffic through the gateway.",
+      primaryType: "fallback",
+      title: "Turn the failed request into recovery",
+    };
+  }
+  return {
+    currentStep: "Control",
+    description:
+      "The first request is visible. Add one control so future gateway traffic has a clear safety, reliability, or cost boundary.",
+    primaryType: "budget",
+    title: "Add one control before scaling traffic",
+  };
+}
+
+const GATEWAY_POLICY_ACTIONS = {
+  budget: {
+    icon: "mdi:currency-usd",
+    label: "Set budget",
+  },
+  fallback: {
+    icon: "mdi:swap-horizontal",
+    label: "Configure fallback",
+  },
+  guardrail: {
+    icon: "mdi:shield-outline",
+    label: "Tune guardrail",
+  },
+};
 
 // ---------------------------------------------------------------------------
 // JSON viewer sub-component
@@ -466,8 +519,17 @@ function GuardrailsTab({ log }) {
 // Main component
 // ---------------------------------------------------------------------------
 
-const RequestDetailDrawer = ({ logId, open, onClose }) => {
+const RequestDetailDrawer = ({
+  logId,
+  open,
+  onClose,
+  onboardingMode,
+  quickStartAttribution,
+}) => {
+  const navigate = useNavigate();
   const { data, isLoading, error, refetch } = useRequestDetail(logId);
+  const recordActivationEvent = useRecordActivationEvent();
+  const recordedLogIds = useRef(new Set());
   const [activeTab, setActiveTab] = useState(0);
 
   // Reset tab when a new log is selected
@@ -476,6 +538,73 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
   }, [logId]);
 
   const log = data?.result ?? data ?? null;
+  const policyRequestId = log?.request_id || log?.id || logId;
+  const showPolicyHandoff =
+    Boolean(log) && ["review-request", "fix-failure"].includes(onboardingMode);
+  const policyHandoff = showPolicyHandoff
+    ? gatewayPolicyHandoffCopy(log, onboardingMode)
+    : null;
+  const policyActions = policyHandoff ? [policyHandoff.primaryType] : [];
+  const isFailureRepair =
+    onboardingMode === "fix-failure" || isGatewayLogFailure(log);
+
+  const handleOpenGatewayPolicy = useCallback(
+    (policyType) => {
+      navigate(
+        buildGatewayPolicyConfigHref({
+          policyType,
+          isFailureRepair,
+          quickStartAttribution,
+          requestId: policyRequestId,
+          tourAnchor: "gateway_policy_button",
+        }),
+      );
+    },
+    [isFailureRepair, navigate, policyRequestId, quickStartAttribution],
+  );
+
+  useEffect(() => {
+    if (!open || !log?.id) return;
+    if (!["review-request", "fix-failure"].includes(onboardingMode)) return;
+    const key = `gateway_log_opened:${log.id}`;
+    if (recordedLogIds.current.has(key)) return;
+    recordedLogIds.current.add(key);
+
+    const metadata = {
+      request_log_id: String(log.id),
+      request_id: log.request_id || null,
+      status_code: log.status_code ?? null,
+      is_error: Boolean(
+        log.is_error || (log.status_code && log.status_code >= 400),
+      ),
+      provider: log.provider || null,
+      model: log.model || null,
+      resolved_model: log.resolved_model || null,
+      latency_ms: log.latency_ms ?? null,
+      cost: log.cost == null ? null : String(log.cost),
+      cache_hit: Boolean(log.cache_hit),
+      fallback_used: Boolean(log.fallback_used),
+      guardrail_triggered: Boolean(log.guardrail_triggered),
+    };
+    const logMetadata =
+      log.metadata && typeof log.metadata === "object" ? log.metadata : {};
+
+    recordActivationEvent.mutate({
+      eventName: "gateway_log_opened",
+      primaryPath: "gateway",
+      stage:
+        onboardingMode === "fix-failure"
+          ? "fix_gateway_failure"
+          : "review_gateway_log",
+      source: "gateway_request_log_drawer",
+      artifactType: "request_log",
+      artifactId: String(log.id),
+      metadata,
+      idempotencyKey: key,
+      isSample: Boolean(logMetadata.is_sample || logMetadata.sample),
+      ...quickStartAttribution,
+    });
+  }, [log, onboardingMode, open, quickStartAttribution, recordActivationEvent]);
 
   // Build the dynamic tab list -- conditionally include Guardrails
   const showGuardrails = log?.guardrail_triggered;
@@ -613,6 +742,65 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
         </Stack>
       ) : null}
 
+      {showPolicyHandoff && (
+        <Box
+          data-testid="gateway-policy-handoff"
+          sx={{
+            mx: 2,
+            mt: 2,
+            p: 1.5,
+            border: "1px solid",
+            borderColor: "primary.main",
+            borderRadius: 1,
+            bgcolor: "background.paper",
+          }}
+        >
+          <Stack spacing={1.25}>
+            <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+              <Chip size="small" label="Gateway setup" />
+              <Chip
+                size="small"
+                variant="outlined"
+                label={policyHandoff.currentStep}
+              />
+              <Chip
+                size="small"
+                color="success"
+                variant="outlined"
+                label="Log reviewed"
+              />
+            </Stack>
+            <Box>
+              <Typography variant="subtitle2">{policyHandoff.title}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {policyHandoff.description}
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+              {policyActions.map((type, index) => (
+                <Button
+                  key={type}
+                  data-tour-anchor={
+                    index === 0 ? "gateway_policy_button" : undefined
+                  }
+                  size="small"
+                  variant={index === 0 ? "contained" : "outlined"}
+                  onClick={() => handleOpenGatewayPolicy(type)}
+                  startIcon={
+                    <Iconify
+                      icon={GATEWAY_POLICY_ACTIONS[type].icon}
+                      width={18}
+                    />
+                  }
+                >
+                  {GATEWAY_POLICY_ACTIONS[type].label}
+                </Button>
+              ))}
+            </Stack>
+          </Stack>
+        </Box>
+      )}
+
       {/* ---- Error state ---- */}
       {error && (
         <Box p={2}>
@@ -674,6 +862,8 @@ RequestDetailDrawer.propTypes = {
   logId: PropTypes.string,
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
+  onboardingMode: PropTypes.string,
+  quickStartAttribution: PropTypes.object,
 };
 
 export default RequestDetailDrawer;

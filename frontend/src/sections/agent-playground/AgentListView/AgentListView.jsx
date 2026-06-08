@@ -9,7 +9,7 @@ import {
 import { LoadingButton } from "@mui/lab";
 import React, { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { format } from "date-fns";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import SvgColor from "src/components/svg-color";
@@ -19,10 +19,17 @@ import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { useAgentPlaygroundStoreShallow } from "../store";
 import DeleteAgentsDialog from "../components/DeleteAgentsDialog";
+import AgentOnboardingFocusPanel from "../components/AgentOnboardingFocusPanel";
 import {
   useCreateGraph,
   useDeleteGraphs,
 } from "../../../api/agent-playground/agent-playground";
+import { useSearchParams } from "react-router-dom";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  agentSetupQuickStartAttributionFromSearch,
+  buildAgentBuilderHref,
+} from "../agentOnboardingEvents";
 
 const PAGE_SIZE_DEFAULT = 25;
 
@@ -45,7 +52,10 @@ const mapGraph = (graph) => {
 
 export default function AgentListView() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const queryClient = useQueryClient();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const { setCurrentAgent } = useAgentPlaygroundStoreShallow((s) => ({
     setCurrentAgent: s.setCurrentAgent,
   }));
@@ -105,13 +115,40 @@ export default function AgentListView() {
     deleteMutation.mutate({ ids });
   };
 
+  const showCreateFocus = searchParams.get("onboarding") === "create";
+  const tourAnchor = searchParams.get("tour_anchor");
+  const quickStartAttribution = useMemo(
+    () => agentSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
   const { mutate: createAgent, isPending: isCreatingAgent } = useCreateGraph({
     navigate,
+    onboardingMode: showCreateFocus ? "run-scenario" : null,
+    quickStartAttribution,
+    recordActivationEvent,
     setCurrentAgent,
   });
 
+  const handleOpenAgentForOnboarding = useCallback(
+    (row) => {
+      if (!row?.id) return;
+      navigate(
+        buildAgentBuilderHref({
+          agentId: row.id,
+          quickStartAttribution,
+          versionId: row.activeVersionId,
+        }),
+      );
+    },
+    [navigate, quickStartAttribution],
+  );
+
   const handleRowClick = useCallback(
     (row) => {
+      if (showCreateFocus) {
+        handleOpenAgentForOnboarding(row);
+        return;
+      }
       if (!row?.activeVersionId) {
         navigate(`/dashboard/agents/playground/${row.id}/build`);
       } else {
@@ -120,8 +157,32 @@ export default function AgentListView() {
         );
       }
     },
-    [navigate],
+    [handleOpenAgentForOnboarding, navigate, showCreateFocus],
   );
+
+  const onboardingPrimaryAction = useMemo(() => {
+    if (items[0]) {
+      return {
+        label: "Open first agent",
+        onClick: () => handleOpenAgentForOnboarding(items[0]),
+      };
+    }
+
+    return {
+      label: "Create Agent",
+      onClick: () => createAgent(),
+      disabled: isCreatingAgent,
+    };
+  }, [createAgent, handleOpenAgentForOnboarding, isCreatingAgent, items]);
+
+  const onboardingSecondaryAction = useMemo(() => {
+    if (!items[0]) return null;
+    return {
+      label: "Create Agent",
+      onClick: () => createAgent(),
+      disabled: isCreatingAgent,
+    };
+  }, [createAgent, isCreatingAgent, items]);
 
   const columns = useMemo(
     () => [
@@ -302,23 +363,45 @@ export default function AgentListView() {
             other
           </Typography>
         </Box>
-        <Button
-          variant="outlined"
-          size="small"
-          sx={{ borderRadius: "4px", height: 30, px: "4px", minWidth: 105 }}
-          component="a"
-          href="https://docs.futureagi.com/docs/agent-playground"
-          target="_blank"
-        >
-          <SvgColor
-            src="/assets/icons/agent/docs.svg"
-            sx={{ height: 16, width: 16, mr: 1 }}
-          />
-          <Typography typography="s2" fontWeight="fontWeightMedium">
-            View Docs
-          </Typography>
-        </Button>
+        {!showCreateFocus ? (
+          <Button
+            variant="outlined"
+            size="small"
+            sx={{ borderRadius: "4px", height: 30, px: "4px", minWidth: 105 }}
+            component="a"
+            href="https://docs.futureagi.com/docs/agent-playground"
+            target="_blank"
+          >
+            <SvgColor
+              src="/assets/icons/agent/docs.svg"
+              sx={{ height: 16, width: 16, mr: 1 }}
+            />
+            <Typography typography="s2" fontWeight="fontWeightMedium">
+              View Docs
+            </Typography>
+          </Button>
+        ) : null}
       </Box>
+
+      <AgentOnboardingFocusPanel
+        currentStep="Agent"
+        description={
+          items[0]
+            ? "Open an existing agent workflow, then run it once from the builder."
+            : "Create one agent workflow, then run it once from the builder."
+        }
+        hidden={!showCreateFocus}
+        primaryAction={onboardingPrimaryAction}
+        secondaryAction={onboardingSecondaryAction}
+        singleActionFocus={showCreateFocus}
+        steps={[
+          { label: "Agent", complete: items.length > 0 },
+          { label: "Scenario", complete: false },
+          { label: "Review", complete: false },
+        ]}
+        title={items[0] ? "Open an agent to run" : "Create the first agent"}
+        tourAnchor={tourAnchor}
+      />
 
       {/* Search + bulk actions / create */}
       <Box
@@ -399,7 +482,7 @@ export default function AgentListView() {
               </Typography>
             </Button>
           </Box>
-        ) : (
+        ) : showCreateFocus ? null : (
           <Box sx={{ display: "flex", gap: 2, alignItems: "center" }}>
             <Button
               variant="outlined"

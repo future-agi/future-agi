@@ -23,6 +23,11 @@ const CAMEL_TO_SNAKE = {
   userId: "user_id",
   sessionId: "session_id",
   apiKeyId: "api_key_id",
+  requestId: "request_id",
+  journeyStep: "journey_step",
+  tourAnchor: "tour_anchor",
+  campaignKey: "campaign_key",
+  targetEvent: "target_event",
 };
 
 // Keys that are NOT content filters (excluded from active filter count).
@@ -32,6 +37,15 @@ const NON_CONTENT_KEYS = new Set([
   "pageSize",
   "sort",
   "search",
+  "onboarding",
+  "source",
+  "journeyStep",
+  "tourAnchor",
+  "campaignKey",
+  "quick_start_goal",
+  "quick_start_id",
+  "quick_start_primary_path",
+  "targetEvent",
 ]);
 
 // Build the reverse map once at module load time.

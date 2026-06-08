@@ -1,7 +1,18 @@
 import React from "react";
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, userEvent } from "src/utils/test-utils";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
 import RequestDetailDrawer from "./RequestDetailDrawer";
+
+const mockRecordActivationEventMutate = vi.hoisted(() => vi.fn());
+const mockNavigate = vi.hoisted(() => vi.fn());
+
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+  };
+});
 
 vi.mock("./hooks/useRequestDetail", () => ({
   default: () => ({
@@ -47,7 +58,17 @@ vi.mock("../guardrails/FeedbackWidget", () => ({
   default: () => <div>Feedback widget</div>,
 }));
 
+vi.mock("src/sections/onboarding-home/hooks/useRecordActivationEvent", () => ({
+  useRecordActivationEvent: () => ({
+    mutate: (...args) => mockRecordActivationEventMutate(...args),
+  }),
+}));
+
 describe("RequestDetailDrawer", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders canonical snake_case details and exposes guardrail tab", async () => {
     render(
       <RequestDetailDrawer open logId="log-detail-id" onClose={vi.fn()} />,
@@ -67,5 +88,94 @@ describe("RequestDetailDrawer", () => {
     expect(screen.getByText(/warned/)).toBeInTheDocument();
     expect(screen.getByText("pii")).toBeInTheDocument();
     expect(screen.getByText("Latency: 12ms")).toBeInTheDocument();
+  });
+
+  it("records gateway log review with setup quick-start attribution", async () => {
+    render(
+      <RequestDetailDrawer
+        open
+        logId="log-detail-id"
+        onboardingMode="review-request"
+        onClose={vi.fn()}
+        quickStartAttribution={{
+          quick_start_goal: "control_model_traffic",
+          quick_start_id: "gateway",
+          quick_start_primary_path: "gateway",
+        }}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(mockRecordActivationEventMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventName: "gateway_log_opened",
+          primaryPath: "gateway",
+          stage: "review_gateway_log",
+          quick_start_goal: "control_model_traffic",
+          quick_start_id: "gateway",
+          quick_start_primary_path: "gateway",
+        }),
+      ),
+    );
+  });
+
+  it("routes reviewed gateway logs into policy controls with attribution", async () => {
+    render(
+      <RequestDetailDrawer
+        open
+        logId="log-detail-id"
+        onboardingMode="review-request"
+        onClose={vi.fn()}
+        quickStartAttribution={{
+          quick_start_goal: "control_model_traffic",
+          quick_start_id: "gateway",
+          quick_start_primary_path: "gateway",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("gateway-policy-handoff")).toBeVisible();
+    expect(screen.getByText("Gateway setup")).toBeVisible();
+    expect(
+      screen.getByText("Turn the reviewed request into a guardrail"),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /configure fallback/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /set budget/i }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /tune guardrail/i }),
+    );
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "/dashboard/gateway/guardrails/configuration?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-detail-1234567890&tour_anchor=gateway_policy_button&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
+    );
+  });
+
+  it("preserves failed-request repair context when routing to policy controls", async () => {
+    render(
+      <RequestDetailDrawer
+        open
+        logId="log-detail-id"
+        onboardingMode="fix-failure"
+        onClose={vi.fn()}
+        quickStartAttribution={{
+          quick_start_goal: "control_model_traffic",
+          quick_start_id: "gateway",
+          quick_start_primary_path: "gateway",
+        }}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: /tune guardrail/i }),
+    );
+
+    expect(mockNavigate).toHaveBeenCalledWith(
+      "/dashboard/gateway/guardrails/configuration?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-detail-1234567890&repair_request=1&tour_anchor=gateway_policy_button&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
+    );
   });
 });

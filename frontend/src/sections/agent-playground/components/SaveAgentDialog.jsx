@@ -70,6 +70,22 @@ export default function SaveAgentDialog() {
   }, [currentAgent, reset]);
 
   const queryClient = useQueryClient();
+  const dialogCopy = pendingRunAfterSave
+    ? {
+        title: "Save and run",
+        subTitle:
+          "This saves the starter prompt as the first version, then runs one scenario.",
+        action: "Save and run",
+        versionLabel: "Version name",
+        notesLabel: "Notes (optional)",
+      }
+    : {
+        title: "Save agent",
+        subTitle: "Save the current agent version.",
+        action: "Save",
+        versionLabel: "Version name",
+        notesLabel: "Notes (optional)",
+      };
 
   const { mutate: saveAgent, isPending: isSavingAgent } = useSaveDraftVersion({
     onSuccess: (data) => {
@@ -172,9 +188,9 @@ export default function SaveAgentDialog() {
         setPendingRunAfterSave(false);
         setOpenSaveAgentDialog(false);
       }}
-      title="Save Agent"
-      subTitle="Save the agent with commit"
-      actionBtnTitle={pendingRunAfterSave ? "Save & Run" : "Save"}
+      title={dialogCopy.title}
+      subTitle={dialogCopy.subTitle}
+      actionBtnTitle={dialogCopy.action}
       actionBtnProps={{
         size: "small",
         onClick: handleSaveAgent,
@@ -194,7 +210,7 @@ export default function SaveAgentDialog() {
       <form noValidate onSubmit={handleSubmit(handleSaveAgent)}>
         <Stack direction="column" gap={2}>
           <FormTextFieldV2
-            label="Version"
+            label={dialogCopy.versionLabel}
             fieldName="versionName"
             control={control}
             size="small"
@@ -203,7 +219,7 @@ export default function SaveAgentDialog() {
             disabled
           />
           <FormTextFieldV2
-            label="Commit Message"
+            label={dialogCopy.notesLabel}
             fieldName="commitMessage"
             control={control}
             size="small"

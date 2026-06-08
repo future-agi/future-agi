@@ -182,7 +182,6 @@ const pathToEventMapper = {
   "/auth/jwt/login": Events.signInPageVisited,
   "/auth/jwt/register": Events.signUpPageVisited,
   "/auth/jwt/forget-password": Events.forgotPassPageVisited,
-  "/auth/jwt/setup-org": Events.setupOrgPageVisited,
   "/dashboard/prompt": Events.promptManagementPageVisited,
   "/dashboard/develop": Events.buildPageVisited,
   "/dashboard/prompt/add": Events.promptFromScratchVisited,

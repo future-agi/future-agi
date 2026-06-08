@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Save version 1 before you change the prompt{% endblock %}
+{% block heading %}Lock in version 1 as your baseline{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, your prompt has produced a result in {{ workspace_name }}, but there is no saved baseline yet.</p>
+  <p style="margin:0;">Save it as version 1 now. With a baseline in place, every later edit can be compared on the same input so you can prove whether quality, latency, or cost actually improved.</p>
+{% endblock %}

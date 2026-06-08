@@ -201,6 +201,30 @@ FEATURE_FLAGS = {
     "enable_monitoring": False,
 }
 
+if os.environ.get("ONBOARDING_TEST_FLAGS_ENABLED", "").lower() in {
+    "1",
+    "true",
+    "yes",
+}:
+    ONBOARDING_FEATURE_FLAGS = {
+        "activation_state_debug_enabled": False,
+        "daily_quality_home_enabled": False,
+        "onboarding_activation_state_api": True,
+        "onboarding_daily_quality_home": False,
+        "onboarding_eval_path": True,
+        "onboarding_eval_route_modes": True,
+        "onboarding_goal_picker": True,
+        "onboarding_home_enabled": True,
+        "onboarding_lifecycle_dry_run_enabled": False,
+        "onboarding_lifecycle_email_dry_run": False,
+        "onboarding_lifecycle_send_enabled": False,
+        "onboarding_observe_mvp_enabled": True,
+        "onboarding_observe_route_modes": True,
+        "onboarding_path_cards": True,
+        "onboarding_sample_project": True,
+        "onboarding_sample_project_enabled": True,
+    }
+
 
 def ensure_clickhouse_test_database():
     """Ensure the ClickHouse test database exists"""

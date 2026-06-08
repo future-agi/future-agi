@@ -13,6 +13,11 @@ import {
   TabWrapper,
 } from "src/sections/develop/AddDatasetDrawer/AddDatasetStyle";
 
+const CODE_SECTION_ALIASES = {
+  installationGuide: "installation_guide",
+  projectAddCode: "project_add_code",
+};
+
 const NewExperiment = () => {
   const theme = useTheme();
   const [languageTab, setLanguageTab] = useState("python");
@@ -51,7 +56,9 @@ const NewExperiment = () => {
 
   const getCodeBySection = (section) => {
     const languageKey = languageTab === "python" ? "Python" : "TypeScript";
-    return cleanCode(keysData[section]?.[languageKey]);
+    const sectionData =
+      keysData[section] || keysData[CODE_SECTION_ALIASES[section]];
+    return cleanCode(sectionData?.[languageKey]);
   };
 
   if (!isSuccess || !keysData) return <LinearProgress />;
@@ -124,14 +131,14 @@ const NewExperiment = () => {
         />
       </Box>
 
-      {/* Telemetry Section with its own tab control */}
+      {/* Project registration section with its own tab control */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <InstructionTitle
-          title="Setup Telemetry"
-          description="Register your application to send traces to this project. The code should be added BEFORE any code execution."
+          title="Register project"
+          description="Register your application before the package call so traces are sent to this project."
         />
 
-        {/* Separate tab selector for telemetry */}
+        {/* Separate tab selector for project registration */}
         <TabWrapper sx={tabWrapperStyles}>
           <CustomTabs
             textColor="primary"
@@ -164,11 +171,11 @@ const NewExperiment = () => {
         />
       </Box>
 
-      {/* Instruments Section */}
+      {/* Package setup section */}
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
         <InstructionTitle
-          title="Setup Instrumentation"
-          description="Add tracing instrumentation to give you observability into your application."
+          title="Connect package calls"
+          description="Connect the package that makes AI calls so Future AGI can trace the request."
         />
 
         <ObserveInstruments

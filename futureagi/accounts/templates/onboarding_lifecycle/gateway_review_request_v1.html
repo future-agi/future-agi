@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}See what your gateway captured{% endblock %}
+{% block heading %}Open the log from your first routed request{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, your first request has been routed through the gateway in {{ workspace_name }} and logged.</p>
+  <p style="margin:0;">Open the log to see exactly what the gateway records on every call: status, provider, latency, cost, and routing behavior, the foundation for monitoring real traffic.</p>
+{% endblock %}

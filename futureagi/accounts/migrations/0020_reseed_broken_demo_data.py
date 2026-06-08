@@ -128,8 +128,8 @@ class Migration(migrations.Migration):
         # first. Without these deps a fresh database can apply this migration
         # before them, raising "No installed app with label 'model_hub'" and
         # crash-looping the backend on first boot.
-        ("model_hub", "0100_merge_20260521_0749"),
-        ("tracer", "0077_merge_20260514_1559"),
+        ("model_hub", "0104_merge_20260526_0921"),
+        ("tracer", "0078_canonicalize_persisted_filter_contracts"),
     ]
 
     operations = [

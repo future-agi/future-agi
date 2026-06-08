@@ -1,0 +1,15 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Pick your AI quality review back up{% endblock %}
+{% block heading %}{% if dormant_summary.targeted %}Review your {{ dormant_summary.area_label }}{% else %}Your workspace is set up, here is where to pick back up{% endif %}{% endblock %}
+{% block body %}
+  {% if dormant_summary.targeted %}
+    <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} already has {{ dormant_summary.area_label }} to review from {{ dormant_summary.path_label }}. There is no setup left to redo.</p>
+    {% if dormant_summary.has_value_signal %}
+      <p style="margin:0 0 16px;"><strong>{{ dormant_summary.value_headline }}</strong>{% if dormant_summary.value_summary %}: {{ dormant_summary.value_summary }}{% endif %}</p>
+    {% endif %}
+    <p style="margin:0;">Open Daily Quality to review what changed, choose the next fix, or confirm that this workflow still looks healthy.</p>
+  {% else %}
+    <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} is already past its first quality review, so there is no setup left to redo. It has just been quiet for a while.</p>
+    <p style="margin:0;">Open the quality view to see the item most worth your attention right now, decide what to fix, or confirm that everything still looks healthy before you move on.</p>
+  {% endif %}
+{% endblock %}

@@ -179,6 +179,116 @@ describe("useAddNodeOptimistic", () => {
     });
   });
 
+  it("draft path: keeps blank prompt node creates on the minimal prompt payload", async () => {
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
+    mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    await act(async () => {
+      await result.current.addNode(defaultPayload);
+    });
+
+    const promptTemplate = addNodeApi.mock.calls[0][0].data.prompt_template;
+    expect(promptTemplate).toMatchObject({
+      prompt_template_id: null,
+      prompt_version_id: null,
+    });
+    expect(promptTemplate.messages).toHaveLength(2);
+    expect(promptTemplate).not.toHaveProperty("model");
+    expect(promptTemplate).not.toHaveProperty("model_detail");
+  });
+
+  it("draft path: includes starter prompt config when creating a prompt node", async () => {
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
+    mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+
+    const starterConfig = {
+      outputFormat: "string",
+      templateFormat: "mustache",
+      modelConfig: {
+        model: "gpt-4o-mini",
+        modelDetail: { modelName: "gpt-4o-mini", providers: "openai" },
+        responseFormat: "text",
+        responseSchema: null,
+        toolChoice: "auto",
+        tools: [],
+      },
+      messages: [
+        {
+          id: "system-1",
+          role: "system",
+          content: [{ type: "text", text: "You triage issues." }],
+        },
+        {
+          id: "user-1",
+          role: "user",
+          content: [{ type: "text", text: "A user reports stale pricing." }],
+        },
+      ],
+    };
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    await act(async () => {
+      await result.current.addNode({
+        ...defaultPayload,
+        config: starterConfig,
+      });
+    });
+
+    expect(addNodeApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          prompt_template: expect.objectContaining({
+            messages: starterConfig.messages,
+            model: "gpt-4o-mini",
+            model_detail: starterConfig.modelConfig.modelDetail,
+            output_format: "string",
+            response_format: "text",
+            template_format: "mustache",
+            tool_choice: "auto",
+            tools: [],
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("draft path: waits for the create-node API when requested", async () => {
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
+    mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+
+    let resolveCreateNode;
+    addNodeApi.mockReturnValue(
+      new Promise((resolve) => {
+        resolveCreateNode = resolve;
+      }),
+    );
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    let settled = false;
+    await act(async () => {
+      const addPromise = result.current
+        .addNode({ ...defaultPayload, waitForApi: true })
+        .then(() => {
+          settled = true;
+        });
+
+      await vi.waitFor(() => expect(addNodeApi).toHaveBeenCalled());
+      expect(settled).toBe(false);
+
+      resolveCreateNode({});
+      await addPromise;
+    });
+
+    expect(settled).toBe(true);
+  });
+
   it("draft path: when addOptimisticNode returns null, returns null without calling addNodeApi", async () => {
     mockEnsureDraft.mockResolvedValue("existing-draft");
     mockAddOptimisticNode.mockReturnValue(null);

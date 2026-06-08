@@ -5873,14 +5873,7 @@ class EvalPlayGroundAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
-
         validated_data = request.validated_data
-        gate = turing_oss_gate_for_template(
-            validated_data.get("model"), validated_data.get("template_id")
-        )
-        if gate is not None:
-            return gate
 
         try:
             org = getattr(request, "organization", None) or request.user.organization
@@ -5914,7 +5907,7 @@ class EvalPlayGroundAPIView(APIView):
             _call_id = validated_data.get("call_id")
             if span_context is None and _span_id:
                 try:
-                    # Codex consolidated review P1 (2026-05-26): the legacy ORM
+                    # Consolidated review P1 (2026-05-26): the legacy ORM
                     # path was unscoped, but the eval playground accepts a
                     # caller-supplied span_id and renders its content into a
                     # template — that's a cross-org read surface. We now
@@ -5949,7 +5942,7 @@ class EvalPlayGroundAPIView(APIView):
                     from tracer.models.trace import Trace
                     from tracer.services.clickhouse.v2 import get_reader
 
-                    # Codex P1: scope Trace lookup to org so a caller can't
+                    # Review P1: scope Trace lookup to org so a caller can't
                     # feed another tenant's trace_id into the playground.
                     _t = Trace.objects.filter(
                         id=_trace_id, project__organization=org
@@ -6336,6 +6329,16 @@ class EvalPlayGroundAPIView(APIView):
                 eval_template = _get_accessible_eval_template(template_id, org)
             except EvalTemplate.DoesNotExist:
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
+
+            from tfc.ee_gates import turing_oss_gate_for_template
+
+            gate = turing_oss_gate_for_template(
+                model,
+                template_id=template_id,
+                eval_type=getattr(eval_template, "eval_type", None),
+            )
+            if gate is not None:
+                return gate
 
             # Validate + coerce function params (matches Dataset / Experiments
             # paths). Without this, FE-sent blank strings flow straight into

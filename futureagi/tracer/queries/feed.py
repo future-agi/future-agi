@@ -233,7 +233,7 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     if not trace_to_clusters:
         return {}
 
-    # CH25-TODO (codex consolidated review P2 2026-05-26): this materializes
+    # CH25-TODO (review consolidated review P2 2026-05-26): this materializes
     # every span for every trace in the cluster list. Bounded by clustering
     # page-size today but unsafe under "all-clusters" sweeps. Pending reader
     # extension:

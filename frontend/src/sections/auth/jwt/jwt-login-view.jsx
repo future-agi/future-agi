@@ -44,6 +44,10 @@ import {
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
 import { usePostLoginPath } from "src/hooks/useDeploymentMode";
+import {
+  isSafeAuthReturnTo,
+  navigateAfterAuthSuccess,
+} from "./post-login-navigation";
 
 // ----------------------------------------------------------------------
 
@@ -58,7 +62,7 @@ export default function JwtLoginView() {
   // Persist returnTo on a login action so it survives flows that drop the
   // URL param (OAuth round-trip, login → setup-org).
   const persistReturnTo = () => {
-    if (returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+    if (isSafeAuthReturnTo(returnTo)) {
       localStorage.setItem("redirectUrl", returnTo);
     }
   };
@@ -239,15 +243,15 @@ export default function JwtLoginView() {
           localStorage.setItem("signupProvider", "email");
           navigate(paths.auth.jwt.setup_org);
         } else {
-          if (returnTo) localStorage.setItem("initial-render", "done");
-          router.push(returnTo || postLoginPath);
-          localStorage.removeItem("redirectUrl");
+          navigateAfterAuthSuccess({
+            router,
+            returnTo,
+            fallbackPath: postLoginPath,
+          });
         }
       }
     } catch (error) {
-      const errorCode =
-        error?.result?.error_code ||
-        error?.error_code
+      const errorCode = error?.result?.error_code || error?.error_code;
       if (errorCode) {
         switch (errorCode) {
           case LOGIN_ERROR_CODES.IP_BLOCKED:
@@ -261,8 +265,7 @@ export default function JwtLoginView() {
 
           case LOGIN_ERROR_CODES.ACCOUNT_BLOCKED:
           case LOGIN_ERROR_CODES.TOO_MANY_ATTEMPTS: {
-            const remaining =
-              error?.result?.block_time_remaining
+            const remaining = error?.result?.block_time_remaining;
             const minutes = remaining ? Math.ceil(remaining / 60) : null;
             setErrorMsg(
               minutes
@@ -362,9 +365,11 @@ export default function JwtLoginView() {
 
       if (verifyRes.status === 200) {
         await login(verifyRes);
-        if (returnTo) localStorage.setItem("initial-render", "done");
-        router.push(returnTo || postLoginPath);
-        localStorage.removeItem("redirectUrl");
+        navigateAfterAuthSuccess({
+          router,
+          returnTo,
+          fallbackPath: postLoginPath,
+        });
       }
     } catch (error) {
       if (error?.name === "NotAllowedError") {
@@ -405,11 +410,7 @@ export default function JwtLoginView() {
       });
 
       if (response.data?.result?.url) {
-        if (
-          returnTo &&
-          returnTo.startsWith("/") &&
-          !returnTo.startsWith("//")
-        ) {
+        if (isSafeAuthReturnTo(returnTo)) {
           localStorage.setItem("redirectUrl", returnTo);
         }
         logger.debug(response.data?.result?.url);

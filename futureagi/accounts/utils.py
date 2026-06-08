@@ -30,6 +30,17 @@ from tfc.utils.parse_errors import parse_serialized_errors
 
 logger = structlog.get_logger(__name__)
 
+BUSINESS_EMAIL_REQUIRED_MESSAGE = (
+    "Use a business email to create a workspace, or ask your administrator "
+    "to invite this address."
+)
+
+
+class SignupValidationError(ValueError):
+    def __init__(self, message, *, code="signup_validation_error"):
+        super().__init__(message)
+        self.code = code
+
 
 def resolve_org(request):
     """Return the organization resolved by auth middleware, falling back to the user FK."""
@@ -158,8 +169,9 @@ def is_work_email(email):
     ).values_list("user_id", flat=True)
     users = User.objects.filter(id__in=saml_user_ids).values_list("email", flat=True)
     if email in users:
-        raise Exception(
-            "SAML authentication is required for your organization. Please log in using SAML."
+        raise SignupValidationError(
+            "SAML authentication is required for your organization. Please log in using SAML.",
+            code="saml_required",
         )
 
     # Extract the domain part from the email
@@ -171,7 +183,7 @@ def is_work_email(email):
 
 def first_signup(data, mode=None):
     if not data.get("email"):
-        raise Exception("Email not provided")
+        raise SignupValidationError("Email is required.", code="missing_email")
 
     data["email"] = data["email"].lower()
     # Defensive stripping of deprecated account-update parameters
@@ -189,12 +201,6 @@ def first_signup(data, mode=None):
     domain = email_parts[1]
 
     if domain in FREE_EMAIL_DOMAINS:
-        # For free email providers, use the username part and create org name
-        username = email_parts[0]
-        # Remove numbers and special characters, capitalize first letter of each word
-        # org_name = re.sub(r'[0-9._-]+', ' ', username)
-        # org_name = ' '.join(word.capitalize() for word in org_name.split())
-        # data["company_name"] = org_name + " Org"
         data["company_name"] = ""
     else:
         # For work emails, use domain as before
@@ -202,7 +208,10 @@ def first_signup(data, mode=None):
 
     allow_any_email = os.getenv("ALLOW_ANY_EMAIL", "false").lower() == "true"
     if not allow_any_email and not is_work_email(data.get("email")):
-        raise Exception("Provided Email is not work email")
+        raise SignupValidationError(
+            BUSINESS_EMAIL_REQUIRED_MESSAGE,
+            code="business_email_required",
+        )
 
     serializer = UserSignupSerializer(data=data)
     if serializer.is_valid():
@@ -240,7 +249,10 @@ def first_signup(data, mode=None):
         except ImportError:
             pass
     else:
-        raise Exception(f"Invalid data: {serializer.errors}")
+        raise SignupValidationError(
+            f"Invalid signup data: {serializer.errors}",
+            code="invalid_signup_data",
+        )
 
     email = data.get("email", None)
     organization = get_user_organization(user)
@@ -269,7 +281,10 @@ def first_signup(data, mode=None):
 
     else:
         error_messages = parse_serialized_errors(serializer)
-        raise Exception(str(error_messages))
+        raise SignupValidationError(
+            str(error_messages),
+            code="invalid_signup_data",
+        )
 
 
 def send_invite_email(email, organization, inviter):
@@ -472,7 +487,9 @@ def _run_post_registration(user_id, generated_password):
             send_slack_notification(user, updated=updated, err=err)
 
 
-def existing_member_access_will_change(existing_user, organization, org_level, workspace_access):
+def existing_member_access_will_change(
+    existing_user, organization, org_level, workspace_access
+):
     """Check if re-inviting an existing active member would actually grant new access."""
     from accounts.models.workspace import WorkspaceMembership
     from tfc.constants.levels import Level

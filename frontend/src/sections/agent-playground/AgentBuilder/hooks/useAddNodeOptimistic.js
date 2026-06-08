@@ -9,6 +9,77 @@ import logger from "src/utils/logger";
 import { API_NODE_TYPES, NODE_TYPES } from "../../utils/constants";
 import { useSaveDraftContext } from "../saveDraftContext";
 
+const messageContentForApi = (content) =>
+  Array.isArray(content) ? content : [{ type: "text", text: content || "" }];
+
+const defaultPromptMessages = () => [
+  {
+    id: crypto.randomUUID(),
+    role: "system",
+    content: [{ type: "text", text: "" }],
+  },
+  {
+    id: crypto.randomUUID(),
+    role: "user",
+    content: [{ type: "text", text: "" }],
+  },
+];
+
+const promptMessagesForApi = (config) =>
+  config?.messages?.length
+    ? config.messages.map((message) => ({
+        id: message.id || crypto.randomUUID(),
+        role: message.role,
+        content: messageContentForApi(message.content),
+      }))
+    : defaultPromptMessages();
+
+const promptTemplateForApi = (config = {}) => {
+  const modelConfig = config?.modelConfig || {};
+  const promptConfiguration = config?.payload?.promptConfig?.[0]?.configuration;
+  const baseTemplate = {
+    prompt_template_id: config?.prompt_template_id ?? null,
+    prompt_version_id: config?.prompt_version_id ?? null,
+    messages: promptMessagesForApi(config),
+  };
+
+  if (!modelConfig.model) {
+    return baseTemplate;
+  }
+
+  return {
+    ...baseTemplate,
+    model: modelConfig.model || null,
+    model_detail: modelConfig.modelDetail || null,
+    response_format:
+      modelConfig.responseFormat ||
+      promptConfiguration?.responseFormat ||
+      promptConfiguration?.response_format ||
+      "text",
+    response_schema: modelConfig.responseSchema || null,
+    output_format: config?.outputFormat || "string",
+    template_format: config?.templateFormat || "mustache",
+    tools: modelConfig.tools || promptConfiguration?.tools || [],
+    tool_choice:
+      modelConfig.toolChoice ||
+      promptConfiguration?.toolChoice ||
+      promptConfiguration?.tool_choice ||
+      "auto",
+    temperature: promptConfiguration?.temperature ?? null,
+    max_tokens:
+      promptConfiguration?.max_tokens ?? promptConfiguration?.maxTokens ?? null,
+    top_p: promptConfiguration?.top_p ?? promptConfiguration?.topP ?? null,
+    frequency_penalty:
+      promptConfiguration?.frequency_penalty ??
+      promptConfiguration?.frequencyPenalty ??
+      null,
+    presence_penalty:
+      promptConfiguration?.presence_penalty ??
+      promptConfiguration?.presencePenalty ??
+      null,
+  };
+};
+
 /**
  * Encapsulates the addNode pattern with optimistic-first approach:
  *
@@ -67,7 +138,7 @@ export default function useAddNodeOptimistic() {
       // Defer drawer opening until API confirms to prevent 404s on rapid clicks.
       const { currentAgent } = useAgentPlaygroundStore.getState();
 
-      addNodeApi({
+      const createNodeRequest = addNodeApi({
         graphId: currentAgent?.id,
         versionId: currentAgent?.version_id,
         data: {
@@ -83,33 +154,12 @@ export default function useAddNodeOptimistic() {
           ...(payload.sourceNodeId && edgeId && { edge_id: edgeId }),
           ports,
           ...(payload.type === NODE_TYPES.LLM_PROMPT && {
-            prompt_template: {
-              prompt_template_id: config?.prompt_template_id ?? null,
-              prompt_version_id: config?.prompt_version_id ?? null,
-              messages: config?.messages?.length
-                ? config.messages.map((m) => ({
-                    id: m.id || crypto.randomUUID(),
-                    role: m.role,
-                    content: Array.isArray(m.content)
-                      ? m.content
-                      : [{ type: "text", text: m.content || "" }],
-                  }))
-                : [
-                    {
-                      id: crypto.randomUUID(),
-                      role: "system",
-                      content: [{ type: "text", text: "" }],
-                    },
-                    {
-                      id: crypto.randomUUID(),
-                      role: "user",
-                      content: [{ type: "text", text: "" }],
-                    },
-                  ],
-            },
+            prompt_template: promptTemplateForApi(config),
           }),
         },
-      })
+      });
+
+      createNodeRequest
         .then((apiResult) => {
           if (edgeId && apiResult?.nodeConnection?.id) {
             useAgentPlaygroundStore
@@ -127,6 +177,14 @@ export default function useAddNodeOptimistic() {
           removeOptimisticNode(nodeId);
           enqueueSnackbar("Failed to add node", { variant: "error" });
         });
+
+      if (payload.waitForApi) {
+        try {
+          await createNodeRequest;
+        } catch {
+          return null;
+        }
+      }
 
       return { nodeId, position };
     },

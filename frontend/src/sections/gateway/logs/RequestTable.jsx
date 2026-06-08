@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo } from "react";
 import PropTypes from "prop-types";
 import {
   Card,
@@ -230,7 +230,13 @@ RequestRow.propTypes = {
 // Main component
 // ---------------------------------------------------------------------------
 
-const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
+const RequestTable = ({
+  filters,
+  setFilter,
+  setFilters,
+  onSelectLog,
+  onRowsLoaded,
+}) => {
   // Pagination state derived from filters (URL params)
   const page = parseInt(filters.page, 10) || 1;
   const pageSize = parseInt(filters.pageSize, 10) || 25;
@@ -244,6 +250,10 @@ const RequestTable = ({ filters, setFilter, setFilters, onSelectLog }) => {
 
   const results = data?.result?.results ?? data?.results ?? [];
   const totalCount = data?.result?.count ?? data?.count ?? 0;
+
+  useEffect(() => {
+    onRowsLoaded?.(results);
+  }, [onRowsLoaded, results]);
 
   // --- Sort handler ---------------------------------------------------------
   const handleSort = useCallback(
@@ -429,6 +439,7 @@ RequestTable.propTypes = {
   setFilter: PropTypes.func.isRequired,
   setFilters: PropTypes.func.isRequired,
   onSelectLog: PropTypes.func.isRequired,
+  onRowsLoaded: PropTypes.func,
 };
 
 export default RequestTable;

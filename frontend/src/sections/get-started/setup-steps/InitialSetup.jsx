@@ -4,6 +4,12 @@ import PropTypes from "prop-types";
 import React, { useMemo } from "react";
 import { useAuthContext } from "src/auth/hooks";
 import SvgColor from "src/components/svg-color";
+import {
+  buildCurrentFlowContext,
+  CurrentFlowEvents,
+  normalizeGetStartedStep,
+  trackCurrentFlow,
+} from "src/utils/analytics/currentFlow";
 import { menuesConstant } from "./../constant";
 
 const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
@@ -26,6 +32,14 @@ const InitialSetup = ({ currentLabel, setCurrentLabel, data }) => {
   }, [currentLabel, data, keySelector, menusList]);
 
   const handleMenuClick = (selected) => {
+    trackCurrentFlow(CurrentFlowEvents.currentFlowGetStartedStepSelected, {
+      ...buildCurrentFlowContext({ user }),
+      event_source: "get_started_initial_setup",
+      selected_step: normalizeGetStartedStep(selected.label),
+      selected_step_status: selected.status,
+      previous_step: normalizeGetStartedStep(currentLabel),
+      is_step_complete: Boolean(data?.[keySelector[selected.label]]),
+    });
     setCurrentLabel(selected.label);
   };
 

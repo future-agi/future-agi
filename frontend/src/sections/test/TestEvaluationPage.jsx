@@ -24,10 +24,7 @@ import { useAuthContext } from "src/auth/hooks";
 import ConfirmRunEvaluations from "../common/EvaluationDrawer/ConfirmRunEvaluations";
 import logger from "src/utils/logger";
 import { useTestDetailContext } from "./context/TestDetailContext";
-import {
-  useTestEvaluationStoreShallow,
-  useTestRunsGridStoreShallow,
-} from "./states";
+import { useTestRunsGridStoreShallow } from "./states";
 import CustomTooltip from "src/components/tooltip";
 import { useTestRunsSelectedCount } from "./common";
 import UpdateKeysDialog from "../agents/AgentConfiguration/UpdateKeysDialog";
@@ -36,10 +33,21 @@ import { useSelectedAgentDefinitionStore } from "./TestRuns/states";
 import { ComponentApiMapping } from "./TestRuns/common";
 import { AGENT_TYPES } from "../agents/constants";
 import useTestRunDetails from "src/hooks/useTestRunDetails";
+import TestOnboardingFocusPanel from "./TestOnboardingFocusPanel";
+import { TEST_ONBOARDING_MODES } from "./testOnboardingModes";
 
 const TestEvaluationPage = ({
   onClose,
   executionIds = null,
+  onboardingMode = null,
+  onboardingAddLabel = null,
+  onboardingCopy = null,
+  onboardingCurrentStep = null,
+  onboardingEyebrow = null,
+  onboardingRunLabel = null,
+  onboardingSecondaryAddLabel = null,
+  onboardingSteps = null,
+  tourAnchor = null,
   onSuccessOfAdditionOfEvals = null,
   onAddEvaluation = null,
   onEditEvaluation = null,
@@ -51,9 +59,6 @@ const TestEvaluationPage = ({
   const { setSelectedAgentDefinitionVersion } =
     useSelectedAgentDefinitionStore();
 
-  const setOpenTestEvaluation = useTestEvaluationStoreShallow(
-    (s) => s.setOpenTestEvaluation,
-  );
   const { toggledNodes, selectAll, setToggledNodes, setSelectAll } =
     useTestRunsGridStoreShallow((s) => ({
       toggledNodes: s.toggledNodes,
@@ -75,6 +80,8 @@ const TestEvaluationPage = ({
     testData?.agentDefinitionDetail?.agentType ??
     AGENT_TYPES.CHAT;
   const queryClient = useQueryClient();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
 
   const { mutate: updateTestRuns } = useUpdateTestRuns(testId, {
     onMutate: async (data) => {
@@ -175,6 +182,26 @@ const TestEvaluationPage = ({
   };
 
   const [openConfirmDialog, setOpenConfirmDialog] = useState(false);
+  const isEvalRouteMode =
+    onboardingMode === TEST_ONBOARDING_MODES.CREATE_EVAL ||
+    onboardingMode === TEST_ONBOARDING_MODES.SAVE_EVAL;
+  const hasEvals = (evals?.length ?? 0) > 0;
+  const hasSelectedRuns = executionIds
+    ? executionIds?.length > 0
+    : selectedCount > 0;
+  const evalRouteCopy =
+    onboardingCopy ||
+    (onboardingMode === TEST_ONBOARDING_MODES.CREATE_EVAL
+      ? {
+          title: "Create eval coverage",
+          description:
+            "Choose or create one evaluation and map it to this test so future runs produce a quality signal.",
+        }
+      : {
+          title: "Save the first evaluation",
+          description:
+            "Add one evaluation to this test, then run it against selected rows to confirm the signal works.",
+        });
 
   const handleAddEvaluationClick = () => {
     if (testId) {
@@ -184,6 +211,30 @@ const TestEvaluationPage = ({
     }
     onAddEvaluation?.();
   };
+
+  const evalRoutePrimaryAction = hasEvals
+    ? {
+        label: onboardingRunLabel || "Run Evaluation",
+        onClick: () => setOpenConfirmRunEvaluations(true),
+        disabled: !canEditEvals || !hasSelectedRuns,
+      }
+    : {
+        label: onboardingAddLabel || "Add Evaluation",
+        onClick: handleAddEvaluationClick,
+        disabled: !canEditEvals,
+      };
+  const evalRouteSecondaryAction = hasEvals
+    ? {
+        label: onboardingSecondaryAddLabel || "Add another evaluation",
+        onClick: handleAddEvaluationClick,
+        disabled: !canEditEvals,
+      }
+    : null;
+  const evalRouteSteps = onboardingSteps || [
+    { label: "Test", complete: Boolean(testId) },
+    { label: "Evaluation", complete: hasEvals },
+    { label: "Run", complete: hasEvals && hasSelectedRuns },
+  ];
 
   const onToggleToolCallCheck = (e) => {
     const value = e.target.checked;
@@ -233,7 +284,15 @@ const TestEvaluationPage = ({
         <Typography fontSize={16} fontWeight={600}>
           All Evaluations
         </Typography>
-        <IconButton onClick={onClose} sx={{ p: 0.5, color: "text.primary" }}>
+        <IconButton
+          hidden={isEvalRouteMode}
+          onClick={onClose}
+          sx={{
+            display: isEvalRouteMode ? "none" : "inline-flex",
+            p: 0.5,
+            color: "text.primary",
+          }}
+        >
           <Iconify icon="mingcute:close-line" width={20} />
         </IconButton>
       </Box>
@@ -247,6 +306,20 @@ const TestEvaluationPage = ({
         </Typography>
       </ShowComponent>
       <Box sx={{ mb: 2 }} />
+
+      <TestOnboardingFocusPanel
+        currentStep={onboardingCurrentStep || "Evaluation"}
+        description={evalRouteCopy.description}
+        eyebrow={onboardingEyebrow || undefined}
+        hidden={!isEvalRouteMode}
+        blocker={hasEvals && !hasSelectedRuns ? "Select a run first" : null}
+        primaryAction={evalRoutePrimaryAction}
+        secondaryAction={evalRouteSecondaryAction}
+        singleActionFocus={isEvalRouteMode}
+        steps={evalRouteSteps}
+        title={evalRouteCopy.title}
+        tourAnchor={tourAnchor}
+      />
 
       {/* ── List ── */}
       <Box
@@ -285,11 +358,8 @@ const TestEvaluationPage = ({
               variant="contained"
               startIcon={<Iconify icon="mdi:plus" width={16} />}
               onClick={handleAddEvaluationClick}
-              disabled={
-                !RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][
-                  role
-                ]
-              }
+              disabled={!canEditEvals}
+              hidden={isEvalRouteMode}
               sx={{
                 textTransform: "none",
                 fontSize: "12px",
@@ -316,12 +386,13 @@ const TestEvaluationPage = ({
 
       {/* ── Footer: Tool-call toggle + Cancel / Run ── */}
       <Box
+        hidden={isEvalRouteMode}
         sx={{
           mt: 2,
           pt: 2,
           borderTop: "1px solid",
           borderColor: "divider",
-          display: "flex",
+          display: isEvalRouteMode ? "none" : "flex",
           flexDirection: "column",
           gap: 1.5,
           flexShrink: 0,
@@ -386,10 +457,7 @@ const TestEvaluationPage = ({
                 disabled={
                   (executionIds
                     ? executionIds?.length === 0
-                    : selectedCount === 0) ||
-                  !RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][
-                    role
-                  ]
+                    : selectedCount === 0) || !canEditEvals
                 }
                 startIcon={
                   <Iconify icon="mdi:play-circle-outline" width={16} />
@@ -475,6 +543,23 @@ const TestEvaluationPage = ({
 TestEvaluationPage.propTypes = {
   onClose: PropTypes.func.isRequired,
   executionIds: PropTypes.arrayOf(PropTypes.string),
+  onboardingMode: PropTypes.string,
+  onboardingAddLabel: PropTypes.string,
+  onboardingCopy: PropTypes.shape({
+    description: PropTypes.string.isRequired,
+    title: PropTypes.string.isRequired,
+  }),
+  onboardingCurrentStep: PropTypes.string,
+  onboardingEyebrow: PropTypes.string,
+  onboardingRunLabel: PropTypes.string,
+  onboardingSecondaryAddLabel: PropTypes.string,
+  onboardingSteps: PropTypes.arrayOf(
+    PropTypes.shape({
+      complete: PropTypes.bool,
+      label: PropTypes.string.isRequired,
+    }),
+  ),
+  tourAnchor: PropTypes.string,
   onSuccessOfAdditionOfEvals: PropTypes.func,
   onAddEvaluation: PropTypes.func,
   onEditEvaluation: PropTypes.func,
@@ -482,6 +567,15 @@ TestEvaluationPage.propTypes = {
 
 TestEvaluationPage.defaultProps = {
   executionIds: null,
+  onboardingMode: null,
+  onboardingAddLabel: null,
+  onboardingCopy: null,
+  onboardingCurrentStep: null,
+  onboardingEyebrow: null,
+  onboardingRunLabel: null,
+  onboardingSecondaryAddLabel: null,
+  onboardingSteps: null,
+  tourAnchor: null,
   onSuccessOfAdditionOfEvals: null,
   onAddEvaluation: null,
   onEditEvaluation: null,

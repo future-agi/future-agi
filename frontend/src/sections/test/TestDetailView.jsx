@@ -20,7 +20,7 @@ const tabEventsMapper = {
 const TestDetailView = () => {
   const { testId } = useParams();
   const navigate = useNavigate();
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const theme = useTheme();
 
   // Define tabs configuration - memoized to prevent recreation
@@ -60,7 +60,7 @@ const TestDetailView = () => {
     (event, newTabId) => {
       const selectedTab = tabs.find((tab) => tab.id === newTabId);
       if (selectedTab && selectedTab.path !== window.location.pathname) {
-        navigate(selectedTab.path, { replace: true });
+        navigate(`${selectedTab.path}${search || ""}`, { replace: true });
       }
       const mixPanelEvent = tabEventsMapper[newTabId];
       if (mixPanelEvent && testId) {
@@ -69,7 +69,7 @@ const TestDetailView = () => {
         });
       }
     },
-    [tabs, navigate, testId],
+    [tabs, navigate, search, testId],
   );
 
   const { selectedExecutions, setSelectedExecutions } =

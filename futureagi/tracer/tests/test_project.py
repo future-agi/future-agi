@@ -7,9 +7,11 @@ Tests for /tracer/project/ endpoints.
 import pytest
 from rest_framework import status
 
-from accounts.models.user import OrgApiKey
+from accounts.models import OnboardingActivationEvent
+from accounts.models.user import OrgApiKey, User
 from model_hub.models.ai_model import AIModel
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
+from tracer.utils.otel import get_or_create_project
 
 
 def get_result(response):
@@ -224,6 +226,155 @@ class TestProjectCreateAPI:
 
         project = Project.objects.get(id=project_id)
         assert project.metadata == {"env": "production", "team": "ml"}
+
+    def test_create_observe_project_api_records_onboarding_event(
+        self, api_client, workspace, organization, user
+    ):
+        api_key = OrgApiKey.objects.create(
+            name="Project create test key",
+            api_key="project-create-key",
+            secret_key="project-create-secret",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            type="user",
+        )
+
+        response = api_client.post(
+            "/tracer/project/",
+            {
+                "name": "API Observe Project",
+                "model_type": "GenerativeLLM",
+                "trace_type": "observe",
+            },
+            format="json",
+            HTTP_X_API_KEY=api_key.api_key,
+            HTTP_X_SECRET_KEY=api_key.secret_key,
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        project = Project.objects.get(id=get_result(response)["project_id"])
+        assert project.user_id is None
+
+        event = OnboardingActivationEvent.no_workspace_objects.get(
+            event_name="observe_project_created"
+        )
+        assert event.user == user
+        assert event.organization == organization
+        assert event.workspace == workspace
+        assert event.product_path == "observe"
+        assert event.activation_stage == "connect_observability"
+        assert event.source == "project_prototype"
+        assert event.metadata == {
+            "project_id": str(project.id),
+            "project_source": "prototype",
+            "project_type": "observe",
+        }
+
+    def test_get_or_create_observe_project_records_onboarding_event(
+        self, organization, workspace, user
+    ):
+        project = get_or_create_project(
+            project_name="SDK Observe Project",
+            organization_id=str(organization.id),
+            project_type="observe",
+            user_id=str(user.id),
+            workspace_id=str(workspace.id),
+            source="prototype",
+        )
+        same_project = get_or_create_project(
+            project_name="SDK Observe Project",
+            organization_id=str(organization.id),
+            project_type="observe",
+            user_id=str(user.id),
+            workspace_id=str(workspace.id),
+            source="prototype",
+        )
+
+        assert same_project.id == project.id
+        event = OnboardingActivationEvent.no_workspace_objects.get(
+            event_name="observe_project_created"
+        )
+        assert event.user == user
+        assert event.organization == organization
+        assert event.workspace == workspace
+        assert event.product_path == "observe"
+        assert event.activation_stage == "connect_observability"
+        assert event.source == "project_prototype"
+        assert event.metadata == {
+            "project_id": str(project.id),
+            "project_source": "prototype",
+            "project_type": "observe",
+        }
+
+    def test_demo_observe_project_does_not_record_real_onboarding_event(
+        self, organization, workspace, user
+    ):
+        Project.objects.create(
+            name="Demo Observe Project",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            source=ProjectSourceChoices.DEMO.value,
+            metadata={},
+        )
+
+        assert (
+            OnboardingActivationEvent.no_workspace_objects.filter(
+                event_name="observe_project_created"
+            ).count()
+            == 0
+        )
+
+    def test_sample_metadata_observe_project_does_not_record_real_onboarding_event(
+        self, organization, workspace, user
+    ):
+        Project.objects.create(
+            name="Sample Metadata Observe Project",
+            organization=organization,
+            workspace=workspace,
+            user=user,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            source=ProjectSourceChoices.PROTOTYPE.value,
+            metadata={"is_sample": True},
+        )
+
+        assert (
+            OnboardingActivationEvent.no_workspace_objects.filter(
+                event_name="observe_project_created"
+            ).count()
+            == 0
+        )
+
+    def test_observe_project_outside_user_scope_does_not_record_event(
+        self, organization, workspace
+    ):
+        other_user = User.objects.create_user(
+            email="other-onboarding-user@example.com",
+            password="testpassword123",
+            name="Other User",
+        )
+
+        Project.objects.create(
+            name="Cross Scope Observe Project",
+            organization=organization,
+            workspace=workspace,
+            user=other_user,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+            source=ProjectSourceChoices.PROTOTYPE.value,
+            metadata={},
+        )
+
+        assert (
+            OnboardingActivationEvent.no_workspace_objects.filter(
+                event_name="observe_project_created"
+            ).count()
+            == 0
+        )
 
     def test_create_project_missing_required_fields(self, auth_client):
         """Create project fails with missing required fields."""
@@ -595,6 +746,43 @@ class TestProjectSDKCodeAPI:
         data = get_result(response)
         assert "installation_guide" in data
         assert "project_add_code" in data
+        assert (
+            data["instruments"]["anthropic"]["Python"]["sample_request_code"]
+            .strip()
+            .startswith("import os")
+        )
+        assert (
+            "client.messages.create"
+            in data["instruments"]["anthropic"]["Python"]["sample_request_code"]
+        )
+        assert (
+            "responses.create"
+            in data["instruments"]["openai"]["TypeScript"]["sample_request_code"]
+        )
+        assert (
+            "ChatOpenAI"
+            in data["instruments"]["langchain"]["Python"]["sample_request_code"]
+        )
+        assert (
+            "Runner.run_sync"
+            in data["instruments"]["openai_agents"]["Python"]["sample_request_code"]
+        )
+        assert (
+            "VectorStoreIndex.from_documents"
+            in data["instruments"]["llama_index"]["Python"]["sample_request_code"]
+        )
+        assert (
+            "client.invoke_model"
+            in data["instruments"]["bedrock"]["Python"]["sample_request_code"]
+        )
+        assert (
+            "MCPServerStreamableHttp"
+            in data["instruments"]["mcp"]["Python"]["sample_request_code"]
+        )
+        assert (
+            "instrument(tracer_provider=trace_provider))"
+            not in data["instruments"]["bedrock"]["Python"]["code"]
+        )
 
     def test_get_sdk_code_invalid_type(self, auth_client):
         """Get SDK code with invalid type fails."""

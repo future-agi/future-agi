@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en" style="color-scheme: dark;">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="x-apple-disable-message-reformatting">
+<meta name="color-scheme" content="dark">
+<meta name="supported-color-schemes" content="dark light">
+<title>{% block title %}Continue your FutureAGI setup{% endblock %}</title>
+<!--[if mso]>
+<xml><o:OfficeDocumentSettings xmlns:o="urn:schemas-microsoft-com:office:office"><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>
+<![endif]-->
+<style>
+  /* Only rules that cannot be inlined live here (visual styling is inline so
+     the strip_tags plaintext preview stays clean). */
+  :root { color-scheme: dark; supported-color-schemes: dark light; }
+  body { margin: 0 !important; padding: 0 !important; background-color: #0a0a0a !important; }
+  a:hover { color: #fafafa; }
+
+  /* Mobile */
+  @media only screen and (max-width: 620px) {
+    .container { width: 100% !important; padding: 24px 16px !important; }
+    .card-inner { padding: 28px 22px !important; }
+    .hx { font-size: 21px !important; }
+    .btn { padding: 14px 24px !important; font-size: 14px !important; }
+  }
+
+  /* Email client dark mode override */
+  [data-ogsc] body { background-color: #0a0a0a !important; }
+  [data-ogsc] .card { background-color: #0f0f10 !important; }
+</style>
+</head>
+<body style="margin:0; padding:0; background-color:#0a0a0a; color:#fafafa; font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
+<!-- Preheader (hidden) -->
+<div style="display:none; overflow:hidden; line-height:1px; opacity:0; max-height:0; max-width:0;">{{ preheader_text }}</div>
+
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0a0a0a;" bgcolor="#0a0a0a">
+  <!-- HEADER -->
+  <tr>
+    <td align="center" style="background-color:#0a0a0a; padding: 0 16px;" bgcolor="#0a0a0a">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="container" style="width:600px; max-width:600px;">
+        <tr>
+          <td style="padding: 32px 0 40px 0;">
+            <a href="https://futureagi.com" target="_blank" style="text-decoration:none;">
+              <img src="https://futureagi.com/images/logos/futureagi-logo-email.png" alt="Future AGI" width="180" height="30" style="display:block; width:180px; height:30px; border:0;">
+            </a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- CARD -->
+  <tr>
+    <td align="center" style="background-color:#0a0a0a; padding: 0 16px;" bgcolor="#0a0a0a">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="container" style="width:600px; max-width:600px;">
+        <tr>
+          <td class="card" style="background-color:#0f0f10; border:1px solid #27272a; border-radius:14px;">
+            <div class="card-inner" style="padding: 40px 44px 36px 44px;">
+              <p class="eyebrow" style="margin:0 0 12px; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; font-weight:500; letter-spacing:0.14em; text-transform:uppercase; color:#a1a1aa;">FutureAGI setup</p>
+              <h1 class="hx" style="margin:0; font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:24px; line-height:1.25; font-weight:600; color:#fafafa; letter-spacing:-0.015em;">{% block heading %}Continue your setup{% endblock %}</h1>
+              <div class="bodytext" style="padding:16px 0 0; font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif; font-size:15px; line-height:1.65; color:#c7c7cc;">
+                {% block body %}
+                  <p style="margin:0 0 16px;">Hi {{ user_name }}, your {{ workspace_name }} workspace has a next setup step ready.</p>
+                {% endblock %}
+                <p style="margin:24px 0;">
+                  <a href="{{ primary_action_url }}" class="btn" style="display:inline-block; font-family:'Inter',-apple-system,sans-serif; font-size:14px; font-weight:600; line-height:1; padding:14px 28px; border-radius:999px; text-decoration:none; background-color:#fafafa; color:#0a0a0a;">{{ primary_action_label }}</a>
+                </p>
+                <p style="margin:16px 0 0; color:#71717a; font-size:13px; line-height:1.6;">
+                  If this is not useful right now, you can
+                  <a href="{{ snooze_url }}" style="color:#a1a1aa; text-decoration:underline; text-underline-offset:2px;">snooze setup emails for 7 days</a>
+                  or
+                  <a href="{{ unsubscribe_url }}" style="color:#a1a1aa; text-decoration:underline; text-underline-offset:2px;">turn off setup emails</a>.
+                </p>
+              </div>
+            </div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+
+  <!-- FOOTER -->
+  <tr>
+    <td align="center" style="background-color:#0a0a0a; padding: 36px 16px 56px 16px;" bgcolor="#0a0a0a">
+      <table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" class="container footer" style="width:600px; max-width:600px;">
+        <tr>
+          <td align="center" style="padding-top: 26px; border-top:1px solid #27272a; font-family:'JetBrains Mono','SF Mono',Menlo,Consolas,monospace; font-size:10px; color:#8a8a92; line-height:1.7; letter-spacing:0.08em;">
+            {{ mailing_address }}
+          </td>
+        </tr>
+        <tr>
+          <td align="center" style="padding-top: 8px; font-family:'Inter',sans-serif; font-size:11px; color:#71717a; line-height:1.6;">
+            © Future AGI &nbsp;·&nbsp; You received this because you have an account on Future AGI.
+            &nbsp;·&nbsp;
+            <a href="{{ notification_settings_url }}" style="color:#a1a1aa; text-decoration:underline; text-underline-offset:2px;">Manage notification settings</a>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>
+</table>
+</body>
+</html>

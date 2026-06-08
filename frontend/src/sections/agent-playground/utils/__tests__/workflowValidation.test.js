@@ -536,6 +536,30 @@ describe("edge cases", () => {
       expect(result.valid).toBe(false);
     });
 
+    it("validates transient starter config on optimistic prompt nodes", () => {
+      const result = validateNodeForSave({
+        id: "node-1",
+        type: "llm_prompt",
+        data: {
+          config: {
+            prompt_template_id: null,
+            prompt_version_id: null,
+          },
+          _initialConfig: {
+            modelConfig: { model: "gpt-4o-mini" },
+            messages: [
+              {
+                role: "user",
+                content: [{ type: "text", text: "Inspect stale pricing." }],
+              },
+            ],
+          },
+        },
+      });
+
+      expect(result.valid).toBe(true);
+    });
+
     it("skips validation for agent (subgraph) nodes", () => {
       const result = validateNodeForSave({
         type: "agent",

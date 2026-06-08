@@ -109,7 +109,7 @@ class UpdateTraceAnnotationTool(BaseTool):
             annotation.annotation_value_bool = params.value_bool
             changes.append(f"value_bool: {old_val} -> {params.value_bool}")
 
-        # Codex wave-2 P1 (2026-05-26): the legacy TraceAnnotation write
+        # Review wave-2 P1 (2026-05-26): the legacy TraceAnnotation write
         # used to commit BEFORE the Score sync. If CH was lagging or the
         # span had no PG row, the Score path silently skipped — leaving
         # TraceAnnotation updated but Score stale. Wrap the entire write
@@ -185,10 +185,10 @@ class UpdateTraceAnnotationTool(BaseTool):
                         else None
                     )
                     if default_item is None:
-                        # Codex P1: bail loudly so the surrounding atomic
+                        # Review P1: bail loudly so the surrounding atomic
                         # rolls back the annotation update. Returning
                         # success-with-stale-Score caused exactly the
-                        # consistency drift codex flagged.
+                        # consistency drift review flagged.
                         raise RuntimeError(
                             "Cannot resolve default annotation queue for "
                             f"span {annotation.observation_span_id} "

@@ -81,8 +81,49 @@ jobs:
     defaults:
       run:
         working-directory: frontend
+    env:
+      EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Detect private EE checkout token
+        id: ee-token
+        working-directory: .
+        run: |
+          if [ -n "${EE_REPO_READ_TOKEN}" ]; then
+            echo "available=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "available=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::EE_REPO_READ_TOKEN is unavailable; running OSS-safe frontend contract checks only."
+          fi
+
+      - name: Checkout EE package
+        if: steps.ee-token.outputs.available == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/ee
+          path: futureagi/ee
+          token: ${{ env.EE_REPO_READ_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Use matching EE branch when available
+        if: steps.ee-token.outputs.available == 'true'
+        working-directory: futureagi/ee
+        run: |
+          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
+            git checkout --detach FETCH_HEAD
+            echo "Using EE branch ${EE_REPO_BRANCH}"
+          else
+            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
+          fi
+
+      - name: Drop EE checkout credentials
+        if: steps.ee-token.outputs.available == 'true'
+        working-directory: futureagi/ee
+        run: git config --unset-all http.https://github.com/.extraheader || true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -94,8 +135,20 @@ jobs:
       - name: Install frontend dependencies
         run: yarn install --frozen-lockfile
 
-      - name: Check generated filter contract
-        run: yarn contracts:check
+      - name: Check generated contracts
+        env:
+          HAS_EE_TOKEN: ${{ steps.ee-token.outputs.available }}
+        run: |
+          if [ "${HAS_EE_TOKEN}" = "true" ]; then
+            yarn contracts:check
+          else
+            node scripts/generate-filter-contract.mjs --check
+            node scripts/generate-api-surface-contract.mjs --check
+            node scripts/generate-openapi-contract.mjs --check
+            node scripts/generate-openapi-client.mjs --check
+            node scripts/check-api-endpoint-registry-contract.mjs
+            node scripts/check-api-surface-usage.mjs
+          fi
 
       - name: Run annotation/filter contract tests
         run: >
@@ -144,21 +197,37 @@ jobs:
       PG_TEST_DB: test_tfc_test
       PG_USER: postgres
       PG_PASSWORD: postgres
+      CH_HOST: localhost
+      CH_PORT: 19000
+      CH_DATABASE: test_tfc
+      CH_USERNAME: default
+      CH_PASSWORD: ""
+      CH25_HOST: localhost
+      CH25_HTTP_PORT: 18123
+      CH25_TCP_PORT: 19000
+      CH25_DATABASE: test_tfc
+      CH25_USER: default
+      CH25_PASSWORD: ""
+      CH25_DROP_LEGACY_CDC_CHAIN: "true"
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Require private EE checkout token
+      - name: Detect private EE checkout token
+        id: ee-token
         working-directory: .
         run: |
-          if [ -z "${EE_REPO_READ_TOKEN}" ]; then
-            echo "::error::EE_REPO_READ_TOKEN is required for backend contract CI because the generated Management API contract includes Enterprise routes."
-            exit 1
+          if [ -n "${EE_REPO_READ_TOKEN}" ]; then
+            echo "available=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "available=false" >> "${GITHUB_OUTPUT}"
+            echo "::notice::EE_REPO_READ_TOKEN is unavailable; running OSS-safe backend contract checks only."
           fi
 
       - name: Checkout EE package
+        if: steps.ee-token.outputs.available == 'true'
         uses: actions/checkout@v4
         with:
           repository: future-agi/ee
@@ -168,6 +237,7 @@ jobs:
           fetch-depth: 1
 
       - name: Use matching EE branch when available
+        if: steps.ee-token.outputs.available == 'true'
         working-directory: futureagi/ee
         run: |
           if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
@@ -179,8 +249,31 @@ jobs:
           fi
 
       - name: Drop EE checkout credentials
+        if: steps.ee-token.outputs.available == 'true'
         working-directory: futureagi/ee
         run: git config --unset-all http.https://github.com/.extraheader || true
+
+      - name: Start ClickHouse test service
+        run: |
+          docker run -d --name api-contracts-clickhouse \
+            -p 18123:8123 \
+            -p 19000:9000 \
+            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -e CLICKHOUSE_DB=test_tfc \
+            -v "${PWD}/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro" \
+            -v "${PWD}/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro" \
+            clickhouse/clickhouse-server:25.3-alpine
+
+          for attempt in {1..60}; do
+            if curl -fsS http://localhost:18123/ping >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs api-contracts-clickhouse
+          exit 1
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -195,7 +288,13 @@ jobs:
 
       - name: Check generated Swagger schema
         working-directory: .
+        env:
+          HAS_EE_TOKEN: ${{ steps.ee-token.outputs.available }}
         run: |
+          if [ "${HAS_EE_TOKEN}" != "true" ]; then
+            echo "::notice::Skipping EE-backed OpenAPI generation drift check because EE_REPO_READ_TOKEN is unavailable."
+            exit 0
+          fi
           if ! ./scripts/generate-openapi-schema.sh > /tmp/openapi-generation.log 2>&1; then
             echo "::error::OpenAPI generation failed with EE checked out. Logs are suppressed here to avoid printing private EE source context; run locally with futureagi/ee present for details."
             exit 1
@@ -203,33 +302,48 @@ jobs:
           git diff --exit-code api_contracts/openapi/swagger.json
 
       - name: Run annotation/filter contract tests
-        run: >
-          uv run pytest -q --tb=line
-          tracer/tests/test_filter_contract.py
-          tracer/tests/test_filter_api_contract.py
-          tracer/tests/test_validate_filters_helper.py
-          tracer/tests/test_filter_engine_parity.py
-          model_hub/tests/test_annotation_api_contract.py
-          model_hub/tests/test_annotation_workflow_api.py
-          tfc/tests/test_falcon_api_contract_debt.py
-          tfc/tests/test_usage_api_contract_debt.py
-          ee/usage/tests/test_events_schema.py
-          ee/usage/tests/test_billing_api.py
-          tfc/tests/test_api_contracts.py
-          tfc/tests/test_accounts_api_contract_debt.py
-          tfc/tests/test_core_api_contract_debt.py
-          tfc/tests/test_model_hub_api_contract_debt.py
-          agent_playground/tests/test_api_contract_debt.py
-          agentcc/tests/test_api_contract_debt.py
-          mcp_server/tests/test_api_contract_debt.py
-          saml2_auth/tests/test_api_contract_debt.py
-          sdk/tests/test_api_contract_debt.py
-          simulate/tests/test_agent_version_api_contract.py
-          simulate/tests/test_call_transcript_api_contract.py
-          simulate/tests/test_chat_simulation_api_contract.py
-          simulate/tests/test_livekit_api_contract.py
-          simulate/tests/test_persona_api_contract.py
-          simulate/tests/test_simulate_api_contract_debt.py
-          simulate/tests/test_simulator_agent_api_contract.py
-          simulate/tests/test_test_execution_api_contract.py
-          tracer/tests/test_tracer_feed_api_contract.py
+        env:
+          HAS_EE_TOKEN: ${{ steps.ee-token.outputs.available }}
+        run: |
+          if [ "${HAS_EE_TOKEN}" = "true" ]; then
+            uv run pytest -q --tb=line \
+              tracer/tests/test_filter_contract.py \
+              tracer/tests/test_filter_api_contract.py \
+              tracer/tests/test_validate_filters_helper.py \
+              tracer/tests/test_filter_engine_parity.py \
+              model_hub/tests/test_annotation_api_contract.py \
+              model_hub/tests/test_annotation_workflow_api.py \
+              tfc/tests/test_falcon_api_contract_debt.py \
+              tfc/tests/test_usage_api_contract_debt.py \
+              ee/usage/tests/test_events_schema.py \
+              ee/usage/tests/test_billing_api.py \
+              tfc/tests/test_api_contracts.py \
+              tfc/tests/test_accounts_api_contract_debt.py \
+              tfc/tests/test_core_api_contract_debt.py \
+              tfc/tests/test_model_hub_api_contract_debt.py \
+              agent_playground/tests/test_api_contract_debt.py \
+              agentcc/tests/test_api_contract_debt.py \
+              mcp_server/tests/test_api_contract_debt.py \
+              saml2_auth/tests/test_api_contract_debt.py \
+              sdk/tests/test_api_contract_debt.py \
+              simulate/tests/test_agent_version_api_contract.py \
+              simulate/tests/test_call_transcript_api_contract.py \
+              simulate/tests/test_chat_simulation_api_contract.py \
+              simulate/tests/test_livekit_api_contract.py \
+              simulate/tests/test_persona_api_contract.py \
+              simulate/tests/test_simulate_api_contract_debt.py \
+              simulate/tests/test_simulator_agent_api_contract.py \
+              simulate/tests/test_test_execution_api_contract.py \
+              tracer/tests/test_tracer_feed_api_contract.py
+          else
+            uv run pytest -q --tb=line \
+              tracer/tests/test_filter_contract.py \
+              tracer/tests/test_filter_api_contract.py \
+              tracer/tests/test_validate_filters_helper.py \
+              tracer/tests/test_filter_engine_parity.py \
+              model_hub/tests/test_annotation_api_contract.py
+          fi
+
+      - name: Stop ClickHouse test service
+        if: always()
+        run: docker rm -f api-contracts-clickhouse || true

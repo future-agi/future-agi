@@ -23,7 +23,14 @@ import { useNavigate } from "react-router";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 
-const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
+const getDatasetId = (result = {}) => result?.datasetId || result?.dataset_id;
+
+const ImportFromHuggingFace = ({
+  open,
+  onClose,
+  onDatasetCreated,
+  refreshGrid,
+}) => {
   const [searchText, setSearchText] = useState("");
 
   const queryClient = useQueryClient();
@@ -96,7 +103,17 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
       queryClient.invalidateQueries({
         queryKey: ["develop", "dataset-name-list"],
       });
-      navigate(`/dashboard/develop/${data?.data?.result?.datasetId}?tab=data`);
+      const datasetId = getDatasetId(data?.data?.result);
+      const nextHref = onDatasetCreated?.({
+        datasetId,
+        sourceMethod: "huggingface",
+      });
+      navigate(
+        nextHref ||
+          (datasetId
+            ? `/dashboard/develop/${datasetId}?tab=data`
+            : "/dashboard/develop"),
+      );
       onCloseClick();
     },
     onError: (error) => {
@@ -342,6 +359,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
 ImportFromHuggingFace.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
+  onDatasetCreated: PropTypes.func,
   refreshGrid: PropTypes.func,
 };
 

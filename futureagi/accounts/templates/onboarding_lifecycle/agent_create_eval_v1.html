@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Turn this agent test into a quality check{% endblock %}
+{% block heading %}Score every agent run, not just this one{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, you have run a scenario against your agent in {{ workspace_name }}. Right now you can see one result; an evaluator turns it into a standard.</p>
+  <p style="margin:0;">Add one evaluator and every future run is scored automatically against the behavior you expect, so you catch a quality drop the moment it happens.</p>
+{% endblock %}

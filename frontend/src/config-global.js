@@ -12,13 +12,24 @@ const API_HOST_MAP = {
   "eu.futureagi.com": "https://api-eu.futureagi.com",
 };
 
-function resolveApiHost() {
-  // Runtime > build-time > hostname map > dev default. See frontend/docker-entrypoint.sh.
+function runtimeConfigValue(key) {
   const runtime =
     (typeof window !== "undefined" && window.__FUTURE_AGI_CONFIG__) || {};
-  if (runtime.VITE_HOST_API) return runtime.VITE_HOST_API;
+  return runtime[key];
+}
+
+function resolveApiHost() {
+  // Runtime > build-time > hostname map > dev default. See frontend/docker-entrypoint.sh.
+  const runtimeHostApi = runtimeConfigValue("VITE_HOST_API");
+  if (runtimeHostApi) return runtimeHostApi;
   if (import.meta.env.VITE_HOST_API) return import.meta.env.VITE_HOST_API;
   return API_HOST_MAP[window.location.hostname] || "http://localhost:8000";
+}
+
+function resolveRuntimeEnv(key) {
+  const runtimeValue = runtimeConfigValue(key);
+  if (runtimeValue) return runtimeValue;
+  return import.meta.env[key];
 }
 
 export const HOST_API = resolveApiHost();
@@ -28,8 +39,8 @@ export const CURRENT_ENVIRONMENT = import.meta.env.VITE_ENVIRONMENT;
 export const GOOGLE_SITE_KEY = import.meta.env.VITE_GOOGLE_SITE_KEY;
 export const SENTRY_DSN = import.meta.env.VITE_SENTRY_DSN;
 export const MIXPANEL_HOST = import.meta.env.VITE_MIXPANEL_HOST;
-export const POSTHOG_KEY = import.meta.env.VITE_POSTHOG_KEY;
-export const POSTHOG_HOST = import.meta.env.VITE_POSTHOG_HOST;
+export const POSTHOG_KEY = resolveRuntimeEnv("VITE_POSTHOG_KEY");
+export const POSTHOG_HOST = resolveRuntimeEnv("VITE_POSTHOG_HOST");
 
 export const GOOGLE_ADS_ID = import.meta.env.VITE_GOOGLE_ADS_ID;
 export const GOOGLE_ADS_SIGNUP_LABEL = import.meta.env
@@ -75,4 +86,4 @@ export const AUTH0_API = {
 export const MAPBOX_API = import.meta.env.VITE_MAPBOX_API;
 
 // ROOT PATH AFTER LOGIN SUCCESSFUL
-export const PATH_AFTER_LOGIN = paths.dashboard.falconAI; // as '/dashboard/falcon-ai'
+export const PATH_AFTER_LOGIN = paths.dashboard.home;

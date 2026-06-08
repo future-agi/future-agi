@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Route a real request next{% endblock %}
+{% block heading %}You have seen sample traffic, now route your own{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, the sample traffic showed you how the gateway logs provider, latency, and cost in {{ workspace_name }}. The sample stays separate from your real progress.</p>
+  <p style="margin:0;">Send one request of your own next so the logs and controls reflect your actual traffic instead of the demo.</p>
+{% endblock %}

@@ -1,0 +1,3463 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { screen, waitFor, within } from "src/utils/test-utils";
+import userEvent from "@testing-library/user-event";
+import { renderWithRouter } from "src/utils/test-utils";
+import { getActivationStateFixture } from "../fixtures/activation-state.fixtures";
+import { normalizeActivationState } from "../activation-state-utils";
+import OnboardingHomeView from "../OnboardingHomeView";
+import {
+  persistSetupQuickStartAttribution,
+  readPersistedSetupQuickStartAttribution,
+  SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS,
+} from "src/sections/auth/jwt/setup-org-quick-starts";
+import { persistObserveSetupIntent } from "src/sections/projects/observeOnboardingRoute";
+
+const mocks = vi.hoisted(() => ({
+  useActivationState: vi.fn(),
+  useRecordActivationEvent: vi.fn(),
+  useSaveOnboardingGoal: vi.fn(),
+  useSampleProject: vi.fn(),
+  useSendTestTrace: vi.fn(),
+  useAuthContext: vi.fn(),
+  useWorkspace: vi.fn(),
+  trackOnboardingHomeEvent: vi.fn(),
+}));
+
+vi.mock("../hooks/useActivationState", () => ({
+  useActivationState: (params) => mocks.useActivationState(params),
+}));
+
+vi.mock("../hooks/useRecordActivationEvent", () => ({
+  useRecordActivationEvent: () => mocks.useRecordActivationEvent(),
+}));
+
+vi.mock("../hooks/useSaveOnboardingGoal", () => ({
+  useSaveOnboardingGoal: () => mocks.useSaveOnboardingGoal(),
+}));
+
+vi.mock("../hooks/useSampleProject", () => ({
+  useSampleProject: () => mocks.useSampleProject(),
+}));
+
+vi.mock("../hooks/useSendTestTrace", () => ({
+  useSendTestTrace: () => mocks.useSendTestTrace(),
+}));
+
+vi.mock("../analytics/onboarding-events", async () => {
+  const actual = await vi.importActual("../analytics/onboarding-events");
+  return {
+    ...actual,
+    trackOnboardingHomeEvent: (...args) =>
+      mocks.trackOnboardingHomeEvent(...args),
+  };
+});
+
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: () => mocks.useAuthContext(),
+}));
+
+vi.mock("src/contexts/WorkspaceContext", () => ({
+  useWorkspace: () => mocks.useWorkspace(),
+}));
+
+const defaultUser = {
+  id: "usr_onboarding",
+  default_workspace_id: "wrk_onboarding",
+  organization: {
+    id: "org_onboarding",
+  },
+};
+
+const defaultWorkspace = {
+  currentWorkspaceId: "wrk_onboarding",
+  currentWorkspaceDisplayName: "Quality Workspace",
+  isReady: true,
+};
+
+const normalizedFixture = (name) =>
+  normalizeActivationState(getActivationStateFixture(name));
+
+const renderView = (route = "/dashboard/home") =>
+  renderWithRouter(<OnboardingHomeView />, { route });
+
+const pathAction = ({
+  completionEvent = null,
+  ctaLabel,
+  description,
+  href,
+  id,
+  kind = "setup",
+  routeAvailable = true,
+  targetPath,
+  title,
+}) => ({
+  id,
+  kind,
+  title,
+  description,
+  href,
+  ctaLabel,
+  estimatedMinutes: 3,
+  priority: 100,
+  blocked: false,
+  blockedReason: null,
+  requiresPermission: null,
+  completionEvent,
+  isSample: false,
+  routeAvailable,
+  fallbackHref: "/dashboard/get-started",
+  analytics: {
+    eventName: "onboarding_recommended_action_clicked",
+    source: "home",
+    targetPath,
+  },
+});
+
+const pathState = ({
+  action,
+  goal,
+  pathDescription,
+  pathLabel,
+  primaryPath,
+  stage,
+}) => {
+  const state = normalizedFixture("observeNoSetup");
+  const pathHref = `/dashboard/home?path=${primaryPath}`;
+
+  return {
+    ...state,
+    availablePaths: [
+      {
+        id: primaryPath,
+        label: pathLabel,
+        description: pathDescription,
+        status: "selected",
+        href: pathHref,
+        isAvailable: true,
+        blockedReason: null,
+        requiresPermission: null,
+        firstActionId: action.id,
+      },
+    ],
+    featureFlags: {
+      ...state.featureFlags,
+      [`onboarding_${primaryPath}_path`]: true,
+    },
+    goal,
+    primaryPath,
+    progress: {
+      build: "complete",
+      test: "selected",
+      observe: "not_started",
+      ship: "not_started",
+      improve: "not_started",
+    },
+    recommendedAction: action,
+    routeAvailability: {
+      ...state.routeAvailability,
+      [`path_${primaryPath}`]: {
+        href: pathHref,
+        isAvailable: true,
+        reason: null,
+      },
+      [action.id]: {
+        href: action.href,
+        isAvailable: action.routeAvailable,
+        reason: action.routeAvailable ? null : "route_not_available",
+      },
+    },
+    sampleProject: {
+      ...state.sampleProject,
+      available: false,
+    },
+    stage,
+  };
+};
+
+const setupQuickStartRoute = ({ goal, id, primaryPath }) =>
+  `/dashboard/home?source=setup_org&quick_start_id=${id}&quick_start_goal=${goal}&quick_start_primary_path=${primaryPath}`;
+
+const expectRouteParams = ({ params, values }) => {
+  Object.entries(values).forEach(([key, value]) => {
+    expect(params.get(key)).toBe(value);
+  });
+};
+
+const expectCurrentRoute = ({ pathname, params }) => {
+  expect(window.location.pathname).toBe(pathname);
+  expectRouteParams({
+    params: new URLSearchParams(window.location.search),
+    values: params,
+  });
+};
+
+const observeJourneyPlan = ({ currentStepIndex = 0 } = {}) => {
+  const steps = [
+    {
+      id: "connect_observability",
+      stage: "connect_observability",
+      actionId: "create_observe_project",
+      label: "Create project from manifest",
+      description: "Create the observe project and prepare the first trace.",
+      href: "/dashboard/observe?setup=true&source=onboarding",
+      fallbackHref: "/dashboard/get-started",
+      routeAvailable: true,
+      tourAnchor: "observe_create_project_button",
+    },
+    {
+      id: "send_first_trace",
+      stage: "waiting_for_first_trace",
+      actionId: "send_first_trace",
+      label: "Send trace from manifest",
+      description: "Send one production or test trace.",
+      href: "/dashboard/observe/observe-1",
+      fallbackHref: "/dashboard/get-started",
+      routeAvailable: true,
+      tourAnchor: "observe_send_trace_button",
+    },
+    {
+      id: "review_first_trace",
+      stage: "review_first_trace",
+      actionId: "review_first_trace",
+      label: "Review trace from manifest",
+      description: "Inspect the trace and decide what to measure.",
+      href: "/dashboard/observe/observe-1/trace/trace-1",
+      fallbackHref: "/dashboard/get-started",
+      routeAvailable: true,
+      tourAnchor: "observe_trace_review_link",
+    },
+    {
+      id: "create_trace_evaluator",
+      stage: "create_trace_evaluator",
+      actionId: "create_trace_evaluator",
+      label: "Create quality check from manifest",
+      description: "Convert the reviewed trace into a repeatable check.",
+      href: "/dashboard/observe/observe-1",
+      fallbackHref: "/dashboard/get-started",
+      routeAvailable: true,
+      tourAnchor: "observe_evaluator_button",
+    },
+  ].map((step, index) => ({
+    ...step,
+    status:
+      index < currentStepIndex
+        ? "complete"
+        : index === currentStepIndex
+          ? "current"
+          : "queued",
+  }));
+
+  const currentStep = steps[currentStepIndex] || steps[0];
+  return {
+    id: "observe_first_run",
+    primaryPath: "observe",
+    eyebrow: "Observe setup",
+    title: "Connect your agent",
+    description:
+      "Connect traces, review the first trace, then create a quality check.",
+    chips: ["observe", "quality"],
+    currentStepId: currentStep.id,
+    currentStepIndex,
+    steps,
+  };
+};
+
+describe("OnboardingHomeView", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    window.sessionStorage.clear();
+    mocks.useAuthContext.mockReturnValue({ user: defaultUser });
+    mocks.useWorkspace.mockReturnValue(defaultWorkspace);
+    mocks.useRecordActivationEvent.mockReturnValue({
+      mutate: vi.fn(),
+      isLoading: false,
+      isPending: false,
+    });
+    mocks.useSaveOnboardingGoal.mockReturnValue({
+      data: null,
+      error: null,
+      isLoading: false,
+      isPending: false,
+      mutateAsync: vi.fn(),
+    });
+    mocks.useSampleProject.mockReturnValue({
+      openSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync: vi.fn(),
+      },
+      hideSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync: vi.fn(),
+      },
+    });
+    mocks.useSendTestTrace.mockReturnValue({
+      sendTestTrace: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync: vi.fn().mockResolvedValue(undefined),
+      },
+    });
+  });
+
+  it("renders the route skeleton while activation state is loading", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: null,
+      isLoading: true,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("onboarding-home-skeleton")).toBeInTheDocument();
+  });
+
+  it("shows one primary CTA with a helpful lead-in when onboarding home is feature disabled", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("featureDisabled"),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    expect(screen.getByText("Continue product setup")).toBeVisible();
+
+    // Path-aware lead-in replaces the old hardcoded Observe sentence. The
+    // feature_disabled fixture has no primary_path, so the copy stays neutral.
+    const leadIn = screen.getByTestId("feature-disabled-lead-in");
+    expect(
+      within(leadIn).getByText("Pick up product setup where you left off"),
+    ).toBeVisible();
+    expect(within(leadIn).queryByText(/Observe/)).toBeNull();
+
+    // Exactly one action card: the primary CTA, no duplicated alternate.
+    expect(screen.getByTestId("onboarding-primary-action")).toBeInTheDocument();
+    expect(screen.queryByTestId("onboarding-fallback-action")).toBeNull();
+    expect(screen.queryByText("Alternate setup")).toBeNull();
+
+    // The single CTA still carries the real action title and button.
+    expect(screen.getByText("Continue with Observe setup")).toBeVisible();
+    expect(screen.getByText("Continue setup")).toBeVisible();
+  });
+
+  it("renders real Observe setup before sample data for first-run users", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("newWorkspaceNoGoal"),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home?source=email&campaign_key=welcome");
+
+    const samplePanel = screen.getByTestId("sample-project-panel");
+    const observeSetupPanel = screen.getByTestId("observe-setup-panel");
+    const onboardingView = screen.getByTestId("onboarding-home-view");
+    const panelOrder = Array.from(
+      onboardingView.querySelectorAll(
+        '[data-testid="sample-project-panel"], [data-testid="observe-setup-panel"]',
+      ),
+    );
+
+    expect(samplePanel).toBeVisible();
+    expect(within(samplePanel).getByText("Sample trace")).toBeVisible();
+    expect(within(samplePanel).getByText("Preview sample trace")).toBeVisible();
+    expect(
+      within(samplePanel).getByRole("button", { name: /open sample trace/i }),
+    ).toBeVisible();
+    expect(observeSetupPanel).toBeVisible();
+    expect(
+      within(observeSetupPanel).getByRole("heading", {
+        name: "Connect your agent",
+      }),
+    ).toBeVisible();
+    expect(panelOrder).toEqual([observeSetupPanel, samplePanel]);
+    expect(
+      screen.queryByTestId("onboarding-goal-picker"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Workspace: Quality Workspace")).toBeVisible();
+    expect(mocks.useActivationState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        organizationId: "org_onboarding",
+        workspaceId: "wrk_onboarding",
+        source: "email",
+        campaignKey: "welcome",
+      }),
+    );
+  });
+
+  it("renders backend observe journey progress on the setup panel", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: {
+        ...normalizedFixture("observeNoSetup"),
+        journeyPlan: observeJourneyPlan({ currentStepIndex: 0 }),
+      },
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("observe-setup-panel");
+    const currentStep = within(panel).getByTestId(
+      "observe-journey-step-connect_observability",
+    );
+    expect(within(panel).getByText("Connect your agent")).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "Connect traces, review the first trace, then create a quality check.",
+      ),
+    ).toBeVisible();
+    expect(within(panel).getByTestId("observe-journey-progress")).toBeVisible();
+    expect(
+      within(currentStep).getByText("Create project from manifest"),
+    ).toBeVisible();
+    expect(within(currentStep).getByText("Current")).toBeVisible();
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Open OpenAI Python setup",
+    );
+    expect(
+      within(panel).getByTestId("observe-package-code-preview"),
+    ).toHaveTextContent("OpenAI Python setup preview");
+    expect(
+      within(panel).getByTestId("observe-package-install-command"),
+    ).toHaveTextContent("pip install traceAI-openai openai");
+    expect(
+      within(panel).getByTestId("observe-package-request-code"),
+    ).toHaveTextContent("client = OpenAI");
+    expect(
+      within(panel).getByTestId("observe-package-code-preview"),
+    ).toHaveTextContent("One request to send the first trace");
+    const setupUrl = new URL(
+      within(panel)
+        .getByRole("link", {
+          name: /open openai python setup/i,
+        })
+        .getAttribute("href"),
+      "https://futureagi.test",
+    );
+    expect(setupUrl.pathname).toBe("/dashboard/observe");
+    expectRouteParams({
+      params: setupUrl.searchParams,
+      values: {
+        setup: "true",
+        source: "onboarding",
+        provider: "openai",
+        language: "python",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+      },
+    });
+  });
+
+  it("renders backend observe journey progress while waiting for a trace", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: {
+        ...normalizedFixture("observeWaitingForTrace"),
+        journeyPlan: observeJourneyPlan({ currentStepIndex: 1 }),
+      },
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home?provider=anthropic&language=python");
+
+    const panel = screen.getByTestId("waiting-for-signal-panel");
+    expect(
+      within(panel).getByText("Send one Anthropic Python trace"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "The Observe project exists. Keep this page open, run one Anthropic Python request, and Future AGI will open the trace when it appears. After review, the next step is the first quality check.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText("Anthropic Python trace status"),
+    ).toBeVisible();
+    const currentStep = within(panel).getByTestId(
+      "observe-journey-step-send_first_trace",
+    );
+    expect(
+      within(currentStep).getByText("Send trace from manifest"),
+    ).toBeVisible();
+    expect(within(currentStep).getByText("Current")).toBeVisible();
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Send one production or test trace.",
+    );
+    expect(within(panel).getByText("Projects: 1 · Traces: 0")).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /send trace/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/observe/observe-1?provider=anthropic&language=python&tour_anchor=observe_send_trace_button&journey_step=send_first_trace",
+    );
+  });
+
+  it("hides the test-trace button while waiting unless the capability is advertised", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: {
+        ...normalizedFixture("observeWaitingForTrace"),
+        journeyPlan: observeJourneyPlan({ currentStepIndex: 1 }),
+      },
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home");
+
+    expect(screen.queryByTestId("send-test-trace-button")).toBeNull();
+  });
+
+  it("renders the gated test-trace button while waiting and runs the mutation", async () => {
+    const mutateAsync = vi.fn().mockResolvedValue(undefined);
+    const refetch = vi.fn();
+    mocks.useSendTestTrace.mockReturnValue({
+      sendTestTrace: { isLoading: false, isPending: false, mutateAsync },
+    });
+    const waitingState = {
+      ...normalizedFixture("observeWaitingForTrace"),
+      journeyPlan: observeJourneyPlan({ currentStepIndex: 1 }),
+    };
+    mocks.useActivationState.mockReturnValue({
+      state: {
+        ...waitingState,
+        signals: { ...waitingState.signals, testTraceSupported: true },
+      },
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch,
+    });
+
+    renderView("/dashboard/home");
+
+    const button = screen.getByTestId("send-test-trace-button");
+    expect(button).toHaveTextContent(/test trace/i);
+
+    await userEvent.click(button);
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ path: "observe", source: "onboarding_home" }),
+    );
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("keeps package-specific trace wait copy when Home is opened without setup params", () => {
+    persistObserveSetupIntent({
+      setupLanguage: "python",
+      setupProvider: "anthropic",
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: {
+        ...normalizedFixture("observeWaitingForTrace"),
+        journeyPlan: observeJourneyPlan({ currentStepIndex: 1 }),
+      },
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home");
+
+    expect(mocks.useActivationState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        setupLanguage: "python",
+        setupProvider: "anthropic",
+      }),
+    );
+    expect(
+      within(screen.getByTestId("waiting-for-signal-panel")).getByText(
+        "Send one Anthropic Python trace",
+      ),
+    ).toBeVisible();
+  });
+
+  it("tracks lifecycle email attribution on Home views and CTA clicks", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=onboarding_email&campaign_key=observe_waiting_for_first_trace&email_key=observe_waiting_v1&target_stage=waiting_for_first_trace&target_event=trace_received&send_log_id=send-123&status=stale&stale_reason=target_complete&provider=anthropic&language=typescript",
+    );
+
+    expect(mocks.useActivationState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "onboarding_email",
+        campaignKey: "observe_waiting_for_first_trace",
+        emailKey: "observe_waiting_v1",
+        targetStage: "waiting_for_first_trace",
+        targetEvent: "trace_received",
+        sendLogId: "send-123",
+        emailStatus: "stale",
+        staleReason: "target_complete",
+        setupProvider: "anthropic",
+        setupLanguage: "typescript",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_home_viewed",
+        expect.objectContaining({
+          source: "onboarding_email",
+          campaign_key: "observe_waiting_for_first_trace",
+          email_key: "observe_waiting_v1",
+          target_stage: "waiting_for_first_trace",
+          target_event: "trace_received",
+          send_log_id: "send-123",
+          email_status: "stale",
+          stale_reason: "target_complete",
+          setup_provider: "anthropic",
+          setup_language: "typescript",
+        }),
+      ),
+    );
+
+    const setupUrl = new URL(
+      screen
+        .getByRole("link", { name: /open anthropic typescript setup/i })
+        .getAttribute("href"),
+      "https://futureagi.test",
+    );
+    expectRouteParams({
+      params: setupUrl.searchParams,
+      values: {
+        provider: "anthropic",
+        language: "typescript",
+      },
+    });
+
+    await userEvent.click(
+      screen.getByRole("link", { name: /open anthropic typescript setup/i }),
+    );
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "onboarding_recommended_action_clicked",
+      expect.objectContaining({
+        action_id: "create_observe_project",
+        source: "onboarding_email",
+        campaign_key: "observe_waiting_for_first_trace",
+        email_key: "observe_waiting_v1",
+        target_event: "trace_received",
+        send_log_id: "send-123",
+        email_status: "stale",
+        stale_reason: "target_complete",
+        setup_provider: "anthropic",
+        setup_language: "typescript",
+      }),
+    );
+  });
+
+  it("shows a recovery message for stale lifecycle email links", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("staleEmailLink"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const alert = screen.getByTestId("lifecycle-email-context-alert");
+    expect(alert).toBeVisible();
+    expect(within(alert).getByText("Your setup step changed")).toBeVisible();
+    expect(
+      within(alert).getByText(
+        "Continue with the latest recommended step below.",
+      ),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: /review trace/i })).toHaveAttribute(
+      "href",
+      "/dashboard/observe/observe-1/trace/trace-1?tour_anchor=observe_trace_review_link&journey_step=review_first_trace",
+    );
+  });
+
+  it("renders the observe setup panel for the observe MVP path", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("observe-setup-panel")).toBeVisible();
+    expect(screen.getByTestId("sample-project-panel")).toBeVisible();
+    expect(screen.getAllByText("Connect your agent").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Step 1 of 4").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("Open OpenAI Python setup").length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.queryByText("Select the SDK package before opening setup."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: /open openai python setup/i }),
+    ).toBeVisible();
+    expect(
+      within(screen.getByTestId("observe-setup-panel")).getByTestId(
+        "observe-selected-package-handoff",
+      ),
+    ).toHaveTextContent("OpenAI Python path selected");
+    expect(screen.getByText("Send first trace")).toBeVisible();
+    expect(screen.getByText("Review first trace")).toBeVisible();
+  });
+
+  it("renders sampleTraceReady as the primary sample project panel", async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockResolvedValue(normalizedFixture("sampleTraceReady"));
+    mocks.useSampleProject.mockReturnValue({
+      openSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync,
+      },
+      hideSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync: vi.fn(),
+      },
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("sampleTraceReady"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const samplePanel = screen.getByTestId("sample-project-panel");
+    expect(samplePanel).toBeVisible();
+    expect(within(samplePanel).getByText("Sample trace")).toBeVisible();
+    expect(
+      within(samplePanel).getByRole("button", { name: /open sample trace/i }),
+    ).toBeVisible();
+    expect(
+      within(samplePanel).getByRole("link", {
+        name: /connect real data/i,
+      }),
+    ).toHaveAttribute("href", "/dashboard/observe");
+    expect(screen.queryByTestId("observe-setup-panel")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-primary-action"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-fallback-action"),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      within(samplePanel).getByRole("button", { name: /open sample trace/i }),
+    );
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "sample_project_open_clicked",
+      expect.objectContaining({
+        is_sample: true,
+        action_path: "sample",
+        primary_path: "sample",
+      }),
+    );
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "observe",
+        source: "onboarding_home",
+        reason: "review_sample_signal",
+      }),
+    );
+  });
+
+  it("renders a focused setup panel for non-Observe product paths", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("promptNoPrompt"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("path-focus-panel-prompt");
+    expect(panel).toBeVisible();
+    expect(screen.queryByTestId("observe-setup-panel")).toBeNull();
+    expect(
+      within(panel).getByText("Test prompts and compare versions"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "Create one prompt, test it, save a baseline, and compare the next version.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /create prompt/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/workbench/all?source=onboarding&action=create-prompt&tour_anchor=prompt_create_button&journey_step=start_prompt",
+    );
+  });
+
+  it("renders the path focus panel above the inline sample preview at the prompt first-run stage", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("promptNoPrompt"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const preview = screen.getByTestId("path-sample-preview-panel-prompt");
+    const focusPanel = screen.getByTestId("path-focus-panel-prompt");
+    expect(preview).toBeVisible();
+    await userEvent.click(
+      within(preview).getByRole("button", {
+        name: /run sample prompt comparison/i,
+      }),
+    );
+    // Starter result is visible before any navigation.
+    expect(
+      within(preview).getByText("Refund eligibility question"),
+    ).toBeVisible();
+    expect(within(preview).getByText("Improved")).toBeVisible();
+    expect(within(preview).getByText("Regressed")).toBeVisible();
+    // The real setup step is rendered ABOVE the sample preview.
+    expect(
+      focusPanel.compareDocumentPosition(preview) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(preview).getByRole("link", { name: /now do it with your data/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/workbench/all?source=onboarding&action=create-prompt&tour_anchor=prompt_create_button&journey_step=start_prompt",
+    );
+  });
+
+  it("renders the path focus panel above the inline sample preview at the evals first-run stage", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: pathState({
+        action: pathAction({
+          id: "create_eval_dataset",
+          title: "Choose what to test",
+          description: "Choose the first dataset, simulation, or trace.",
+          href: "/dashboard/evaluations/create?source=onboarding&step=data",
+          ctaLabel: "Choose source",
+          completionEvent: "eval_dataset_created",
+          targetPath: "evals",
+        }),
+        goal: "evaluate_quality",
+        pathDescription: "Choose a source and review the first result.",
+        pathLabel: "Evaluate quality",
+        primaryPath: "evals",
+        stage: "create_eval_dataset",
+      }),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const preview = screen.getByTestId("path-sample-preview-panel-evals");
+    const focusPanel = screen.getByTestId("path-focus-panel-evals");
+    expect(preview).toBeVisible();
+    await userEvent.click(
+      within(preview).getByRole("button", { name: /run sample eval/i }),
+    );
+    expect(within(preview).getByText("7 pass / 3 fail")).toBeVisible();
+    expect(
+      within(preview).getByText(/Hallucinated refund amount/),
+    ).toBeVisible();
+    expect(
+      focusPanel.compareDocumentPosition(preview) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      within(preview).getByRole("link", { name: /now do it with your data/i }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("/dashboard/evaluations/create"),
+    );
+    expect(
+      within(preview).getByRole("link", { name: /now do it with your data/i }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("tour_anchor=eval_dataset_button"),
+    );
+    expect(
+      within(preview).getByRole("link", { name: /now do it with your data/i }),
+    ).toHaveAttribute(
+      "href",
+      expect.stringContaining("journey_step=create_eval_dataset"),
+    );
+  });
+
+  it.each([
+    {
+      fixture: () => normalizedFixture("promptNoPrompt"),
+      goal: "improve_prompts",
+      quickStartId: "prompt",
+      path: "prompt",
+      routeParams: {
+        source: "onboarding",
+        action: "create-prompt",
+        tour_anchor: "prompt_create_button",
+        journey_step: "start_prompt",
+      },
+    },
+    {
+      fixture: () => normalizedFixture("agentNoAgent"),
+      goal: "build_ai_agent",
+      quickStartId: "agent",
+      path: "agent",
+      routeParams: {
+        onboarding: "create",
+        tour_anchor: "agent_create_button",
+        journey_step: "create_agent",
+      },
+    },
+    {
+      fixture: () => normalizedFixture("gatewayNoProvider"),
+      goal: "control_model_traffic",
+      quickStartId: "gateway",
+      path: "gateway",
+      routeParams: {
+        source: "onboarding",
+        tour_anchor: "gateway_provider_button",
+        journey_step: "configure_gateway_provider",
+      },
+    },
+    {
+      fixture: () =>
+        pathState({
+          action: pathAction({
+            id: "create_eval_dataset",
+            title: "Choose what to test",
+            description: "Choose the first dataset, simulation, or trace.",
+            href: "/dashboard/evaluations/create?source=onboarding&step=data",
+            ctaLabel: "Choose source",
+            completionEvent: "eval_dataset_created",
+            targetPath: "evals",
+          }),
+          goal: "evaluate_quality",
+          pathDescription: "Choose a source and review the first result.",
+          pathLabel: "Evaluate quality",
+          primaryPath: "evals",
+          stage: "create_eval_dataset",
+        }),
+      goal: "evaluate_quality",
+      quickStartId: "evals",
+      path: "evals",
+      routeParams: {
+        source: "onboarding",
+        step: "data",
+        tour_anchor: "eval_dataset_button",
+        journey_step: "create_eval_dataset",
+      },
+    },
+    {
+      fixture: () =>
+        pathState({
+          action: pathAction({
+            id: "create_voice_agent",
+            title: "Create voice agent",
+            description: "Create or connect one voice agent.",
+            href: "/dashboard/simulate/agent-definitions/create-new-agent-definition?source=onboarding&onboarding=create-voice-agent",
+            ctaLabel: "Create voice agent",
+            completionEvent: "voice_agent_created",
+            targetPath: "voice",
+          }),
+          goal: "connect_voice_ai_agent",
+          pathDescription: "Run or review a call with clear success criteria.",
+          pathLabel: "Connect a voice AI agent",
+          primaryPath: "voice",
+          stage: "create_voice_agent",
+        }),
+      goal: "connect_voice_ai_agent",
+      quickStartId: "voice",
+      path: "voice",
+      routeParams: {
+        source: "onboarding",
+        onboarding: "create-voice-agent",
+        tour_anchor: "voice_agent_button",
+        journey_step: "create_voice_agent",
+      },
+    },
+  ])(
+    "keeps $path real setup before the sample preview with guided attribution",
+    ({ fixture, goal, path, quickStartId, routeParams }) => {
+      mocks.useActivationState.mockReturnValue({
+        state: fixture(),
+        isLoading: false,
+        isRefetching: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+      });
+
+      renderView(
+        setupQuickStartRoute({
+          goal,
+          id: quickStartId,
+          primaryPath: path,
+        }),
+      );
+
+      const preview = screen.getByTestId(`path-sample-preview-panel-${path}`);
+      const focusPanel = screen.getByTestId(`path-focus-panel-${path}`);
+      expect(
+        focusPanel.compareDocumentPosition(preview) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+
+      const setupLink = within(preview).getByRole("link", {
+        name: /now do it with your data/i,
+      });
+      const setupUrl = new URL(
+        setupLink.getAttribute("href"),
+        "https://futureagi.test",
+      );
+      expectRouteParams({
+        params: setupUrl.searchParams,
+        values: {
+          ...routeParams,
+          quick_start_goal: goal,
+          quick_start_id: quickStartId,
+          quick_start_primary_path: path,
+        },
+      });
+    },
+  );
+
+  it("does not render the path sample preview for the observe path", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("observe-setup-panel")).toBeVisible();
+    expect(
+      screen.queryByTestId("path-sample-preview-panel-observe"),
+    ).toBeNull();
+    expect(document.querySelector('[data-sample-preview="true"]')).toBeNull();
+  });
+
+  it("does not render the path sample preview once the path is past first-run", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("promptCreatedNoRun"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("path-focus-panel-prompt")).toBeVisible();
+    expect(screen.queryByTestId("path-sample-preview-panel-prompt")).toBeNull();
+    expect(document.querySelector('[data-sample-preview="true"]')).toBeNull();
+  });
+
+  it("keeps setup quick-start attribution on prompt path actions after first setup", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("promptCreatedNoRun"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=prompt&quick_start_goal=improve_prompts&quick_start_primary_path=prompt",
+    );
+
+    const panel = screen.getByTestId("path-focus-panel-prompt");
+    const href = within(panel)
+      .getByRole("link", { name: /run test/i })
+      .getAttribute("href");
+    const params = new URLSearchParams(href.split("?")[1]);
+
+    expect(href).toContain("/dashboard/workbench/create/prompt-1?");
+    expect(params.get("quick_start_goal")).toBe("improve_prompts");
+    expect(params.get("quick_start_id")).toBe("prompt");
+    expect(params.get("quick_start_primary_path")).toBe("prompt");
+    expect(params.get("tour_anchor")).toBe("prompt_run_test_button");
+    expect(params.get("journey_step")).toBe("run_prompt_test");
+    expect(within(panel).getAllByText("Step 2 of 6").length).toBeGreaterThan(0);
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Run it on a real example and read the result.",
+    );
+    expect(within(panel).getByText("Later steps")).toBeVisible();
+    expect(within(panel).getAllByText("Step 2 of 6").length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("path-focus-step-run_prompt_test")).toBeNull();
+    expect(
+      screen.getByTestId("path-focus-step-save_prompt_version"),
+    ).toBeVisible();
+    expect(
+      within(panel).queryByRole("link", { name: /open workbench/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByTestId("onboarding-state-summary")).toBeNull();
+    expect(screen.queryByTestId("onboarding-path-card-grid")).toBeNull();
+  });
+
+  it("renders the completed setup screen after the first observe workflow", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeFirstLoopComplete"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(panel).toBeVisible();
+    expect(
+      within(panel).getByText("First quality loop complete"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText("Your first workflow is live"),
+    ).toBeVisible();
+    expect(within(panel).getByText("Next best step")).toBeVisible();
+    expect(
+      within(panel).getByText("First product workflow completed"),
+    ).toBeVisible();
+    expect(within(panel).getByText("Connect your agent")).toBeVisible();
+    expect(
+      within(panel).queryByText("first_quality_loop_completed"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).getByRole("link", { name: /review daily quality/i }),
+    ).toHaveAttribute("href", "/dashboard/home?mode=daily-quality");
+    expect(
+      within(panel).getByRole("link", { name: /open observe/i }),
+    ).toHaveAttribute("href", "/dashboard/observe/observe-1");
+  });
+
+  it("shows the real value signal as latest proof when present", () => {
+    const activatedState = normalizedFixture("observeFirstLoopComplete");
+    activatedState.valueSignal = {
+      latencyMs: 1200,
+      cost: 0.03,
+      totalTokens: 1240,
+    };
+    mocks.useActivationState.mockReturnValue({
+      state: activatedState,
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(within(panel).getByText("Latest proof")).toBeVisible();
+    expect(within(panel).getByText(/1\.2 s/)).toBeVisible();
+    expect(within(panel).getByText(/1,240 tokens/)).toBeVisible();
+    expect(within(panel).getByText(/\$0\.0300/)).toBeVisible();
+    // The real metric supersedes the event-label fallback.
+    expect(
+      within(panel).queryByText("First product workflow completed"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows prompt completion proof on the activated prompt home", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("promptActivated"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(within(panel).getByText("Latest proof")).toBeVisible();
+    expect(
+      within(panel).getByText("2 versions compared · 1 quality check ready"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText("Test prompts or agent prompts"),
+    ).toBeVisible();
+    expect(
+      within(panel).queryByText("Dataset example added"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows gateway completion proof on the activated gateway home", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("gatewayPolicyCreated"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(within(panel).getByText("Latest proof")).toBeVisible();
+    expect(
+      within(panel).getByText("1 request routed · 1 policy ready"),
+    ).toBeVisible();
+    expect(within(panel).getByText("Set up gateway")).toBeVisible();
+    expect(
+      within(panel).queryByText("Gateway policy created"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("falls back to the event label as latest proof when no value signal", () => {
+    const activatedState = normalizedFixture("observeFirstLoopComplete");
+    activatedState.valueSignal = null;
+    mocks.useActivationState.mockReturnValue({
+      state: activatedState,
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(within(panel).getByText("Latest proof")).toBeVisible();
+    expect(
+      within(panel).getByText("First product workflow completed"),
+    ).toBeVisible();
+  });
+
+  it("shows honest team-setup copy when activation is inherited from the organization", () => {
+    const activatedState = normalizedFixture("observeFirstLoopComplete");
+    activatedState.activatedVia = "organization";
+    mocks.useActivationState.mockReturnValue({
+      state: activatedState,
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(panel).toBeVisible();
+    expect(
+      within(panel).getByText("Your team already set up this workspace"),
+    ).toBeVisible();
+    expect(
+      within(panel).queryByText("Your first workflow is live"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the post-activation screen actionable when daily quality is unavailable", () => {
+    const activatedState = normalizedFixture("observeFirstLoopComplete");
+    activatedState.routeAvailability.daily_quality_home = {
+      href: "/dashboard/home?mode=daily-quality",
+      isAvailable: false,
+      reason: "feature_disabled",
+    };
+    mocks.useActivationState.mockReturnValue({
+      state: activatedState,
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(panel).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "Open the current loop next. Daily quality will take over when a reviewable signal is available.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(panel).queryByRole("link", { name: /review daily quality/i }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).getByRole("link", { name: /open observe/i }),
+    ).toHaveAttribute("href", "/dashboard/observe/observe-1");
+  });
+
+  it("uses the post-activation screen for activated non-observe paths", () => {
+    const activatedState = normalizedFixture("promptActivated");
+    activatedState.routeAvailability.daily_quality_home = {
+      href: "/dashboard/home?mode=daily-quality&source=post-activation-test",
+      isAvailable: true,
+      reason: null,
+    };
+    mocks.useActivationState.mockReturnValue({
+      state: activatedState,
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-loop-complete-panel");
+    expect(panel).toBeVisible();
+    expect(
+      within(panel).getByText("Your first workflow is live"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText("Test prompts or agent prompts"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /review daily quality/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/home?mode=daily-quality&source=post-activation-test",
+    );
+    expect(
+      within(panel).getByRole("link", { name: /open prompt metrics/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=metrics&tab=Metrics",
+    );
+  });
+
+  it("tracks activation once when the first workflow is reached", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeFirstLoopComplete"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    const { rerender } = renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=observe&quick_start_goal=monitor_production_ai_app&quick_start_primary_path=observe",
+    );
+
+    expect(screen.getByTestId("first-loop-complete-panel")).toBeVisible();
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_first_value_reached",
+        expect.objectContaining({
+          source: "setup_org",
+          quick_start_id: "observe",
+          primary_path: "observe",
+          activation_stage: "activated",
+          activated_at: "2026-05-26T15:10:00Z",
+          activation_event_name: "first_quality_loop_completed",
+          activation_event_occurred_at: "2026-05-26T15:10:00Z",
+          activation_event_path: "evals",
+          daily_quality_available: true,
+          is_sample: false,
+        }),
+      ),
+    );
+
+    const activationReachedCalls = () =>
+      mocks.trackOnboardingHomeEvent.mock.calls.filter(
+        ([eventName]) => eventName === "onboarding_first_value_reached",
+      );
+    expect(activationReachedCalls()).toHaveLength(1);
+
+    rerender(<OnboardingHomeView />);
+
+    expect(activationReachedCalls()).toHaveLength(1);
+  });
+
+  it("keeps setup quick-start attribution on the completed setup route", async () => {
+    persistSetupQuickStartAttribution({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeFirstLoopComplete"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=onboarding&target_event=first_quality_loop_completed",
+    );
+
+    expect(mocks.useActivationState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        source: "onboarding",
+        targetEvent: "first_quality_loop_completed",
+        quickStartGoal: "monitor_production_ai_app",
+        quickStartId: "observe",
+        quickStartPrimaryPath: "observe",
+      }),
+    );
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_first_value_reached",
+        expect.objectContaining({
+          source: "onboarding",
+          target_event: "first_quality_loop_completed",
+          quick_start_goal: "monitor_production_ai_app",
+          quick_start_id: "observe",
+          quick_start_primary_path: "observe",
+          activation_event_name: "first_quality_loop_completed",
+          daily_quality_available: true,
+          is_sample: false,
+        }),
+      ),
+    );
+  });
+
+  it.each([
+    {
+      actionId: "create_observe_project",
+      fixture: () => normalizedFixture("observeNoSetup"),
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+      pathname: "/dashboard/observe",
+      primaryLabel: "Open package setup",
+      stage: "connect_observability",
+      routeParams: {
+        setup: "true",
+        source: "onboarding",
+        provider: "openai",
+        language: "python",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+      },
+    },
+    {
+      actionId: "create_prompt",
+      fixture: () => normalizedFixture("promptNoPrompt"),
+      quickStartGoal: "improve_prompts",
+      quickStartId: "prompt",
+      quickStartPrimaryPath: "prompt",
+      pathname: "/dashboard/workbench/all",
+      primaryLabel: "Create prompt",
+      stepLabel: "Write the prompt you want to improve",
+      stage: "start_prompt",
+      routeParams: {
+        source: "onboarding",
+        action: "create-prompt",
+        tour_anchor: "prompt_create_button",
+        journey_step: "start_prompt",
+      },
+    },
+    {
+      actionId: "create_agent",
+      fixture: () => normalizedFixture("agentNoAgent"),
+      quickStartGoal: "build_ai_agent",
+      quickStartId: "agent",
+      quickStartPrimaryPath: "agent",
+      pathname: "/dashboard/agents",
+      primaryLabel: "Create agent",
+      stepLabel: "Stand up an agent you can run",
+      stage: "create_agent",
+      routeParams: {
+        onboarding: "create",
+        tour_anchor: "agent_create_button",
+        journey_step: "create_agent",
+      },
+    },
+    {
+      actionId: "gateway_add_provider",
+      fixture: () => normalizedFixture("gatewayNoProvider"),
+      quickStartGoal: "control_model_traffic",
+      quickStartId: "gateway",
+      quickStartPrimaryPath: "gateway",
+      pathname: "/dashboard/gateway/providers",
+      primaryLabel: "Add model provider",
+      stepLabel: "Route your first request",
+      stage: "configure_gateway_provider",
+      routeParams: {
+        source: "onboarding",
+        tour_anchor: "gateway_provider_button",
+        journey_step: "configure_gateway_provider",
+      },
+    },
+    {
+      actionId: "create_eval_dataset",
+      fixture: () =>
+        pathState({
+          action: pathAction({
+            id: "create_eval_dataset",
+            title: "Choose what to test",
+            description:
+              "Choose the first dataset, simulation, or trace source.",
+            href: "/dashboard/evaluations/create?source=onboarding&step=data",
+            ctaLabel: "Choose source",
+            completionEvent: "eval_dataset_created",
+            targetPath: "evals",
+          }),
+          goal: "evaluate_quality",
+          pathDescription:
+            "Choose a source, run a quality check, and review the first result.",
+          pathLabel: "Evaluate quality",
+          primaryPath: "evals",
+          stage: "create_eval_dataset",
+        }),
+      quickStartGoal: "evaluate_quality",
+      quickStartId: "evals",
+      quickStartPrimaryPath: "evals",
+      pathname: "/dashboard/evaluations/create",
+      primaryLabel: "Choose source",
+      stepLabel: "Pick what to test",
+      stage: "create_eval_dataset",
+      routeParams: {
+        source: "onboarding",
+        step: "data",
+        tour_anchor: "eval_dataset_button",
+        journey_step: "create_eval_dataset",
+      },
+    },
+    {
+      actionId: "create_voice_agent",
+      fixture: () =>
+        pathState({
+          action: pathAction({
+            id: "create_voice_agent",
+            title: "Create voice agent",
+            description: "Create or connect one voice agent.",
+            href: "/dashboard/simulate/agent-definitions/create-new-agent-definition?source=onboarding&onboarding=create-voice-agent",
+            ctaLabel: "Create voice agent",
+            completionEvent: "voice_agent_created",
+            targetPath: "voice",
+          }),
+          goal: "connect_voice_ai_agent",
+          pathDescription: "Run or review a call with clear success criteria.",
+          pathLabel: "Connect a voice AI agent",
+          primaryPath: "voice",
+          stage: "create_voice_agent",
+        }),
+      quickStartGoal: "connect_voice_ai_agent",
+      quickStartId: "voice",
+      quickStartPrimaryPath: "voice",
+      pathname:
+        "/dashboard/simulate/agent-definitions/create-new-agent-definition",
+      primaryLabel: "Create voice agent",
+      stepLabel: "Bring in a voice agent to test",
+      stage: "create_voice_agent",
+      routeParams: {
+        source: "onboarding",
+        onboarding: "create-voice-agent",
+        tour_anchor: "voice_agent_button",
+        journey_step: "create_voice_agent",
+      },
+    },
+  ])(
+    "shows setup $quickStartId quick-start as a focused checklist",
+    async ({
+      actionId,
+      fixture,
+      quickStartGoal,
+      quickStartId,
+      quickStartPrimaryPath,
+      pathname,
+      primaryLabel,
+      stepLabel = primaryLabel,
+      routeParams,
+      stage,
+    }) => {
+      const activationState = fixture();
+      mocks.useActivationState.mockReturnValue({
+        state: activationState,
+        isLoading: false,
+        isRefetching: false,
+        isError: false,
+        error: null,
+        refetch: vi.fn(),
+      });
+
+      renderView(
+        setupQuickStartRoute({
+          goal: quickStartGoal,
+          id: quickStartId,
+          primaryPath: quickStartPrimaryPath,
+        }),
+      );
+
+      expect(mocks.useActivationState).toHaveBeenCalledWith(
+        expect.objectContaining({
+          source: "setup_org",
+          quickStartGoal,
+          quickStartId,
+          quickStartPrimaryPath,
+        }),
+      );
+      await waitFor(() =>
+        expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+          "onboarding_home_viewed",
+          expect.objectContaining({
+            source: "setup_org",
+            quick_start_goal: quickStartGoal,
+            quick_start_id: quickStartId,
+            quick_start_primary_path: quickStartPrimaryPath,
+            workspace_id: "wrk_onboarding",
+            organization_id: "org_onboarding",
+            user_id: "usr_onboarding",
+            activation_stage: stage,
+            primary_path: quickStartPrimaryPath,
+            is_sample: false,
+            permission_limited: false,
+          }),
+        ),
+      );
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_recommended_action_viewed",
+        expect.objectContaining({
+          action_id: actionId,
+          source: "setup_org",
+          quick_start_id: quickStartId,
+        }),
+      );
+      expectCurrentRoute({
+        pathname: "/dashboard/home",
+        params: {
+          source: "setup_org",
+          quick_start_goal: quickStartGoal,
+          quick_start_id: quickStartId,
+          quick_start_primary_path: quickStartPrimaryPath,
+        },
+      });
+      const panel =
+        quickStartPrimaryPath === "observe"
+          ? screen.getByTestId("observe-setup-panel")
+          : screen.getByTestId(`path-focus-panel-${quickStartPrimaryPath}`);
+      const quickStartOption = SETUP_ORG_PRODUCT_LOOP_QUICK_STARTS.find(
+        (option) => option.id === quickStartId,
+      );
+      expect(
+        screen.getByRole("heading", {
+          level: 3,
+          name: quickStartOption.buttonLabel,
+        }),
+      ).toBeVisible();
+      expect(
+        screen.getByText(new RegExp(`Current step: ${stepLabel}`)),
+      ).toBeVisible();
+      expect(
+        screen.getByText(quickStartOption.shortDescription, {
+          exact: false,
+        }),
+      ).toBeVisible();
+      expect(
+        screen.queryByTestId("setup-quick-start-handoff-alert"),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId("sample-project-panel")).toBeNull();
+      expect(within(panel).getAllByText(/^Step 1 of /).length).toBeGreaterThan(
+        0,
+      );
+      expect(within(panel).getByText("Later steps")).toBeVisible();
+      expect(within(panel).queryByText("Show full path")).toBeNull();
+      const primaryLinkName =
+        quickStartPrimaryPath === "observe"
+          ? /open openai python setup/i
+          : new RegExp(primaryLabel, "i");
+      const primaryLink = within(panel).getByRole("link", {
+        name: primaryLinkName,
+      });
+      const primaryUrl = new URL(
+        primaryLink.getAttribute("href"),
+        "https://futureagi.test",
+      );
+      expect(primaryUrl.pathname).toBe(pathname);
+      expectRouteParams({
+        params: primaryUrl.searchParams,
+        values: {
+          ...routeParams,
+          quick_start_goal: quickStartGoal,
+          quick_start_id: quickStartId,
+          quick_start_primary_path: quickStartPrimaryPath,
+        },
+      });
+      if (quickStartPrimaryPath === "observe") {
+        expect(
+          within(panel).getAllByText("Open OpenAI Python setup").length,
+        ).toBeGreaterThan(0);
+        expect(
+          within(panel).getByTestId("observe-selected-package-handoff"),
+        ).toHaveTextContent("OpenAI Python path selected");
+        expect(
+          within(panel).getByTestId("current-step-guide"),
+        ).toHaveTextContent("Open OpenAI Python setup");
+        expect(
+          screen.getByTestId("observe-journey-step-send_first_trace"),
+        ).toBeVisible();
+      } else {
+        expect(
+          within(panel).getByTestId("current-step-guide"),
+        ).toHaveTextContent(stepLabel);
+        expect(
+          screen.queryByTestId(`path-focus-step-${stage}`),
+        ).not.toBeInTheDocument();
+      }
+      expect(
+        within(panel).queryByRole("link", {
+          name:
+            quickStartPrimaryPath === "observe"
+              ? /get started|fallback/i
+              : /open|get started|fallback/i,
+        }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId("onboarding-state-summary")).toBeNull();
+      expect(
+        screen.queryByTestId("onboarding-product-loop-stepper"),
+      ).toBeNull();
+      expect(screen.queryByTestId("onboarding-path-card-grid")).toBeNull();
+      expect(readPersistedSetupQuickStartAttribution()).toEqual({
+        quickStartGoal,
+        quickStartId,
+        quickStartPrimaryPath,
+      });
+    },
+  );
+
+  it("keeps stale sample state from hijacking a real setup quick-start", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("sampleTraceReady"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      setupQuickStartRoute({
+        goal: "monitor_production_ai_app",
+        id: "observe",
+        primaryPath: "observe",
+      }),
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        level: 3,
+        name: "Connect your agent",
+      }),
+    ).toBeVisible();
+    const panel = screen.getByTestId("observe-setup-panel");
+    expect(
+      within(panel).queryByRole("heading", { name: "Connect your agent" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(panel).getAllByText("Open OpenAI Python setup").length,
+    ).toBeGreaterThan(0);
+    expect(within(panel).getAllByText("Step 1 of 4").length).toBeGreaterThan(0);
+    expect(within(panel).getByText("Later steps")).toBeVisible();
+    expect(within(panel).queryByText("Show full path")).toBeNull();
+    expect(within(panel).getByTestId("observe-package-picker")).toBeVisible();
+    await userEvent.click(
+      within(panel).getByRole("button", { name: /anthropic/i }),
+    );
+    expect(
+      within(panel).getByTestId("observe-selected-package-handoff"),
+    ).toHaveTextContent("Anthropic Python path selected");
+    expect(
+      within(panel).getByTestId("observe-package-code-preview"),
+    ).toHaveTextContent("Anthropic Python setup preview");
+    expect(
+      within(panel).getByTestId("observe-package-install-command"),
+    ).toHaveTextContent("pip install traceAI-anthropic anthropic");
+    expect(
+      within(panel).getByTestId("observe-package-request-code"),
+    ).toHaveTextContent("client = anthropic.Anthropic");
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Open Anthropic Python setup",
+    );
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "package setup code",
+    );
+    const pythonSetupUrl = new URL(
+      screen
+        .getByRole("link", { name: /open anthropic python setup/i })
+        .getAttribute("href"),
+      "https://futureagi.test",
+    );
+    expect(pythonSetupUrl.pathname).toBe("/dashboard/observe");
+    expectRouteParams({
+      params: pythonSetupUrl.searchParams,
+      values: {
+        setup: "true",
+        source: "onboarding",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+        provider: "anthropic",
+        language: "python",
+      },
+    });
+    await userEvent.click(
+      within(panel).getByRole("button", { name: /typescript/i }),
+    );
+    expect(
+      within(panel).getByTestId("observe-selected-package-handoff"),
+    ).toHaveTextContent("Anthropic TypeScript path selected");
+    expect(
+      within(panel).getByTestId("observe-package-install-command"),
+    ).toHaveTextContent(
+      "npm install @traceai/fi-core @traceai/anthropic @opentelemetry/instrumentation @anthropic-ai/sdk",
+    );
+    expect(within(panel).getByText("Send first trace")).toBeVisible();
+    expect(within(panel).getByText("Review first trace")).toBeVisible();
+    const setupLink = screen.getByRole("link", {
+      name: /open anthropic typescript setup/i,
+    });
+    const setupUrl = new URL(
+      setupLink.getAttribute("href"),
+      "https://futureagi.test",
+    );
+    expect(setupUrl.pathname).toBe("/dashboard/observe");
+    expectRouteParams({
+      params: setupUrl.searchParams,
+      values: {
+        setup: "true",
+        source: "onboarding",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+        provider: "anthropic",
+        language: "typescript",
+      },
+    });
+    expect(screen.queryByTestId("sample-project-panel")).toBeNull();
+    expect(screen.queryByTestId("onboarding-state-summary")).toBeNull();
+    expect(screen.queryByTestId("onboarding-product-loop-stepper")).toBeNull();
+    expect(screen.queryByTestId("onboarding-path-card-grid")).toBeNull();
+  });
+
+  it("keeps observe setup links on supported package languages", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      setupQuickStartRoute({
+        goal: "monitor_production_ai_app",
+        id: "observe",
+        primaryPath: "observe",
+      }),
+    );
+
+    const panel = screen.getByTestId("observe-setup-panel");
+    await userEvent.click(
+      within(panel).getByRole("button", { name: /typescript/i }),
+    );
+    await userEvent.click(
+      within(panel).getByRole("button", { name: /langchain/i }),
+    );
+
+    expect(
+      within(panel).getByRole("button", { name: /typescript/i }),
+    ).toBeDisabled();
+
+    const setupUrl = new URL(
+      within(panel)
+        .getByRole("link", { name: /open langchain python setup/i })
+        .getAttribute("href"),
+      "https://futureagi.test",
+    );
+    expect(setupUrl.pathname).toBe("/dashboard/observe");
+    expectRouteParams({
+      params: setupUrl.searchParams,
+      values: {
+        setup: "true",
+        source: "onboarding",
+        provider: "langchain",
+        language: "python",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+        quick_start_goal: "monitor_production_ai_app",
+        quick_start_id: "observe",
+        quick_start_primary_path: "observe",
+      },
+    });
+  });
+
+  it("records Observe package selection so lifecycle emails keep package context", async () => {
+    const recordPackageSelection = vi.fn();
+    mocks.useRecordActivationEvent.mockReturnValue({
+      mutate: recordPackageSelection,
+      isLoading: false,
+      isPending: false,
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      setupQuickStartRoute({
+        goal: "monitor_production_ai_app",
+        id: "observe",
+        primaryPath: "observe",
+      }),
+    );
+
+    const panel = screen.getByTestId("observe-setup-panel");
+    await userEvent.click(
+      within(panel).getByRole("button", { name: /anthropic/i }),
+    );
+
+    await waitFor(() =>
+      expect(recordPackageSelection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          artifactId: "observe-package",
+          artifactType: "observe_setup",
+          eventName: "onboarding_observe_package_selected",
+          idempotencyKey:
+            "onboarding_observe_package_selected:wrk_onboarding:anthropic:python",
+          isSample: false,
+          primaryPath: "observe",
+          source: "onboarding_home",
+          stage: "connect_observability",
+          metadata: expect.objectContaining({
+            setup_language: "python",
+            setup_label: "Anthropic Python",
+            setup_provider: "anthropic",
+          }),
+        }),
+      ),
+    );
+  });
+
+  it("shows the selected setup path when saved state points at another path", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      setupQuickStartRoute({
+        goal: "improve_prompts",
+        id: "prompt",
+        primaryPath: "prompt",
+      }),
+    );
+
+    expect(
+      screen.getByRole("heading", {
+        level: 3,
+        name: "Prove a prompt edit is better",
+      }),
+    ).toBeVisible();
+    const panel = screen.getByTestId("path-focus-panel-prompt");
+    expect(screen.queryByTestId("path-focus-step-start_prompt")).toBeNull();
+    expect(screen.getByTestId("path-focus-step-run_prompt_test")).toBeVisible();
+    expect(within(panel).getAllByText("Step 1 of 6").length).toBeGreaterThan(0);
+    expect(within(panel).getByText("Later steps")).toBeVisible();
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Create prompt",
+    );
+    expect(
+      within(panel).getByText("See how it scores on real cases"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /create prompt/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/workbench/all?source=onboarding&action=create-prompt&tour_anchor=prompt_create_button&journey_step=start_prompt&quick_start_goal=improve_prompts&quick_start_id=prompt&quick_start_primary_path=prompt",
+    );
+    expect(screen.queryByTestId("onboarding-state-summary")).toBeNull();
+    expect(screen.queryByTestId("onboarding-product-loop-stepper")).toBeNull();
+    expect(screen.queryByTestId("onboarding-path-card-grid")).toBeNull();
+  });
+
+  it.each([
+    {
+      label: "stage has moved past the first setup action",
+      state: () => normalizedFixture("promptCreatedNoRun"),
+    },
+    {
+      label: "first action route is unavailable",
+      state: () => ({
+        ...normalizedFixture("promptNoPrompt"),
+        recommendedAction: {
+          ...normalizedFixture("promptNoPrompt").recommendedAction,
+          routeAvailable: false,
+        },
+      }),
+    },
+    {
+      label: "first action is blocked",
+      state: () => ({
+        ...normalizedFixture("promptNoPrompt"),
+        recommendedAction: {
+          ...normalizedFixture("promptNoPrompt").recommendedAction,
+          blocked: true,
+        },
+      }),
+    },
+    {
+      label: "workspace permissions are limited",
+      state: () => ({
+        ...normalizedFixture("promptNoPrompt"),
+        permissions: {
+          ...normalizedFixture("promptNoPrompt").permissions,
+          permissionLimited: true,
+        },
+      }),
+    },
+  ])("keeps setup quick-start on Home when $label", async ({ state }) => {
+    mocks.useActivationState.mockReturnValue({
+      state: state(),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      setupQuickStartRoute({
+        goal: "improve_prompts",
+        id: "prompt",
+        primaryPath: "prompt",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_home_viewed",
+        expect.objectContaining({
+          source: "setup_org",
+          quick_start_goal: "improve_prompts",
+          quick_start_id: "prompt",
+          quick_start_primary_path: "prompt",
+        }),
+      ),
+    );
+    expect(window.location.pathname).toBe("/dashboard/home");
+    expect(mocks.trackOnboardingHomeEvent).not.toHaveBeenCalledWith(
+      "onboarding_setup_quick_start_auto_handoff",
+      expect.anything(),
+    );
+  });
+
+  it("keeps setup path switching visible during first setup", async () => {
+    const state = normalizedFixture("observeNoSetup");
+    const refetch = vi.fn();
+    const mutateAsync = vi.fn().mockResolvedValue({
+      ...state,
+      goal: "improve_prompts",
+      primaryPath: "prompt",
+      stage: "start_prompt",
+    });
+    mocks.useSaveOnboardingGoal.mockReturnValue({
+      data: null,
+      error: null,
+      isLoading: false,
+      isPending: false,
+      mutateAsync,
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: {
+        ...state,
+        availablePaths: [
+          ...state.availablePaths,
+          {
+            id: "prompt",
+            label: "Test prompts or agent prompts",
+            description: "Create, test, and compare prompt versions.",
+            status: "available",
+            href: "/dashboard/home?path=prompt",
+            isAvailable: true,
+            blockedReason: null,
+            requiresPermission: "prompt:write",
+            firstActionId: "create_prompt",
+          },
+        ],
+        routeAvailability: {
+          ...state.routeAvailability,
+          path_prompt: {
+            href: "/dashboard/home?path=prompt",
+            isAvailable: true,
+            reason: null,
+          },
+        },
+      },
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch,
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("observe-setup-panel")).toBeVisible();
+    expect(screen.getByTestId("onboarding-path-card-grid")).toBeVisible();
+    expect(screen.getByTestId("onboarding-path-card-prompt")).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: /choose this/i }));
+
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goal: "improve_prompts",
+        primaryPath: "prompt",
+        source: "path_card",
+      }),
+    );
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it("opens sample preview quick starts to the sample data action", async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockResolvedValue(normalizedFixture("sampleTraceReady"));
+    const refetch = vi.fn();
+    mocks.useSampleProject.mockReturnValue({
+      openSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync,
+      },
+      hideSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync: vi.fn(),
+      },
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("sampleTraceReady"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch,
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=sample_preview&quick_start_goal=explore_sample_data&quick_start_primary_path=sample",
+    );
+
+    const samplePanel = screen.getByTestId("sample-project-panel");
+    expect(samplePanel).toBeVisible();
+    expect(
+      within(samplePanel).getByRole("button", { name: /open sample trace/i }),
+    ).toBeVisible();
+    expect(
+      screen.queryByTestId("onboarding-state-summary"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-product-loop-stepper"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("onboarding-path-card-grid"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByTestId("setup-quick-start-handoff-alert"),
+    ).toHaveTextContent("Sample trace is preview-only");
+    expect(mutateAsync).not.toHaveBeenCalled();
+    await userEvent.click(
+      within(samplePanel).getByRole("button", { name: /open sample trace/i }),
+    );
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "observe",
+        source: "setup_org",
+        reason: "sample_preview",
+        openAfterCreate: true,
+        quickStartGoal: "explore_sample_data",
+        quickStartId: "sample_preview",
+        quickStartPrimaryPath: "sample",
+      }),
+    );
+    await waitFor(() =>
+      expect(window.location.pathname + window.location.search).toContain(
+        "/dashboard/home?sample=true",
+      ),
+    );
+    const attributionParams = new URLSearchParams(window.location.search);
+    expect(attributionParams.get("quick_start_goal")).toBe(
+      "explore_sample_data",
+    );
+    expect(attributionParams.get("quick_start_id")).toBe("sample_preview");
+    expect(attributionParams.get("quick_start_primary_path")).toBe("sample");
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the sample preview fallback visible when opening the sample fails", async () => {
+    const mutateAsync = vi.fn().mockRejectedValue(new Error("sample failed"));
+    mocks.useSampleProject.mockReturnValue({
+      openSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync,
+      },
+      hideSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync: vi.fn(),
+      },
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("sampleTraceReady"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=sample_preview&quick_start_goal=explore_sample_data&quick_start_primary_path=sample",
+    );
+
+    expect(screen.getByTestId("sample-project-panel")).toBeVisible();
+    expect(mutateAsync).not.toHaveBeenCalled();
+    await userEvent.click(
+      screen.getByRole("button", { name: /open sample trace/i }),
+    );
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId("sample-project-panel")).toBeVisible();
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "sample_project_open_failed",
+      expect.objectContaining({
+        is_sample: true,
+        action_path: "sample",
+        reason: "sample failed",
+      }),
+    );
+  });
+
+  it("does not reopen the sample after review and routes to guided real setup", async () => {
+    const mutateAsync = vi.fn();
+    mocks.useSampleProject.mockReturnValue({
+      openSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync,
+      },
+      hideSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync: vi.fn(),
+      },
+    });
+    const state = normalizedFixture("sampleTraceReady");
+    mocks.useActivationState.mockReturnValue({
+      state: {
+        ...state,
+        stage: "connect_real_data",
+        sampleProject: {
+          ...state.sampleProject,
+          realSetupHref: "/dashboard/observe?setup=true&source=onboarding",
+        },
+      },
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=sample_preview&quick_start_goal=explore_sample_data&quick_start_primary_path=sample",
+    );
+
+    const samplePanel = screen.getByTestId("sample-project-panel");
+    const realSetupLink = within(samplePanel).getByRole("link", {
+      name: /connect real data/i,
+    });
+    const params = new URLSearchParams(
+      realSetupLink.getAttribute("href").split("?")[1],
+    );
+
+    expect(realSetupLink.getAttribute("href")).toContain("/dashboard/observe?");
+    expect(params.get("setup")).toBe("true");
+    expect(params.get("source")).toBe("sample_trace_review");
+    expect(params.get("tour_anchor")).toBe("sample_connect_real_data_button");
+    expect(params.get("journey_step")).toBe("connect_real_data");
+    expect(params.get("quick_start_goal")).toBe("explore_sample_data");
+    expect(params.get("quick_start_id")).toBe("sample_preview");
+    expect(params.get("quick_start_primary_path")).toBe("sample");
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_home_viewed",
+        expect.objectContaining({
+          activation_stage: "connect_real_data",
+          quick_start_id: "sample_preview",
+        }),
+      ),
+    );
+    expect(mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("drops unrecognized quick-start URL attribution before tracking", async () => {
+    persistSetupQuickStartAttribution({
+      quickStartGoal: "monitor_production_ai_app",
+      quickStartId: "observe",
+      quickStartPrimaryPath: "observe",
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=user@example.com&quick_start_goal=secret&quick_start_primary_path=observe",
+    );
+
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "onboarding_home_viewed",
+        expect.not.objectContaining({
+          quick_start_goal: expect.any(String),
+          quick_start_id: expect.any(String),
+          quick_start_primary_path: expect.any(String),
+        }),
+      ),
+    );
+    expect(readPersistedSetupQuickStartAttribution()).toEqual({});
+  });
+
+  it("does not reuse persisted quick-start context on a fresh setup-org URL", async () => {
+    persistSetupQuickStartAttribution({
+      quickStartGoal: "explore_sample_data",
+      quickStartId: "sample_preview",
+      quickStartPrimaryPath: "sample",
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNoSetup"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home?source=setup_org");
+
+    await waitFor(() =>
+      expect(mocks.useActivationState).toHaveBeenCalledWith(
+        expect.objectContaining({ source: "setup_org" }),
+      ),
+    );
+    const activationStateParams = mocks.useActivationState.mock.calls[0][0];
+    expect(activationStateParams).not.toHaveProperty("quickStartGoal");
+    expect(activationStateParams).not.toHaveProperty("quickStartId");
+    expect(activationStateParams).not.toHaveProperty("quickStartPrimaryPath");
+    expect(readPersistedSetupQuickStartAttribution()).toEqual({});
+  });
+
+  it("renders daily quality home for activated observe workspaces", async () => {
+    const mutate = vi.fn();
+    mocks.useRecordActivationEvent.mockReturnValue({
+      mutate,
+      isLoading: false,
+      isPending: false,
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("dailyQualityObserveNewSignal"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?mode=daily-quality&source=onboarding_email&campaign_key=daily_quality_open_actions&email_key=daily_quality_open_actions_v1&target_stage=daily_review&target_event=daily_quality_item_reviewed&send_log_id=send-daily&email_status=current&link_issued_at=2026-05-29T08:00:00Z&context_status=current",
+    );
+
+    expect(screen.getByTestId("onboarding-daily-quality")).toBeVisible();
+    expect(screen.getByTestId("daily-quality-top-signal")).toBeVisible();
+    expect(screen.queryByTestId("first-loop-complete-panel")).toBeNull();
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "daily_quality_home_viewed",
+        expect.objectContaining({
+          daily_quality_mode: "new_signal",
+          signal_id: "trace_failure:trace-2",
+        }),
+      ),
+    );
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_top_signal_shown",
+      expect.objectContaining({
+        signal_type: "trace_failure",
+      }),
+    );
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_digest_destination_opened",
+      expect.objectContaining({
+        digest_context_id: "daily_quality_open_actions",
+        send_log_id: "send-daily",
+      }),
+    );
+    expect(screen.getByTestId("weekly-quality-review")).toBeVisible();
+
+    await userEvent.click(screen.getByTestId("weekly-quality-review-action"));
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "weekly_quality_review_opened",
+      expect.objectContaining({
+        weekly_review_status: "due",
+        unresolved_count: 1,
+        route: "/dashboard/home?mode=weekly-review",
+      }),
+    );
+
+    await userEvent.click(screen.getByTestId("daily-quality-primary-action"));
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_action_opened",
+      expect.objectContaining({
+        recommended_action_id: "review_failed_trace",
+        route: "/dashboard/observe/observe-1/trace/trace-2",
+      }),
+    );
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_item_reviewed",
+      expect.objectContaining({
+        signal_id: "trace_failure:trace-2",
+        source_type: "trace",
+      }),
+    );
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "daily_quality_item_reviewed",
+        primaryPath: "observe",
+        stage: "daily_review",
+        artifactType: "trace",
+        artifactId: "trace-2",
+        campaignKey: "daily_quality_open_actions",
+        emailKey: "daily_quality_open_actions_v1",
+        sendLogId: "send-daily",
+        emailStatus: "current",
+        targetStage: "daily_review",
+        targetEvent: "daily_quality_item_reviewed",
+        linkIssuedAt: "2026-05-29T08:00:00Z",
+        contextStatus: "current",
+      }),
+    );
+  });
+
+  it("records cross-path daily quality signal reviews on the signal path", async () => {
+    const mutate = vi.fn();
+    const state = normalizedFixture("dailyQualityObserveNewSignal");
+    state.dailyQuality.topSignal = {
+      ...state.dailyQuality.topSignal,
+      id: "gateway_request_issue:req-1",
+      path: "gateway",
+      type: "gateway_request_issue",
+      sourceType: "gateway_request",
+      sourceId: "req-1",
+      route: "/dashboard/gateway/logs?request_id=req-1",
+    };
+    state.dailyQuality.primaryAction = {
+      ...state.dailyQuality.primaryAction,
+      id: "review_gateway_request_issue",
+      path: "gateway",
+      label: "Review request",
+      route: "/dashboard/gateway/logs?request_id=req-1",
+      sourceType: "gateway_request",
+      sourceId: "req-1",
+    };
+    state.recommendedAction = {
+      ...state.recommendedAction,
+      id: "review_gateway_request_issue",
+      href: "/dashboard/gateway/logs?request_id=req-1",
+      analytics: {
+        ...state.recommendedAction.analytics,
+        targetPath: "gateway",
+      },
+    };
+    state.dailyQuality.productCards = [
+      {
+        path: "observe",
+        status: "healthy",
+        label: "Observe",
+        summary: "Create alert",
+        metric: "0",
+        change: "No new signal",
+        route: "/dashboard/observe/observe-1",
+      },
+      {
+        path: "gateway",
+        status: "needs_review",
+        label: "Gateway",
+        summary: "Review the latest failed gateway request",
+        metric: "1",
+        change: "New since last review",
+        route: "/dashboard/gateway/logs?request_id=req-1",
+      },
+    ];
+    mocks.useRecordActivationEvent.mockReturnValue({
+      mutate,
+      isLoading: false,
+      isPending: false,
+    });
+    mocks.useActivationState.mockReturnValue({
+      state,
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home?mode=daily-quality");
+
+    expect(
+      screen.getByTestId("daily-quality-product-card-observe"),
+    ).toBeVisible();
+    expect(
+      screen.getByTestId("daily-quality-product-card-gateway"),
+    ).toBeVisible();
+    await userEvent.click(screen.getByTestId("daily-quality-primary-action"));
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_item_reviewed",
+      expect.objectContaining({
+        signal_id: "gateway_request_issue:req-1",
+        signal_path: "gateway",
+        source_type: "gateway_request",
+      }),
+    );
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "daily_quality_item_reviewed",
+        primaryPath: "gateway",
+        artifactType: "gateway_request",
+        artifactId: "req-1",
+        metadata: expect.objectContaining({
+          signal_path: "gateway",
+        }),
+      }),
+    );
+  });
+
+  it("renders daily quality no-signal state with one useful action", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("dailyQualityObserveNoSignal"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("onboarding-daily-quality")).toBeVisible();
+    expect(screen.getByTestId("daily-quality-empty-state")).toBeVisible();
+    expect(
+      screen.getByTestId("daily-quality-primary-action"),
+    ).toHaveTextContent("Create alert");
+    expect(screen.queryByTestId("observe-setup-panel")).toBeNull();
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "daily_quality_empty_state_viewed",
+        expect.objectContaining({
+          daily_quality_mode: "no_new_signal",
+        }),
+      ),
+    );
+  });
+
+  it("renders carried-forward daily quality actions", async () => {
+    const mutate = vi.fn();
+    mocks.useRecordActivationEvent.mockReturnValue({
+      mutate,
+      isLoading: false,
+      isPending: false,
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("dailyQualityObserveOpenAction"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("onboarding-daily-quality")).toBeVisible();
+    expect(
+      screen.getByTestId("daily-quality-primary-action"),
+    ).toHaveTextContent("Continue action");
+    const actionCard = screen.getByTestId(
+      "daily-quality-action-card-assign_trace_owner",
+    );
+    expect(actionCard).toBeVisible();
+    expect(actionCard).toHaveTextContent("Assign trace owner");
+    expect(actionCard).toHaveTextContent("Owner Ava");
+    expect(actionCard).toHaveTextContent(/Due .*2026/);
+    expect(screen.getByTestId("weekly-quality-review")).toBeVisible();
+
+    await userEvent.click(
+      within(actionCard).getByRole("button", { name: /done/i }),
+    );
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_action_completed",
+      expect.objectContaining({
+        recommended_action_id: "assign_trace_owner",
+        route: "/dashboard/observe/observe-1?mode=quality-actions",
+        resolution: "completed",
+      }),
+    );
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "daily_quality_action_completed",
+        primaryPath: "observe",
+        stage: "daily_review",
+        artifactType: "project",
+        artifactId: "observe-1",
+        projectId: "observe-1",
+        metadata: expect.objectContaining({
+          action_id: "assign_trace_owner",
+          source_type: "project",
+          source_id: "observe-1",
+          resolution: "completed",
+        }),
+      }),
+      expect.objectContaining({
+        onSuccess: expect.any(Function),
+      }),
+    );
+
+    await userEvent.click(
+      screen.getByTestId("daily-quality-primary-action-dismiss"),
+    );
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_action_dismissed",
+      expect.objectContaining({
+        recommended_action_id: "continue_trace_action",
+        route: "/dashboard/observe/observe-1",
+        resolution: "dismissed",
+      }),
+    );
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventName: "daily_quality_action_dismissed",
+        artifactType: "project",
+        artifactId: "observe-1",
+        metadata: expect.objectContaining({
+          action_id: "continue_trace_action",
+          resolution: "dismissed",
+        }),
+      }),
+      expect.objectContaining({
+        onSuccess: expect.any(Function),
+      }),
+    );
+
+    await userEvent.click(
+      within(actionCard).getByRole("link", { name: /open/i }),
+    );
+
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+      "daily_quality_action_opened",
+      expect.objectContaining({
+        recommended_action_id: "assign_trace_owner",
+        route: "/dashboard/observe/observe-1?mode=quality-actions",
+      }),
+    );
+  });
+
+  it("renders daily quality home for activated non-observe paths", async () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("dailyQualityPromptNoSignal"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home?mode=daily-quality");
+
+    expect(screen.getByTestId("onboarding-daily-quality")).toBeVisible();
+    expect(screen.getByTestId("daily-quality-empty-state")).toBeVisible();
+    expect(screen.queryByText("Next setup step")).toBeNull();
+    expect(
+      screen.getByTestId("daily-quality-primary-action"),
+    ).toHaveTextContent("Review prompt metrics");
+    expect(
+      screen.getByTestId("daily-quality-product-card-prompt"),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalledWith(
+        "daily_quality_home_viewed",
+        expect.objectContaining({
+          daily_quality_mode: "no_new_signal",
+          primary_path: "prompt",
+          recommended_action_id: "open_prompt_metrics",
+        }),
+      ),
+    );
+  });
+
+  it("checks again from the waiting-for-signal panel", async () => {
+    const refetch = vi.fn();
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeWaitingForTrace"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch,
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("waiting-for-signal-panel")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: /check again/i }));
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders the first trace review panel when the trace arrives", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeFirstTraceReady"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home?provider=anthropic&language=typescript");
+
+    const panel = screen.getByTestId("first-signal-panel");
+    expect(panel).toBeVisible();
+    expect(
+      within(panel).getByText("Anthropic TypeScript trace received"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "Review the Anthropic TypeScript trace to inspect inputs, outputs, latency, cost, and errors.",
+      ),
+    ).toBeVisible();
+    expect(within(panel).getByText("Anthropic TypeScript trace")).toBeVisible();
+    expect(within(panel).getByText("trace-1")).toBeVisible();
+    expect(within(panel).getByText("Not reviewed")).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /review trace/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/observe/observe-1/trace/trace-1?provider=anthropic&language=typescript&tour_anchor=observe_trace_review_link&journey_step=review_first_trace",
+    );
+  });
+
+  it("keeps the package context when the first trace is ready for a quality check", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeNeedsEvaluator"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView("/dashboard/home?provider=anthropic&language=python");
+
+    const panel = screen.getByTestId("first-signal-panel");
+    expect(
+      within(panel).getByText(
+        "Create a quality check from this Anthropic Python trace",
+      ),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "The Anthropic Python trace has been reviewed. Create a repeatable quality check next.",
+      ),
+    ).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /create quality check/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/evaluations/create?source=onboarding&step=data&source_type=trace_project&source_id=observe-1&trace_id=trace-1&provider=anthropic&language=python&tour_anchor=observe_evaluator_button&journey_step=create_trace_evaluator",
+    );
+  });
+
+  it("renders backend observe journey progress on the first signal panel", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: {
+        ...normalizedFixture("observeFirstTraceReady"),
+        journeyPlan: observeJourneyPlan({ currentStepIndex: 2 }),
+      },
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("first-signal-panel");
+    const currentStep = within(panel).getByTestId(
+      "observe-journey-step-review_first_trace",
+    );
+    expect(
+      within(currentStep).getByText("Review trace from manifest"),
+    ).toBeVisible();
+    expect(within(currentStep).getByText("Current")).toBeVisible();
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Inspect the trace and decide what to measure.",
+    );
+    expect(within(panel).getByText("trace-1")).toBeVisible();
+    expect(
+      within(panel).getByRole("link", { name: /review trace/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/observe/observe-1/trace/trace-1?tour_anchor=observe_trace_review_link&journey_step=review_first_trace",
+    );
+  });
+
+  it("opens the sample panel from the waiting state", async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockResolvedValue(normalizedFixture("observeWaitingWithSample"));
+    mocks.useSampleProject.mockReturnValue({
+      openSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync,
+      },
+      hideSampleProject: {
+        isLoading: false,
+        isPending: false,
+        mutateAsync: vi.fn(),
+      },
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("observeWaitingWithSample"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("sample-project-panel")).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: /open sample trace/i }),
+    );
+
+    expect(mutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: "observe",
+        source: "onboarding_home",
+        reason: "waiting_for_first_trace_sample_available",
+      }),
+    );
+  });
+
+  it("renders prompt onboarding as a focused prompt path panel", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("promptCreatedNoRun"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("path-focus-panel-prompt");
+    expect(screen.getByText("Run a prompt test")).toBeVisible();
+    expect(
+      within(panel).getByText("Test prompts and compare versions"),
+    ).toBeVisible();
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Start here",
+    );
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Run it on a real example and read the result.",
+    );
+    expect(
+      within(panel).getByRole("link", { name: /run test/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/workbench/create/prompt-1?source=onboarding&onboarding=run-test&tour_anchor=prompt_run_test_button&journey_step=run_prompt_test",
+    );
+    expect(screen.queryByTestId("onboarding-state-summary")).toBeNull();
+    expect(screen.queryByTestId("onboarding-product-loop-stepper")).toBeNull();
+    expect(screen.getByTestId("onboarding-path-card-grid")).toBeVisible();
+  });
+
+  it("renders agent onboarding as a focused agent path panel", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("agentCreatedNoRun"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("path-focus-panel-agent");
+    expect(screen.getAllByText("Add a starter prompt").length).toBeGreaterThan(
+      0,
+    );
+    expect(
+      within(panel).getByText("Prototype an agent with eval coverage"),
+    ).toBeVisible();
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Add a runnable prompt with a model and sample input.",
+    );
+    expect(
+      within(panel).getByRole("link", { name: /add starter prompt/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/agents/playground/agent-1/build?onboarding=run-scenario&journey_step=add_agent_node&tour_anchor=agent_add_node_button",
+    );
+    expect(screen.queryByTestId("onboarding-state-summary")).toBeNull();
+    expect(screen.queryByTestId("onboarding-product-loop-stepper")).toBeNull();
+    expect(screen.getByTestId("onboarding-path-card-grid")).toBeVisible();
+  });
+
+  it("keeps setup quick-start attribution on the agent primary action after first setup", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("agentCreatedNoRun"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=agent&quick_start_goal=build_ai_agent&quick_start_primary_path=agent",
+    );
+
+    const panel = screen.getByTestId("path-focus-panel-agent");
+    expect(
+      within(panel).getByRole("link", { name: /add starter prompt/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/agents/playground/agent-1/build?onboarding=run-scenario&journey_step=add_agent_node&tour_anchor=agent_add_node_button&quick_start_goal=build_ai_agent&quick_start_id=agent&quick_start_primary_path=agent",
+    );
+  });
+
+  it("renders gateway onboarding as a focused gateway path panel", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("gatewayKeyNoRequest"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=gateway&quick_start_goal=control_model_traffic&quick_start_primary_path=gateway",
+    );
+
+    const panel = screen.getByTestId("path-focus-panel-gateway");
+    expect(
+      screen.getByRole("heading", {
+        level: 3,
+        name: "Route LLM traffic safely",
+      }),
+    ).toBeVisible();
+    expect(within(panel).getByText("Later steps")).toBeVisible();
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "See cost + latency per call",
+    );
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Send one request and read its cost, latency, and routing.",
+    );
+    expect(
+      within(panel).getByRole("link", { name: /send request/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/gateway?onboarding=test-request&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway&tour_anchor=gateway_request_button&journey_step=run_gateway_request",
+    );
+    expect(
+      within(
+        screen.getByTestId("path-focus-step-review_gateway_log"),
+      ).getByText("Next"),
+    ).toBeVisible();
+    expect(screen.queryByText("gateway")).toBeNull();
+  });
+
+  it("does not add path anchors to unavailable path fallback actions", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("selectedPathUnavailable"),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("path-focus-panel-prompt");
+    within(panel)
+      .getAllByRole("link", { name: /start with observe/i })
+      .forEach((link) => {
+        expect(link).toHaveAttribute(
+          "href",
+          "/dashboard/observe?setup=true&source=onboarding",
+        );
+      });
+  });
+
+  it("renders eval onboarding with path-specific hero and focused panel copy", () => {
+    const href = "/dashboard/evaluations/create?source=onboarding&step=run";
+    mocks.useActivationState.mockReturnValue({
+      state: pathState({
+        action: pathAction({
+          id: "run_eval",
+          kind: "test",
+          title: "Run quality check",
+          description: "Run the first quality check and review the result.",
+          href,
+          ctaLabel: "Run check",
+          completionEvent: "eval_run_completed",
+          targetPath: "evals",
+        }),
+        goal: "evaluate_quality",
+        pathDescription:
+          "Choose a source, run a quality check, and review the first result.",
+        pathLabel: "Evaluate quality",
+        primaryPath: "evals",
+        stage: "run_eval",
+      }),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("path-focus-panel-evals");
+    const cta = within(panel).getByRole("link", { name: /run check/i });
+    expect(screen.getByText("Quality run")).toBeVisible();
+    expect(screen.getByText("Run the first quality check")).toBeVisible();
+    expect(
+      screen.getByText("Run it once so the first result is reviewable."),
+    ).toBeVisible();
+    expect(within(panel).getByText("Simulation / Evals")).toBeVisible();
+    expect(
+      within(panel).getByText("Test AI and act on the first result"),
+    ).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "Choose a small dataset, simulation, or trace source, add a quality check, run it, and fix what failed.",
+      ),
+    ).toBeVisible();
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Run it once and open the pass/fail breakdown.",
+    );
+    expect(screen.queryByText("Continue setup")).not.toBeInTheDocument();
+    expect(cta).toHaveAttribute(
+      "href",
+      `${href}&tour_anchor=eval_run_button&journey_step=run_eval`,
+    );
+    expect(cta.getAttribute("href")).not.toMatch(/^\/\//);
+  });
+
+  it("renders voice onboarding with path-specific hero and disabled unavailable CTA", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: pathState({
+        action: pathAction({
+          id: "review_voice_call",
+          kind: "review",
+          title: "Review call",
+          description: "Review the transcript and call outcome.",
+          href: "/dashboard/simulate/test/voice-test-1/run/execution-1?onboarding=review-voice-call",
+          ctaLabel: "Review call",
+          routeAvailable: false,
+          targetPath: "voice",
+        }),
+        goal: "connect_voice_ai_agent",
+        pathDescription: "Run or review a call with clear success criteria.",
+        pathLabel: "Connect a voice AI agent",
+        primaryPath: "voice",
+        stage: "review_voice_call",
+      }),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    const panel = screen.getByTestId("path-focus-panel-voice");
+    const cta = within(panel).getByRole("button", { name: /review call/i });
+    expect(screen.getByText("Voice call")).toBeVisible();
+    expect(screen.getByText("Review the voice call")).toBeVisible();
+    expect(
+      screen.getByText(
+        "Inspect the call transcript and identify the first improvement.",
+      ),
+    ).toBeVisible();
+    expect(within(panel).getByText("Voice setup")).toBeVisible();
+    expect(within(panel).getByText("Connect a voice AI agent")).toBeVisible();
+    expect(
+      within(panel).getByText(
+        "Create or connect a voice AI agent, run one call, review it, and add success criteria.",
+      ),
+    ).toBeVisible();
+    expect(within(panel).getByTestId("current-step-guide")).toHaveTextContent(
+      "Open the call to inspect timing, interruptions, and result.",
+    );
+    expect(screen.queryByText("Continue setup")).not.toBeInTheDocument();
+    expect(cta).toBeDisabled();
+    expect(cta).not.toHaveAttribute("href");
+  });
+
+  it("keeps setup quick-start attribution on the voice primary action after first setup", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: pathState({
+        action: pathAction({
+          id: "run_voice_test_call",
+          kind: "setup",
+          title: "Run test call",
+          description: "Run a safe call or simulation.",
+          href: "/dashboard/simulate/test?from=onboarding&onboarding=create-test-call&agent_definition_id=agent-1",
+          ctaLabel: "Run call",
+          completionEvent: "voice_test_call_completed",
+          targetPath: "voice",
+        }),
+        goal: "connect_voice_ai_agent",
+        pathDescription: "Run or review a call with clear success criteria.",
+        pathLabel: "Connect a voice AI agent",
+        primaryPath: "voice",
+        stage: "run_voice_test_call",
+      }),
+      isLoading: false,
+      isRefetching: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      "/dashboard/home?source=setup_org&quick_start_id=voice&quick_start_goal=connect_voice_ai_agent&quick_start_primary_path=voice",
+    );
+
+    const panel = screen.getByTestId("path-focus-panel-voice");
+    expect(
+      within(panel).getByRole("link", { name: /run call/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/simulate/test?from=onboarding&onboarding=create-test-call&agent_definition_id=agent-1&quick_start_goal=connect_voice_ai_agent&quick_start_id=voice&quick_start_primary_path=voice&tour_anchor=voice_test_call_button&journey_step=run_voice_test_call",
+    );
+  });
+
+  it("saves a selected goal through the goal mutation", async () => {
+    const mutateAsync = vi
+      .fn()
+      .mockResolvedValue(normalizedFixture("observeNoSetup"));
+    mocks.useSaveOnboardingGoal.mockReturnValue({
+      data: null,
+      error: null,
+      isLoading: false,
+      isPending: false,
+      mutateAsync,
+    });
+    mocks.useActivationState.mockReturnValue({
+      state: normalizedFixture("goalPickerFallback"),
+      isLoading: false,
+      isError: false,
+      error: null,
+      refetch: vi.fn(),
+    });
+
+    renderView();
+
+    await userEvent.click(screen.getByLabelText("Connect your agent"));
+    await userEvent.click(
+      screen.getByRole("button", { name: /open the first step/i }),
+    );
+
+    await waitFor(() =>
+      expect(mutateAsync).toHaveBeenCalledWith({
+        goal: "monitor_production_ai_app",
+        primaryPath: "observe",
+        source: "goal_picker",
+        reason: "first_selection",
+        expectedStage: "choose_goal",
+      }),
+    );
+    expect(mocks.trackOnboardingHomeEvent).toHaveBeenCalled();
+  });
+
+  it("renders a hard-error fallback and retries on demand", async () => {
+    const refetch = vi.fn();
+    mocks.useActivationState.mockReturnValue({
+      state: null,
+      isLoading: false,
+      isError: true,
+      error: { message: "Activation state failed" },
+      refetch,
+    });
+
+    renderView();
+
+    expect(screen.getByTestId("onboarding-home-error")).toBeInTheDocument();
+    expect(screen.getByText("Activation state failed")).toBeVisible();
+    expect(screen.getByText("Continue with Observe setup")).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: /create observe project/i }),
+    ).toHaveAttribute(
+      "href",
+      "/dashboard/observe?setup=true&source=onboarding&tour_anchor=observe_create_project_button&journey_step=connect_observability",
+    );
+    expect(screen.queryByRole("link", { name: /get started/i })).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: /retry/i }));
+
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    {
+      goal: "monitor_production_ai_app",
+      id: "observe",
+      label: "Create Observe project",
+      pathname: "/dashboard/observe",
+      primaryPath: "observe",
+      title: "Connect your agent",
+      routeParams: {
+        setup: "true",
+        source: "onboarding",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+      },
+    },
+    {
+      goal: "improve_prompts",
+      id: "prompt",
+      label: "Create prompt",
+      pathname: "/dashboard/workbench/all",
+      primaryPath: "prompt",
+      title: "Test prompts or agent prompts",
+      routeParams: {
+        source: "onboarding",
+        action: "create-prompt",
+        tour_anchor: "prompt_create_button",
+        journey_step: "start_prompt",
+      },
+    },
+    {
+      goal: "build_ai_agent",
+      id: "agent",
+      label: "Create agent",
+      pathname: "/dashboard/agents",
+      primaryPath: "agent",
+      title: "Prototype agent",
+      routeParams: {
+        onboarding: "create",
+        tour_anchor: "agent_create_button",
+        journey_step: "create_agent",
+      },
+    },
+    {
+      goal: "control_model_traffic",
+      id: "gateway",
+      label: "Add model provider",
+      pathname: "/dashboard/gateway/providers",
+      primaryPath: "gateway",
+      title: "Set up gateway",
+      routeParams: {
+        source: "onboarding",
+        tour_anchor: "gateway_provider_button",
+        journey_step: "configure_gateway_provider",
+      },
+    },
+    {
+      goal: "evaluate_quality",
+      id: "evals",
+      label: "Choose test source",
+      pathname: "/dashboard/evaluations/create",
+      primaryPath: "evals",
+      title: "Test AI with Simulation / Evals",
+      routeParams: {
+        source: "onboarding",
+        step: "data",
+        tour_anchor: "eval_dataset_button",
+        journey_step: "create_eval_dataset",
+      },
+    },
+    {
+      goal: "connect_voice_ai_agent",
+      id: "voice",
+      label: "Create voice agent",
+      pathname:
+        "/dashboard/simulate/agent-definitions/create-new-agent-definition",
+      primaryPath: "voice",
+      title: "Connect a voice AI agent",
+      routeParams: {
+        source: "onboarding",
+        onboarding: "create-voice-agent",
+        tour_anchor: "voice_agent_button",
+        journey_step: "create_voice_agent",
+      },
+    },
+  ])(
+    "keeps setup $id quick-start on its selected first action when activation state fails",
+    ({ goal, id, label, pathname, primaryPath, routeParams, title }) => {
+      mocks.useActivationState.mockReturnValue({
+        state: null,
+        isLoading: false,
+        isError: true,
+        error: { message: "Activation state failed" },
+        refetch: vi.fn(),
+      });
+
+      renderView(setupQuickStartRoute({ goal, id, primaryPath }));
+
+      expect(screen.getByText(title)).toBeVisible();
+      const fallbackLink = screen.getByRole("link", { name: label });
+      const fallbackUrl = new URL(
+        fallbackLink.getAttribute("href"),
+        "https://futureagi.test",
+      );
+      expect(fallbackUrl.pathname).toBe(pathname);
+      expectRouteParams({
+        params: fallbackUrl.searchParams,
+        values: {
+          ...routeParams,
+          quick_start_goal: goal,
+          quick_start_id: id,
+          quick_start_primary_path: primaryPath,
+        },
+      });
+      expect(screen.queryByRole("link", { name: /get started/i })).toBeNull();
+    },
+  );
+
+  it("keeps sample preview errors on an attributed real setup fallback", () => {
+    mocks.useActivationState.mockReturnValue({
+      state: null,
+      isLoading: false,
+      isError: true,
+      error: { message: "Activation state failed" },
+      refetch: vi.fn(),
+    });
+
+    renderView(
+      setupQuickStartRoute({
+        goal: "explore_sample_data",
+        id: "sample_preview",
+        primaryPath: "sample",
+      }),
+    );
+
+    expect(screen.getByText("Continue with real setup")).toBeVisible();
+    const fallbackLink = screen.getByRole("link", {
+      name: "Create Observe project",
+    });
+    const fallbackUrl = new URL(
+      fallbackLink.getAttribute("href"),
+      "https://futureagi.test",
+    );
+    expect(fallbackUrl.pathname).toBe("/dashboard/observe");
+    expectRouteParams({
+      params: fallbackUrl.searchParams,
+      values: {
+        setup: "true",
+        source: "onboarding",
+        tour_anchor: "observe_create_project_button",
+        journey_step: "connect_observability",
+        quick_start_goal: "explore_sample_data",
+        quick_start_id: "sample_preview",
+        quick_start_primary_path: "sample",
+      },
+    });
+    expect(screen.queryByRole("link", { name: /get started/i })).toBeNull();
+  });
+});

@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import { Box, Stack, Tab, Tabs, Card, Skeleton } from "@mui/material";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import SectionHeader from "../components/SectionHeader";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
@@ -19,6 +19,15 @@ import ProviderConfigView from "./ProviderConfigView";
 import RoutingConfigView from "./RoutingConfigView";
 import CacheStatusView from "./CacheStatusView";
 import AddProviderDialog from "./AddProviderDialog";
+import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
+import {
+  appendGatewayOnboardingAttributionToHref,
+  buildGatewayProviderAddedPayload,
+  GATEWAY_ONBOARDING_MODES,
+  gatewaySetupQuickStartAttributionFromSearch,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 
 const TAB_SLUGS = ["health", "config", "routing", "cache"];
 
@@ -32,7 +41,9 @@ const ProviderManagementSection = () => {
   const canWrite =
     RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT][role];
   const { tab: tabSlug } = useParams();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const tab = tabSlugToIndex(tabSlug);
 
   const handleTabChange = useCallback(
@@ -47,6 +58,14 @@ const ProviderManagementSection = () => {
     },
     [navigate],
   );
+  const onboardingHref = useCallback(
+    (href) => appendGatewayOnboardingAttributionToHref(href, searchParams),
+    [searchParams],
+  );
+  const gatewayQuickStartAttribution = useMemo(
+    () => gatewaySetupQuickStartAttributionFromSearch(searchParams),
+    [searchParams],
+  );
   const [addProviderOpen, setAddProviderOpen] = useState(false);
 
   const { gatewayId, isLoading: gwLoading } = useGatewayContext();
@@ -60,6 +79,15 @@ const ProviderManagementSection = () => {
 
   const isLoading =
     gwLoading || configLoading || healthLoading || orgConfigLoading;
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const showOnboardingFocus =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_PROVIDER);
+  const providers = providerHealth?.providers;
+  const hasProviders = Array.isArray(providers)
+    ? providers.length > 0
+    : Boolean(providers && Object.keys(providers).length > 0);
 
   const handleReload = () => {
     if (!gatewayId) return;
@@ -71,6 +99,26 @@ const ProviderManagementSection = () => {
         enqueueSnackbar("Failed to reload config", { variant: "error" });
       },
     });
+  };
+
+  const handleProviderSaved = (providerPayload) => {
+    if (!showOnboardingFocus) return;
+
+    recordActivationEvent(
+      buildGatewayProviderAddedPayload({
+        ...providerPayload,
+        quickStartAttribution: gatewayQuickStartAttribution,
+      }),
+      {
+        onSettled: () => {
+          navigate(
+            onboardingHref(
+              "/dashboard/gateway/keys?source=onboarding&onboarding=create-key&journey_step=create_gateway_key&tour_anchor=gateway_key_button",
+            ),
+          );
+        },
+      },
+    );
   };
 
   if (isLoading) {
@@ -138,6 +186,41 @@ const ProviderManagementSection = () => {
         ]}
       />
 
+      <GatewayOnboardingFocusPanel
+        currentStep="Provider"
+        description="Add one model provider so gateway traffic can resolve to a real model before the first request."
+        hidden={!showOnboardingFocus}
+        primaryAction={
+          canWrite
+            ? {
+                label: "Add Provider",
+                onClick: () => setAddProviderOpen(true),
+              }
+            : {
+                label: "Open overview",
+                onClick: () => navigate(onboardingHref("/dashboard/gateway")),
+              }
+        }
+        secondaryAction={{
+          label: "Open API keys",
+          onClick: () =>
+            navigate(
+              onboardingHref("/dashboard/gateway/keys?source=onboarding"),
+            ),
+        }}
+        singleActionFocus={showOnboardingFocus}
+        steps={[
+          {
+            label: "Provider",
+            complete: hasProviders,
+          },
+          { label: "API key", complete: false },
+          { label: "Request", complete: false },
+        ]}
+        title="Connect a gateway provider"
+        tourAnchor={onboardingParams.tourAnchor}
+      />
+
       <Tabs
         value={tab}
         onChange={handleTabChange}
@@ -169,6 +252,7 @@ const ProviderManagementSection = () => {
         open={addProviderOpen}
         onClose={() => setAddProviderOpen(false)}
         gatewayId={gatewayId}
+        onProviderSaved={handleProviderSaved}
       />
     </Box>
   );
