@@ -111,5 +111,20 @@ class EvalTaskLogger(BaseModel):
         ordering = ["-created_at"]
 
 
+class EvalTaskProcessedEntity(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    eval_task_logger = models.ForeignKey(
+        EvalTaskLogger,
+        on_delete=models.CASCADE,
+        related_name="processed_entities",
+        db_index=False,
+    )
+    entity_id = models.CharField(max_length=255)
+
+    class Meta:
+        db_table = "tracer_eval_task_processed_entity"
+        unique_together = ("eval_task_logger", "entity_id")
+
+
 MAX_EVAL_RUNS_IN_TASK = 50
 EVAL_TASK_LOGGER_LIMIT = 10
