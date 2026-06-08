@@ -77,12 +77,48 @@ on:
 
 jobs:
   frontend-contracts:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: frontend
+    env:
+      EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
+      EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Require private EE checkout token
+        working-directory: .
+        run: |
+          if [ -z "${EE_REPO_READ_TOKEN}" ]; then
+            echo "::error::EE_REPO_READ_TOKEN is required for frontend contract CI because the runtime Management API contract debt report includes Enterprise routes."
+            exit 1
+          fi
+
+      - name: Checkout EE package
+        uses: actions/checkout@v4
+        with:
+          repository: future-agi/ee
+          path: futureagi/ee
+          token: ${{ env.EE_REPO_READ_TOKEN }}
+          persist-credentials: true
+          fetch-depth: 1
+
+      - name: Use matching EE branch when available
+        working-directory: futureagi/ee
+        run: |
+          if git ls-remote --exit-code --heads origin "${EE_REPO_BRANCH}" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "${EE_REPO_BRANCH}"
+            git checkout --detach FETCH_HEAD
+            echo "Using EE branch ${EE_REPO_BRANCH}"
+          else
+            echo "::notice::No EE branch named ${EE_REPO_BRANCH}; using the EE repository default branch."
+          fi
+
+      - name: Drop EE checkout credentials
+        working-directory: futureagi/ee
+        run: git config --unset-all http.https://github.com/.extraheader || true
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -128,12 +164,22 @@ jobs:
       redis:
         image: redis:7
         ports:
-          - 6379:6379
+          - 16379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.3-alpine
+        ports:
+          - 18123:8123
+          - 19000:9000
+        options: >-
+          --health-cmd "wget -q -O - http://localhost:8123/ping || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     defaults:
       run:
         working-directory: futureagi
