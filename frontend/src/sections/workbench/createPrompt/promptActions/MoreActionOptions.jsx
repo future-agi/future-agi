@@ -156,6 +156,8 @@ const moreActionOptionsPropTypes = {
   data: PropTypes.object,
 };
 
+MoreActionOptionsChild.propTypes = moreActionOptionsPropTypes;
+
 // @ts-ignore
 export const MoreActionOptions = forwardRef(MoreActionOptionsChild);
 MoreActionOptions.propTypes = moreActionOptionsPropTypes;
