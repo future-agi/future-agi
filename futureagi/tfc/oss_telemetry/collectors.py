@@ -59,7 +59,7 @@ def collect_counts(window_start: datetime, window_end: datetime) -> dict[str, in
         ).count()
 
     def dataset_eval_runs() -> int:
-        from model_hub.models.develop_dataset import Cell, Column
+        from model_hub.models.develop_dataset import Cell
 
         return (
             Cell.no_workspace_objects.filter(

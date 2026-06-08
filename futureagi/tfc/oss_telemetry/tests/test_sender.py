@@ -53,6 +53,17 @@ def test_previous_fixed_utc_window(
     )
 
 
+def test_previous_fixed_utc_window_with_seconds_override(monkeypatch):
+    monkeypatch.delenv("FUTURE_AGI_TELEMETRY_INTERVAL_SECONDS", raising=False)
+    assert compute_previous_utc_window(
+        datetime(2026, 6, 7, 8, 5, 59, tzinfo=UTC),
+        interval_seconds=120,
+    ) == (
+        datetime(2026, 6, 7, 8, 2, tzinfo=UTC),
+        datetime(2026, 6, 7, 8, 4, tzinfo=UTC),
+    )
+
+
 def test_schedule_disables_temporal_retries():
     schedule = OSS_TELEMETRY_SCHEDULES[0]
     assert schedule.schedule_id == "oss-telemetry-heartbeat"
@@ -346,12 +357,13 @@ def test_cycle_failures_are_silent():
         }
 
 
-def test_signup_hook_starts_daemon_registration_thread():
+def test_signup_hook_starts_non_daemon_registration_thread_without_joining():
     with (
         patch("tfc.ee_gating.is_oss", return_value=True),
         patch("threading.Thread") as thread,
     ):
         _fire_oss_telemetry_registration()
 
-    assert thread.call_args.kwargs["daemon"] is True
+    assert "daemon" not in thread.call_args.kwargs
     thread.return_value.start.assert_called_once()
+    thread.return_value.join.assert_not_called()
