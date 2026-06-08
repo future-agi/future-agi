@@ -176,10 +176,10 @@ jobs:
           - 18123:8123
           - 19000:9000
         options: >-
-          --health-cmd "wget -q -O - http://localhost:8123/ping || exit 1"
+          --health-cmd "clickhouse-client --query 'SELECT 1' || exit 1"
           --health-interval 10s
           --health-timeout 5s
-          --health-retries 10
+          --health-retries 12
     defaults:
       run:
         working-directory: futureagi
