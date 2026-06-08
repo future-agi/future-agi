@@ -188,7 +188,6 @@ const ANNOTATOR_OPS = [
 
 // Direct UUID identifiers support exact multi-select through the canonical
 // list operators. Avoid substring/null operators for these fields.
-const ID_ONLY_FIELDS = new Set(["trace_id", "span_id", "session"]);
 const ID_ONLY_OPS = [
   { value: "in", label: "equals" },
   { value: "not_in", label: "not equals" },
