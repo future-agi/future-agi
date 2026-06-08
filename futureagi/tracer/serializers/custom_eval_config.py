@@ -38,6 +38,7 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
             "kb_id",
             "model",
             "eval_group",
+            "pinned_version",
         ]
 
     def get_eval_group(self, obj):

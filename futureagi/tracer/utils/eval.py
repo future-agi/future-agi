@@ -1092,9 +1092,9 @@ def _execute_composite_on_span(
             observation_span_id,
             select_related=("project", "project__organization", "project__workspace"),
         )
-        custom_eval_config = CustomEvalConfig.objects.get(
-            id=custom_eval_config_id, deleted=False
-        )
+        custom_eval_config = CustomEvalConfig.objects.select_related(
+            "pinned_version",
+        ).get(id=custom_eval_config_id, deleted=False)
     except (ObservationSpan.DoesNotExist, CustomEvalConfig.DoesNotExist) as e:
         raise ValueError(f"Span composite eval load failed: {e}") from e
 
@@ -1469,9 +1469,9 @@ def _execute_evaluation(
             select_related=("project", "project__organization", "project__workspace"),
         )
 
-        custom_eval_config = CustomEvalConfig.objects.get(
-            id=custom_eval_config_id, deleted=False
-        )
+        custom_eval_config = CustomEvalConfig.objects.select_related(
+            "pinned_version",
+        ).get(id=custom_eval_config_id, deleted=False)
     except ObservationSpan.DoesNotExist:
         raise ValueError("Observation span not found")  # noqa: B904
     except CustomEvalConfig.DoesNotExist:
@@ -1579,6 +1579,11 @@ def _execute_evaluation(
             _eval_inputs["session_context"] = _session_ctx
 
     # --- Run eval via unified engine ---
+    _pinned_vn = (
+        custom_eval_config.pinned_version.version_number
+        if custom_eval_config.pinned_version_id
+        else None
+    )
     try:
         result = run_eval(
             EvalRequest(
@@ -1593,6 +1598,7 @@ def _execute_evaluation(
                 runtime_config=custom_eval_config.config,
                 organization_id=org_id,
                 workspace_id=ws_id,
+                version_number=_pinned_vn,
             )
         )
 
@@ -2890,6 +2896,11 @@ def _execute_evaluation_for_trace(
     if _di["span_context"]:
         _eval_inputs["span_context"] = build_span_context(anchor_span)
 
+    _pinned_vn = (
+        custom_eval_config.pinned_version.version_number
+        if custom_eval_config.pinned_version_id
+        else None
+    )
     try:
         result = run_eval(
             EvalRequest(
@@ -2904,6 +2915,7 @@ def _execute_evaluation_for_trace(
                 runtime_config=custom_eval_config.config,
                 organization_id=org_id,
                 workspace_id=ws_id,
+                version_number=_pinned_vn,
             )
         )
 
@@ -3124,6 +3136,11 @@ def _execute_evaluation_for_session(
         if _session_ctx is not None:
             _eval_inputs["session_context"] = _session_ctx
 
+    _pinned_vn = (
+        custom_eval_config.pinned_version.version_number
+        if custom_eval_config.pinned_version_id
+        else None
+    )
     try:
         result = run_eval(
             EvalRequest(
@@ -3138,6 +3155,7 @@ def _execute_evaluation_for_session(
                 runtime_config=custom_eval_config.config,
                 organization_id=org_id,
                 workspace_id=ws_id,
+                version_number=_pinned_vn,
             )
         )
 

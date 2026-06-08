@@ -52,6 +52,14 @@ class CustomEvalConfig(BaseModel):
     eval_group = models.ForeignKey(
         EvalGroup, on_delete=models.CASCADE, null=True, blank=True
     )
+    pinned_version = models.ForeignKey(
+        "model_hub.EvalTemplateVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pinned_custom_eval_configs",
+        help_text="Pin to a specific template version for runtime.",
+    )
 
     def __str__(self):
         return f"Custom Eval Config {self.id}"
