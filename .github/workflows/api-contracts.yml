@@ -172,11 +172,15 @@ jobs:
           --health-retries 5
       clickhouse:
         image: clickhouse/clickhouse-server:25.3-alpine
+        env:
+          CLICKHOUSE_USER: default
+          CLICKHOUSE_PASSWORD: ci_test_pw
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
         ports:
           - 18123:8123
           - 19000:9000
         options: >-
-          --health-cmd "clickhouse-client --query 'SELECT 1' || exit 1"
+          --health-cmd "clickhouse-client --password ci_test_pw --query 'SELECT 1' || exit 1"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 12
@@ -190,6 +194,8 @@ jobs:
       PG_TEST_DB: test_tfc_test
       PG_USER: postgres
       PG_PASSWORD: postgres
+      CH_PASSWORD: ci_test_pw
+      CH25_PASSWORD: ci_test_pw
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
