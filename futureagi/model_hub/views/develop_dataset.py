@@ -7900,7 +7900,13 @@ class EditAndRunUserEvalView(APIView):
                     )
 
             # --- Version creation on edit ---
-            if eval_metric.template.owner == OwnerChoices.USER.value:
+            # Only create a version when the request has actual config changes.
+            # A bare {"run": true} rerun should not snapshot stale template config.
+            _has_config_changes = bool(
+                request_data.get("config")
+                or request_data.get("composite_weight_overrides") is not None
+            )
+            if _has_config_changes and eval_metric.template.owner == OwnerChoices.USER.value:
                 from model_hub.models.evals_metric import EvalTemplateVersion
                 from model_hub.utils.prompt_migration import config_to_prompt_messages
 
