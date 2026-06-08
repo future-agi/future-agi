@@ -23,7 +23,7 @@ from django.db.models import (
     When,
 )
 from django.db.models.fields.json import KeyTextTransform
-from django.db.models.functions import Cast, Coalesce, Floor, JSONObject, NullIf
+from django.db.models.functions import Cast, Coalesce, Floor, JSONObject, NullIf, Round
 
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.score import Score
@@ -93,13 +93,22 @@ def build_annotation_subqueries(
             )
             score_field = Cast(KeyTextTransform(value_key, "value"), FloatField())
 
+            # STAR is integer (1-5); Floor matches that. NUMERIC can be a
+            # continuous float (e.g. 0.0-1.0 with step 0.1) where Floor would
+            # destroy precision (0.5 → 0). Use Round to preserve sub-integer
+            # values.
+            avg_score = (
+                Floor(Avg(score_field))
+                if label.type == AnnotationTypeChoices.STAR.value
+                else Round(Avg(score_field), 2)
+            )
             subq = (
                 Score.objects.filter(base_ann_q)
                 .exclude(**{f"value__{value_key}__isnull": True})
                 .values("label_id")
                 .annotate(
                     result=JSONObject(
-                        score=Floor(Avg(score_field)),
+                        score=avg_score,
                         annotators=JSONBObjectAgg(
                             Cast(F("annotator_id"), TextField()),
                             JSONObject(
@@ -107,6 +116,8 @@ def build_annotation_subqueries(
                                 user_name=annotator_name,
                                 score=score_field,
                             ),
+                            # jsonb_object_agg() requires NOT NULL keys.
+                            filter=Q(annotator_id__isnull=False),
                         ),
                     )
                 )
@@ -149,6 +160,7 @@ def build_annotation_subqueries(
                                     output_field=FloatField(),
                                 ),
                             ),
+                            filter=Q(annotator_id__isnull=False),
                         ),
                     )
                 )
@@ -222,6 +234,7 @@ def build_annotation_subqueries(
                                 user_name=annotator_name,
                                 value=F("value__text"),
                             ),
+                            filter=Q(annotator_id__isnull=False),
                         ),
                     )
                 )
