@@ -2,6 +2,9 @@ FROM futureagi/future-agi:v1.8.19_base
 
 COPY . .
 
+# bring image deps in sync with this branch's requirements (base image is older)
+RUN pip install --no-cache-dir -r requirements.txt
+
 # Install Node.js for sandboxed JavaScript eval execution
 RUN apt-get update -qq && \
     apt-get install -y --no-install-recommends nodejs && \

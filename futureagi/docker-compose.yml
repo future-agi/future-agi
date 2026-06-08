@@ -317,7 +317,7 @@ services:
       - ./config/userlist.txt:/etc/pgbouncer/userlist.txt
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.10.2.80
+    image: clickhouse/clickhouse-server:25.3.14.14-alpine
     container_name: clickhouse
     ports:
       - "${CH_HTTP_PORT:-8123}:8123"
@@ -326,6 +326,8 @@ services:
       - clickhouse_data:/var/lib/clickhouse
       - ./config/clickhouse/config.xml:/etc/clickhouse-server/config.d/custom.xml:ro
       - ./config/clickhouse/users.xml:/etc/clickhouse-server/users.d/custom.xml:ro
+      - ./config/clickhouse/default-user.xml:/etc/clickhouse-server/users.d/default-user.xml:ro
+      - ./.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/storage_policy.xml
     deploy:
       resources:
         limits:
