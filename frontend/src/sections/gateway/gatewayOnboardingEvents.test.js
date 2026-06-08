@@ -1,0 +1,361 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildGatewayFailureResolvedPayload,
+  buildGatewayPolicyConfigHref,
+  buildGatewayRequestReviewHref,
+  buildGatewayRequestSeenPayload,
+  buildGatewayFallbackPolicyCreatedPayload,
+  buildGatewayKeyCreatedPayload,
+  buildGatewayOnboardingCompletionHref,
+  buildGatewayPolicyCreatedPayload,
+  buildGatewayProviderAddedPayload,
+  GATEWAY_ONBOARDING_MODES,
+  gatewayPlaygroundRequestId,
+  gatewaySetupQuickStartAttributionFromSearch,
+  getGatewayOnboardingRouteParams,
+} from "./gatewayOnboardingEvents";
+
+const GATEWAY_QUICK_START_SEARCH =
+  "?quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway";
+
+describe("gatewayOnboardingEvents", () => {
+  it("parses gateway journey-step params from Home CTAs", () => {
+    [
+      [
+        "configure_gateway_provider",
+        GATEWAY_ONBOARDING_MODES.ADD_PROVIDER,
+        false,
+      ],
+      ["create_gateway_key", GATEWAY_ONBOARDING_MODES.CREATE_KEY, false],
+      ["run_gateway_request", GATEWAY_ONBOARDING_MODES.TEST_REQUEST, false],
+      ["review_gateway_log", GATEWAY_ONBOARDING_MODES.REVIEW_REQUEST, false],
+      ["fix_gateway_failure", GATEWAY_ONBOARDING_MODES.FIX_FAILURE, true],
+      ["add_gateway_policy", GATEWAY_ONBOARDING_MODES.ADD_POLICY, false],
+    ].forEach(([journeyStep, mode, isFailureRepair]) => {
+      expect(
+        getGatewayOnboardingRouteParams(
+          `?tour_anchor=gateway_focus&journey_step=${journeyStep}&request_id=req-123`,
+        ),
+      ).toEqual({
+        isOnboarding: true,
+        isFailureRepair,
+        mode,
+        requestId: "req-123",
+        tourAnchor: "gateway_focus",
+      });
+    });
+  });
+
+  it("builds a gateway first-request payload from playground results", () => {
+    expect(
+      buildGatewayRequestSeenPayload({
+        gatewayId: "gateway-1",
+        result: {
+          status_code: 200,
+          body: { id: "chatcmpl-1" },
+          guardrail_headers: {
+            "x-agentcc-request-id": "req-123",
+          },
+          model: "gpt-4o-mini",
+          blocked: false,
+          warned: false,
+        },
+      }),
+    ).toMatchObject({
+      eventName: "gateway_request_seen",
+      primaryPath: "gateway",
+      stage: "run_gateway_request",
+      source: "gateway_request_onboarding",
+      artifactType: "gateway_request",
+      artifactId: "req-123",
+      metadata: {
+        gateway_id: "gateway-1",
+        request_id: "req-123",
+        response_id: "chatcmpl-1",
+        status_code: 200,
+        is_error: false,
+        model: "gpt-4o-mini",
+        blocked: false,
+        warned: false,
+      },
+      idempotencyKey: "gateway_request_seen:req-123:gateway-1",
+      isSample: false,
+    });
+  });
+
+  it("builds gateway provider and key creation payloads without secrets", () => {
+    const quickStartAttribution = gatewaySetupQuickStartAttributionFromSearch(
+      GATEWAY_QUICK_START_SEARCH,
+    );
+
+    expect(
+      buildGatewayProviderAddedPayload({
+        apiFormat: "openai",
+        gatewayId: "gateway-1",
+        modelCount: 2,
+        providerName: "openai",
+        quickStartAttribution,
+      }),
+    ).toMatchObject({
+      eventName: "gateway_provider_added",
+      primaryPath: "gateway",
+      stage: "configure_gateway_provider",
+      source: "gateway_provider_onboarding",
+      artifactType: "gateway_provider",
+      artifactId: "openai",
+      metadata: {
+        gateway_id: "gateway-1",
+        provider_name: "openai",
+        api_format: "openai",
+        model_count: 2,
+      },
+      idempotencyKey: "gateway_provider_added:openai:gateway-1",
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
+    });
+
+    expect(
+      buildGatewayKeyCreatedPayload({
+        allowedModels: ["gpt-4o-mini"],
+        allowedProviders: ["openai"],
+        gatewayId: "gateway-1",
+        key: {
+          gatewayKeyId: "gw-key-1",
+          id: "key-1",
+          keyPrefix: "fagi_",
+        },
+        keyName: "production",
+        owner: "backend",
+        quickStartAttribution,
+      }),
+    ).toMatchObject({
+      eventName: "gateway_key_created",
+      primaryPath: "gateway",
+      stage: "create_gateway_key",
+      source: "gateway_key_onboarding",
+      artifactType: "gateway_key",
+      artifactId: "key-1",
+      metadata: {
+        gateway_id: "gateway-1",
+        gateway_key_id: "gw-key-1",
+        key_id: "key-1",
+        key_prefix: "fagi_",
+        key_name: "production",
+        owner: "backend",
+        allowed_model_count: 1,
+        allowed_provider_count: 1,
+      },
+      idempotencyKey: "gateway_key_created:key-1:gateway-1",
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
+    });
+  });
+
+  it("extracts request IDs from playground response shapes", () => {
+    expect(gatewayPlaygroundRequestId({ request_id: "req-top" })).toBe(
+      "req-top",
+    );
+    expect(
+      gatewayPlaygroundRequestId({
+        guardrailHeaders: {
+          "X-Request-ID": "req-header",
+        },
+      }),
+    ).toBe("req-header");
+  });
+
+  it("builds gateway request-review routes", () => {
+    expect(buildGatewayRequestReviewHref({ requestId: "req-123" })).toBe(
+      "/dashboard/gateway/logs?onboarding=review-request&request_id=req-123",
+    );
+    expect(
+      buildGatewayRequestReviewHref({
+        requestId: "req-123",
+        search: GATEWAY_QUICK_START_SEARCH,
+      }),
+    ).toBe(
+      "/dashboard/gateway/logs?onboarding=review-request&request_id=req-123&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
+    );
+    expect(buildGatewayRequestReviewHref()).toBe(
+      "/dashboard/gateway/logs?onboarding=review-request",
+    );
+  });
+
+  it("builds gateway policy configuration routes from reviewed logs", () => {
+    expect(
+      buildGatewayPolicyConfigHref({
+        isFailureRepair: true,
+        policyType: "fallback",
+        requestId: "req-123",
+        search: GATEWAY_QUICK_START_SEARCH,
+        tourAnchor: "gateway_policy_button",
+      }),
+    ).toBe(
+      "/dashboard/gateway/fallbacks?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-123&repair_request=1&tour_anchor=gateway_policy_button&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
+    );
+    expect(
+      getGatewayOnboardingRouteParams(
+        "?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-123&repair_request=1",
+      ),
+    ).toEqual({
+      isOnboarding: true,
+      isFailureRepair: true,
+      mode: GATEWAY_ONBOARDING_MODES.ADD_POLICY,
+      requestId: "req-123",
+      tourAnchor: null,
+    });
+    expect(
+      buildGatewayPolicyConfigHref({
+        policyType: "guardrail",
+        requestId: "req-123",
+      }),
+    ).toBe(
+      "/dashboard/gateway/guardrails/configuration?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy&request_id=req-123",
+    );
+    expect(
+      buildGatewayPolicyConfigHref({
+        policyType: "budget",
+      }),
+    ).toBe(
+      "/dashboard/gateway/budgets?source=onboarding&onboarding=add-policy&journey_step=add_gateway_policy",
+    );
+  });
+
+  it("extracts setup quick-start attribution from gateway routes", () => {
+    expect(
+      gatewaySetupQuickStartAttributionFromSearch(GATEWAY_QUICK_START_SEARCH),
+    ).toEqual({
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
+    });
+  });
+
+  it("builds a safe gateway fallback policy completion payload", () => {
+    expect(
+      buildGatewayFallbackPolicyCreatedPayload({
+        gatewayId: "gateway-1",
+        requestId: "req-123",
+        routing: {
+          fallback_enabled: true,
+          model_fallbacks: {
+            "gpt-4o": ["gpt-4o-mini"],
+          },
+        },
+      }),
+    ).toMatchObject({
+      eventName: "gateway_policy_created",
+      primaryPath: "gateway",
+      stage: "add_gateway_policy",
+      source: "gateway_fallbacks_onboarding",
+      artifactType: "gateway_policy",
+      artifactId: "req-123",
+      metadata: {
+        gateway_id: "gateway-1",
+        request_id: "req-123",
+        policy_type: "fallback",
+        policy_id: "fallback:req-123",
+        gateway_synced: true,
+        fallback_chain_count: 1,
+        fallback_enabled: true,
+      },
+      idempotencyKey: "gateway_policy_created:fallback:req-123:gateway-1",
+      isSample: false,
+    });
+  });
+
+  it("keeps idempotency keys bounded when request IDs are long", () => {
+    const payload = buildGatewayFallbackPolicyCreatedPayload({
+      requestId: "request-".repeat(40),
+      routing: {},
+    });
+
+    expect(payload.idempotencyKey.length).toBeLessThanOrEqual(160);
+  });
+
+  it("builds generic gateway policy completion payloads", () => {
+    expect(
+      buildGatewayPolicyCreatedPayload({
+        gatewayId: "gateway-1",
+        policyId: "budget:per_model",
+        policyType: "budget",
+        quickStartAttribution: gatewaySetupQuickStartAttributionFromSearch(
+          GATEWAY_QUICK_START_SEARCH,
+        ),
+        requestId: "req-123",
+        source: "gateway_budget_onboarding",
+        metadata: {
+          budget_level: "per_model",
+          limit: 1000,
+        },
+      }),
+    ).toMatchObject({
+      eventName: "gateway_policy_created",
+      primaryPath: "gateway",
+      stage: "add_gateway_policy",
+      source: "gateway_budget_onboarding",
+      metadata: {
+        gateway_id: "gateway-1",
+        request_id: "req-123",
+        policy_type: "budget",
+        policy_id: "budget:per_model",
+        gateway_synced: true,
+        budget_level: "per_model",
+        limit: 1000,
+      },
+      idempotencyKey: "gateway_policy_created:budget:req-123:gateway-1",
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
+    });
+  });
+
+  it("builds a failed gateway request repair payload", () => {
+    expect(
+      buildGatewayFailureResolvedPayload({
+        gatewayId: "gateway-1",
+        quickStartAttribution: gatewaySetupQuickStartAttributionFromSearch(
+          GATEWAY_QUICK_START_SEARCH,
+        ),
+        repairType: "fallback",
+        requestId: "req-123",
+        source: "gateway_fallbacks_onboarding",
+        metadata: {
+          fallback_chain_count: 1,
+        },
+      }),
+    ).toMatchObject({
+      eventName: "gateway_failure_resolved",
+      primaryPath: "gateway",
+      stage: "fix_gateway_failure",
+      source: "gateway_fallbacks_onboarding",
+      artifactType: "request_log",
+      artifactId: "req-123",
+      metadata: {
+        gateway_id: "gateway-1",
+        request_id: "req-123",
+        repair_type: "fallback",
+        fallback_chain_count: 1,
+      },
+      idempotencyKey: "gateway_failure_resolved:fallback:req-123:gateway-1",
+      quick_start_goal: "control_model_traffic",
+      quick_start_id: "gateway",
+      quick_start_primary_path: "gateway",
+    });
+  });
+
+  it("builds the gateway onboarding completion destination", () => {
+    expect(buildGatewayOnboardingCompletionHref()).toBe(
+      "/dashboard/home?mode=daily-quality&source=onboarding&target_event=gateway_policy_created",
+    );
+    expect(
+      buildGatewayOnboardingCompletionHref({
+        search: GATEWAY_QUICK_START_SEARCH,
+      }),
+    ).toBe(
+      "/dashboard/home?mode=daily-quality&source=onboarding&target_event=gateway_policy_created&quick_start_goal=control_model_traffic&quick_start_id=gateway&quick_start_primary_path=gateway",
+    );
+  });
+});

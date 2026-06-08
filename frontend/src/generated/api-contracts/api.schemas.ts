@@ -256,6 +256,2048 @@ export interface AcceptInvitationRequestApi {
   repeat_password: string;
 }
 
+export type ActivationEventRequestApiStage = typeof ActivationEventRequestApiStage[keyof typeof ActivationEventRequestApiStage];
+
+
+export const ActivationEventRequestApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export type ActivationEventRequestApiArtifactType = typeof ActivationEventRequestApiArtifactType[keyof typeof ActivationEventRequestApiArtifactType];
+
+
+export const ActivationEventRequestApiArtifactType = {
+  trace: 'trace',
+  observe_project: 'observe_project',
+  observe_setup: 'observe_setup',
+  project: 'project',
+  agent: 'agent',
+  agent_node: 'agent_node',
+  graph_execution: 'graph_execution',
+  test_execution: 'test_execution',
+  call_execution: 'call_execution',
+  voice_agent: 'voice_agent',
+  voice_call: 'voice_call',
+  voice_scenario: 'voice_scenario',
+  voice_test: 'voice_test',
+  dataset: 'dataset',
+  eval: 'eval',
+  eval_group: 'eval_group',
+  eval_run: 'eval_run',
+  eval_scorer: 'eval_scorer',
+  eval_task: 'eval_task',
+  gateway: 'gateway',
+  gateway_provider: 'gateway_provider',
+  gateway_key: 'gateway_key',
+  gateway_request: 'gateway_request',
+  gateway_policy: 'gateway_policy',
+  request_log: 'request_log',
+} as const;
+
+export type ActivationEventRequestApiMetadata = {[key: string]: string};
+
+export type ActivationEventRequestApiTargetStage = typeof ActivationEventRequestApiTargetStage[keyof typeof ActivationEventRequestApiTargetStage];
+
+
+export const ActivationEventRequestApiTargetStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export type ActivationEventRequestApiContextStatus = typeof ActivationEventRequestApiContextStatus[keyof typeof ActivationEventRequestApiContextStatus];
+
+
+export const ActivationEventRequestApiContextStatus = {
+  current: 'current',
+  stale: 'stale',
+  expired: 'expired',
+  invalid: 'invalid',
+  complete: 'complete',
+  route_unavailable: 'route_unavailable',
+} as const;
+
+export interface ActivationEventRequestApi {
+  /** @minLength 1 */
+  event_name: string;
+  primary_path?: string;
+  stage?: ActivationEventRequestApiStage;
+  source?: string;
+  artifact_type?: ActivationEventRequestApiArtifactType;
+  artifact_id?: string;
+  project_id?: string;
+  metadata?: ActivationEventRequestApiMetadata;
+  /** @maxLength 160 */
+  idempotency_key?: string;
+  is_sample?: boolean;
+  campaign_key?: string;
+  email_key?: string;
+  send_log_id?: string;
+  email_status?: string;
+  target_stage?: ActivationEventRequestApiTargetStage;
+  target_event?: string;
+  link_issued_at?: string;
+  stale_reason?: string;
+  context_status?: ActivationEventRequestApiContextStatus;
+}
+
+export type ActivationEventResultApiEventName = typeof ActivationEventResultApiEventName[keyof typeof ActivationEventResultApiEventName];
+
+
+export const ActivationEventResultApiEventName = {
+  onboarding_transition_viewed: 'onboarding_transition_viewed',
+  onboarding_home_viewed: 'onboarding_home_viewed',
+  onboarding_goal_selected: 'onboarding_goal_selected',
+  onboarding_goal_changed: 'onboarding_goal_changed',
+  onboarding_recommended_action_viewed: 'onboarding_recommended_action_viewed',
+  onboarding_recommended_action_clicked: 'onboarding_recommended_action_clicked',
+  onboarding_path_card_clicked: 'onboarding_path_card_clicked',
+  onboarding_blocked_state_viewed: 'onboarding_blocked_state_viewed',
+  onboarding_diagnostics_opened: 'onboarding_diagnostics_opened',
+  onboarding_sample_project_opened: 'onboarding_sample_project_opened',
+  onboarding_fallback_action_clicked: 'onboarding_fallback_action_clicked',
+  sample_trace_available: 'sample_trace_available',
+  sample_signal_viewed: 'sample_signal_viewed',
+  sample_to_real_setup_clicked: 'sample_to_real_setup_clicked',
+  first_quality_loop_completed: 'first_quality_loop_completed',
+  daily_quality_home_viewed: 'daily_quality_home_viewed',
+  daily_quality_top_signal_shown: 'daily_quality_top_signal_shown',
+  daily_quality_top_change_reviewed: 'daily_quality_top_change_reviewed',
+  daily_quality_item_reviewed: 'daily_quality_item_reviewed',
+  daily_quality_action_created: 'daily_quality_action_created',
+  daily_quality_action_opened: 'daily_quality_action_opened',
+  daily_quality_action_assigned: 'daily_quality_action_assigned',
+  daily_quality_action_completed: 'daily_quality_action_completed',
+  daily_quality_action_dismissed: 'daily_quality_action_dismissed',
+  daily_quality_no_signal_viewed: 'daily_quality_no_signal_viewed',
+  daily_quality_empty_state_viewed: 'daily_quality_empty_state_viewed',
+  daily_quality_digest_destination_opened: 'daily_quality_digest_destination_opened',
+  daily_quality_route_fallback_used: 'daily_quality_route_fallback_used',
+  weekly_quality_review_opened: 'weekly_quality_review_opened',
+  weekly_quality_action_assigned: 'weekly_quality_action_assigned',
+  weekly_quality_action_completed: 'weekly_quality_action_completed',
+  weekly_quality_review_completed: 'weekly_quality_review_completed',
+  weekly_quality_digest_sent: 'weekly_quality_digest_sent',
+  weekly_quality_digest_suppressed: 'weekly_quality_digest_suppressed',
+  lifecycle_email_send_queued: 'lifecycle_email_send_queued',
+  lifecycle_email_sent: 'lifecycle_email_sent',
+  lifecycle_email_send_failed: 'lifecycle_email_send_failed',
+  lifecycle_email_send_suppressed: 'lifecycle_email_send_suppressed',
+  lifecycle_email_clicked: 'lifecycle_email_clicked',
+  lifecycle_email_unsubscribed: 'lifecycle_email_unsubscribed',
+  lifecycle_email_snoozed: 'lifecycle_email_snoozed',
+  lifecycle_email_completed: 'lifecycle_email_completed',
+  reactivation_reason_clicked: 'reactivation_reason_clicked',
+  observe_project_created: 'observe_project_created',
+  onboarding_observe_package_selected: 'onboarding_observe_package_selected',
+  onboarding_observe_route_focus_viewed: 'onboarding_observe_route_focus_viewed',
+  trace_received: 'trace_received',
+  trace_reviewed: 'trace_reviewed',
+  trace_detail_opened: 'trace_detail_opened',
+  prompt_created: 'prompt_created',
+  prompt_test_input_added: 'prompt_test_input_added',
+  prompt_test_run_completed: 'prompt_test_run_completed',
+  prompt_version_created: 'prompt_version_created',
+  prompt_comparable_version_created: 'prompt_comparable_version_created',
+  prompt_comparison_completed: 'prompt_comparison_completed',
+  dataset_example_added: 'dataset_example_added',
+  eval_dataset_created: 'eval_dataset_created',
+  eval_scorer_created: 'eval_scorer_created',
+  eval_run_started: 'eval_run_started',
+  eval_run_completed: 'eval_run_completed',
+  eval_failures_reviewed: 'eval_failures_reviewed',
+  eval_failure_action_created: 'eval_failure_action_created',
+  eval_group_created: 'eval_group_created',
+  onboarding_eval_source_selected: 'onboarding_eval_source_selected',
+  onboarding_eval_route_focus_viewed: 'onboarding_eval_route_focus_viewed',
+  onboarding_eval_run_clicked: 'onboarding_eval_run_clicked',
+  onboarding_eval_failure_detail_opened: 'onboarding_eval_failure_detail_opened',
+  onboarding_eval_source_fix_cta_clicked: 'onboarding_eval_source_fix_cta_clicked',
+  onboarding_eval_source_fix_route_viewed: 'onboarding_eval_source_fix_route_viewed',
+  onboarding_eval_source_fix_rerun_clicked: 'onboarding_eval_source_fix_rerun_clicked',
+  onboarding_eval_scorer_edit_cta_clicked: 'onboarding_eval_scorer_edit_cta_clicked',
+  onboarding_eval_fix_rerun_completed: 'onboarding_eval_fix_rerun_completed',
+  onboarding_eval_fix_rerun_reviewed: 'onboarding_eval_fix_rerun_reviewed',
+  onboarding_eval_sample_viewed: 'onboarding_eval_sample_viewed',
+  voice_agent_created: 'voice_agent_created',
+  voice_scenario_created: 'voice_scenario_created',
+  voice_test_call_started: 'voice_test_call_started',
+  voice_test_call_completed: 'voice_test_call_completed',
+  voice_call_reviewed: 'voice_call_reviewed',
+  voice_success_criteria_added: 'voice_success_criteria_added',
+  voice_call_monitor_opened: 'voice_call_monitor_opened',
+  onboarding_voice_route_focus_viewed: 'onboarding_voice_route_focus_viewed',
+  onboarding_voice_call_detail_opened: 'onboarding_voice_call_detail_opened',
+  onboarding_voice_success_criteria_cta_clicked: 'onboarding_voice_success_criteria_cta_clicked',
+  onboarding_voice_sample_viewed: 'onboarding_voice_sample_viewed',
+  prompt_version_promoted: 'prompt_version_promoted',
+  agent_created: 'agent_created',
+  agent_node_added: 'agent_node_added',
+  agent_scenario_created: 'agent_scenario_created',
+  agent_prototype_run_completed: 'agent_prototype_run_completed',
+  agent_trace_reviewed: 'agent_trace_reviewed',
+  agent_scenario_saved_as_eval: 'agent_scenario_saved_as_eval',
+  agent_eval_created: 'agent_eval_created',
+  agent_live_trace_received: 'agent_live_trace_received',
+  gateway_provider_added: 'gateway_provider_added',
+  gateway_key_created: 'gateway_key_created',
+  gateway_test_request_sent: 'gateway_test_request_sent',
+  gateway_request_seen: 'gateway_request_seen',
+  gateway_log_opened: 'gateway_log_opened',
+  gateway_failure_resolved: 'gateway_failure_resolved',
+  gateway_policy_created: 'gateway_policy_created',
+  gateway_dashboard_created: 'gateway_dashboard_created',
+  team_member_invited: 'team_member_invited',
+  trace_failure_detected: 'trace_failure_detected',
+} as const;
+
+export type ActivationStateResponseApiGoal = typeof ActivationStateResponseApiGoal[keyof typeof ActivationStateResponseApiGoal];
+
+
+export const ActivationStateResponseApiGoal = {
+  monitor_production_ai_app: 'monitor_production_ai_app',
+  improve_prompts: 'improve_prompts',
+  build_ai_agent: 'build_ai_agent',
+  control_model_traffic: 'control_model_traffic',
+  evaluate_quality: 'evaluate_quality',
+  connect_voice_ai_agent: 'connect_voice_ai_agent',
+  explore_sample_data: 'explore_sample_data',
+} as const;
+
+export type ActivationStateResponseApiPrimaryPath = typeof ActivationStateResponseApiPrimaryPath[keyof typeof ActivationStateResponseApiPrimaryPath];
+
+
+export const ActivationStateResponseApiPrimaryPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export type ActivationStateResponseApiStage = typeof ActivationStateResponseApiStage[keyof typeof ActivationStateResponseApiStage];
+
+
+export const ActivationStateResponseApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export interface ActivationStageCopyApi {
+  /** @minLength 1 */
+  eyebrow: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  description: string;
+}
+
+export type ActivationStateResponseApiHomeMode = typeof ActivationStateResponseApiHomeMode[keyof typeof ActivationStateResponseApiHomeMode];
+
+
+export const ActivationStateResponseApiHomeMode = {
+  first_run: 'first_run',
+  daily_quality: 'daily_quality',
+  fallback: 'fallback',
+} as const;
+
+export type ActivationStateResponseApiActivatedVia = typeof ActivationStateResponseApiActivatedVia[keyof typeof ActivationStateResponseApiActivatedVia];
+
+
+export const ActivationStateResponseApiActivatedVia = {
+  workspace: 'workspace',
+  organization: 'organization',
+} as const;
+
+export type ActivationActionApiKind = typeof ActivationActionApiKind[keyof typeof ActivationActionApiKind];
+
+
+export const ActivationActionApiKind = {
+  choose_goal: 'choose_goal',
+  setup: 'setup',
+  send_signal: 'send_signal',
+  review: 'review',
+  improve: 'improve',
+  sample_project: 'sample_project',
+  request_access: 'request_access',
+  fallback: 'fallback',
+  daily_quality: 'daily_quality',
+  adjacent_loop: 'adjacent_loop',
+} as const;
+
+export type ActivationAnalyticsApiTargetPath = typeof ActivationAnalyticsApiTargetPath[keyof typeof ActivationAnalyticsApiTargetPath];
+
+
+export const ActivationAnalyticsApiTargetPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export interface ActivationAnalyticsApi {
+  /** @minLength 1 */
+  event_name: string;
+  source?: string;
+  target_path?: ActivationAnalyticsApiTargetPath;
+}
+
+export interface ActivationActionApi {
+  /** @minLength 1 */
+  id: string;
+  kind: ActivationActionApiKind;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  description: string;
+  href: string;
+  /** @minLength 1 */
+  cta_label: string;
+  /** @minimum 1 */
+  estimated_minutes?: number;
+  priority: number;
+  blocked: boolean;
+  blocked_reason?: string;
+  requires_permission?: string;
+  completion_event?: string;
+  is_sample?: boolean;
+  route_available: boolean;
+  /** @minLength 1 */
+  fallback_href: string;
+  analytics: ActivationAnalyticsApi;
+}
+
+export type ActivationProgressApiBuild = typeof ActivationProgressApiBuild[keyof typeof ActivationProgressApiBuild];
+
+
+export const ActivationProgressApiBuild = {
+  not_started: 'not_started',
+  available: 'available',
+  selected: 'selected',
+  in_progress: 'in_progress',
+  blocked: 'blocked',
+  complete: 'complete',
+  sample_only: 'sample_only',
+} as const;
+
+export type ActivationProgressApiTest = typeof ActivationProgressApiTest[keyof typeof ActivationProgressApiTest];
+
+
+export const ActivationProgressApiTest = {
+  not_started: 'not_started',
+  available: 'available',
+  selected: 'selected',
+  in_progress: 'in_progress',
+  blocked: 'blocked',
+  complete: 'complete',
+  sample_only: 'sample_only',
+} as const;
+
+export type ActivationProgressApiObserve = typeof ActivationProgressApiObserve[keyof typeof ActivationProgressApiObserve];
+
+
+export const ActivationProgressApiObserve = {
+  not_started: 'not_started',
+  available: 'available',
+  selected: 'selected',
+  in_progress: 'in_progress',
+  blocked: 'blocked',
+  complete: 'complete',
+  sample_only: 'sample_only',
+} as const;
+
+export type ActivationProgressApiShip = typeof ActivationProgressApiShip[keyof typeof ActivationProgressApiShip];
+
+
+export const ActivationProgressApiShip = {
+  not_started: 'not_started',
+  available: 'available',
+  selected: 'selected',
+  in_progress: 'in_progress',
+  blocked: 'blocked',
+  complete: 'complete',
+  sample_only: 'sample_only',
+} as const;
+
+export type ActivationProgressApiImprove = typeof ActivationProgressApiImprove[keyof typeof ActivationProgressApiImprove];
+
+
+export const ActivationProgressApiImprove = {
+  not_started: 'not_started',
+  available: 'available',
+  selected: 'selected',
+  in_progress: 'in_progress',
+  blocked: 'blocked',
+  complete: 'complete',
+  sample_only: 'sample_only',
+} as const;
+
+export interface ActivationProgressApi {
+  build: ActivationProgressApiBuild;
+  test: ActivationProgressApiTest;
+  observe: ActivationProgressApiObserve;
+  ship: ActivationProgressApiShip;
+  improve: ActivationProgressApiImprove;
+}
+
+export interface ActivationSignalsApi {
+  /** @minimum 0 */
+  provider_keys?: number;
+  /** @minimum 0 */
+  datasets?: number;
+  /** @minimum 0 */
+  evals?: number;
+  /** @minimum 0 */
+  eval_runs?: number;
+  /** @minimum 0 */
+  eval_source_count?: number;
+  eval_source_type?: string;
+  eval_source_id?: string;
+  eval_source_name?: string;
+  /** @minimum 0 */
+  eval_scorer_count?: number;
+  eval_scorer_id?: string;
+  eval_scorer_template_id?: string;
+  eval_scorer_name?: string;
+  /** @minimum 0 */
+  eval_group_count?: number;
+  eval_group_id?: string;
+  /** @minimum 0 */
+  eval_run_count?: number;
+  eval_run_id?: string;
+  eval_run_status?: string;
+  eval_run_completed_at?: string;
+  /** @minimum 0 */
+  eval_failure_count?: number;
+  eval_has_source?: boolean;
+  eval_has_scorer?: boolean;
+  eval_has_completed_run?: boolean;
+  eval_has_failures?: boolean;
+  eval_has_review?: boolean;
+  eval_has_failure_action?: boolean;
+  eval_first_loop_completed?: boolean;
+  eval_is_sample_only?: boolean;
+  /** @minimum 0 */
+  eval_sample_source_count?: number;
+  eval_permission_limited?: boolean;
+  /** @minimum 0 */
+  prompt_templates?: number;
+  /** @minimum 0 */
+  prompt_versions?: number;
+  /** @minimum 0 */
+  prompt_comparisons?: number;
+  first_prompt_id?: string;
+  latest_prompt_id?: string;
+  /** @minimum 0 */
+  prompt_sample_templates?: number;
+  prompt_comparable_versions_exist?: boolean;
+  prompt_run_exists?: boolean;
+  prompt_committed_version_exists?: boolean;
+  prompt_comparison_completed?: boolean;
+  prompt_next_loop_action_exists?: boolean;
+  prompt_first_loop_completed?: boolean;
+  /** @minimum 0 */
+  agents?: number;
+  /** @minimum 0 */
+  agent_prototype_runs?: number;
+  agent_id?: string;
+  agent_source?: string;
+  agent_version_id?: string;
+  agent_scenario_id?: string;
+  agent_test_id?: string;
+  agent_execution_id?: string;
+  agent_call_execution_id?: string;
+  agent_graph_execution_id?: string;
+  agent_run_status?: string;
+  /** @minimum 0 */
+  agent_sample_count?: number;
+  agent_has_agent?: boolean;
+  agent_has_agent_version?: boolean;
+  agent_has_step?: boolean;
+  agent_has_scenario?: boolean;
+  agent_has_run?: boolean;
+  agent_run_failed?: boolean;
+  agent_has_review?: boolean;
+  agent_has_eval_coverage?: boolean;
+  agent_multiple_scenarios?: boolean;
+  agent_first_loop_completed?: boolean;
+  agent_voice_feature_unavailable?: boolean;
+  agent_permission_limited?: boolean;
+  /** @minimum 0 */
+  observe_projects?: number;
+  /** @minimum 0 */
+  traces?: number;
+  /** @minimum 0 */
+  trace_reviews?: number;
+  /** @minimum 0 */
+  gateway_keys?: number;
+  /** @minimum 0 */
+  gateway_requests?: number;
+  /** @minimum 0 */
+  gateway_policies?: number;
+  gateway_available?: boolean;
+  gateway_id?: string;
+  gateway_status?: string;
+  gateway_public_url?: string;
+  /** @minimum 0 */
+  gateway_provider_count?: number;
+  gateway_provider_credential_id?: string;
+  gateway_provider_name?: string;
+  gateway_provider_health_status?: string;
+  /** @minimum 0 */
+  gateway_provider_model_count?: number;
+  gateway_has_provider?: boolean;
+  gateway_has_key?: boolean;
+  gateway_key_id?: string;
+  gateway_key_prefix?: string;
+  gateway_key_status?: string;
+  gateway_has_request?: boolean;
+  gateway_request_log_id?: string;
+  gateway_request_id?: string;
+  gateway_request_status_code?: number;
+  gateway_request_is_error?: boolean;
+  gateway_request_error_message?: string;
+  gateway_request_provider?: string;
+  gateway_request_model?: string;
+  gateway_request_resolved_model?: string;
+  /** @minimum 0 */
+  gateway_request_latency_ms?: number;
+  gateway_request_cost?: string;
+  gateway_request_cache_hit?: boolean;
+  gateway_request_fallback_used?: boolean;
+  gateway_request_guardrail_triggered?: boolean;
+  gateway_has_review?: boolean;
+  gateway_reviewed_at?: string;
+  gateway_has_failure_repair?: boolean;
+  gateway_has_policy?: boolean;
+  gateway_policy_type?: string;
+  gateway_policy_id?: string;
+  gateway_policy_route?: string;
+  gateway_policy_synced?: boolean;
+  gateway_is_sample_only?: boolean;
+  /** @minimum 0 */
+  gateway_sample_request_count?: number;
+  gateway_permission_limited?: boolean;
+  gateway_guard_blocked?: boolean;
+  gateway_first_loop_completed?: boolean;
+  /** @minimum 0 */
+  voice_agents?: number;
+  /** @minimum 0 */
+  voice_simulations?: number;
+  /** @minimum 0 */
+  voice_calls?: number;
+  /** @minimum 0 */
+  voice_reviews?: number;
+  voice_agent_id?: string;
+  voice_agent_name?: string;
+  voice_agent_provider?: string;
+  voice_agent_version_id?: string;
+  voice_scenario_id?: string;
+  voice_run_test_id?: string;
+  voice_test_execution_id?: string;
+  voice_call_execution_id?: string;
+  voice_call_status?: string;
+  voice_call_completed_at?: string;
+  /** @minimum 0 */
+  voice_call_duration_seconds?: number;
+  /** @minimum 0 */
+  voice_call_response_time_ms?: number;
+  /** @minimum 0 */
+  voice_call_interruption_count?: number;
+  voice_transcript_available?: boolean;
+  voice_recording_available?: boolean;
+  voice_has_agent?: boolean;
+  voice_has_scenario?: boolean;
+  voice_has_test?: boolean;
+  voice_has_call?: boolean;
+  voice_has_completed_call?: boolean;
+  voice_call_failed?: boolean;
+  voice_has_review?: boolean;
+  voice_has_success_criteria?: boolean;
+  voice_first_loop_completed?: boolean;
+  voice_is_sample_only?: boolean;
+  /** @minimum 0 */
+  voice_sample_call_count?: number;
+  voice_permission_limited?: boolean;
+  /** @minimum 0 */
+  team_invites?: number;
+  /** @minimum 0 */
+  dashboards?: number;
+  /** @minimum 0 */
+  alerts?: number;
+  first_trace_id?: string;
+  first_observe_id?: string;
+  sample_project_opened?: boolean;
+  sample_trace_available?: boolean;
+  sample_signal_viewed?: boolean;
+  sample_trace_reviewed?: boolean;
+}
+
+export type AvailableGoalApiGoal = typeof AvailableGoalApiGoal[keyof typeof AvailableGoalApiGoal];
+
+
+export const AvailableGoalApiGoal = {
+  monitor_production_ai_app: 'monitor_production_ai_app',
+  improve_prompts: 'improve_prompts',
+  build_ai_agent: 'build_ai_agent',
+  control_model_traffic: 'control_model_traffic',
+  evaluate_quality: 'evaluate_quality',
+  connect_voice_ai_agent: 'connect_voice_ai_agent',
+  explore_sample_data: 'explore_sample_data',
+} as const;
+
+export type AvailableGoalApiPrimaryPath = typeof AvailableGoalApiPrimaryPath[keyof typeof AvailableGoalApiPrimaryPath];
+
+
+export const AvailableGoalApiPrimaryPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export interface AvailableGoalApi {
+  /** @minLength 1 */
+  id: string;
+  goal: AvailableGoalApiGoal;
+  primary_path: AvailableGoalApiPrimaryPath;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  description: string;
+  outcome_preview?: string;
+  /** @minimum 1 */
+  estimated_minutes?: number;
+  disabled?: boolean;
+  disabled_reason?: string;
+}
+
+export type AvailablePathApiId = typeof AvailablePathApiId[keyof typeof AvailablePathApiId];
+
+
+export const AvailablePathApiId = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export type AvailablePathApiStatus = typeof AvailablePathApiStatus[keyof typeof AvailablePathApiStatus];
+
+
+export const AvailablePathApiStatus = {
+  available: 'available',
+  selected: 'selected',
+  in_progress: 'in_progress',
+  blocked: 'blocked',
+  complete: 'complete',
+  sample_only: 'sample_only',
+  hidden: 'hidden',
+} as const;
+
+export interface AvailablePathApi {
+  id: AvailablePathApiId;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  description: string;
+  status: AvailablePathApiStatus;
+  /** @minLength 1 */
+  href: string;
+  is_available: boolean;
+  blocked_reason?: string;
+  requires_permission?: string;
+  first_action_id?: string;
+}
+
+export type ActivationJourneyPlanApiPrimaryPath = typeof ActivationJourneyPlanApiPrimaryPath[keyof typeof ActivationJourneyPlanApiPrimaryPath];
+
+
+export const ActivationJourneyPlanApiPrimaryPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export type ActivationJourneyStepApiStage = typeof ActivationJourneyStepApiStage[keyof typeof ActivationJourneyStepApiStage];
+
+
+export const ActivationJourneyStepApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export type ActivationJourneyStepApiSuccessEvent = typeof ActivationJourneyStepApiSuccessEvent[keyof typeof ActivationJourneyStepApiSuccessEvent];
+
+
+export const ActivationJourneyStepApiSuccessEvent = {
+  onboarding_transition_viewed: 'onboarding_transition_viewed',
+  onboarding_home_viewed: 'onboarding_home_viewed',
+  onboarding_goal_selected: 'onboarding_goal_selected',
+  onboarding_goal_changed: 'onboarding_goal_changed',
+  onboarding_recommended_action_viewed: 'onboarding_recommended_action_viewed',
+  onboarding_recommended_action_clicked: 'onboarding_recommended_action_clicked',
+  onboarding_path_card_clicked: 'onboarding_path_card_clicked',
+  onboarding_blocked_state_viewed: 'onboarding_blocked_state_viewed',
+  onboarding_diagnostics_opened: 'onboarding_diagnostics_opened',
+  onboarding_sample_project_opened: 'onboarding_sample_project_opened',
+  onboarding_fallback_action_clicked: 'onboarding_fallback_action_clicked',
+  sample_trace_available: 'sample_trace_available',
+  sample_signal_viewed: 'sample_signal_viewed',
+  sample_to_real_setup_clicked: 'sample_to_real_setup_clicked',
+  first_quality_loop_completed: 'first_quality_loop_completed',
+  daily_quality_home_viewed: 'daily_quality_home_viewed',
+  daily_quality_top_signal_shown: 'daily_quality_top_signal_shown',
+  daily_quality_top_change_reviewed: 'daily_quality_top_change_reviewed',
+  daily_quality_item_reviewed: 'daily_quality_item_reviewed',
+  daily_quality_action_created: 'daily_quality_action_created',
+  daily_quality_action_opened: 'daily_quality_action_opened',
+  daily_quality_action_assigned: 'daily_quality_action_assigned',
+  daily_quality_action_completed: 'daily_quality_action_completed',
+  daily_quality_action_dismissed: 'daily_quality_action_dismissed',
+  daily_quality_no_signal_viewed: 'daily_quality_no_signal_viewed',
+  daily_quality_empty_state_viewed: 'daily_quality_empty_state_viewed',
+  daily_quality_digest_destination_opened: 'daily_quality_digest_destination_opened',
+  daily_quality_route_fallback_used: 'daily_quality_route_fallback_used',
+  weekly_quality_review_opened: 'weekly_quality_review_opened',
+  weekly_quality_action_assigned: 'weekly_quality_action_assigned',
+  weekly_quality_action_completed: 'weekly_quality_action_completed',
+  weekly_quality_review_completed: 'weekly_quality_review_completed',
+  weekly_quality_digest_sent: 'weekly_quality_digest_sent',
+  weekly_quality_digest_suppressed: 'weekly_quality_digest_suppressed',
+  lifecycle_email_send_queued: 'lifecycle_email_send_queued',
+  lifecycle_email_sent: 'lifecycle_email_sent',
+  lifecycle_email_send_failed: 'lifecycle_email_send_failed',
+  lifecycle_email_send_suppressed: 'lifecycle_email_send_suppressed',
+  lifecycle_email_clicked: 'lifecycle_email_clicked',
+  lifecycle_email_unsubscribed: 'lifecycle_email_unsubscribed',
+  lifecycle_email_snoozed: 'lifecycle_email_snoozed',
+  lifecycle_email_completed: 'lifecycle_email_completed',
+  reactivation_reason_clicked: 'reactivation_reason_clicked',
+  observe_project_created: 'observe_project_created',
+  onboarding_observe_package_selected: 'onboarding_observe_package_selected',
+  onboarding_observe_route_focus_viewed: 'onboarding_observe_route_focus_viewed',
+  trace_received: 'trace_received',
+  trace_reviewed: 'trace_reviewed',
+  trace_detail_opened: 'trace_detail_opened',
+  prompt_created: 'prompt_created',
+  prompt_test_input_added: 'prompt_test_input_added',
+  prompt_test_run_completed: 'prompt_test_run_completed',
+  prompt_version_created: 'prompt_version_created',
+  prompt_comparable_version_created: 'prompt_comparable_version_created',
+  prompt_comparison_completed: 'prompt_comparison_completed',
+  dataset_example_added: 'dataset_example_added',
+  eval_dataset_created: 'eval_dataset_created',
+  eval_scorer_created: 'eval_scorer_created',
+  eval_run_started: 'eval_run_started',
+  eval_run_completed: 'eval_run_completed',
+  eval_failures_reviewed: 'eval_failures_reviewed',
+  eval_failure_action_created: 'eval_failure_action_created',
+  eval_group_created: 'eval_group_created',
+  onboarding_eval_source_selected: 'onboarding_eval_source_selected',
+  onboarding_eval_route_focus_viewed: 'onboarding_eval_route_focus_viewed',
+  onboarding_eval_run_clicked: 'onboarding_eval_run_clicked',
+  onboarding_eval_failure_detail_opened: 'onboarding_eval_failure_detail_opened',
+  onboarding_eval_source_fix_cta_clicked: 'onboarding_eval_source_fix_cta_clicked',
+  onboarding_eval_source_fix_route_viewed: 'onboarding_eval_source_fix_route_viewed',
+  onboarding_eval_source_fix_rerun_clicked: 'onboarding_eval_source_fix_rerun_clicked',
+  onboarding_eval_scorer_edit_cta_clicked: 'onboarding_eval_scorer_edit_cta_clicked',
+  onboarding_eval_fix_rerun_completed: 'onboarding_eval_fix_rerun_completed',
+  onboarding_eval_fix_rerun_reviewed: 'onboarding_eval_fix_rerun_reviewed',
+  onboarding_eval_sample_viewed: 'onboarding_eval_sample_viewed',
+  voice_agent_created: 'voice_agent_created',
+  voice_scenario_created: 'voice_scenario_created',
+  voice_test_call_started: 'voice_test_call_started',
+  voice_test_call_completed: 'voice_test_call_completed',
+  voice_call_reviewed: 'voice_call_reviewed',
+  voice_success_criteria_added: 'voice_success_criteria_added',
+  voice_call_monitor_opened: 'voice_call_monitor_opened',
+  onboarding_voice_route_focus_viewed: 'onboarding_voice_route_focus_viewed',
+  onboarding_voice_call_detail_opened: 'onboarding_voice_call_detail_opened',
+  onboarding_voice_success_criteria_cta_clicked: 'onboarding_voice_success_criteria_cta_clicked',
+  onboarding_voice_sample_viewed: 'onboarding_voice_sample_viewed',
+  prompt_version_promoted: 'prompt_version_promoted',
+  agent_created: 'agent_created',
+  agent_node_added: 'agent_node_added',
+  agent_scenario_created: 'agent_scenario_created',
+  agent_prototype_run_completed: 'agent_prototype_run_completed',
+  agent_trace_reviewed: 'agent_trace_reviewed',
+  agent_scenario_saved_as_eval: 'agent_scenario_saved_as_eval',
+  agent_eval_created: 'agent_eval_created',
+  agent_live_trace_received: 'agent_live_trace_received',
+  gateway_provider_added: 'gateway_provider_added',
+  gateway_key_created: 'gateway_key_created',
+  gateway_test_request_sent: 'gateway_test_request_sent',
+  gateway_request_seen: 'gateway_request_seen',
+  gateway_log_opened: 'gateway_log_opened',
+  gateway_failure_resolved: 'gateway_failure_resolved',
+  gateway_policy_created: 'gateway_policy_created',
+  gateway_dashboard_created: 'gateway_dashboard_created',
+  team_member_invited: 'team_member_invited',
+  trace_failure_detected: 'trace_failure_detected',
+} as const;
+
+export type ActivationJourneyStepApiStatus = typeof ActivationJourneyStepApiStatus[keyof typeof ActivationJourneyStepApiStatus];
+
+
+export const ActivationJourneyStepApiStatus = {
+  complete: 'complete',
+  current: 'current',
+  queued: 'queued',
+} as const;
+
+export interface ActivationJourneyStepApi {
+  /** @minLength 1 */
+  id: string;
+  stage: ActivationJourneyStepApiStage;
+  /** @minLength 1 */
+  action_id: string;
+  success_event?: ActivationJourneyStepApiSuccessEvent;
+  tour_anchor?: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  description: string;
+  status: ActivationJourneyStepApiStatus;
+  href: string;
+  /** @minLength 1 */
+  fallback_href: string;
+  route_available: boolean;
+  blocked_reason?: string;
+  requires_permission?: string;
+}
+
+export interface ActivationJourneyPlanApi {
+  /** @minLength 1 */
+  id: string;
+  primary_path: ActivationJourneyPlanApiPrimaryPath;
+  /** @minLength 1 */
+  eyebrow: string;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  description: string;
+  chips: string[];
+  /** @minLength 1 */
+  current_step_id: string;
+  /** @minimum 0 */
+  current_step_index: number;
+  steps: ActivationJourneyStepApi[];
+}
+
+export type SampleProjectStateApiStatus = typeof SampleProjectStateApiStatus[keyof typeof SampleProjectStateApiStatus];
+
+
+export const SampleProjectStateApiStatus = {
+  not_created: 'not_created',
+  unavailable: 'unavailable',
+  available: 'available',
+  creating: 'creating',
+  ready_for_observe: 'ready_for_observe',
+  partially_ready: 'partially_ready',
+  ready: 'ready',
+  partial: 'partial',
+  hidden: 'hidden',
+  stale_manifest: 'stale_manifest',
+  repair_required: 'repair_required',
+  repair_failed: 'repair_failed',
+} as const;
+
+export type SampleProjectStateApiArtifactRefs = { [key: string]: unknown };
+
+export type SampleProjectStateApiHealth = { [key: string]: unknown };
+
+export interface SampleProjectStateApi {
+  available: boolean;
+  created: boolean;
+  status: SampleProjectStateApiStatus;
+  href: string;
+  version: string;
+  manifest_id?: string;
+  manifest_version?: string;
+  label?: string;
+  entry_route?: string;
+  is_repairable?: boolean;
+  blocked_reason?: string;
+  artifact_refs?: SampleProjectStateApiArtifactRefs;
+  health?: SampleProjectStateApiHealth;
+  real_setup_href?: string;
+  is_hidden: boolean;
+  hidden_reason?: string;
+  entry_routes: string[];
+  missing_artifacts: string[];
+  last_opened_at?: string;
+}
+
+export type ActivationPromptStateApiStage = typeof ActivationPromptStateApiStage[keyof typeof ActivationPromptStateApiStage];
+
+
+export const ActivationPromptStateApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export interface ActivationPromptStateApi {
+  prompt_id?: string;
+  prompt_name?: string;
+  stage: ActivationPromptStateApiStage;
+  has_real_prompt: boolean;
+  has_test_run: boolean;
+  has_committed_version: boolean;
+  has_comparable_versions?: boolean;
+  has_comparison: boolean;
+  has_next_loop_action: boolean;
+  is_sample?: boolean;
+  /** @minimum 0 */
+  sample_prompt_count?: number;
+  diagnostics?: string[];
+}
+
+export type ActivationAgentStateApiStage = typeof ActivationAgentStateApiStage[keyof typeof ActivationAgentStateApiStage];
+
+
+export const ActivationAgentStateApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export interface ActivationAgentStateApi {
+  agent_id?: string;
+  agent_source?: string;
+  agent_version_id?: string;
+  scenario_id?: string;
+  test_id?: string;
+  execution_id?: string;
+  call_execution_id?: string;
+  graph_execution_id?: string;
+  run_status?: string;
+  run_completed_at?: string;
+  stage: ActivationAgentStateApiStage;
+  has_agent: boolean;
+  has_agent_version: boolean;
+  has_step: boolean;
+  has_scenario: boolean;
+  has_run: boolean;
+  has_review: boolean;
+  has_eval_coverage: boolean;
+  is_sample?: boolean;
+  /** @minimum 0 */
+  sample_agent_count?: number;
+  voice_feature_unavailable?: boolean;
+  permission_limited?: boolean;
+  diagnostics?: string[];
+}
+
+export type ActivationEvalStateApiStage = typeof ActivationEvalStateApiStage[keyof typeof ActivationEvalStateApiStage];
+
+
+export const ActivationEvalStateApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export interface ActivationEvalStateApi {
+  source_type?: string;
+  source_id?: string;
+  source_name?: string;
+  scorer_id?: string;
+  scorer_template_id?: string;
+  scorer_name?: string;
+  eval_group_id?: string;
+  run_id?: string;
+  run_status?: string;
+  run_completed_at?: string;
+  /** @minimum 0 */
+  failure_count?: number;
+  reviewed_at?: string;
+  failure_action_at?: string;
+  stage: ActivationEvalStateApiStage;
+  has_source?: boolean;
+  has_scorer?: boolean;
+  has_completed_run?: boolean;
+  has_failures?: boolean;
+  has_review?: boolean;
+  has_failure_action?: boolean;
+  is_sample?: boolean;
+  /** @minimum 0 */
+  sample_source_count?: number;
+  permission_limited?: boolean;
+  diagnostics?: string[];
+}
+
+export type ActivationVoiceStateApiStage = typeof ActivationVoiceStateApiStage[keyof typeof ActivationVoiceStateApiStage];
+
+
+export const ActivationVoiceStateApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export interface ActivationVoiceStateApi {
+  agent_id?: string;
+  agent_name?: string;
+  agent_provider?: string;
+  agent_version_id?: string;
+  scenario_id?: string;
+  run_test_id?: string;
+  test_execution_id?: string;
+  call_execution_id?: string;
+  call_status?: string;
+  call_completed_at?: string;
+  /** @minimum 0 */
+  call_duration_seconds?: number;
+  /** @minimum 0 */
+  call_response_time_ms?: number;
+  /** @minimum 0 */
+  call_interruption_count?: number;
+  transcript_available?: boolean;
+  recording_available?: boolean;
+  reviewed_at?: string;
+  success_criteria_at?: string;
+  eval_config_id?: string;
+  stage: ActivationVoiceStateApiStage;
+  has_agent?: boolean;
+  has_scenario?: boolean;
+  has_test?: boolean;
+  has_call?: boolean;
+  has_completed_call?: boolean;
+  call_failed?: boolean;
+  has_review?: boolean;
+  has_success_criteria?: boolean;
+  is_sample?: boolean;
+  /** @minimum 0 */
+  sample_call_count?: number;
+  permission_limited?: boolean;
+  diagnostics?: string[];
+}
+
+export type ActivationGatewayStateApiStage = typeof ActivationGatewayStateApiStage[keyof typeof ActivationGatewayStateApiStage];
+
+
+export const ActivationGatewayStateApiStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export interface ActivationGatewayStateApi {
+  gateway_available: boolean;
+  gateway_id?: string;
+  gateway_status?: string;
+  gateway_public_url?: string;
+  /** @minimum 0 */
+  provider_count?: number;
+  provider_credential_id?: string;
+  provider_name?: string;
+  provider_health_status?: string;
+  /** @minimum 0 */
+  provider_model_count?: number;
+  has_provider?: boolean;
+  has_key?: boolean;
+  gateway_key_id?: string;
+  key_prefix?: string;
+  key_status?: string;
+  has_request?: boolean;
+  request_log_id?: string;
+  request_id?: string;
+  request_status_code?: number;
+  request_is_error?: boolean;
+  request_error_message?: string;
+  request_provider?: string;
+  request_model?: string;
+  request_resolved_model?: string;
+  /** @minimum 0 */
+  request_latency_ms?: number;
+  request_cost?: string;
+  request_cache_hit?: boolean;
+  request_fallback_used?: boolean;
+  request_guardrail_triggered?: boolean;
+  has_review?: boolean;
+  reviewed_at?: string;
+  has_failure_repair?: boolean;
+  has_policy?: boolean;
+  policy_type?: string;
+  policy_id?: string;
+  policy_route?: string;
+  policy_synced?: boolean;
+  is_sample?: boolean;
+  /** @minimum 0 */
+  sample_request_count?: number;
+  permission_limited?: boolean;
+  guard_blocked?: boolean;
+  diagnostics?: string[];
+  stage: ActivationGatewayStateApiStage;
+}
+
+export type LifecyclePreviewApiStatus = typeof LifecyclePreviewApiStatus[keyof typeof LifecyclePreviewApiStatus];
+
+
+export const LifecyclePreviewApiStatus = {
+  eligible: 'eligible',
+  suppressed: 'suppressed',
+  skipped: 'skipped',
+  error: 'error',
+} as const;
+
+export type LifecyclePreviewApiSuppressionReason = typeof LifecyclePreviewApiSuppressionReason[keyof typeof LifecyclePreviewApiSuppressionReason];
+
+
+export const LifecyclePreviewApiSuppressionReason = {
+  activated: 'activated',
+  target_event_complete: 'target_event_complete',
+  workspace_suppressed: 'workspace_suppressed',
+  user_unsubscribed: 'user_unsubscribed',
+  user_snoozed: 'user_snoozed',
+  sample_hidden: 'sample_hidden',
+  sample_not_allowed: 'sample_not_allowed',
+  route_unavailable: 'route_unavailable',
+  permission_limited: 'permission_limited',
+  feature_disabled: 'feature_disabled',
+  dry_run_flag_off: 'dry_run_flag_off',
+  send_flag_off: 'send_flag_off',
+  frequency_cap: 'frequency_cap',
+  frequency_cap_user_24h: 'frequency_cap_user_24h',
+  frequency_cap_user_7d: 'frequency_cap_user_7d',
+  frequency_cap_workspace_24h: 'frequency_cap_workspace_24h',
+  frequency_cap_campaign_7d: 'frequency_cap_campaign_7d',
+  wait_window_open: 'wait_window_open',
+  recent_goal_change: 'recent_goal_change',
+  recent_same_task_activity: 'recent_same_task_activity',
+  path_changed: 'path_changed',
+  missing_email: 'missing_email',
+  workspace_inactive: 'workspace_inactive',
+  activation_state_error: 'activation_state_error',
+  no_matching_campaign: 'no_matching_campaign',
+  manual_pause: 'manual_pause',
+  not_activated: 'not_activated',
+  sample_only: 'sample_only',
+  no_useful_signal: 'no_useful_signal',
+  open_action: 'open_action',
+  already_reviewed: 'already_reviewed',
+  frequency_capped: 'frequency_capped',
+  flag_disabled: 'flag_disabled',
+  preferences_blocked: 'preferences_blocked',
+  missing_digest_preview: 'missing_digest_preview',
+} as const;
+
+export interface LifecyclePreviewApi {
+  dry_run_enabled: boolean;
+  send_enabled?: boolean;
+  status: LifecyclePreviewApiStatus;
+  next_campaign_key?: string;
+  template_key?: string;
+  eligible_at?: string;
+  suppressed: boolean;
+  suppression_reason?: LifecyclePreviewApiSuppressionReason;
+  target_success_event?: string;
+  target_action_id?: string;
+  target_url?: string;
+  dry_run_only?: boolean;
+}
+
+export type DailyQualityStateApiMode = typeof DailyQualityStateApiMode[keyof typeof DailyQualityStateApiMode];
+
+
+export const DailyQualityStateApiMode = {
+  new_signal: 'new_signal',
+  open_action: 'open_action',
+  no_new_signal: 'no_new_signal',
+  permission_limited: 'permission_limited',
+  unavailable: 'unavailable',
+} as const;
+
+export interface DailyQualityWindowApi {
+  start_at: string;
+  end_at: string;
+}
+
+export type DailyQualitySignalApiPath = typeof DailyQualitySignalApiPath[keyof typeof DailyQualitySignalApiPath];
+
+
+export const DailyQualitySignalApiPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export type DailyQualitySignalApiType = typeof DailyQualitySignalApiType[keyof typeof DailyQualitySignalApiType];
+
+
+export const DailyQualitySignalApiType = {
+  trace_failure: 'trace_failure',
+  prompt_quality_review: 'prompt_quality_review',
+  span_latency: 'span_latency',
+  span_cost: 'span_cost',
+  agent_run_issue: 'agent_run_issue',
+  gateway_request_issue: 'gateway_request_issue',
+  eval_failure: 'eval_failure',
+  voice_call_issue: 'voice_call_issue',
+  alert_triggered: 'alert_triggered',
+  feed_issue: 'feed_issue',
+  dashboard_missing: 'dashboard_missing',
+  alert_missing: 'alert_missing',
+  evaluator_missing: 'evaluator_missing',
+  saved_view_missing: 'saved_view_missing',
+} as const;
+
+export type DailyQualitySignalApiSeverity = typeof DailyQualitySignalApiSeverity[keyof typeof DailyQualitySignalApiSeverity];
+
+
+export const DailyQualitySignalApiSeverity = {
+  critical: 'critical',
+  warning: 'warning',
+  info: 'info',
+} as const;
+
+export interface DailyQualitySignalApi {
+  /** @minLength 1 */
+  id: string;
+  path?: DailyQualitySignalApiPath;
+  type: DailyQualitySignalApiType;
+  severity: DailyQualitySignalApiSeverity;
+  /** @minLength 1 */
+  title: string;
+  /** @minLength 1 */
+  body: string;
+  /** @minLength 1 */
+  source_type: string;
+  /** @minLength 1 */
+  source_id: string;
+  /** @minLength 1 */
+  project_id?: string;
+  /** @minLength 1 */
+  route: string;
+  is_sample?: boolean;
+  created_at: string;
+}
+
+export type DailyQualityActionApiPath = typeof DailyQualityActionApiPath[keyof typeof DailyQualityActionApiPath];
+
+
+export const DailyQualityActionApiPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export type DailyQualityActionApiActivationKind = typeof DailyQualityActionApiActivationKind[keyof typeof DailyQualityActionApiActivationKind];
+
+
+export const DailyQualityActionApiActivationKind = {
+  choose_goal: 'choose_goal',
+  setup: 'setup',
+  send_signal: 'send_signal',
+  review: 'review',
+  improve: 'improve',
+  sample_project: 'sample_project',
+  request_access: 'request_access',
+  fallback: 'fallback',
+  daily_quality: 'daily_quality',
+  adjacent_loop: 'adjacent_loop',
+} as const;
+
+export interface DailyQualityActionApi {
+  /** @minLength 1 */
+  id: string;
+  path?: DailyQualityActionApiPath;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  body: string;
+  /** @minLength 1 */
+  route: string;
+  /** @minLength 1 */
+  fallback_route: string;
+  route_available?: boolean;
+  /** @minLength 1 */
+  source_type: string;
+  /** @minLength 1 */
+  source_id?: string;
+  assigned_to_user_id?: string;
+  assigned_to_name?: string;
+  assigned_at?: string;
+  due_at?: string;
+  is_overdue?: boolean;
+  success_event?: string;
+  is_primary?: boolean;
+  is_sample?: boolean;
+  requires_permission?: string;
+  activation_kind?: DailyQualityActionApiActivationKind;
+}
+
+export type DailyQualityProductCardApiPath = typeof DailyQualityProductCardApiPath[keyof typeof DailyQualityProductCardApiPath];
+
+
+export const DailyQualityProductCardApiPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export interface DailyQualityProductCardApi {
+  path: DailyQualityProductCardApiPath;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  summary: string;
+  /** @minLength 1 */
+  metric: string;
+  change?: string;
+  /** @minLength 1 */
+  route: string;
+}
+
+export type DailyQualityWeeklyReviewApiStatus = typeof DailyQualityWeeklyReviewApiStatus[keyof typeof DailyQualityWeeklyReviewApiStatus];
+
+
+export const DailyQualityWeeklyReviewApiStatus = {
+  due: 'due',
+  not_due: 'not_due',
+  permission_limited: 'permission_limited',
+  flag_disabled: 'flag_disabled',
+  no_useful_signal: 'no_useful_signal',
+  completed_recently: 'completed_recently',
+} as const;
+
+export interface DailyQualityWeeklyReviewApi {
+  due: boolean;
+  status: DailyQualityWeeklyReviewApiStatus;
+  /** @minLength 1 */
+  route: string;
+  window: DailyQualityWindowApi;
+  /** @minLength 1 */
+  summary: string;
+  /** @minimum 0 */
+  unresolved_count: number;
+  /** @minimum 0 */
+  completed_count: number;
+  last_completed_at?: string;
+  action_label?: string;
+}
+
+export interface DailyQualityStateApi {
+  mode: DailyQualityStateApiMode;
+  last_reviewed_at?: string;
+  window: DailyQualityWindowApi;
+  top_signal?: DailyQualitySignalApi;
+  primary_action?: DailyQualityActionApi;
+  action_cards?: DailyQualityActionApi[];
+  product_cards?: DailyQualityProductCardApi[];
+  weekly_review?: DailyQualityWeeklyReviewApi;
+  digest_eligible: boolean;
+  digest_suppression_reason?: string;
+  diagnostics?: string[];
+}
+
+export type LifecycleEligibilityApiSuppressionReason = typeof LifecycleEligibilityApiSuppressionReason[keyof typeof LifecycleEligibilityApiSuppressionReason];
+
+
+export const LifecycleEligibilityApiSuppressionReason = {
+  activated: 'activated',
+  target_event_complete: 'target_event_complete',
+  workspace_suppressed: 'workspace_suppressed',
+  user_unsubscribed: 'user_unsubscribed',
+  user_snoozed: 'user_snoozed',
+  sample_hidden: 'sample_hidden',
+  sample_not_allowed: 'sample_not_allowed',
+  route_unavailable: 'route_unavailable',
+  permission_limited: 'permission_limited',
+  feature_disabled: 'feature_disabled',
+  dry_run_flag_off: 'dry_run_flag_off',
+  send_flag_off: 'send_flag_off',
+  frequency_cap: 'frequency_cap',
+  frequency_cap_user_24h: 'frequency_cap_user_24h',
+  frequency_cap_user_7d: 'frequency_cap_user_7d',
+  frequency_cap_workspace_24h: 'frequency_cap_workspace_24h',
+  frequency_cap_campaign_7d: 'frequency_cap_campaign_7d',
+  wait_window_open: 'wait_window_open',
+  recent_goal_change: 'recent_goal_change',
+  recent_same_task_activity: 'recent_same_task_activity',
+  path_changed: 'path_changed',
+  missing_email: 'missing_email',
+  workspace_inactive: 'workspace_inactive',
+  activation_state_error: 'activation_state_error',
+  no_matching_campaign: 'no_matching_campaign',
+  manual_pause: 'manual_pause',
+  not_activated: 'not_activated',
+  sample_only: 'sample_only',
+  no_useful_signal: 'no_useful_signal',
+  open_action: 'open_action',
+  already_reviewed: 'already_reviewed',
+  frequency_capped: 'frequency_capped',
+  flag_disabled: 'flag_disabled',
+  preferences_blocked: 'preferences_blocked',
+  missing_digest_preview: 'missing_digest_preview',
+} as const;
+
+export interface LifecycleEligibilityApi {
+  eligible: boolean;
+  suppressed: boolean;
+  suppression_reason?: LifecycleEligibilityApiSuppressionReason;
+  next_email_key?: string;
+  next_email_after?: string;
+  digest_eligible: boolean;
+  last_email_sent_at?: string;
+  /** @minimum 0 */
+  frequency_cap_remaining: number;
+  dry_run_only?: boolean;
+}
+
+export interface ActivationPermissionsApi {
+  role: string;
+  can_read: boolean;
+  can_write: boolean;
+  can_manage_workspace: boolean;
+  missing_permissions: string[];
+  request_access_href?: string;
+  permission_limited: boolean;
+}
+
+export interface RouteAvailabilityApi { [key: string]: unknown }
+
+export type ActivationEmailContextApiTargetStage = typeof ActivationEmailContextApiTargetStage[keyof typeof ActivationEmailContextApiTargetStage];
+
+
+export const ActivationEmailContextApiTargetStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export type ActivationEmailContextApiContextStatus = typeof ActivationEmailContextApiContextStatus[keyof typeof ActivationEmailContextApiContextStatus];
+
+
+export const ActivationEmailContextApiContextStatus = {
+  current: 'current',
+  stale: 'stale',
+  expired: 'expired',
+  invalid: 'invalid',
+  complete: 'complete',
+  route_unavailable: 'route_unavailable',
+} as const;
+
+export interface ActivationEmailContextApi {
+  campaign_key?: string;
+  email_key?: string;
+  send_log_id?: string;
+  email_status?: string;
+  link_issued_at?: string;
+  target_stage?: ActivationEmailContextApiTargetStage;
+  target_event?: string;
+  target_route?: string;
+  context_status: ActivationEmailContextApiContextStatus;
+  stale_reason?: string;
+  /** @minLength 1 */
+  resolved_href: string;
+}
+
+export type ActivationMeaningfulEventApiPath = typeof ActivationMeaningfulEventApiPath[keyof typeof ActivationMeaningfulEventApiPath];
+
+
+export const ActivationMeaningfulEventApiPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export type ActivationMeaningfulEventApiMetadata = {[key: string]: string};
+
+export interface ActivationMeaningfulEventApi {
+  /** @minLength 1 */
+  name: string;
+  occurred_at: string;
+  is_sample?: boolean;
+  path?: ActivationMeaningfulEventApiPath;
+  metadata?: ActivationMeaningfulEventApiMetadata;
+}
+
+export type ActivationValueSignalApiKind = typeof ActivationValueSignalApiKind[keyof typeof ActivationValueSignalApiKind];
+
+
+export const ActivationValueSignalApiKind = {
+  observe_trace_metrics: 'observe_trace_metrics',
+  prompt_quality_loop: 'prompt_quality_loop',
+  agent_quality_loop: 'agent_quality_loop',
+  gateway_routing_loop: 'gateway_routing_loop',
+  eval_quality_loop: 'eval_quality_loop',
+  voice_quality_loop: 'voice_quality_loop',
+} as const;
+
+export interface ActivationValueMetricApi {
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  value: string;
+}
+
+export interface ActivationValueSignalApi {
+  kind?: ActivationValueSignalApiKind;
+  headline?: string;
+  summary?: string;
+  metrics?: ActivationValueMetricApi[];
+  /** @minimum 0 */
+  latency_ms?: number;
+  /** @minimum 0 */
+  cost?: number;
+  /** @minimum 0 */
+  total_tokens?: number;
+}
+
+export interface ActivationDiagnosticsSuppressedActionApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  reason: string;
+}
+
+export interface ActivationDiagnosticsApi {
+  /** @minLength 1 */
+  resolver_version: string;
+  /** @minLength 1 */
+  decision_reason: string;
+  /** @minLength 1 */
+  matched_rule: string;
+  candidate_actions: string[];
+  suppressed_actions: ActivationDiagnosticsSuppressedActionApi[];
+  evaluated_at: string;
+}
+
+export type ActivationStateResponseApiFeatureFlags = {[key: string]: boolean};
+
+export interface ActivationStateResponseApi {
+  /** @minLength 1 */
+  schema_version: string;
+  /** @minLength 1 */
+  request_id: string;
+  server_time: string;
+  /** @minLength 1 */
+  workspace_id: string;
+  /** @minLength 1 */
+  organization_id: string;
+  /** @minLength 1 */
+  user_id: string;
+  goal: ActivationStateResponseApiGoal;
+  persona: string;
+  primary_path: ActivationStateResponseApiPrimaryPath;
+  stage: ActivationStateResponseApiStage;
+  stage_copy?: ActivationStageCopyApi;
+  home_mode: ActivationStateResponseApiHomeMode;
+  is_activated: boolean;
+  activated_via?: ActivationStateResponseApiActivatedVia;
+  activated_at: string;
+  recommended_action: ActivationActionApi;
+  fallback_action: ActivationActionApi;
+  progress: ActivationProgressApi;
+  signals: ActivationSignalsApi;
+  available_goals?: AvailableGoalApi[];
+  available_paths: AvailablePathApi[];
+  journey_plan?: ActivationJourneyPlanApi;
+  sample_project: SampleProjectStateApi;
+  prompt?: ActivationPromptStateApi;
+  agent?: ActivationAgentStateApi;
+  eval?: ActivationEvalStateApi;
+  voice?: ActivationVoiceStateApi;
+  gateway?: ActivationGatewayStateApi;
+  lifecycle?: LifecyclePreviewApi;
+  daily_quality?: DailyQualityStateApi;
+  email_eligibility: LifecycleEligibilityApi;
+  permissions: ActivationPermissionsApi;
+  feature_flags: ActivationStateResponseApiFeatureFlags;
+  route_availability: RouteAvailabilityApi;
+  email_context: ActivationEmailContextApi;
+  last_meaningful_event: ActivationMeaningfulEventApi;
+  value_signal?: ActivationValueSignalApi;
+  diagnostics: ActivationDiagnosticsApi;
+  warnings: string[];
+}
+
+export interface ActivationEventResultApi {
+  /** @minLength 1 */
+  event_id: string;
+  event_name: ActivationEventResultApiEventName;
+  activation_state: ActivationStateResponseApi;
+}
+
+export interface ActivationEventResponseApi {
+  status?: boolean;
+  result: ActivationEventResultApi;
+}
+
+export interface ActivationStateApiResponseApi {
+  status?: boolean;
+  result: ActivationStateResponseApi;
+}
+
 export interface AccountOrganizationDetailApi {
   id: string;
   created_at?: string;
@@ -532,6 +2574,328 @@ export interface TimezoneResponseApi {
   timezone: string;
 }
 
+export type NotificationChannelApiScope = typeof NotificationChannelApiScope[keyof typeof NotificationChannelApiScope];
+
+
+export const NotificationChannelApiScope = {
+  organization: 'organization',
+  workspace: 'workspace',
+} as const;
+
+export type NotificationChannelApiType = typeof NotificationChannelApiType[keyof typeof NotificationChannelApiType];
+
+
+export const NotificationChannelApiType = {
+  email_list: 'email_list',
+  slack_webhook: 'slack_webhook',
+  webhook: 'webhook',
+} as const;
+
+export type NotificationChannelApiLastTestStatus = typeof NotificationChannelApiLastTestStatus[keyof typeof NotificationChannelApiLastTestStatus];
+
+
+export const NotificationChannelApiLastTestStatus = {
+  untested: 'untested',
+  ready: 'ready',
+  failed: 'failed',
+} as const;
+
+export type NotificationChannelApiConfig = { [key: string]: unknown };
+
+export type NotificationChannelApiMetadata = { [key: string]: unknown };
+
+export interface NotificationChannelApi {
+  id?: string;
+  scope?: NotificationChannelApiScope;
+  type: NotificationChannelApiType;
+  /** @minLength 1 */
+  display_name: string;
+  target_identifier?: string;
+  config?: NotificationChannelApiConfig;
+  is_active?: boolean;
+  last_tested_at?: string;
+  last_test_status?: NotificationChannelApiLastTestStatus;
+  metadata?: NotificationChannelApiMetadata;
+}
+
+export interface NotificationChannelTestResultApi {
+  channel: NotificationChannelApi;
+}
+
+export interface NotificationChannelTestResponseApi {
+  status: boolean;
+  result: NotificationChannelTestResultApi;
+}
+
+export type NotificationFamilyApiId = typeof NotificationFamilyApiId[keyof typeof NotificationFamilyApiId];
+
+
+export const NotificationFamilyApiId = {
+  product_onboarding: 'product_onboarding',
+  daily_quality_digest: 'daily_quality_digest',
+  usage_budget: 'usage_budget',
+  gateway_alert: 'gateway_alert',
+  observe_monitor: 'observe_monitor',
+  eval_quality_alert: 'eval_quality_alert',
+  workspace_admin: 'workspace_admin',
+} as const;
+
+export type NotificationFamilyApiDefaultChannelsItem = typeof NotificationFamilyApiDefaultChannelsItem[keyof typeof NotificationFamilyApiDefaultChannelsItem];
+
+
+export const NotificationFamilyApiDefaultChannelsItem = {
+  email: 'email',
+  slack: 'slack',
+  webhook: 'webhook',
+} as const;
+
+export interface NotificationFamilyApi {
+  id: NotificationFamilyApiId;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  description: string;
+  default_channels: NotificationFamilyApiDefaultChannelsItem[];
+  non_critical: boolean;
+  user_controllable: boolean;
+  workspace_controllable: boolean;
+}
+
+export type NotificationPreferenceApiScope = typeof NotificationPreferenceApiScope[keyof typeof NotificationPreferenceApiScope];
+
+
+export const NotificationPreferenceApiScope = {
+  organization: 'organization',
+  workspace: 'workspace',
+  user: 'user',
+  user_workspace: 'user_workspace',
+} as const;
+
+export type NotificationPreferenceApiFamily = typeof NotificationPreferenceApiFamily[keyof typeof NotificationPreferenceApiFamily];
+
+
+export const NotificationPreferenceApiFamily = {
+  product_onboarding: 'product_onboarding',
+  daily_quality_digest: 'daily_quality_digest',
+  usage_budget: 'usage_budget',
+  gateway_alert: 'gateway_alert',
+  observe_monitor: 'observe_monitor',
+  eval_quality_alert: 'eval_quality_alert',
+  workspace_admin: 'workspace_admin',
+} as const;
+
+export type NotificationPreferenceApiChannel = typeof NotificationPreferenceApiChannel[keyof typeof NotificationPreferenceApiChannel];
+
+
+export const NotificationPreferenceApiChannel = {
+  email: 'email',
+  slack: 'slack',
+  webhook: 'webhook',
+} as const;
+
+export type NotificationPreferenceApiSettings = { [key: string]: unknown };
+
+export interface NotificationPreferenceApi {
+  id?: string;
+  scope: NotificationPreferenceApiScope;
+  family: NotificationPreferenceApiFamily;
+  channel: NotificationPreferenceApiChannel;
+  enabled: boolean;
+  mute_until?: string;
+  /** @minimum 1 */
+  frequency_cap_minutes?: number;
+  settings?: NotificationPreferenceApiSettings;
+  /** @minLength 1 */
+  source?: string;
+}
+
+export type NotificationDecisionApiFamily = typeof NotificationDecisionApiFamily[keyof typeof NotificationDecisionApiFamily];
+
+
+export const NotificationDecisionApiFamily = {
+  product_onboarding: 'product_onboarding',
+  daily_quality_digest: 'daily_quality_digest',
+  usage_budget: 'usage_budget',
+  gateway_alert: 'gateway_alert',
+  observe_monitor: 'observe_monitor',
+  eval_quality_alert: 'eval_quality_alert',
+  workspace_admin: 'workspace_admin',
+} as const;
+
+export type NotificationDecisionApiChannel = typeof NotificationDecisionApiChannel[keyof typeof NotificationDecisionApiChannel];
+
+
+export const NotificationDecisionApiChannel = {
+  email: 'email',
+  slack: 'slack',
+  webhook: 'webhook',
+} as const;
+
+export interface NotificationDecisionApi {
+  allowed: boolean;
+  family: NotificationDecisionApiFamily;
+  channel: NotificationDecisionApiChannel;
+  reason?: string;
+  /** @minLength 1 */
+  source: string;
+  preference_id?: string;
+}
+
+export type NotificationDeliveryLogApiFamily = typeof NotificationDeliveryLogApiFamily[keyof typeof NotificationDeliveryLogApiFamily];
+
+
+export const NotificationDeliveryLogApiFamily = {
+  product_onboarding: 'product_onboarding',
+  daily_quality_digest: 'daily_quality_digest',
+  usage_budget: 'usage_budget',
+  gateway_alert: 'gateway_alert',
+  observe_monitor: 'observe_monitor',
+  eval_quality_alert: 'eval_quality_alert',
+  workspace_admin: 'workspace_admin',
+} as const;
+
+export type NotificationDeliveryLogApiChannel = typeof NotificationDeliveryLogApiChannel[keyof typeof NotificationDeliveryLogApiChannel];
+
+
+export const NotificationDeliveryLogApiChannel = {
+  email: 'email',
+  slack: 'slack',
+  webhook: 'webhook',
+} as const;
+
+export type NotificationDeliveryLogApiStatus = typeof NotificationDeliveryLogApiStatus[keyof typeof NotificationDeliveryLogApiStatus];
+
+
+export const NotificationDeliveryLogApiStatus = {
+  eligible: 'eligible',
+  suppressed: 'suppressed',
+  sent: 'sent',
+  failed: 'failed',
+  clicked: 'clicked',
+  completed: 'completed',
+} as const;
+
+export type NotificationDeliveryLogApiMetadata = { [key: string]: unknown };
+
+export interface NotificationDeliveryLogApi {
+  id: string;
+  family: NotificationDeliveryLogApiFamily;
+  /** @minLength 1 */
+  source_type: string;
+  source_id?: string;
+  channel: NotificationDeliveryLogApiChannel;
+  recipient_type?: string;
+  recipient_identifier_masked?: string;
+  notification_key?: string;
+  stage?: string;
+  severity?: string;
+  status: NotificationDeliveryLogApiStatus;
+  suppressed_reason?: string;
+  route_url?: string;
+  sent_at?: string;
+  created_at?: string;
+  metadata?: NotificationDeliveryLogApiMetadata;
+}
+
+export interface NotificationSettingsResultApi {
+  families: NotificationFamilyApi[];
+  channels: NotificationChannelApi[];
+  preferences: NotificationPreferenceApi[];
+  decisions: NotificationDecisionApi[];
+  delivery_logs: NotificationDeliveryLogApi[];
+  can_manage_workspace: boolean;
+}
+
+export interface NotificationSettingsResponseApi {
+  status: boolean;
+  result: NotificationSettingsResultApi;
+}
+
+export type NotificationPreferencePatchItemApiScope = typeof NotificationPreferencePatchItemApiScope[keyof typeof NotificationPreferencePatchItemApiScope];
+
+
+export const NotificationPreferencePatchItemApiScope = {
+  organization: 'organization',
+  workspace: 'workspace',
+  user: 'user',
+  user_workspace: 'user_workspace',
+} as const;
+
+export type NotificationPreferencePatchItemApiFamily = typeof NotificationPreferencePatchItemApiFamily[keyof typeof NotificationPreferencePatchItemApiFamily];
+
+
+export const NotificationPreferencePatchItemApiFamily = {
+  product_onboarding: 'product_onboarding',
+  daily_quality_digest: 'daily_quality_digest',
+  usage_budget: 'usage_budget',
+  gateway_alert: 'gateway_alert',
+  observe_monitor: 'observe_monitor',
+  eval_quality_alert: 'eval_quality_alert',
+  workspace_admin: 'workspace_admin',
+} as const;
+
+export type NotificationPreferencePatchItemApiChannel = typeof NotificationPreferencePatchItemApiChannel[keyof typeof NotificationPreferencePatchItemApiChannel];
+
+
+export const NotificationPreferencePatchItemApiChannel = {
+  email: 'email',
+  slack: 'slack',
+  webhook: 'webhook',
+} as const;
+
+export type NotificationPreferencePatchItemApiSettings = { [key: string]: unknown };
+
+export interface NotificationPreferencePatchItemApi {
+  scope?: NotificationPreferencePatchItemApiScope;
+  family: NotificationPreferencePatchItemApiFamily;
+  channel: NotificationPreferencePatchItemApiChannel;
+  enabled: boolean;
+  mute_until?: string;
+  /** @minimum 1 */
+  frequency_cap_minutes?: number;
+  settings?: NotificationPreferencePatchItemApiSettings;
+}
+
+export type NotificationChannelPatchItemApiScope = typeof NotificationChannelPatchItemApiScope[keyof typeof NotificationChannelPatchItemApiScope];
+
+
+export const NotificationChannelPatchItemApiScope = {
+  organization: 'organization',
+  workspace: 'workspace',
+} as const;
+
+export type NotificationChannelPatchItemApiType = typeof NotificationChannelPatchItemApiType[keyof typeof NotificationChannelPatchItemApiType];
+
+
+export const NotificationChannelPatchItemApiType = {
+  email_list: 'email_list',
+  slack_webhook: 'slack_webhook',
+  webhook: 'webhook',
+} as const;
+
+export type NotificationChannelPatchItemApiConfig = { [key: string]: unknown };
+
+export type NotificationChannelPatchItemApiMetadata = { [key: string]: unknown };
+
+export interface NotificationChannelPatchItemApi {
+  id?: string;
+  scope?: NotificationChannelPatchItemApiScope;
+  type: NotificationChannelPatchItemApiType;
+  /**
+     * @minLength 1
+     * @maxLength 120
+     */
+  display_name: string;
+  config?: NotificationChannelPatchItemApiConfig;
+  is_active?: boolean;
+  metadata?: NotificationChannelPatchItemApiMetadata;
+}
+
+export interface NotificationSettingsPatchRequestApi {
+  preferences?: NotificationPreferencePatchItemApi[];
+  channels?: NotificationChannelPatchItemApi[];
+}
+
 export interface UserOnboardingResultApi {
   role: string;
   goals: string[];
@@ -567,6 +2931,396 @@ export interface UserOnboardingSaveResultApi {
 export interface UserOnboardingSaveResponseApi {
   status: boolean;
   result: UserOnboardingSaveResultApi;
+}
+
+export type OnboardingActivationFactReceiptRequestApiFact = { [key: string]: unknown };
+
+export interface OnboardingActivationFactReceiptRequestApi {
+  /**
+     * @minLength 1
+     * @maxLength 64
+     */
+  type: string;
+  export_log_id: string;
+  /**
+     * @minLength 1
+     * @maxLength 220
+     */
+  idempotency_key: string;
+  /**
+     * @minLength 1
+     * @maxLength 96
+     */
+  schema_version: string;
+  /** @maxLength 160 */
+  event_cursor?: string;
+  evaluated_at: string;
+  fact: OnboardingActivationFactReceiptRequestApiFact;
+}
+
+export interface OnboardingActivationFactReceiptResultApi {
+  receipt_id: string;
+  created: boolean;
+  /** @minLength 1 */
+  idempotency_key: string;
+  workspace_id: string;
+  user_id?: string;
+  /** @minLength 1 */
+  activation_stage: string;
+  /** @minLength 1 */
+  primary_path: string;
+  cohort_keys: string[];
+}
+
+export interface OnboardingActivationFactReceiptApiResponseApi {
+  status?: boolean;
+  result: OnboardingActivationFactReceiptResultApi;
+}
+
+export type ActivationGoalRequestApiReason = typeof ActivationGoalRequestApiReason[keyof typeof ActivationGoalRequestApiReason];
+
+
+export const ActivationGoalRequestApiReason = {
+  first_selection: 'first_selection',
+  path_change: 'path_change',
+  email_link: 'email_link',
+  manual_switch: 'manual_switch',
+} as const;
+
+export type ActivationGoalRequestApiExpectedStage = typeof ActivationGoalRequestApiExpectedStage[keyof typeof ActivationGoalRequestApiExpectedStage];
+
+
+export const ActivationGoalRequestApiExpectedStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export interface ActivationGoalRequestApi {
+  /** @minLength 1 */
+  goal: string;
+  primary_path?: string;
+  persona?: string;
+  source?: string;
+  campaign_key?: string;
+  reason?: ActivationGoalRequestApiReason;
+  expected_stage?: ActivationGoalRequestApiExpectedStage;
+  known_goal_id?: string;
+}
+
+export type ActivationGoalConflictResultApiErrorCode = typeof ActivationGoalConflictResultApiErrorCode[keyof typeof ActivationGoalConflictResultApiErrorCode];
+
+
+export const ActivationGoalConflictResultApiErrorCode = {
+  ONBOARDING_GOAL_CONFLICT: 'ONBOARDING_GOAL_CONFLICT',
+} as const;
+
+export interface ActivationGoalConflictResultApi {
+  error_code: ActivationGoalConflictResultApiErrorCode;
+  /** @minLength 1 */
+  reason: string;
+  /** @minLength 1 */
+  current_goal_id: string;
+  activation_state: ActivationStateResponseApi;
+}
+
+export interface ActivationGoalConflictResponseApi {
+  status?: boolean;
+  result: ActivationGoalConflictResultApi;
+}
+
+export type OnboardingLifecycleDigestReviewItemApiSourceType = typeof OnboardingLifecycleDigestReviewItemApiSourceType[keyof typeof OnboardingLifecycleDigestReviewItemApiSourceType];
+
+
+export const OnboardingLifecycleDigestReviewItemApiSourceType = {
+  evaluation_log: 'evaluation_log',
+  send_log: 'send_log',
+} as const;
+
+export interface OnboardingLifecycleDigestActionApi {
+  /** @minLength 1 */
+  action_id: string;
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  route: string;
+  /** @minLength 1 */
+  fallback_route: string;
+  /** @minLength 1 */
+  source_type: string;
+  source_id?: string;
+  primary_path?: string;
+  status?: string;
+  /** @minimum 0 */
+  age_minutes: number;
+  last_event_at?: string;
+  assigned_to_user_id?: string;
+  due_at?: string;
+  is_overdue?: boolean;
+}
+
+export interface OnboardingLifecycleDigestPreviewApi {
+  /** @minLength 1 */
+  kind: string;
+  /** @minLength 1 */
+  campaign_key: string;
+  /** @minLength 1 */
+  template_key: string;
+  generated_at?: string;
+  /** @minLength 1 */
+  workspace_id: string;
+  /** @minimum 0 */
+  action_count: number;
+  /** @minimum 0 */
+  omitted_action_count: number;
+  actions: OnboardingLifecycleDigestActionApi[];
+}
+
+export interface OnboardingLifecycleDigestSummaryApi {
+  /** @minimum 0 */
+  action_count: number;
+  /** @minimum 0 */
+  visible_action_count: number;
+  /** @minimum 0 */
+  omitted_action_count: number;
+  /** @minimum 0 */
+  overdue_count: number;
+  /** @minimum 0 */
+  assigned_count: number;
+}
+
+export type OnboardingLifecycleDigestDeliveryLogApiStatus = typeof OnboardingLifecycleDigestDeliveryLogApiStatus[keyof typeof OnboardingLifecycleDigestDeliveryLogApiStatus];
+
+
+export const OnboardingLifecycleDigestDeliveryLogApiStatus = {
+  eligible: 'eligible',
+  suppressed: 'suppressed',
+  sent: 'sent',
+  failed: 'failed',
+  clicked: 'clicked',
+  completed: 'completed',
+} as const;
+
+export interface OnboardingLifecycleDigestDeliveryLogApi {
+  id: string;
+  /** @minLength 1 */
+  channel: string;
+  status: OnboardingLifecycleDigestDeliveryLogApiStatus;
+  suppressed_reason?: string;
+  sent_at?: string;
+  created_at: string;
+}
+
+export interface OnboardingLifecycleDigestReviewItemApi {
+  source_type: OnboardingLifecycleDigestReviewItemApiSourceType;
+  source_id: string;
+  /** @minLength 1 */
+  campaign_key: string;
+  /** @minLength 1 */
+  campaign_group?: string;
+  /** @minLength 1 */
+  template_key?: string;
+  /** @minLength 1 */
+  template_version?: string;
+  /** @minLength 1 */
+  status: string;
+  suppression_reason?: string;
+  user_id: string;
+  workspace_id?: string;
+  evaluated_at?: string;
+  queued_at?: string;
+  sent_at?: string;
+  created_at: string;
+  preview: OnboardingLifecycleDigestPreviewApi;
+  summary: OnboardingLifecycleDigestSummaryApi;
+  delivery_logs: OnboardingLifecycleDigestDeliveryLogApi[];
+}
+
+export interface OnboardingLifecycleDigestReviewResultApi {
+  generated_at: string;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  limit: number;
+  campaign_key?: string;
+  /** @minimum 0 */
+  count: number;
+  items: OnboardingLifecycleDigestReviewItemApi[];
+}
+
+export interface OnboardingLifecycleDigestReviewResponseApi {
+  status: boolean;
+  result: OnboardingLifecycleDigestReviewResultApi;
+}
+
+export type OnboardingLifecycleDigestPromotionRequestApiScopeType = typeof OnboardingLifecycleDigestPromotionRequestApiScopeType[keyof typeof OnboardingLifecycleDigestPromotionRequestApiScopeType];
+
+
+export const OnboardingLifecycleDigestPromotionRequestApiScopeType = {
+  user: 'user',
+  workspace: 'workspace',
+} as const;
+
+export type OnboardingLifecycleDigestPromotionSourceApiSourceType = typeof OnboardingLifecycleDigestPromotionSourceApiSourceType[keyof typeof OnboardingLifecycleDigestPromotionSourceApiSourceType];
+
+
+export const OnboardingLifecycleDigestPromotionSourceApiSourceType = {
+  evaluation_log: 'evaluation_log',
+  send_log: 'send_log',
+} as const;
+
+export interface OnboardingLifecycleDigestPromotionSourceApi {
+  source_type: OnboardingLifecycleDigestPromotionSourceApiSourceType;
+  source_id: string;
+}
+
+export interface OnboardingLifecycleDigestPromotionRequestApi {
+  sources: OnboardingLifecycleDigestPromotionSourceApi[];
+  scope_type?: OnboardingLifecycleDigestPromotionRequestApiScopeType;
+  dry_run?: boolean;
+  /** @maxLength 180 */
+  reason?: string;
+}
+
+export type OnboardingLifecycleDigestPromotionResultApiScopeType = typeof OnboardingLifecycleDigestPromotionResultApiScopeType[keyof typeof OnboardingLifecycleDigestPromotionResultApiScopeType];
+
+
+export const OnboardingLifecycleDigestPromotionResultApiScopeType = {
+  user: 'user',
+  workspace: 'workspace',
+} as const;
+
+export type OnboardingLifecycleDigestPromotionEntryApiSourceType = typeof OnboardingLifecycleDigestPromotionEntryApiSourceType[keyof typeof OnboardingLifecycleDigestPromotionEntryApiSourceType];
+
+
+export const OnboardingLifecycleDigestPromotionEntryApiSourceType = {
+  evaluation_log: 'evaluation_log',
+  send_log: 'send_log',
+} as const;
+
+export type OnboardingLifecycleDigestPromotionEntryApiOperation = typeof OnboardingLifecycleDigestPromotionEntryApiOperation[keyof typeof OnboardingLifecycleDigestPromotionEntryApiOperation];
+
+
+export const OnboardingLifecycleDigestPromotionEntryApiOperation = {
+  created: 'created',
+  updated: 'updated',
+  would_create: 'would_create',
+  would_update: 'would_update',
+} as const;
+
+export type OnboardingLifecycleDigestPromotionEntryApiScopeType = typeof OnboardingLifecycleDigestPromotionEntryApiScopeType[keyof typeof OnboardingLifecycleDigestPromotionEntryApiScopeType];
+
+
+export const OnboardingLifecycleDigestPromotionEntryApiScopeType = {
+  user: 'user',
+  workspace: 'workspace',
+} as const;
+
+export interface OnboardingLifecycleDigestPromotionEntryApi {
+  source_type: OnboardingLifecycleDigestPromotionEntryApiSourceType;
+  source_id: string;
+  allowlist_id?: string;
+  operation: OnboardingLifecycleDigestPromotionEntryApiOperation;
+  scope_type: OnboardingLifecycleDigestPromotionEntryApiScopeType;
+  /** @minLength 1 */
+  scope_value: string;
+  /** @minLength 1 */
+  campaign_group?: string;
+  user_id: string;
+  workspace_id: string;
+}
+
+export type OnboardingLifecycleDigestPromotionSkippedApiSourceType = typeof OnboardingLifecycleDigestPromotionSkippedApiSourceType[keyof typeof OnboardingLifecycleDigestPromotionSkippedApiSourceType];
+
+
+export const OnboardingLifecycleDigestPromotionSkippedApiSourceType = {
+  evaluation_log: 'evaluation_log',
+  send_log: 'send_log',
+} as const;
+
+export type OnboardingLifecycleDigestPromotionSkippedApiReason = typeof OnboardingLifecycleDigestPromotionSkippedApiReason[keyof typeof OnboardingLifecycleDigestPromotionSkippedApiReason];
+
+
+export const OnboardingLifecycleDigestPromotionSkippedApiReason = {
+  duplicate_source: 'duplicate_source',
+  duplicate_target: 'duplicate_target',
+  missing_digest_preview: 'missing_digest_preview',
+  not_found: 'not_found',
+  unsupported_campaign: 'unsupported_campaign',
+} as const;
+
+export interface OnboardingLifecycleDigestPromotionSkippedApi {
+  source_type: OnboardingLifecycleDigestPromotionSkippedApiSourceType;
+  source_id: string;
+  reason: OnboardingLifecycleDigestPromotionSkippedApiReason;
+}
+
+export interface OnboardingLifecycleDigestPromotionResultApi {
+  generated_at: string;
+  /** @minLength 1 */
+  environment: string;
+  /** @minLength 1 */
+  campaign_key: string;
+  scope_type: OnboardingLifecycleDigestPromotionResultApiScopeType;
+  dry_run: boolean;
+  /** @minimum 0 */
+  promoted_count: number;
+  /** @minimum 0 */
+  skipped_count: number;
+  /** @minimum 0 */
+  created_count: number;
+  /** @minimum 0 */
+  updated_count: number;
+  entries: OnboardingLifecycleDigestPromotionEntryApi[];
+  skipped: OnboardingLifecycleDigestPromotionSkippedApi[];
+}
+
+export interface OnboardingLifecycleDigestPromotionResponseApi {
+  status: boolean;
+  result: OnboardingLifecycleDigestPromotionResultApi;
 }
 
 export interface OrgTwoFactorPolicyResponseApi {
@@ -1003,6 +3757,134 @@ export interface AccountsRedisDeleteResponseApi {
   result: AccountsRedisDeleteResultApi;
 }
 
+export type SampleProjectRequestApiTargetStage = typeof SampleProjectRequestApiTargetStage[keyof typeof SampleProjectRequestApiTargetStage];
+
+
+export const SampleProjectRequestApiTargetStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export type SampleProjectRequestApiContextStatus = typeof SampleProjectRequestApiContextStatus[keyof typeof SampleProjectRequestApiContextStatus];
+
+
+export const SampleProjectRequestApiContextStatus = {
+  current: 'current',
+  stale: 'stale',
+  expired: 'expired',
+  invalid: 'invalid',
+  complete: 'complete',
+  route_unavailable: 'route_unavailable',
+} as const;
+
+export type SampleProjectRequestApiQuickStartGoal = typeof SampleProjectRequestApiQuickStartGoal[keyof typeof SampleProjectRequestApiQuickStartGoal];
+
+
+export const SampleProjectRequestApiQuickStartGoal = {
+  monitor_production_ai_app: 'monitor_production_ai_app',
+  improve_prompts: 'improve_prompts',
+  build_ai_agent: 'build_ai_agent',
+  control_model_traffic: 'control_model_traffic',
+  evaluate_quality: 'evaluate_quality',
+  connect_voice_ai_agent: 'connect_voice_ai_agent',
+  explore_sample_data: 'explore_sample_data',
+} as const;
+
+export type SampleProjectRequestApiQuickStartPrimaryPath = typeof SampleProjectRequestApiQuickStartPrimaryPath[keyof typeof SampleProjectRequestApiQuickStartPrimaryPath];
+
+
+export const SampleProjectRequestApiQuickStartPrimaryPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export interface SampleProjectRequestApi {
+  /** @minLength 1 */
+  path?: string;
+  manifest_id?: string;
+  manifest_version?: string;
+  source?: string;
+  reason?: string;
+  open_after_create?: boolean;
+  campaign_key?: string;
+  email_key?: string;
+  send_log_id?: string;
+  email_status?: string;
+  target_stage?: SampleProjectRequestApiTargetStage;
+  target_event?: string;
+  link_issued_at?: string;
+  stale_reason?: string;
+  context_status?: SampleProjectRequestApiContextStatus;
+  quick_start_goal?: SampleProjectRequestApiQuickStartGoal;
+  /** @pattern ^[a-z0-9_:-]{1,80}$ */
+  quick_start_id?: string;
+  quick_start_primary_path?: SampleProjectRequestApiQuickStartPrimaryPath;
+}
+
+export interface SampleProjectResponseApi {
+  sample_project: SampleProjectStateApi;
+  activation_state: ActivationStateResponseApi;
+}
+
+export interface SampleProjectApiResponseApi {
+  status?: boolean;
+  result: SampleProjectResponseApi;
+}
+
+export interface SampleProjectHideRequestApi {
+  source?: string;
+  reason?: string;
+}
+
 export interface SignupRequestApi {
   /** @minLength 1 */
   email: string;
@@ -1139,6 +4021,129 @@ export interface TeamRemoveResultApi {
 export interface TeamRemoveResponseApi {
   status: boolean;
   result: TeamRemoveResultApi;
+}
+
+export type TestTraceRequestApiTargetStage = typeof TestTraceRequestApiTargetStage[keyof typeof TestTraceRequestApiTargetStage];
+
+
+export const TestTraceRequestApiTargetStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export type TestTraceRequestApiContextStatus = typeof TestTraceRequestApiContextStatus[keyof typeof TestTraceRequestApiContextStatus];
+
+
+export const TestTraceRequestApiContextStatus = {
+  current: 'current',
+  stale: 'stale',
+  expired: 'expired',
+  invalid: 'invalid',
+  complete: 'complete',
+  route_unavailable: 'route_unavailable',
+} as const;
+
+export type TestTraceRequestApiQuickStartGoal = typeof TestTraceRequestApiQuickStartGoal[keyof typeof TestTraceRequestApiQuickStartGoal];
+
+
+export const TestTraceRequestApiQuickStartGoal = {
+  monitor_production_ai_app: 'monitor_production_ai_app',
+  improve_prompts: 'improve_prompts',
+  build_ai_agent: 'build_ai_agent',
+  control_model_traffic: 'control_model_traffic',
+  evaluate_quality: 'evaluate_quality',
+  connect_voice_ai_agent: 'connect_voice_ai_agent',
+  explore_sample_data: 'explore_sample_data',
+} as const;
+
+export type TestTraceRequestApiQuickStartPrimaryPath = typeof TestTraceRequestApiQuickStartPrimaryPath[keyof typeof TestTraceRequestApiQuickStartPrimaryPath];
+
+
+export const TestTraceRequestApiQuickStartPrimaryPath = {
+  prompt: 'prompt',
+  agent: 'agent',
+  observe: 'observe',
+  gateway: 'gateway',
+  voice: 'voice',
+  evals: 'evals',
+  dashboards: 'dashboards',
+  sample: 'sample',
+} as const;
+
+export interface TestTraceRequestApi {
+  /** @minLength 1 */
+  path?: string;
+  project_id: string;
+  source?: string;
+  reason?: string;
+  campaign_key?: string;
+  email_key?: string;
+  send_log_id?: string;
+  email_status?: string;
+  target_stage?: TestTraceRequestApiTargetStage;
+  target_event?: string;
+  link_issued_at?: string;
+  stale_reason?: string;
+  context_status?: TestTraceRequestApiContextStatus;
+  quick_start_goal?: TestTraceRequestApiQuickStartGoal;
+  /** @pattern ^[a-z0-9_:-]{1,80}$ */
+  quick_start_id?: string;
+  quick_start_primary_path?: TestTraceRequestApiQuickStartPrimaryPath;
+}
+
+export interface TestTraceResponseApi {
+  trace_id: string;
+  project_id: string;
+  created: boolean;
+  activation_state: ActivationStateResponseApi;
+}
+
+export interface TestTraceApiResponseApi {
+  status?: boolean;
+  result: TestTraceResponseApi;
 }
 
 export interface LoginRequestApi {
@@ -2797,6 +5802,7 @@ export interface GatewayPlaygroundTestResultApi {
   guardrail_headers: GatewayPlaygroundTestResultApiGuardrailHeaders;
   /** @minLength 1 */
   model: string;
+  request_id?: string;
   blocked: boolean;
   warned: boolean;
 }
@@ -6607,6 +9613,7 @@ export interface AnnotationsLabelsApi {
   readonly created_at?: string;
   readonly trace_annotations_count?: number;
   readonly annotation_count?: number;
+  readonly archived?: boolean;
 }
 
 export interface AnnotationLabelRestoreResponseApi {
@@ -8759,6 +11766,9 @@ export type DatasetTableMetadataApiStatus = { [key: string]: unknown };
 export interface DatasetTableMetadataApi {
   /** @minLength 1 */
   dataset_name: string;
+  experiment_id?: string;
+  /** @minLength 1 */
+  experiment_name?: string;
   total_rows?: number;
   total_pages?: number;
   error_messages?: string[];
@@ -9247,6 +12257,14 @@ export interface EvalSummaryTemplateDeleteResponseApi {
   result: EvalSummaryTemplateDeleteResponseResultApi;
 }
 
+export type EvalTemplateApiOwner = typeof EvalTemplateApiOwner[keyof typeof EvalTemplateApiOwner];
+
+
+export const EvalTemplateApiOwner = {
+  system: 'system',
+  user: 'user',
+} as const;
+
 export type EvalTemplateApiConfig = { [key: string]: unknown };
 
 export interface EvalTemplateApi {
@@ -9255,11 +12273,7 @@ export interface EvalTemplateApi {
      * @maxLength 50
      */
   name: string;
-  /**
-     * @minLength 1
-     * @maxLength 50
-     */
-  owner?: string;
+  owner?: EvalTemplateApiOwner;
   config: EvalTemplateApiConfig;
   eval_tags?: string[];
 }
@@ -9394,6 +12408,8 @@ export const CompositeEvalCreateRequestApiAggregationFunction = {
 
 export type CompositeEvalCreateRequestApiChildWeights = { [key: string]: unknown };
 
+export type CompositeEvalCreateRequestApiChildPinnedVersions = { [key: string]: unknown };
+
 export type CompositeEvalCreateRequestApiCompositeChildAxis = typeof CompositeEvalCreateRequestApiCompositeChildAxis[keyof typeof CompositeEvalCreateRequestApiCompositeChildAxis];
 
 
@@ -9417,6 +12433,7 @@ export interface CompositeEvalCreateRequestApi {
   aggregation_enabled?: boolean;
   aggregation_function?: CompositeEvalCreateRequestApiAggregationFunction;
   child_weights?: CompositeEvalCreateRequestApiChildWeights;
+  child_pinned_versions?: CompositeEvalCreateRequestApiChildPinnedVersions;
   composite_child_axis?: CompositeEvalCreateRequestApiCompositeChildAxis;
 }
 
@@ -9614,10 +12631,28 @@ export const EvalListFiltersApiEvalTypeItem = {
   agent: 'agent',
 } as const;
 
+export type EvalListFiltersApiEvalTypeNotItem = typeof EvalListFiltersApiEvalTypeNotItem[keyof typeof EvalListFiltersApiEvalTypeNotItem];
+
+
+export const EvalListFiltersApiEvalTypeNotItem = {
+  llm: 'llm',
+  code: 'code',
+  agent: 'agent',
+} as const;
+
 export type EvalListFiltersApiOutputTypeItem = typeof EvalListFiltersApiOutputTypeItem[keyof typeof EvalListFiltersApiOutputTypeItem];
 
 
 export const EvalListFiltersApiOutputTypeItem = {
+  pass_fail: 'pass_fail',
+  percentage: 'percentage',
+  deterministic: 'deterministic',
+} as const;
+
+export type EvalListFiltersApiOutputTypeNotItem = typeof EvalListFiltersApiOutputTypeNotItem[keyof typeof EvalListFiltersApiOutputTypeNotItem];
+
+
+export const EvalListFiltersApiOutputTypeNotItem = {
   pass_fail: 'pass_fail',
   percentage: 'percentage',
   deterministic: 'deterministic',
@@ -9631,13 +12666,27 @@ export const EvalListFiltersApiTemplateTypeItem = {
   composite: 'composite',
 } as const;
 
+export type EvalListFiltersApiTemplateTypeNotItem = typeof EvalListFiltersApiTemplateTypeNotItem[keyof typeof EvalListFiltersApiTemplateTypeNotItem];
+
+
+export const EvalListFiltersApiTemplateTypeNotItem = {
+  single: 'single',
+  composite: 'composite',
+} as const;
+
 export interface EvalListFiltersApi {
   eval_type?: EvalListFiltersApiEvalTypeItem[];
+  eval_type_not?: EvalListFiltersApiEvalTypeNotItem[];
   output_type?: EvalListFiltersApiOutputTypeItem[];
+  output_type_not?: EvalListFiltersApiOutputTypeNotItem[];
   template_type?: EvalListFiltersApiTemplateTypeItem[];
+  template_type_not?: EvalListFiltersApiTemplateTypeNotItem[];
   tags?: string[];
+  tags_not?: string[];
   created_by?: string[];
+  created_by_not?: string[];
   names?: string[];
+  names_not?: string[];
 }
 
 export interface EvalListRequestApi {
@@ -9728,6 +12777,8 @@ export const CompositeEvalUpdateRequestApiAggregationFunction = {
 
 export type CompositeEvalUpdateRequestApiChildWeights = { [key: string]: unknown };
 
+export type CompositeEvalUpdateRequestApiChildPinnedVersions = { [key: string]: unknown };
+
 export type CompositeEvalUpdateRequestApiCompositeChildAxis = typeof CompositeEvalUpdateRequestApiCompositeChildAxis[keyof typeof CompositeEvalUpdateRequestApiCompositeChildAxis];
 
 
@@ -9751,6 +12802,7 @@ export interface CompositeEvalUpdateRequestApi {
   aggregation_function?: CompositeEvalUpdateRequestApiAggregationFunction;
   child_template_ids?: string[];
   child_weights?: CompositeEvalUpdateRequestApiChildWeights;
+  child_pinned_versions?: CompositeEvalUpdateRequestApiChildPinnedVersions;
   composite_child_axis?: CompositeEvalUpdateRequestApiCompositeChildAxis;
 }
 
@@ -13822,10 +16874,6 @@ export interface AgentDefinitionResponseApi {
   readonly knowledge_base?: string;
   /** Organization this agent definition belongs to */
   readonly organization?: string;
-  /**
-     * API key for the agent
-     * @minLength 1
-     */
   readonly api_key?: string;
   readonly observability_provider?: string;
   readonly created_at?: string;
@@ -16019,7 +19067,10 @@ export interface CallExecutionDetailApi {
   /** Call summary from the service */
   call_summary?: string;
   readonly recordings?: string;
+  readonly test_execution_id?: string;
   readonly scenario_id?: string;
+  readonly scenario_graph?: string;
+  readonly scenario_graph_id?: string;
   readonly avg_agent_latency?: number;
   /**
      * Average agent latency in milliseconds (time taken by agent to respond after user's pause)
@@ -18383,8 +21434,12 @@ export type EvalTaskApiFilters = {
   date_range?: string[];
   /** Lower-bound ISO timestamp for legacy task filters. */
   created_at?: string;
-  /** Trace session id to constrain the task. */
-  session_id?: string;
+  /** Trace session id(s) to constrain the task. */
+  session_id?: string[];
+  /** Trace id(s) to constrain linked-source tasks. */
+  trace_id?: string[];
+  /** Observation span id(s) to constrain linked-source tasks. */
+  span_id?: string[];
   /** Observation span type(s), for example llm, tool, or chain. */
   observation_type?: string[];
   span_attributes_filters?: EvalTaskApiFiltersSpanAttributesFiltersItem[];
@@ -18455,6 +21510,127 @@ export interface EvalTaskApi {
   evals: string[];
   failed_spans?: EvalTaskApiFailedSpans;
   readonly progress?: string;
+}
+
+export interface EvalTaskDeleteRequestApi {
+  eval_task_ids: string[];
+}
+
+export interface EvalTaskMessageResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface EvalTaskMessageResponseApi {
+  status?: boolean;
+  result: EvalTaskMessageResultApi;
+}
+
+export type EditEvalTaskApiFiltersSpanAttributesFiltersItemFilterConfig = {
+  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array. */
+  filter_type: string;
+  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
+  filter_op: string;
+  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
+  filter_value?: unknown;
+  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
+  col_type?: string;
+};
+
+export type EditEvalTaskApiFiltersSpanAttributesFiltersItem = {
+  /** Column or attribute id to filter on. */
+  column_id: string;
+  /** Optional UI label for chips and saved views. */
+  display_name?: string;
+  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
+  source?: string;
+  /** Optional metric output type metadata used by eval and annotation filters. */
+  output_type?: string;
+  filter_config: EditEvalTaskApiFiltersSpanAttributesFiltersItemFilterConfig;
+};
+
+export type EditEvalTaskApiFilters = {
+  /** Project scope for the evaluation task. */
+  project_id?: string;
+  /**
+     * Inclusive start/end ISO timestamps.
+     * @minItems 2
+     * @maxItems 2
+     */
+  date_range?: string[];
+  /** Lower-bound ISO timestamp for legacy task filters. */
+  created_at?: string;
+  /** Trace session id(s) to constrain the task. */
+  session_id?: string[];
+  /** Trace id(s) to constrain linked-source tasks. */
+  trace_id?: string[];
+  /** Observation span id(s) to constrain linked-source tasks. */
+  span_id?: string[];
+  /** Observation span type(s), for example llm, tool, or chain. */
+  observation_type?: string[];
+  span_attributes_filters?: EditEvalTaskApiFiltersSpanAttributesFiltersItem[];
+};
+
+export type EditEvalTaskApiRunType = typeof EditEvalTaskApiRunType[keyof typeof EditEvalTaskApiRunType];
+
+
+export const EditEvalTaskApiRunType = {
+  continuous: 'continuous',
+  historical: 'historical',
+} as const;
+
+export type EditEvalTaskApiRowType = typeof EditEvalTaskApiRowType[keyof typeof EditEvalTaskApiRowType];
+
+
+export const EditEvalTaskApiRowType = {
+  spans: 'spans',
+  traces: 'traces',
+  sessions: 'sessions',
+  voiceCalls: 'voiceCalls',
+} as const;
+
+export type EditEvalTaskApiStatus = typeof EditEvalTaskApiStatus[keyof typeof EditEvalTaskApiStatus];
+
+
+export const EditEvalTaskApiStatus = {
+  pending: 'pending',
+  running: 'running',
+  completed: 'completed',
+  failed: 'failed',
+  paused: 'paused',
+  deleted: 'deleted',
+} as const;
+
+export type EditEvalTaskApiEditType = typeof EditEvalTaskApiEditType[keyof typeof EditEvalTaskApiEditType];
+
+
+export const EditEvalTaskApiEditType = {
+  edit_rerun: 'edit_rerun',
+  fresh_run: 'fresh_run',
+} as const;
+
+export interface EditEvalTaskApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name?: string;
+  filters?: EditEvalTaskApiFilters;
+  /**
+     * @minimum 1
+     * @maximum 100
+     */
+  sampling_rate?: number;
+  /**
+     * @minimum 1
+     * @maximum 1000000
+     */
+  spans_limit?: number;
+  run_type?: EditEvalTaskApiRunType;
+  row_type?: EditEvalTaskApiRowType;
+  status?: EditEvalTaskApiStatus;
+  evals?: string[];
+  edit_type: EditEvalTaskApiEditType;
 }
 
 export interface LinearTeamApi {
@@ -18605,6 +21781,7 @@ export interface FeedUpdateBodyApi {
 export interface CreateLinearIssueApi {
   /** @minLength 1 */
   team_id: string;
+  trace_id?: string;
   title?: string;
   description?: string;
   priority?: number;
@@ -20406,6 +23583,13 @@ export interface UserAlertMonitorApi {
   created_by?: string;
 }
 
+export interface UserAlertBulkMuteRequestApi {
+  ids?: string[];
+  is_mute?: boolean;
+  select_all?: boolean;
+  exclude_ids?: string[];
+}
+
 export interface UserAlertMonitorDuplicateApi {
   id: string;
   /**
@@ -21521,6 +24705,13 @@ export interface UsageBillingOverviewResponseApi {
   result: UsageBillingOverviewResultApi;
 }
 
+export interface UsageBudgetThresholdApi {
+  percent: number;
+  enabled?: boolean;
+  /** @minLength 1 */
+  severity?: string;
+}
+
 export interface UsageBudgetApi {
   id: number;
   /** @minLength 1 */
@@ -21531,10 +24722,12 @@ export interface UsageBudgetApi {
   /** @minLength 1 */
   action: string;
   notify_emails?: string[];
+  notify_slack_webhook?: string;
   is_active?: boolean;
   /** @minLength 1 */
   last_triggered_period?: string;
   last_triggered_at?: string;
+  thresholds?: UsageBudgetThresholdApi[];
   created_at?: string;
 }
 
@@ -21565,6 +24758,7 @@ export interface UsageBudgetMutationRequestApi {
   action?: UsageBudgetMutationRequestApiAction;
   notify_emails?: string[];
   notify_slack_webhook?: string;
+  thresholds?: UsageBudgetThresholdApi[];
   is_active?: boolean;
 }
 
@@ -21578,6 +24772,8 @@ export interface UsageBudgetMutationResultApi {
   threshold_value: string;
   /** @minLength 1 */
   action: string;
+  notify_slack_webhook?: string;
+  thresholds?: UsageBudgetThresholdApi[];
   is_active?: boolean;
 }
 
@@ -21919,6 +25115,92 @@ export interface StripeWebhookLegacyResponseApi {
   result?: StripeWebhookResultApi;
 }
 
+export type AccountsActivationStateListParams = {
+source?: string;
+campaign_key?: string;
+email_key?: string;
+target_stage?: AccountsActivationStateListTargetStage;
+target_event?: string;
+target_route?: string;
+send_log_id?: string;
+email_status?: string;
+status?: string;
+link_issued_at?: string;
+stale_reason?: string;
+context_status?: AccountsActivationStateListContextStatus;
+mode?: string;
+quick_start_goal?: string;
+/**
+ * @pattern ^[a-z0-9_:-]{1,80}$
+ */
+quick_start_id?: string;
+quick_start_primary_path?: string;
+debug?: boolean;
+};
+
+export type AccountsActivationStateListTargetStage = typeof AccountsActivationStateListTargetStage[keyof typeof AccountsActivationStateListTargetStage];
+
+
+export const AccountsActivationStateListTargetStage = {
+  feature_disabled: 'feature_disabled',
+  workspace_missing: 'workspace_missing',
+  permission_limited: 'permission_limited',
+  choose_goal: 'choose_goal',
+  selected_path_unavailable: 'selected_path_unavailable',
+  activated: 'activated',
+  daily_review: 'daily_review',
+  connect_observability: 'connect_observability',
+  waiting_for_first_trace: 'waiting_for_first_trace',
+  waiting_for_first_trace_sample_available: 'waiting_for_first_trace_sample_available',
+  review_first_trace: 'review_first_trace',
+  create_trace_evaluator: 'create_trace_evaluator',
+  review_sample_signal: 'review_sample_signal',
+  start_prompt: 'start_prompt',
+  run_prompt_test: 'run_prompt_test',
+  save_prompt_version: 'save_prompt_version',
+  create_second_prompt_version: 'create_second_prompt_version',
+  compare_prompt_versions: 'compare_prompt_versions',
+  prompt_next_loop: 'prompt_next_loop',
+  create_agent: 'create_agent',
+  add_agent_node: 'add_agent_node',
+  run_agent_scenario: 'run_agent_scenario',
+  review_agent_trace: 'review_agent_trace',
+  save_agent_eval: 'save_agent_eval',
+  agent_create_eval: 'agent_create_eval',
+  create_trace_dashboard: 'create_trace_dashboard',
+  create_trace_alert: 'create_trace_alert',
+  configure_gateway_provider: 'configure_gateway_provider',
+  create_gateway_key: 'create_gateway_key',
+  run_gateway_request: 'run_gateway_request',
+  review_gateway_log: 'review_gateway_log',
+  fix_gateway_failure: 'fix_gateway_failure',
+  add_gateway_policy: 'add_gateway_policy',
+  create_voice_agent: 'create_voice_agent',
+  run_voice_test_call: 'run_voice_test_call',
+  review_voice_call: 'review_voice_call',
+  add_voice_success_criteria: 'add_voice_success_criteria',
+  voice_monitor_calls: 'voice_monitor_calls',
+  create_eval_dataset: 'create_eval_dataset',
+  add_eval_scorer: 'add_eval_scorer',
+  run_eval: 'run_eval',
+  review_eval_failures: 'review_eval_failures',
+  eval_next_loop: 'eval_next_loop',
+  open_sample_project: 'open_sample_project',
+  connect_real_data: 'connect_real_data',
+} as const;
+
+export type AccountsActivationStateListContextStatus = typeof AccountsActivationStateListContextStatus[keyof typeof AccountsActivationStateListContextStatus];
+
+
+export const AccountsActivationStateListContextStatus = {
+  current: 'current',
+  stale: 'stale',
+  expired: 'expired',
+  invalid: 'invalid',
+  complete: 'complete',
+  route_unavailable: 'route_unavailable',
+} as const;
+
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   'x-amzn-marketplace-token': string;
   'x-amzn-marketplace-product-id'?: string;
@@ -21930,6 +25212,22 @@ export type AccountsAwsMarketplaceVerifyTokenCreateBody = {
   'x-amzn-marketplace-product-id'?: string;
   'x-amzn-marketplace-agreement-id'?: string;
 };
+
+export type AccountsOnboardingLifecycleDigestPreviewsListParams = {
+campaign_key?: AccountsOnboardingLifecycleDigestPreviewsListCampaignKey;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+};
+
+export type AccountsOnboardingLifecycleDigestPreviewsListCampaignKey = typeof AccountsOnboardingLifecycleDigestPreviewsListCampaignKey[keyof typeof AccountsOnboardingLifecycleDigestPreviewsListCampaignKey];
+
+
+export const AccountsOnboardingLifecycleDigestPreviewsListCampaignKey = {
+  daily_quality_open_actions: 'daily_quality_open_actions',
+} as const;
 
 export type AccountsOrganizationMembersListParams = {
 /**
@@ -23020,6 +26318,7 @@ type?: ModelHubAnnotationsLabelsListType;
 search?: string;
 include_usage_count?: boolean;
 include_archived?: boolean;
+archived?: boolean;
 };
 
 export type ModelHubAnnotationsLabelsListType = typeof ModelHubAnnotationsLabelsListType[keyof typeof ModelHubAnnotationsLabelsListType];
@@ -24607,13 +27906,6 @@ page?: number;
 limit?: number;
 };
 
-export type TracerEvalTaskList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: EvalTaskApi[];
-};
-
 export type TracerEvalTaskGetEvalDetailsParams = {
 /**
  * A page number within the paginated result set.
@@ -24623,13 +27915,6 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type TracerEvalTaskGetEvalDetails200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: EvalTaskApi[];
 };
 
 export type TracerEvalTaskGetEvalTaskLogsParams = {
@@ -24643,13 +27928,6 @@ page?: number;
 limit?: number;
 };
 
-export type TracerEvalTaskGetEvalTaskLogs200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: EvalTaskApi[];
-};
-
 export type TracerEvalTaskGetUsageParams = {
 /**
  * A page number within the paginated result set.
@@ -24659,13 +27937,6 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type TracerEvalTaskGetUsage200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: EvalTaskApi[];
 };
 
 export type TracerEvalTaskListEvalTasksParams = {
@@ -25781,13 +29052,6 @@ page?: number;
 limit?: number;
 };
 
-export type TracerUserAlertsList200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: UserAlertMonitorApi[];
-};
-
 export type TracerUserAlertsListMonitorsParams = {
 /**
  * A page number within the paginated result set.
@@ -25797,13 +29061,6 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type TracerUserAlertsListMonitors200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: UserAlertMonitorApi[];
 };
 
 export type TracerUserAlertsMetricOptionsParams = {

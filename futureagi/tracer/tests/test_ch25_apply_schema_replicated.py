@@ -209,7 +209,7 @@ class TestAllShippedSchemas:
         #
         # Earlier this only checked for literal "ReplicatedMergeTree" which
         # missed "ReplicatedReplacingMergeTree" / "ReplicatedAggregatingMergeTree"
-        # (codex review). Now substring-match the "Replicated" prefix.
+        # (review). Now substring-match the "Replicated" prefix.
         for f in schema_files:
             text = f.read_text()
             assert "Replicated" not in text, (
@@ -225,7 +225,7 @@ class TestAllShippedSchemas:
 
 
 class TestFailClosed:
-    """Regression coverage for codex P1: replicated mode must NOT silently
+    """Regression coverage for review P1: replicated mode must NOT silently
     apply a CREATE TABLE whose ENGINE the rewriter doesn't recognise.
     """
 
@@ -251,7 +251,7 @@ class TestFailClosed:
 
 
 class TestSchemaQualifiedNames:
-    """Codex P1: <db>.<table> must extract the LAST segment for the ZK
+    """Review P1: <db>.<table> must extract the LAST segment for the ZK
     path, not the database qualifier.
     """
 
@@ -278,7 +278,7 @@ class TestSchemaQualifiedNames:
 
 
 class TestGoldenOutputForShippedFiles:
-    """Codex follow-up: substring asserts let a rewriter regression pass
+    """Review follow-up: substring asserts let a rewriter regression pass
     silently. These tests pin the EXACT engine line we expect for each
     shipped CREATE TABLE — any future schema edit that changes intent
     must update this test, making the change visible in review.

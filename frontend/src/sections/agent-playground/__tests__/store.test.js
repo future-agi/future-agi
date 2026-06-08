@@ -77,6 +77,39 @@ describe("useAgentPlaygroundStore", () => {
       expect(nodes[0].data.node_template_id).toBe("tpl-1");
     });
 
+    it("persists complete prompt config without marking it as transient", () => {
+      useAgentPlaygroundStore
+        .getState()
+        .addOptimisticNode(
+          NODE_TYPES.LLM_PROMPT,
+          null,
+          null,
+          "tpl-1",
+          undefined,
+          {
+            modelConfig: { model: "gpt-4o-mini" },
+            messages: [
+              {
+                role: "user",
+                content: [{ type: "text", text: "Inspect stale pricing." }],
+              },
+            ],
+          },
+        );
+
+      const { nodes } = useAgentPlaygroundStore.getState();
+      expect(nodes[0].data.config).toMatchObject({
+        modelConfig: { model: "gpt-4o-mini" },
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "Inspect stale pricing." }],
+          },
+        ],
+      });
+      expect(nodes[0].data._initialConfig).toBeUndefined();
+    });
+
     it("is blocked during workflow run", () => {
       useWorkflowRunStore.setState({ isRunning: true });
       const result = useAgentPlaygroundStore

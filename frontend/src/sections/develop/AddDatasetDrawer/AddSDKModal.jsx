@@ -56,7 +56,13 @@ const tabOptions = [
   { label: "Curl", value: "curl", disabled: false },
 ];
 
-const AddSDKModal = ({ open, onClose, refreshGrid }) => {
+const getDatasetId = (result = {}) =>
+  result?.datasetId || result?.dataset_id || result?.dataset?.id;
+
+const getDatasetName = (result = {}) =>
+  result?.datasetName || result?.dataset_name || result?.dataset?.name;
+
+const AddSDKModal = ({ open, onClose, onDatasetCreated, refreshGrid }) => {
   const theme = useTheme();
   const { control, handleSubmit, reset, setValue } = useForm({
     defaultValues,
@@ -64,6 +70,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
   });
   const [isNext, setIsNext] = useState(false);
   const [currentTab, setCurrentTab] = useState("python");
+  const [createdDatasetHref, setCreatedDatasetHref] = useState(null);
   const navigate = useNavigate();
 
   const copyToClipboard = (text, type) => {
@@ -106,10 +113,22 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
         headers: { "Content-Type": "multipart/form-data" },
       }),
     onSuccess: (data) => {
+      const result = data?.data?.result;
+      const datasetId = getDatasetId(result);
+      const nextHref = onDatasetCreated?.({
+        datasetId,
+        sourceMethod: "sdk",
+      });
       onCloseClick();
+      setCreatedDatasetHref(
+        nextHref ||
+          (datasetId
+            ? `/dashboard/develop/${datasetId}?tab=data`
+            : "/dashboard/develop"),
+      );
       //@ts-ignore
       addRowSDK({
-        dataset_name: data?.data?.result?.datasetName,
+        dataset_name: getDatasetName(result),
       });
       setIsNext(true);
     },
@@ -137,7 +156,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
   const onCloseClick = () => {
     onClose();
     reset();
-    refreshGrid();
+    refreshGrid?.();
   };
 
   return (
@@ -212,7 +231,8 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
         onClose={() => {
           setIsNext(false);
           navigate(
-            `/dashboard/develop/${data?.data?.result?.dataset?.id}?tab=data`,
+            createdDatasetHref ||
+              `/dashboard/develop/${data?.data?.result?.dataset?.id}?tab=data`,
           );
         }}
         sx={{
@@ -512,7 +532,8 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                 });
                 setIsNext(false);
                 navigate(
-                  `/dashboard/develop/${data?.data?.result?.dataset?.id}?tab=data`,
+                  createdDatasetHref ||
+                    `/dashboard/develop/${data?.data?.result?.dataset?.id}?tab=data`,
                 );
               }}
               variant="contained"
@@ -534,6 +555,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
 AddSDKModal.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
+  onDatasetCreated: PropTypes.func,
   refreshGrid: PropTypes.func,
 };
 

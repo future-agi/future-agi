@@ -5914,7 +5914,7 @@ class EvalPlayGroundAPIView(APIView):
             _call_id = validated_data.get("call_id")
             if span_context is None and _span_id:
                 try:
-                    # Codex consolidated review P1 (2026-05-26): the legacy ORM
+                    # Consolidated review P1 (2026-05-26): the legacy ORM
                     # path was unscoped, but the eval playground accepts a
                     # caller-supplied span_id and renders its content into a
                     # template — that's a cross-org read surface. We now
@@ -5949,7 +5949,7 @@ class EvalPlayGroundAPIView(APIView):
                     from tracer.models.trace import Trace
                     from tracer.services.clickhouse.v2 import get_reader
 
-                    # Codex P1: scope Trace lookup to org so a caller can't
+                    # Review P1: scope Trace lookup to org so a caller can't
                     # feed another tenant's trace_id into the playground.
                     _t = Trace.objects.filter(
                         id=_trace_id, project__organization=org

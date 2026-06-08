@@ -42,13 +42,15 @@ import {
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
-import VersionBadge from "./VersionBadge";
 import {
   useExecuteCompositeEval,
   useExecuteCompositeEvalAdhoc,
 } from "../hooks/useCompositeEval";
 
 const SOURCE_TABS = ["Dataset", "Tracing", "Simulation", "Custom"];
+
+const normalizeSourceTab = (tab) =>
+  SOURCE_TABS.includes(tab) ? tab : "Custom";
 
 const camelizeKey = (key = "") =>
   key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
@@ -623,7 +625,9 @@ const TestPlayground = React.forwardRef(
       onTestResult,
       onColumnsLoaded,
       onVersionSelect,
+      onCreateSourceClick,
       onSourceTabChange,
+      onSourceSelected,
       onClearResult,
       errorLocalizerEnabled = false,
       isComposite = false,
@@ -636,12 +640,18 @@ const TestPlayground = React.forwardRef(
       code = "",
       codeLanguage = "python",
       isSystemEval = false,
+      initialSourceTab = "Custom",
+      initialTraceProjectId = null,
+      initialTraceRowType = null,
+      initialTraceId = null,
       onReadyChange,
     },
     ref,
   ) => {
     const [activeMainTab, setActiveMainTab] = useState("test"); // "test" or "versions"
-    const [activeTab, setActiveTab] = useState("Custom");
+    const [activeTab, setActiveTab] = useState(() =>
+      normalizeSourceTab(initialSourceTab),
+    );
     const { data: versionsData } = useEvalVersions(templateId);
     const setDefaultVersion = useSetDefaultVersion(templateId);
     const restoreVersion = useRestoreVersion(templateId);
@@ -817,6 +827,17 @@ const TestPlayground = React.forwardRef(
       inputValuesRef.current = inputValues;
     }, [inputValues]);
 
+    useEffect(() => {
+      const nextTab = normalizeSourceTab(initialSourceTab);
+      setActiveTab((currentTab) => {
+        if (currentTab === nextTab) return currentTab;
+        setError(null);
+        setResult(null);
+        setInputValues({});
+        return nextTab;
+      });
+    }, [initialSourceTab]);
+
     const handleInputChange = useCallback((variable, value) => {
       setInputValues((prev) => ({ ...prev, [variable]: value }));
     }, []);
@@ -832,11 +853,14 @@ const TestPlayground = React.forwardRef(
       codeParamsRef.current = codeParams;
     }, [codeParams]);
 
-    const handleCodeParamChange = useCallback((key, value) => {
-      const next = { ...codeParamsRef.current, [key]: value };
-      setInternalCodeParams(next);
-      onCodeParamsChange?.(next);
-    }, [onCodeParamsChange]);
+    const handleCodeParamChange = useCallback(
+      (key, value) => {
+        const next = { ...codeParamsRef.current, [key]: value };
+        setInternalCodeParams(next);
+        onCodeParamsChange?.(next);
+      },
+      [onCodeParamsChange],
+    );
 
     const visibleFunctionParamEntries = React.useMemo(() => {
       if (!functionParamsSchema) return [];
@@ -1018,6 +1042,8 @@ const TestPlayground = React.forwardRef(
       }
     }, [
       variables,
+      evalType,
+      model,
       onTestResult,
       errorLocalizerEnabled,
       startErrorLocalizerPoll,
@@ -1407,6 +1433,8 @@ const TestPlayground = React.forwardRef(
                   codeParams={codeParams}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
+                  onCreateSourceClick={onCreateSourceClick}
+                  onSourceSelected={onSourceSelected}
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleDatasetReady}
@@ -1424,9 +1452,13 @@ const TestPlayground = React.forwardRef(
                   codeParams={codeParams}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
+                  onSourceSelected={onSourceSelected}
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleTracingReady}
+                  initialProjectId={initialTraceProjectId}
+                  initialRowType={initialTraceRowType}
+                  initialTraceId={initialTraceId}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
                   hostsFilter
@@ -1442,6 +1474,7 @@ const TestPlayground = React.forwardRef(
                   codeParams={codeParams}
                   onTestResult={onTestResult}
                   onColumnsLoaded={onColumnsLoaded}
+                  onSourceSelected={onSourceSelected}
                   onClearResult={onClearResult}
                   errorLocalizerEnabled={errorLocalizerEnabled}
                   onReadyChange={handleSimulationReady}
@@ -1896,11 +1929,13 @@ TestPlayground.propTypes = {
   onTestResult: PropTypes.func,
   onColumnsLoaded: PropTypes.func,
   onVersionSelect: PropTypes.func,
+  onCreateSourceClick: PropTypes.func,
   errorLocalizerEnabled: PropTypes.bool,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
   templateFormat: PropTypes.string,
   onSourceTabChange: PropTypes.func,
+  onSourceSelected: PropTypes.func,
   onClearResult: PropTypes.func,
   model: PropTypes.string,
   functionParamsSchema: PropTypes.object,
@@ -1909,6 +1944,10 @@ TestPlayground.propTypes = {
   onCodeParamsChange: PropTypes.func,
   code: PropTypes.string,
   codeLanguage: PropTypes.string,
+  initialSourceTab: PropTypes.string,
+  initialTraceProjectId: PropTypes.string,
+  initialTraceRowType: PropTypes.string,
+  initialTraceId: PropTypes.string,
   onReadyChange: PropTypes.func,
   isSystemEval: PropTypes.bool,
 };

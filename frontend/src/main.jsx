@@ -131,7 +131,18 @@ const root = ReactDOM.createRoot(document.getElementById("root"));
 root.render(
   <HelmetProvider>
     <BrowserRouter>
-      <GoogleReCaptchaProvider reCaptchaKey={GOOGLE_SITE_KEY}>
+      {/*
+        GoogleReCaptchaProvider injects the reCAPTCHA v3 script and exposes
+        `executeRecaptcha` only once it loads. This version exposes no error
+        callback, so when the script is blocked (ad blocker / CSP / network)
+        `executeRecaptcha` stays undefined. The auth views detect that with a
+        bounded readiness timeout and show an actionable message instead of a
+        dead button. Loading async/deferred keeps the script non-blocking.
+      */}
+      <GoogleReCaptchaProvider
+        reCaptchaKey={GOOGLE_SITE_KEY}
+        scriptProps={{ async: true, defer: true, id: "google-recaptcha-v3" }}
+      >
         <Suspense fallback={<SplashScreen />}>
           <App />
         </Suspense>

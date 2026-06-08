@@ -32,7 +32,7 @@ def _aggregate_spans_by_trace_ids(trace_ids):
           legitimately empty in PG too); False if CH lag dropped any.
           See _aggregate_spans_by_trace_ids callers — both periodic-
           task branches skip the write when coverage is incomplete
-          (avoids the P0 silent-undercount path from the codex
+          (avoids the P0 silent-undercount path from the review
           consolidated review).
 
     The reader does not yet expose `error_count` or `last_activity_at`
@@ -71,7 +71,7 @@ def _aggregate_spans_by_trace_ids(trace_ids):
     # replicated yet. The old PG-aggregate path masked this distinction
     # (Count returned 0 either way).
     #
-    # Codex wave-2 P2 (2026-05-26): distinguish (a) from (b) by querying
+    # Review wave-2 P2 (2026-05-26): distinguish (a) from (b) by querying
     # PG for whether the missing trace_ids have ANY span in PG. If yes,
     # CH is lagging (treat as not covered → skip the write). If no, the
     # trace is legitimately empty everywhere (treat as covered → write the
@@ -252,7 +252,7 @@ def update_session_metrics_task():
                         # CH lag: some trace_ids that exist in PG haven't
                         # replicated yet. Skip the write — the next tick
                         # will pick them up. Logging the missing set so
-                        # the lag is observable (codex P0 from the
+                        # the lag is observable (review P0 from the
                         # consolidated review: writes driven by under-
                         # counted CH reads should not be silent).
                         logger.warning(
@@ -592,7 +592,7 @@ def complete_sessions_with_trace_completion_task():
                     continue
 
                 # CH coverage check before driving a status/ended_at write
-                # (codex P0 from the consolidated review). If any trace in
+                # (review P0 from the consolidated review). If any trace in
                 # this session has zero spans in CH while it has spans in
                 # PG (lag), skipping completion until the next tick is the
                 # safe choice — partial coverage could make the "last
@@ -601,7 +601,7 @@ def complete_sessions_with_trace_completion_task():
                 requested = {str(tid) for tid in trace_ids}
                 missing = requested - seen_trace_ids
                 if missing:
-                    # Codex final-review P2 (2026-05-26): a Trace row can
+                    # Review final-review P2 (2026-05-26): a Trace row can
                     # legitimately have zero spans (e.g. trace created but
                     # ingestion failed). Without this PG existence gate,
                     # any such trace would keep `missing` non-empty

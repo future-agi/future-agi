@@ -865,10 +865,17 @@ class AgentccGatewayViewSet(ViewSet):
 
             # Extract guardrail info from response
             guardrail_info = {}
+            normalized_headers = {str(key).lower(): val for key, val in headers.items()}
             for key, val in headers.items():
                 lk = key.lower()
                 if "guardrail" in lk or "x-agentcc" in lk:
                     guardrail_info[key] = val
+            request_id = (
+                normalized_headers.get("x-agentcc-request-id")
+                or normalized_headers.get("x-request-id")
+                or normalized_headers.get("x-correlation-id")
+                or ""
+            )
 
             return self._gm.success_response(
                 {
@@ -876,6 +883,7 @@ class AgentccGatewayViewSet(ViewSet):
                     "body": body,
                     "guardrail_headers": guardrail_info,
                     "model": model,
+                    "request_id": request_id,
                     "blocked": status_code in (403, 446),
                     "warned": status_code == 246,
                 }

@@ -4,6 +4,8 @@ export {
   resetPostHogUser,
   trackPostHogEvent,
   isFeatureEnabled,
+  isPostHogAvailable,
+  getFeatureFlagValue,
   getFeatureFlagPayload,
   onFeatureFlags,
   posthog,

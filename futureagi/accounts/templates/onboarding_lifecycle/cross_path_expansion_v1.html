@@ -1,0 +1,8 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Add the next AI workflow to your workspace{% endblock %}
+{% block heading %}{{ expansion_summary.action_title }}{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} already has one useful FutureAGI workflow running. The next recommended path is <strong>{{ expansion_summary.path_label }}</strong>.</p>
+  <p style="margin:0 0 16px;">{{ expansion_summary.action_description }}</p>
+  <p style="margin:0;">Complete this one setup and FutureAGI will bring the new signals back into Daily Quality alongside the workflow your team already uses.</p>
+{% endblock %}

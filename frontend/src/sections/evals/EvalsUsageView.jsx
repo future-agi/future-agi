@@ -3,7 +3,7 @@ import EvalsWrapper from "./EvalsWrapper";
 import ApexCharts from "apexcharts";
 import { format } from "date-fns";
 import PropTypes from "prop-types";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { useDebounce } from "src/hooks/use-debounce";
 import { preventHeaderSelection } from "src/utils/utils";
 import axios, { endpoints } from "src/utils/axios";
@@ -20,6 +20,15 @@ import LandingPageCard from "src/components/LandingPageCard/LandingPageCard";
 import CustomStatusBar from "./CustomStatusBar";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { APP_CONSTANTS } from "src/utils/constants";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import EvalOnboardingFocusPanel from "./components/EvalOnboardingFocusPanel";
+import {
+  buildEvalReviewDetailHref,
+  buildEvalReviewRouteFocusPayload,
+  evalSetupQuickStartAttributionFromSearch,
+  getEvalReviewOnboardingCopy,
+  getEvalReviewOnboardingParams,
+} from "./components/evalCreateOnboarding";
 
 const ApexChartRenderer = ({ data, type, max }) => {
   const muiTheme = useTheme();
@@ -126,7 +135,51 @@ const EvalsUsageView = () => {
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
   const [firstLoading, setFirstLoading] = useState(true);
   const navigate = useNavigate();
+  const location = useLocation();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
+  const recordedOnboardingFocusRef = useRef(false);
+  const reviewOnboardingParams = useMemo(
+    () => getEvalReviewOnboardingParams(location.search),
+    [location.search],
+  );
+  const onboardingQuickStartAttribution = useMemo(
+    () => evalSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const reviewOnboardingCopy = useMemo(
+    () => getEvalReviewOnboardingCopy(reviewOnboardingParams),
+    [reviewOnboardingParams],
+  );
   preventHeaderSelection();
+
+  useEffect(() => {
+    if (
+      !reviewOnboardingParams.isOnboarding ||
+      recordedOnboardingFocusRef.current
+    ) {
+      return;
+    }
+
+    recordedOnboardingFocusRef.current = true;
+    recordActivationEvent?.(
+      buildEvalReviewRouteFocusPayload({
+        previousRunId: reviewOnboardingParams.previousRunId,
+        quickStartAttribution: onboardingQuickStartAttribution,
+        rerunFrom: reviewOnboardingParams.rerunFrom,
+        route: "eval_usage_list",
+        runId: reviewOnboardingParams.runId,
+        setupLanguage: reviewOnboardingParams.setupLanguage,
+        setupProvider: reviewOnboardingParams.setupProvider,
+        sourceId: reviewOnboardingParams.sourceId,
+        sourceType: reviewOnboardingParams.sourceType,
+        traceId: reviewOnboardingParams.traceId,
+      }),
+    );
+  }, [
+    onboardingQuickStartAttribution,
+    recordActivationEvent,
+    reviewOnboardingParams,
+  ]);
 
   const dataSource = useMemo(
     () => ({
@@ -267,87 +320,106 @@ const EvalsUsageView = () => {
         <Box
           sx={{
             display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
+            flexDirection: "column",
+            height: "100%",
+            minHeight: 0,
           }}
         >
-          <FormSearchField
-            size="small"
-            placeholder="Search"
-            sx={{ minWidth: "415px" }}
-            autoFocus
-            disabled={firstLoading}
-            searchQuery={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+          <EvalOnboardingFocusPanel
+            hidden={!reviewOnboardingParams.isOnboarding}
+            tourAnchor={reviewOnboardingParams.tourAnchor}
+            {...reviewOnboardingCopy}
           />
-          <Box>
-            <Button
-              variant="contained"
-              color="primary"
-              disabled={firstLoading}
-              onClick={() => {
-                navigate("/dashboard/evaluations");
-              }}
-              sx={{
-                px: "24px",
-                typography: "s1",
-              }}
-            >
-              Create Evaluation
-            </Button>
-          </Box>
-        </Box>
-        <Box
-          className="ag-theme-quartz"
-          style={{ height: "calc(100% - 40px)", paddingTop: "12px" }}
-        >
-          <AgGridReact
-            ref={gridRef}
-            getRowHeight={40}
-            rowSelection="none"
-            theme={agTheme}
-            columnDefs={columnDefs}
-            defaultColDef={defaultColDef}
-            pagination={false}
-            suppressServerSideFullWidthLoadingRow={true}
-            serverSideInitialRowCount={5}
-            cacheBlockSize={10}
-            maxBlocksInCache={10}
-            suppressContextMenu={true}
-            suppressRowClickSelection={true}
-            statusBar={firstLoading ? null : statusBar}
-            rowModelType="serverSide"
-            serverSideDatasource={dataSource}
-            isApplyServerSideTransaction={() => true}
-            getRowId={({ data }) => data.id}
-            onCellClicked={(event) => {
-              if (
-                event.column.getColId() !==
-                APP_CONSTANTS.AG_GRID_SELECTION_COLUMN
-              ) {
-                const { data } = event;
-                trackEvent(Events.usageEvalClicked, {
-                  [PropertyName.evalId]: data?.id,
-                  [PropertyName.evalName]: data?.eval_template_name,
-                });
-                navigate(`/dashboard/evaluations/${data?.id}`, {
-                  state: { dataset: data },
-                });
-              }
+          <Box
+            sx={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              flexShrink: 0,
             }}
-            // loading={firstLoading}
-            // loadingOverlayComponent={() => (
-            //   <Box
-            //     sx={{
-            //       width: "100vw",
-            //       height: "100vh",
-            //       backgroundColor: "background.paper",
-            //     }}
-            //   >
-            //     <LoadingScreen sx={undefined} />
-            //   </Box>
-            // )}
-          />
+          >
+            <FormSearchField
+              size="small"
+              placeholder="Search"
+              sx={{ minWidth: "415px" }}
+              autoFocus
+              disabled={firstLoading}
+              searchQuery={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+            <Box>
+              <Button
+                variant="contained"
+                color="primary"
+                disabled={firstLoading}
+                onClick={() => {
+                  navigate("/dashboard/evaluations");
+                }}
+                sx={{
+                  px: "24px",
+                  typography: "s1",
+                }}
+              >
+                Create Evaluation
+              </Button>
+            </Box>
+          </Box>
+          <Box
+            className="ag-theme-quartz"
+            sx={{ flex: 1, minHeight: 0, pt: "12px" }}
+          >
+            <AgGridReact
+              ref={gridRef}
+              getRowHeight={40}
+              rowSelection="none"
+              theme={agTheme}
+              columnDefs={columnDefs}
+              defaultColDef={defaultColDef}
+              pagination={false}
+              suppressServerSideFullWidthLoadingRow={true}
+              serverSideInitialRowCount={5}
+              cacheBlockSize={10}
+              maxBlocksInCache={10}
+              suppressContextMenu={true}
+              suppressRowClickSelection={true}
+              statusBar={firstLoading ? null : statusBar}
+              rowModelType="serverSide"
+              serverSideDatasource={dataSource}
+              isApplyServerSideTransaction={() => true}
+              getRowId={({ data }) => data.id}
+              onCellClicked={(event) => {
+                if (
+                  event.column.getColId() !==
+                  APP_CONSTANTS.AG_GRID_SELECTION_COLUMN
+                ) {
+                  const { data } = event;
+                  if (!data?.id) return;
+                  trackEvent(Events.usageEvalClicked, {
+                    [PropertyName.evalId]: data.id,
+                    [PropertyName.evalName]: data?.eval_template_name,
+                  });
+                  navigate(
+                    buildEvalReviewDetailHref(data.id, location.search),
+                    {
+                      state: { dataset: data },
+                    },
+                  );
+                }
+              }}
+              // loading={firstLoading}
+              // loadingOverlayComponent={() => (
+              //   <Box
+              //     sx={{
+              //       width: "100vw",
+              //       height: "100vh",
+              //       backgroundColor: "background.paper",
+              //     }}
+              //   >
+              //     <LoadingScreen sx={undefined} />
+              //   </Box>
+              // )}
+            />
+          </Box>
         </Box>
       </ShowComponent>
       <ShowComponent condition={!hasData}>

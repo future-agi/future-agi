@@ -25,6 +25,38 @@ import {
 import logger from "src/utils/logger";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
 
+const clonePromptMessages = (messages = DefaultMessages) =>
+  messages.map((message) => ({
+    ...message,
+    id: getRandomId(),
+    content: Array.isArray(message.content)
+      ? message.content.map((content) => ({ ...content }))
+      : message.content,
+  }));
+
+const serializePromptMessages = (messages = []) =>
+  messages.map(({ id, ...rest }) => ({
+    role: rest.role,
+    content: rest.content.map((content) => {
+      if (content.type === "text") {
+        return {
+          ...content,
+          text: sanitizeContent(content.text),
+        };
+      }
+      return content;
+    }),
+  }));
+
+const buildPromptConfiguration = (config, templateFormat) => {
+  const currentConfig = { ...(config || modelConfigDefault) };
+  delete currentConfig.id;
+  const configuration = normalizeConfigurationForSave(currentConfig);
+  configuration["tool_choice"] = currentConfig?.tools?.length > 0 ? "auto" : "";
+  configuration["template_format"] = templateFormat || "mustache";
+  return configuration;
+};
+
 const WorkbenchProvider = ({ children }) => {
   const { id } = useParams();
 
@@ -721,12 +753,10 @@ const WorkbenchProvider = ({ children }) => {
 
   const getSaveTemplatePayload = useCallback(
     (index, isRun) => {
-      const currentConfig = { ...modelConfig[index] };
-      delete currentConfig.id;
-      const configuration = normalizeConfigurationForSave(currentConfig);
-      configuration["tool_choice"] =
-        currentConfig?.tools?.length > 0 ? "auto" : "";
-      configuration["template_format"] = templateFormat || "mustache";
+      const configuration = buildPromptConfiguration(
+        modelConfig[index],
+        templateFormat,
+      );
 
       const selectedVersion = selectedVersions[index];
 
@@ -745,20 +775,7 @@ const WorkbenchProvider = ({ children }) => {
         templateFormat,
       );
 
-      const sanitizedMessages = currentPrompts?.map(({ id, ...rest }) => {
-        return {
-          role: rest.role,
-          content: rest.content.map((con) => {
-            if (con.type === "text") {
-              return {
-                ...con,
-                text: sanitizeContent(con.text),
-              };
-            }
-            return con;
-          }),
-        };
-      });
+      const sanitizedMessages = serializePromptMessages(currentPrompts);
 
       const sanitizedPlaceholders = currentPlaceholders || [];
 
@@ -1098,21 +1115,26 @@ const WorkbenchProvider = ({ children }) => {
     }
 
     const newIndex = selectedVersions.length;
+    const sourceIndex = Math.max(newIndex - 1, 0);
+    const sourcePrompts = prompts[sourceIndex]?.prompts?.length
+      ? prompts[sourceIndex].prompts
+      : DefaultMessages;
+    const clonedPrompts = clonePromptMessages(sourcePrompts);
+    const sourceModelConfig = modelConfig[sourceIndex] || modelConfigDefault;
+    const clonedModelConfig = {
+      ...sourceModelConfig,
+      id: getRandomId(),
+    };
+    const sourcePlaceholders = placeholders[sourceIndex] || [];
 
     setPromptsByIndex(newIndex, {
-      prompts: DefaultMessages.map((content) => ({
-        ...content,
-        id: getRandomId(),
-      })),
+      prompts: clonedPrompts,
       id: getRandomId(),
     });
 
-    setPlaceholdersByIndex(newIndex, []);
+    setPlaceholdersByIndex(newIndex, [...sourcePlaceholders]);
 
-    setModelConfigByIndex(newIndex, {
-      id: getRandomId(),
-      ...modelConfigDefault,
-    });
+    setModelConfigByIndex(newIndex, clonedModelConfig);
 
     setResultsByIndex(newIndex, {
       output: [],
@@ -1146,11 +1168,23 @@ const WorkbenchProvider = ({ children }) => {
       {
         new_prompts: [
           {
-            variable_names: {},
+            variable_names: getVariables(
+              clonedPrompts,
+              variableData,
+              templateFormat,
+            ),
+            placeholders: sourcePlaceholders.reduce((acc, name) => {
+              acc[name] = placeholderData?.[name] || [];
+              return acc;
+            }, {}),
             prompt_config: [
               {
-                messages: [...DefaultMessages],
-                configuration: { ...modelConfigDefault },
+                messages: serializePromptMessages(clonedPrompts),
+                configuration: buildPromptConfiguration(
+                  clonedModelConfig,
+                  templateFormat,
+                ),
+                placeholders: sourcePlaceholders,
               },
             ],
             evaluation_configs: [],
@@ -1160,15 +1194,19 @@ const WorkbenchProvider = ({ children }) => {
     );
 
     const newVersion = newDraftRes.data.result?.[0];
+    const nextVersion = {
+      ...versionObject,
+      version: newVersion?.template_version,
+      lastSaved: newVersion?.updated_at,
+      isDefault: newVersion?.is_default,
+      isDraft: newVersion?.is_draft,
+      id: versionId,
+    };
 
     setSelectedVersionByIndex(newIndex, (p) => {
       return {
         ...p,
-        version: newVersion?.template_version,
-        lastSaved: newVersion?.updated_at,
-        isDefault: newVersion?.is_default,
-        isDraft: newVersion?.is_draft,
-        id: versionId,
+        ...nextVersion,
       };
     });
 
@@ -1180,6 +1218,8 @@ const WorkbenchProvider = ({ children }) => {
       });
       unsavedDrafts.current[newIndex] = null;
     }
+
+    return [...selectedVersions, nextVersion];
   };
 
   const applyCompare = (newCompareVersions) => {

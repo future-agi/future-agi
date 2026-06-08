@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Turn this failure into a lasting check{% endblock %}
+{% block heading %}Close the loop on the case that failed{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, you have reviewed an eval result in {{ workspace_name }} and seen where quality falls short.</p>
+  <p style="margin:0;">Update the source or the expected behavior so the failing case becomes a reusable check. The next run will tell you whether your fix actually worked, instead of leaving it to chance.</p>
+{% endblock %}

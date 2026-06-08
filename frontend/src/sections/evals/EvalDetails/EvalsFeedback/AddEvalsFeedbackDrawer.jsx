@@ -70,6 +70,7 @@ const AddEvalsFeedbackDrawerChild = ({
   refreshGrid = (_option) => {},
   evalsId,
   existingFeedback,
+  onSubmitted,
 }) => {
   const isEdit = !!existingFeedback;
   const handleClose = () => {
@@ -135,10 +136,15 @@ const AddEvalsFeedbackDrawerChild = ({
   const { mutate: submitFeedback, isPending: isSubmitting } = useMutation({
     mutationFn: (formData) =>
       axios.post(endpoints.develop.eval.addEvalsFeedback, formData),
-    onSuccess: (data) => {
+    onSuccess: (data, formData) => {
       // @ts-ignore
       enqueueSnackbar(data?.data?.result?.message, {
         variant: "success",
+      });
+      onSubmitted?.({
+        actionType: formData?.action_type,
+        feedbackId: data?.data?.result?.feedback_id,
+        logId: formData?.log_id,
       });
       reset();
       onClose(true);
@@ -200,6 +206,7 @@ AddEvalsFeedbackDrawerChild.propTypes = {
   refreshGrid: PropTypes.func,
   evalsId: PropTypes.string,
   existingFeedback: PropTypes.object,
+  onSubmitted: PropTypes.func,
 };
 
 const AddEvalsFeedbackDrawer = ({ open, onClose, ...rest }) => {
@@ -241,4 +248,5 @@ AddEvalsFeedbackDrawer.propTypes = {
   selectedAddFeedback: PropTypes.object,
   evalsId: PropTypes.string,
   existingFeedback: PropTypes.object,
+  onSubmitted: PropTypes.func,
 };

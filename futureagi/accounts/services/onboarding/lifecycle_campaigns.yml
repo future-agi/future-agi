@@ -1,0 +1,859 @@
+schema_version: onboarding-lifecycle-campaigns-2026-05-27.v1
+
+campaigns:
+  - campaign_key: welcome_choose_goal
+    template_key: welcome_choose_goal_v1
+    template_version: "2026-05-27.1"
+    campaign_group: welcome
+    email_subject: Choose one FutureAGI workflow to finish first
+    email_preheader: Pick the first setup path so the product can route you to the right next action.
+    primary_path: any
+    entry_stages:
+      - choose_goal
+    wait_window_minutes: 15
+    priority: 70
+    target_action_id: choose_onboarding_goal
+    target_success_event: onboarding_goal_selected
+    route_strategy: home_choose_goal
+    dry_run_flag: onboarding_email_welcome_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: no_goal_after_wait
+
+  - campaign_key: welcome_resume_goal
+    template_key: welcome_resume_goal_v1
+    template_version: "2026-05-27.1"
+    campaign_group: welcome
+    email_subject: Continue with your first observe project
+    email_preheader: Create the project that will receive your first trace and open trace review.
+    primary_path: observe
+    entry_stages:
+      - connect_observability
+    wait_window_minutes: 15
+    priority: 70
+    target_action_id: create_observe_project
+    target_success_event: observe_project_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_welcome_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: selected_goal_no_first_action
+
+  - campaign_key: prompt_create_first
+    template_key: prompt_create_first_v1
+    template_version: "2026-05-27.1"
+    campaign_group: prompt
+    email_subject: Create the prompt you want to test
+    email_preheader: Start with one prompt so the next step can run an example and show a result.
+    primary_path: prompt
+    entry_stages:
+      - start_prompt
+    wait_window_minutes: 60
+    priority: 85
+    target_action_id: create_prompt
+    target_success_event: prompt_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_prompt_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: prompt_no_prompt_after_wait
+
+  - campaign_key: prompt_run_first_test
+    template_key: prompt_run_first_test_v1
+    template_version: "2026-05-27.1"
+    campaign_group: prompt
+    email_subject: Run one prompt test before editing
+    email_preheader: Use a single example to turn the prompt draft into a visible test result.
+    primary_path: prompt
+    entry_stages:
+      - run_prompt_test
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: run_prompt_test
+    target_success_event: prompt_test_run_completed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_prompt_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: prompt_created_no_run_after_wait
+
+  - campaign_key: prompt_save_baseline
+    template_key: prompt_save_baseline_v1
+    template_version: "2026-05-27.1"
+    campaign_group: prompt
+    email_subject: Save a baseline before the next edit
+    email_preheader: Keep the current result as a version so future prompt changes have a comparison point.
+    primary_path: prompt
+    entry_stages:
+      - save_prompt_version
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: save_prompt_version
+    target_success_event: prompt_version_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_prompt_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: prompt_run_no_version_after_wait
+
+  - campaign_key: prompt_create_second_version
+    template_key: prompt_compare_candidate_v1
+    template_version: "2026-05-27.1"
+    campaign_group: prompt
+    email_subject: Create one more prompt version to compare
+    email_preheader: A second tested version gives the baseline something real to compare against.
+    primary_path: prompt
+    entry_stages:
+      - create_second_prompt_version
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: create_second_prompt_version
+    target_success_event: prompt_comparable_version_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_prompt_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: prompt_single_version_no_second_version_after_wait
+
+  - campaign_key: prompt_compare_candidate
+    template_key: prompt_compare_candidate_v1
+    template_version: "2026-05-27.1"
+    campaign_group: prompt
+    email_subject: See whether the next prompt edit is better
+    email_preheader: Compare the candidate against the baseline before deciding what to ship.
+    primary_path: prompt
+    entry_stages:
+      - compare_prompt_versions
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: compare_prompt_versions
+    target_success_event: prompt_comparison_completed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_prompt_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: prompt_version_no_comparison_after_wait
+
+  - campaign_key: prompt_add_failure_example
+    template_key: prompt_add_failure_example_v1
+    template_version: "2026-05-27.1"
+    campaign_group: prompt
+    email_subject: Keep the failing example for future tests
+    email_preheader: Save the regression as eval data so the same issue is easier to catch next time.
+    primary_path: prompt
+    entry_stages:
+      - prompt_next_loop
+    wait_window_minutes: 1440
+    priority: 70
+    target_action_id: add_prompt_failure_example
+    target_success_event: dataset_example_added
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_prompt_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: prompt_comparison_no_next_loop_after_wait
+
+  - campaign_key: agent_create_first
+    template_key: agent_create_first_v1
+    template_version: "2026-05-27.1"
+    campaign_group: agent
+    email_subject: Create one agent task first
+    email_preheader: Define the task that the first scenario can run and inspect.
+    primary_path: agent
+    entry_stages:
+      - create_agent
+    wait_window_minutes: 60
+    priority: 85
+    target_action_id: create_agent
+    target_success_event: agent_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_agent_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: agent_no_agent_after_wait
+
+  - campaign_key: agent_add_starter_prompt
+    template_key: agent_add_starter_prompt_v1
+    template_version: "2026-06-01.1"
+    campaign_group: agent
+    email_subject: Add the starter prompt to your agent
+    email_preheader: Add one runnable prompt step so the first scenario can produce output to review.
+    primary_path: agent
+    entry_stages:
+      - add_agent_node
+    wait_window_minutes: 120
+    priority: 82
+    target_action_id: add_agent_node
+    target_success_event: agent_node_added
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_agent_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: agent_created_no_step_after_wait
+
+  - campaign_key: agent_run_first_scenario
+    template_key: agent_run_first_scenario_v1
+    template_version: "2026-05-27.1"
+    campaign_group: agent
+    email_subject: Run one agent scenario before users do
+    email_preheader: Generate the first prototype run so the trace can be reviewed before launch.
+    primary_path: agent
+    entry_stages:
+      - run_agent_scenario
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: run_agent_scenario
+    target_success_event: agent_prototype_run_completed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_agent_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: agent_created_no_run_after_wait
+
+  - campaign_key: agent_review_failed_scenario
+    template_key: agent_review_failed_scenario_v1
+    template_version: "2026-05-27.1"
+    campaign_group: agent
+    email_subject: Review the agent run that needs attention
+    email_preheader: Open the run output and inspect the failed step before saving eval coverage.
+    primary_path: agent
+    entry_stages:
+      - review_agent_trace
+    wait_window_minutes: 120
+    priority: 80
+    target_action_id: review_agent_trace
+    target_success_event: agent_trace_reviewed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_agent_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: agent_run_not_reviewed_after_wait
+
+  - campaign_key: agent_save_scenario
+    template_key: agent_save_scenario_v1
+    template_version: "2026-05-27.1"
+    campaign_group: agent
+    email_subject: Save this agent scenario as a regression test
+    email_preheader: Turn the reviewed scenario into a reusable check for future changes.
+    primary_path: agent
+    entry_stages:
+      - save_agent_eval
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: save_agent_eval
+    target_success_event: agent_scenario_saved_as_eval
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_agent_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: agent_review_no_eval_after_wait
+
+  - campaign_key: agent_create_eval
+    template_key: agent_create_eval_v1
+    template_version: "2026-05-27.1"
+    campaign_group: agent
+    email_subject: Turn agent scenarios into eval coverage
+    email_preheader: Group saved scenarios into an eval so future runs can be measured.
+    primary_path: agent
+    entry_stages:
+      - agent_create_eval
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: create_agent_eval
+    target_success_event: agent_eval_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_agent_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: agent_multiple_scenarios_no_eval_after_wait
+
+  - campaign_key: agent_sample_bridge
+    template_key: agent_sample_bridge_v1
+    template_version: "2026-05-27.1"
+    campaign_group: agent
+    email_subject: Try a sample agent scenario first
+    email_preheader: Review sample behavior before connecting a real agent workflow.
+    primary_path: agent
+    entry_stages:
+      - create_agent
+    wait_window_minutes: 1440
+    priority: 60
+    target_action_id: create_agent
+    target_success_event: agent_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_agent_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: sample_bridge
+    sample_policy: sample_only
+    owner: product
+    qa_fixture: agent_sample_reviewed_no_real_agent
+
+  - campaign_key: gateway_add_provider
+    template_key: gateway_add_provider_v1
+    template_version: "2026-05-27.1"
+    campaign_group: gateway
+    email_subject: Add the provider your gateway will route to
+    email_preheader: Connect one provider so a gateway key can send the first request.
+    primary_path: gateway
+    entry_stages:
+      - configure_gateway_provider
+    wait_window_minutes: 60
+    priority: 85
+    target_action_id: gateway_add_provider
+    target_success_event: gateway_provider_added
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_gateway_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: gateway_no_provider_after_wait
+
+  - campaign_key: gateway_create_key
+    template_key: gateway_create_key_v1
+    template_version: "2026-05-27.1"
+    campaign_group: gateway
+    email_subject: Create a gateway key for one route
+    email_preheader: Generate the key that lets your app send traffic through the gateway.
+    primary_path: gateway
+    entry_stages:
+      - create_gateway_key
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: gateway_create_key
+    target_success_event: gateway_key_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_gateway_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: gateway_provider_no_key_after_wait
+
+  - campaign_key: gateway_send_first_request
+    template_key: gateway_send_first_request_v1
+    template_version: "2026-05-27.1"
+    campaign_group: gateway
+    email_subject: Send one request through the gateway
+    email_preheader: Make the first request so latency, provider, and policy behavior become visible.
+    primary_path: gateway
+    entry_stages:
+      - run_gateway_request
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: gateway_send_first_request
+    target_success_event: gateway_request_seen
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_gateway_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: gateway_key_no_request_after_wait
+
+  - campaign_key: gateway_review_request
+    template_key: gateway_review_request_v1
+    template_version: "2026-05-27.1"
+    campaign_group: gateway
+    email_subject: Review your first gateway request
+    email_preheader: Open the request log to inspect route, provider, latency, and outcome.
+    primary_path: gateway
+    entry_stages:
+      - review_gateway_log
+    wait_window_minutes: 15
+    priority: 90
+    target_action_id: gateway_review_request
+    target_success_event: gateway_log_opened
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_gateway_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: gateway_request_not_reviewed
+
+  - campaign_key: gateway_fix_failed_request
+    template_key: gateway_fix_failed_request_v1
+    template_version: "2026-05-27.1"
+    campaign_group: gateway
+    email_subject: Review the failed gateway request
+    email_preheader: Inspect the failure details before changing provider, route, or policy settings.
+    primary_path: gateway
+    entry_stages:
+      - fix_gateway_failure
+    wait_window_minutes: 30
+    priority: 90
+    target_action_id: gateway_fix_failed_request
+    target_success_event: gateway_failure_resolved
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_gateway_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: gateway_failed_request_not_fixed
+
+  - campaign_key: gateway_add_policy
+    template_key: gateway_add_policy_v1
+    template_version: "2026-05-27.1"
+    campaign_group: gateway
+    email_subject: Add one control to your gateway route
+    email_preheader: Use a policy to make the route safer before more traffic goes through it.
+    primary_path: gateway
+    entry_stages:
+      - add_gateway_policy
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: gateway_add_policy
+    target_success_event: gateway_policy_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_gateway_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: gateway_reviewed_no_policy_after_wait
+
+  - campaign_key: gateway_sample_bridge
+    template_key: gateway_sample_bridge_v1
+    template_version: "2026-05-27.1"
+    campaign_group: gateway
+    email_subject: See a sample routed request first
+    email_preheader: Review sample gateway traffic before sending your own production request.
+    primary_path: gateway
+    entry_stages:
+      - run_gateway_request
+    wait_window_minutes: 1440
+    priority: 60
+    target_action_id: gateway_send_first_request
+    target_success_event: gateway_request_seen
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_gateway_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: sample_bridge
+    sample_policy: sample_only
+    owner: product
+    qa_fixture: gateway_sample_request_no_real_request
+
+  - campaign_key: eval_create_source
+    template_key: eval_create_source_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Add the examples for your first eval
+    email_preheader: Start with one dataset or trace source so FutureAGI can measure the behavior.
+    primary_path: evals
+    entry_stages:
+      - create_eval_dataset
+    wait_window_minutes: 60
+    priority: 85
+    target_action_id: create_eval_dataset
+    target_success_event: eval_dataset_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_no_source_after_wait
+
+  - campaign_key: eval_add_scorer
+    template_key: eval_add_scorer_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Add the scorer that defines quality
+    email_preheader: Attach one scorer so the eval can decide whether the output is good enough.
+    primary_path: evals
+    entry_stages:
+      - add_eval_scorer
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: add_eval_scorer
+    target_success_event: eval_scorer_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_source_no_scorer_after_wait
+
+  - campaign_key: eval_run_first
+    template_key: eval_run_first_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Run the eval once before changing it
+    email_preheader: Generate the first result so the next step can show failures and summary quality.
+    primary_path: evals
+    entry_stages:
+      - run_eval
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: run_eval
+    target_success_event: eval_run_completed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_scorer_no_run_after_wait
+
+  - campaign_key: eval_review_failures
+    template_key: eval_review_failures_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Review the first eval result
+    email_preheader: Inspect the result before deciding which source, scorer, or prompt needs work.
+    primary_path: evals
+    entry_stages:
+      - review_eval_failures
+    wait_window_minutes: 15
+    priority: 90
+    target_action_id: review_eval_failures
+    target_success_event: eval_failures_reviewed
+    route_strategy: artifact_deep_link
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_run_not_reviewed
+
+  - campaign_key: eval_fix_source
+    template_key: eval_fix_source_v1
+    template_version: "2026-05-30.1"
+    campaign_group: eval
+    email_subject: Turn the eval failure into the next fix
+    email_preheader: Use the reviewed failure to update the source or expected behavior.
+    primary_path: evals
+    entry_stages:
+      - eval_next_loop
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: fix_eval_source
+    target_success_event: eval_failure_action_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_eval
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: eval_review_no_source_fix_after_wait
+
+  - campaign_key: voice_create_agent
+    template_key: voice_create_agent_v1
+    template_version: "2026-05-30.1"
+    campaign_group: voice
+    email_subject: Create the voice agent you want to test
+    email_preheader: Start with one voice agent so the product can guide you to a test call.
+    primary_path: voice
+    entry_stages:
+      - create_voice_agent
+    wait_window_minutes: 60
+    priority: 85
+    target_action_id: create_voice_agent
+    target_success_event: voice_agent_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_voice
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: voice_no_agent_after_wait
+
+  - campaign_key: voice_run_test_call
+    template_key: voice_run_test_call_v1
+    template_version: "2026-05-30.1"
+    campaign_group: voice
+    email_subject: Run one test call before launch
+    email_preheader: Create a safe call signal so transcript, latency, and outcome can be reviewed.
+    primary_path: voice
+    entry_stages:
+      - run_voice_test_call
+    wait_window_minutes: 240
+    priority: 80
+    target_action_id: run_voice_test_call
+    target_success_event: voice_test_call_completed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_voice
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: voice_agent_no_call_after_wait
+
+  - campaign_key: voice_review_call
+    template_key: voice_review_call_v1
+    template_version: "2026-05-30.1"
+    campaign_group: voice
+    email_subject: Review the first voice call
+    email_preheader: Inspect transcript, response time, and interruptions before adding success criteria.
+    primary_path: voice
+    entry_stages:
+      - review_voice_call
+    wait_window_minutes: 15
+    priority: 90
+    target_action_id: review_voice_call
+    target_success_event: voice_call_reviewed
+    route_strategy: artifact_deep_link
+    dry_run_flag: onboarding_email_voice
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: voice_call_not_reviewed
+
+  - campaign_key: voice_add_success_criteria
+    template_key: voice_add_success_criteria_v1
+    template_version: "2026-05-30.1"
+    campaign_group: voice
+    email_subject: Define what a good voice call means
+    email_preheader: Add criteria so future calls can be monitored against the same quality target.
+    primary_path: voice
+    entry_stages:
+      - add_voice_success_criteria
+    wait_window_minutes: 1440
+    priority: 75
+    target_action_id: add_voice_success_criteria
+    target_success_event: voice_success_criteria_added
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_voice
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: voice_review_no_success_criteria_after_wait
+
+  - campaign_key: observe_connect_first
+    template_key: observe_connect_first_v1
+    template_version: "2026-05-27.1"
+    campaign_group: recovery
+    email_subject: Connect one observe project first
+    email_preheader: Create the project that will receive your first trace and start quality review.
+    primary_path: observe
+    entry_stages:
+      - connect_observability
+    wait_window_minutes: 60
+    priority: 80
+    target_action_id: create_observe_project
+    target_success_event: observe_project_created
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_first_action_recovery_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: observe_no_project_after_wait
+
+  - campaign_key: observe_waiting_for_first_trace
+    template_key: observe_waiting_for_first_trace_v1
+    template_version: "2026-05-27.1"
+    campaign_group: recovery
+    email_subject: Send one trace from your selected package
+    email_preheader: Once a real trace arrives, FutureAGI opens trace review and guides you to an eval.
+    primary_path: observe
+    entry_stages:
+      - waiting_for_first_trace
+      - waiting_for_first_trace_sample_available
+    wait_window_minutes: 240
+    priority: 70
+    target_action_id: send_first_trace
+    target_success_event: trace_received
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_first_action_recovery_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: waiting_for_first_trace_after_wait
+
+  - campaign_key: observe_sample_bridge
+    template_key: observe_sample_bridge_v1
+    template_version: "2026-05-27.1"
+    campaign_group: sample
+    email_subject: Review a sample trace before connecting data
+    email_preheader: Open sample data to see the review workflow without treating it as live traffic.
+    primary_path: observe
+    entry_stages:
+      - waiting_for_first_trace
+      - waiting_for_first_trace_sample_available
+    wait_window_minutes: 1440
+    priority: 60
+    target_action_id: open_sample_trace
+    target_success_event: onboarding_sample_project_opened
+    route_strategy: sample_project
+    dry_run_flag: onboarding_email_sample_bridge_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: sample_bridge
+    sample_policy: sample_only
+    owner: product
+    qa_fixture: sample_available_after_long_wait
+
+  - campaign_key: observe_first_trace_ready
+    template_key: observe_first_trace_ready_v1
+    template_version: "2026-05-27.1"
+    campaign_group: first_signal
+    email_subject: Review your first AI trace
+    email_preheader: A real trace is ready, so review latency, cost, inputs, and the next eval action.
+    primary_path: observe
+    entry_stages:
+      - review_first_trace
+    wait_window_minutes: 15
+    priority: 90
+    target_action_id: review_first_trace
+    target_success_event: trace_reviewed
+    route_strategy: artifact_deep_link
+    dry_run_flag: onboarding_email_first_signal_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: trace_ready
+
+  - campaign_key: observe_next_loop
+    template_key: observe_next_loop_v1
+    template_version: "2026-05-27.1"
+    campaign_group: next_loop
+    email_subject: Create one quality check from the trace
+    email_preheader: Turn the reviewed trace into a repeatable quality check for future traffic.
+    primary_path: observe
+    entry_stages:
+      - create_trace_evaluator
+    wait_window_minutes: 1440
+    priority: 80
+    target_action_id: create_trace_evaluator
+    target_success_event: first_quality_loop_completed
+    route_strategy: activation_recommendation
+    dry_run_flag: onboarding_email_next_loop_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: trace_reviewed_next_loop
+
+  - campaign_key: first_loop_complete_next
+    template_key: first_loop_complete_next_v1
+    template_version: "2026-05-27.1"
+    campaign_group: activation_success
+    email_subject: Your first AI quality review is live
+    email_preheader: Open daily quality to review the next signal after your first review.
+    primary_path: any
+    entry_stages:
+      - activated
+      - daily_review
+    wait_window_minutes: 60
+    priority: 50
+    target_action_id: review_daily_quality
+    target_success_event: daily_quality_item_reviewed
+    route_strategy: daily_quality
+    dry_run_flag: onboarding_email_daily_digest_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: daily_digest
+    sample_policy: real_only
+    owner: product
+    qa_fixture: first_loop_complete_next
+
+  - campaign_key: dormant_reactivation
+    template_key: dormant_reactivation_v1
+    template_version: "2026-06-02.1"
+    campaign_group: activation_success
+    email_subject: Pick your AI quality review back up
+    email_preheader: Your workspace is set up and has gone quiet, so here is the next item worth a look.
+    primary_path: any
+    entry_stages:
+      - activated
+      - daily_review
+    wait_window_minutes: 10080
+    priority: 55
+    target_action_id: review_daily_quality
+    target_success_event: daily_quality_item_reviewed
+    route_strategy: daily_quality
+    dry_run_flag: onboarding_email_daily_digest_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: activated_then_dormant_after_wait
+
+  - campaign_key: cross_path_expansion
+    template_key: cross_path_expansion_v1
+    template_version: "2026-06-08.1"
+    campaign_group: next_loop
+    email_subject: Add the next AI workflow to your workspace
+    email_preheader: Open the next setup that is ready for your team.
+    primary_path: any
+    entry_stages:
+      - daily_review
+    daily_quality_modes:
+      - no_new_signal
+    wait_window_minutes: 1440
+    priority: 60
+    target_action_id: create_prompt
+    target_success_event: prompt_created
+    route_strategy: cross_path_expansion
+    expansion_target_paths:
+      - prompt
+      - evals
+      - gateway
+      - agent
+      - voice
+      - observe
+    dry_run_flag: onboarding_email_next_loop_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: standard
+    sample_policy: real_only
+    owner: product
+    qa_fixture: activated_then_next_path_available
+
+  - campaign_key: daily_quality_open_actions
+    template_key: daily_quality_open_actions_v1
+    template_version: "2026-05-27.1"
+    campaign_group: activation_success
+    email_subject: A quality action is waiting for review
+    email_preheader: Review, assign, or dismiss the open item from the daily quality view.
+    primary_path: any
+    entry_stages:
+      - activated
+      - daily_review
+    daily_quality_modes:
+      - open_action
+    wait_window_minutes: 60
+    priority: 70
+    target_action_id: review_daily_quality
+    target_success_event: daily_quality_action_completed
+    route_strategy: daily_quality
+    dry_run_flag: onboarding_email_daily_digest_enabled
+    send_flag: onboarding_lifecycle_send_enabled
+    frequency_cap_key: daily_digest
+    requires_digest_preview: true
+    sample_policy: real_only
+    owner: product
+    qa_fixture: daily_quality_open_actions

@@ -241,7 +241,7 @@ def _resolve_default_queue_scope(source_type, source_obj, organization=None):
             if project is None:
                 # CHSpan path: no FK traversals available, but the row
                 # carries project_id. Resolve the PG Project explicitly.
-                # Codex wave-2 P2: scope the PG lookup by organization when
+                # Review wave-2 P2: scope the PG lookup by organization when
                 # one is provided. Defense-in-depth — current CHSpan callers
                 # gate on org upstream, but a future caller could forget;
                 # fail closed here.

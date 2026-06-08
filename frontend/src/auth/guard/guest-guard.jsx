@@ -9,6 +9,7 @@ import { SplashScreen } from "src/components/loading-screen";
 import { useAuthContext } from "../hooks";
 import { useSearchParams } from "react-router-dom";
 import { useRouter } from "src/routes/hooks";
+import { resolveAuthSuccessRoute } from "src/sections/auth/jwt/post-login-navigation";
 
 // ----------------------------------------------------------------------
 
@@ -29,7 +30,10 @@ function Container({ children }) {
 
   const [searchParams] = useSearchParams();
 
-  const returnTo = searchParams.get("returnTo") || paths.dashboard.root;
+  const returnTo = resolveAuthSuccessRoute({
+    returnTo: searchParams.get("returnTo"),
+    fallbackPath: paths.dashboard.root,
+  });
 
   const { authenticated } = useAuthContext();
 

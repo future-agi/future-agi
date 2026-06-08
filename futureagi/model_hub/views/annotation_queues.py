@@ -4359,7 +4359,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 id__in=missing_default_ids,
             ).select_related("project", "dataset", "agent_definition")
 
-            # Codex consolidated review P2 (2026-05-26): the original loop
+            # Consolidated review P2 (2026-05-26): the original loop
             # called `get_reader().get(sid)` inside both the project- and
             # agent-definition-scope branches for every queue × source
             # combination, producing N×M CH round-trips. Precompute the
@@ -4402,7 +4402,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                             ).exists()
                         elif st == "observation_span":
                             # Bulk-prefetched above; in-memory dict lookup
-                            # (avoids N×M CH round-trips per codex P2).
+                            # (avoids N×M CH round-trips per review P2).
                             _sp = _ch_span_by_id.get(str(sid))
                             exists = _sp is not None and _sp.project_id == str(
                                 dq.project_id
@@ -5325,7 +5325,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # column itself remains a PG CharField pointing at
             # tracer_observation_span.id.
             #
-            # Codex consolidated review P1 (2026-05-26): if the CH span has
+            # Consolidated review P1 (2026-05-26): if the CH span has
             # no matching PG ObservationSpan row (e.g. dual-write skew, or
             # OTel-direct-to-CH cutover before PG dual-write removed),
             # SpanNotes.update_or_create raises ForeignKey IntegrityError

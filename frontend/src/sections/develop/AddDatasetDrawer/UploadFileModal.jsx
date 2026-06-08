@@ -34,7 +34,9 @@ const defaultValues = {
   modelType: "GenerativeLLM",
 };
 
-const UploadFileModal = ({ open, onClose, refreshGrid }) => {
+const getDatasetId = (result = {}) => result?.datasetId || result?.dataset_id;
+
+const UploadFileModal = ({ open, onClose, onDatasetCreated, refreshGrid }) => {
   const {
     control,
     handleSubmit,
@@ -71,7 +73,17 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
       onCloseClick(null, true);
       reset();
       refreshGrid();
-      navigate(`/dashboard/develop/${data?.data?.result?.datasetId}?tab=data`);
+      const datasetId = getDatasetId(data?.data?.result);
+      const nextHref = onDatasetCreated?.({
+        datasetId,
+        sourceMethod: "file_upload",
+      });
+      navigate(
+        nextHref ||
+          (datasetId
+            ? `/dashboard/develop/${datasetId}?tab=data`
+            : "/dashboard/develop"),
+      );
     },
     onError: (error) => {
       enqueueSnackbar(
@@ -320,6 +332,7 @@ const UploadFileModal = ({ open, onClose, refreshGrid }) => {
 UploadFileModal.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
+  onDatasetCreated: PropTypes.func,
   refreshGrid: PropTypes.func,
 };
 

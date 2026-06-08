@@ -54,8 +54,8 @@ const UsersEmptyScreen = () => {
       />
 
       <InstructionTitle
-        title="Setup Telemetry"
-        description="Configure your application to send user ID's to Future AGI"
+        title="Send user IDs"
+        description="Configure your application to attach user IDs to Future AGI traces."
       />
 
       <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>

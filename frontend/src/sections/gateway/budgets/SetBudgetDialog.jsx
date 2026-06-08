@@ -12,8 +12,16 @@ import {
   MenuItem,
   Typography,
 } from "@mui/material";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { useSetBudget } from "../providers/hooks/useGatewayConfig";
+import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
+import {
+  buildGatewayFailureResolvedPayload,
+  buildGatewayOnboardingCompletionHref,
+  buildGatewayPolicyCreatedPayload,
+  gatewaySetupQuickStartAttributionFromSearch,
+} from "../gatewayOnboardingEvents";
 
 const BUDGET_LEVELS = [
   {
@@ -61,8 +69,20 @@ const ACTIONS = [
   },
 ];
 
-const SetBudgetDialog = ({ open, onClose, gatewayId, budget }) => {
+const SetBudgetDialog = ({
+  open,
+  onClose,
+  gatewayId,
+  budget,
+  onboardingRequestId,
+  shouldRecordOnboardingCompletion = false,
+  shouldRecordOnboardingRepair = false,
+}) => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const isEditMode = Boolean(budget);
+  const gatewayQuickStartAttribution =
+    gatewaySetupQuickStartAttributionFromSearch(searchParams);
   const [level, setLevel] = useState("");
   const [limit, setLimit] = useState("");
   const [alertThreshold, setAlertThreshold] = useState("80");
@@ -100,10 +120,60 @@ const SetBudgetDialog = ({ open, onClose, gatewayId, budget }) => {
     setBudgetMutation.mutate(
       { gatewayId, level, config },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
           const label =
             BUDGET_LEVELS.find((b) => b.value === level)?.label || level;
           enqueueSnackbar(`Budget "${label}" saved`, { variant: "success" });
+          if (shouldRecordOnboardingCompletion) {
+            try {
+              const eventPayload = buildGatewayPolicyCreatedPayload({
+                gatewayId,
+                policyId: `budget:${level}`,
+                policyType: "budget",
+                quickStartAttribution: gatewayQuickStartAttribution,
+                requestId: onboardingRequestId,
+                source: "gateway_budget_onboarding",
+                metadata: {
+                  budget_level: level,
+                  limit: Number(limit),
+                  alert_threshold: Number(alertThreshold),
+                  on_exceed: onExceed,
+                },
+              });
+              if (shouldRecordOnboardingRepair) {
+                await recordActivationEvent(
+                  buildGatewayFailureResolvedPayload({
+                    gatewayId,
+                    quickStartAttribution: gatewayQuickStartAttribution,
+                    repairType: "budget",
+                    requestId: onboardingRequestId,
+                    source: "gateway_budget_onboarding",
+                    metadata: {
+                      budget_level: level,
+                      limit: Number(limit),
+                      alert_threshold: Number(alertThreshold),
+                      on_exceed: onExceed,
+                    },
+                  }),
+                );
+              }
+              await recordActivationEvent(eventPayload);
+              navigate(
+                buildGatewayOnboardingCompletionHref({
+                  ...eventPayload,
+                  quickStartAttribution: gatewayQuickStartAttribution,
+                }),
+                {
+                  replace: true,
+                },
+              );
+            } catch {
+              enqueueSnackbar(
+                "Budget saved, but onboarding could not be completed. Please try again.",
+                { variant: "error" },
+              );
+            }
+          }
           onClose();
         },
         onError: () => {
@@ -209,6 +279,9 @@ SetBudgetDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
   budget: PropTypes.object,
+  onboardingRequestId: PropTypes.string,
+  shouldRecordOnboardingCompletion: PropTypes.bool,
+  shouldRecordOnboardingRepair: PropTypes.bool,
 };
 
 export default SetBudgetDialog;

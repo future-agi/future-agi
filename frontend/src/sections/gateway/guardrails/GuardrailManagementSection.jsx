@@ -27,7 +27,7 @@ import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { enqueueSnackbar } from "notistack";
 import { useQuery } from "@tanstack/react-query";
 import axiosInstance, { endpoints, createQueryString } from "src/utils/axios";
@@ -42,6 +42,15 @@ import EditGuardrailDialog from "./EditGuardrailDialog";
 import GuardrailAnalyticsTab from "./GuardrailAnalyticsTab";
 import FeedbackSummaryCard from "./FeedbackSummaryCard";
 import GuardrailConfigTab from "../settings/GuardrailConfigTab";
+import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
+import {
+  buildGatewayOnboardingCompletionHref,
+  buildGatewayFailureResolvedPayload,
+  buildGatewayPolicyCreatedPayload,
+  GATEWAY_ONBOARDING_MODES,
+  gatewaySetupQuickStartAttributionFromSearch,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
 
 // Tab slug <-> index mapping
 const TAB_SLUGS = [
@@ -350,11 +359,33 @@ function checksToRules(guardrailObj) {
   return { ...rest, rules };
 }
 
+function guardrailRuleCount(guardrails) {
+  if (!guardrails || typeof guardrails !== "object") return 0;
+  if (Array.isArray(guardrails.rules)) return guardrails.rules.length;
+  if (Array.isArray(guardrails.checks)) return guardrails.checks.length;
+  if (guardrails.checks && typeof guardrails.checks === "object") {
+    return Object.keys(guardrails.checks).length;
+  }
+  return 0;
+}
+
 const ConfigTab = () => {
   const { data: orgConfig, isLoading } = useOrgConfig();
   const createOrgConfig = useCreateOrgConfig();
+  const { gatewayId } = useGatewayContext();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [localGuardrails, setLocalGuardrails] = useState(null);
   const [dirty, setDirty] = useState(false);
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const gatewayQuickStartAttribution =
+    gatewaySetupQuickStartAttributionFromSearch(searchParams);
+  const isOnboardingRoute =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_POLICY);
+  const onboardingRequestId = onboardingParams.requestId;
+  const isFailureRepair = onboardingParams.isFailureRepair;
 
   // Initialize local state from org config on first load
   const guardrailData = localGuardrails ?? orgConfig?.guardrails ?? {};
@@ -374,8 +405,52 @@ const ConfigTab = () => {
         routing: orgConfig?.routing || {},
       },
       {
-        onSuccess: () => {
+        onSuccess: async () => {
           setDirty(false);
+          if (isOnboardingRoute) {
+            try {
+              const eventPayload = buildGatewayPolicyCreatedPayload({
+                gatewayId,
+                policyId: "guardrail",
+                policyType: "guardrail",
+                quickStartAttribution: gatewayQuickStartAttribution,
+                requestId: onboardingRequestId,
+                source: "gateway_guardrail_onboarding",
+                metadata: {
+                  guardrail_rule_count: guardrailRuleCount(toSave),
+                },
+              });
+              if (isFailureRepair) {
+                await recordActivationEvent(
+                  buildGatewayFailureResolvedPayload({
+                    gatewayId,
+                    quickStartAttribution: gatewayQuickStartAttribution,
+                    repairType: "guardrail",
+                    requestId: onboardingRequestId,
+                    source: "gateway_guardrail_onboarding",
+                    metadata: {
+                      guardrail_rule_count: guardrailRuleCount(toSave),
+                    },
+                  }),
+                );
+              }
+              await recordActivationEvent(eventPayload);
+              navigate(
+                buildGatewayOnboardingCompletionHref({
+                  ...eventPayload,
+                  quickStartAttribution: gatewayQuickStartAttribution,
+                }),
+                {
+                  replace: true,
+                },
+              );
+            } catch {
+              enqueueSnackbar(
+                "Guardrail saved, but onboarding could not be completed. Please try again.",
+                { variant: "error" },
+              );
+            }
+          }
         },
       },
     );

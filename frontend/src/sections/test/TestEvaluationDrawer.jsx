@@ -2,7 +2,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import PropTypes from "prop-types";
 import { Drawer } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
@@ -19,12 +19,54 @@ import { useTestEvaluationStore } from "./states";
 import TestEvaluationPage from "./TestEvaluationPage";
 import { AGENT_TYPES } from "../agents/constants";
 import { SourceType } from "../scenarios/common";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  buildVoiceOnboardingReturnHref,
+  buildVoiceSuccessCriteriaAddedPayload,
+  getVoiceOnboardingParams,
+  voiceSetupQuickStartAttributionFromSearch,
+  VOICE_ONBOARDING_MODES,
+} from "./onboardingVoiceRouteEvents";
+import {
+  buildAgentEvalCoveragePayload,
+  isEvalOnboardingMode,
+  TEST_ONBOARDING_MODES,
+} from "./testOnboardingModes";
+import {
+  agentSetupQuickStartAttributionFromSearch,
+  buildAgentOnboardingReturnHref,
+} from "src/sections/agent-playground/agentOnboardingEvents";
 
 const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
   const { openTestEvaluation, setOpenTestEvaluation } =
     useTestEvaluationStore();
   const { testId } = useParams();
+  const location = useLocation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const {
+    mutate: recordActivationEvent,
+    mutateAsync: recordActivationEventAsync,
+  } = useRecordActivationEvent();
+  const voiceParams = useMemo(
+    () => getVoiceOnboardingParams(location.search),
+    [location.search],
+  );
+  const voiceQuickStartAttribution = useMemo(
+    () => voiceSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const agentQuickStartAttribution = useMemo(
+    () => agentSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const routeMode = new URLSearchParams(location.search).get("onboarding");
+  const isSuccessCriteriaMode =
+    voiceParams.mode === VOICE_ONBOARDING_MODES.SUCCESS_CRITERIA;
+  const evalOnboardingMode = isEvalOnboardingMode(routeMode) ? routeMode : null;
+  const drawerOnboardingMode = isSuccessCriteriaMode
+    ? TEST_ONBOARDING_MODES.CREATE_EVAL
+    : evalOnboardingMode;
 
   const runTestDetail = queryClient.getQueryData(["test-runs-detail", testId]);
   const runTestData = runTestDetail?.data;
@@ -109,6 +151,59 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
           await addEvalsAsync({ evaluations_config: [payload] });
           enqueueSnackbar("Eval added successfully", { variant: "success" });
         }
+        if (isSuccessCriteriaMode) {
+          const eventPayload = buildVoiceSuccessCriteriaAddedPayload({
+            testId,
+            callId: voiceParams.callId,
+            evalConfig: {
+              ...payload,
+              id: editing?.id,
+            },
+            quickStartAttribution: voiceQuickStartAttribution,
+          });
+          try {
+            if (recordActivationEventAsync) {
+              await recordActivationEventAsync(eventPayload);
+            } else {
+              recordActivationEvent?.(eventPayload);
+            }
+            navigate(buildVoiceOnboardingReturnHref(eventPayload), {
+              replace: true,
+            });
+          } catch {
+            enqueueSnackbar(
+              "Success criteria saved, but onboarding could not be updated. Please try again.",
+              { variant: "error" },
+            );
+          }
+        }
+        if (evalOnboardingMode) {
+          const eventPayload = buildAgentEvalCoveragePayload({
+            mode: evalOnboardingMode,
+            testId,
+            executionIds,
+            quickStartAttribution: agentQuickStartAttribution,
+            evalConfig: {
+              ...payload,
+              id: editing?.id,
+            },
+          });
+          try {
+            if (recordActivationEventAsync) {
+              await recordActivationEventAsync(eventPayload);
+            } else {
+              recordActivationEvent?.(eventPayload);
+            }
+            navigate(buildAgentOnboardingReturnHref(eventPayload), {
+              replace: true,
+            });
+          } catch {
+            enqueueSnackbar(
+              "Eval saved, but onboarding could not be completed. Please try again.",
+              { variant: "error" },
+            );
+          }
+        }
         handleRefresh();
         setEditingEvalItem(null);
       } catch (error) {
@@ -118,7 +213,22 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
         throw error;
       }
     },
-    [addEvalsAsync, updateEvalAsync, handleRefresh, testId, editingEvalItem],
+    [
+      addEvalsAsync,
+      updateEvalAsync,
+      handleRefresh,
+      testId,
+      editingEvalItem,
+      evalOnboardingMode,
+      executionIds,
+      agentQuickStartAttribution,
+      isSuccessCriteriaMode,
+      navigate,
+      recordActivationEvent,
+      recordActivationEventAsync,
+      voiceParams.callId,
+      voiceQuickStartAttribution,
+    ],
   );
 
   const handleEditEvaluation = useCallback((evalItem) => {
@@ -159,6 +269,42 @@ const TestEvaluationDrawer = ({ executionIds, onSuccessOfAdditionOfEvals }) => {
         <TestEvaluationPage
           onClose={onCloseHandler}
           executionIds={executionIds}
+          onboardingMode={drawerOnboardingMode}
+          onboardingAddLabel={
+            isSuccessCriteriaMode ? "Add success criteria" : undefined
+          }
+          onboardingCopy={
+            isSuccessCriteriaMode
+              ? {
+                  title: "Add voice success criteria",
+                  description:
+                    "Add one success criterion so future voice calls can be scored after each run.",
+                }
+              : undefined
+          }
+          onboardingCurrentStep={
+            isSuccessCriteriaMode ? "Success criteria" : undefined
+          }
+          onboardingEyebrow={isSuccessCriteriaMode ? "Voice setup" : undefined}
+          onboardingRunLabel={
+            isSuccessCriteriaMode ? "Check criteria" : undefined
+          }
+          onboardingSecondaryAddLabel={
+            isSuccessCriteriaMode ? "Add another criterion" : undefined
+          }
+          onboardingSteps={
+            isSuccessCriteriaMode
+              ? [
+                  { label: "Test call", complete: true },
+                  { label: "Review call", complete: true },
+                  {
+                    label: "Success criteria",
+                    complete: existingEvals.length > 0,
+                  },
+                ]
+              : undefined
+          }
+          tourAnchor={voiceParams.tourAnchor}
           onSuccessOfAdditionOfEvals={onSuccessOfAdditionOfEvals}
           onAddEvaluation={() => {
             setEditingEvalItem(null);

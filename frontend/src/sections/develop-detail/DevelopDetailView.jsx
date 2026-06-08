@@ -1,6 +1,12 @@
-import { Box, Skeleton, useTheme } from "@mui/material";
-import { Outlet, useLocation, useParams } from "react-router";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { Alert, Box, Button, Skeleton, useTheme } from "@mui/material";
+import { Outlet, useLocation, useNavigate, useParams } from "react-router";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useSearchParams } from "src/routes/hooks";
 import DatasetsSelectRow from "./DatasetsSelectRow";
 import DevelopBar from "./DevelopBar/DevelopBar";
@@ -41,6 +47,16 @@ import DevelopEvaluationDrawer from "./DataTab/DevelopEvaluationDrawer";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import ConditionalNodeV2 from "./AddColumn/ConditionalNode/ConditionalNodeV2";
 import ExperimentTabHeader from "./ExperimentTab/ExperimentTabHeader";
+import { recordActivationEvent as recordActivationEventRequest } from "src/sections/onboarding-home/api/onboarding-home-api";
+import {
+  buildEvalRunStepHref,
+  buildEvalSourceFixRerunClickedPayload,
+  buildEvalSourceFixRouteFocusPayload,
+  EVAL_FIX_RERUN_ORIGINS,
+  evalSetupQuickStartAttributionFromSearch,
+  getEvalSourceFixOnboardingCopy,
+  getEvalSourceFixOnboardingParams,
+} from "src/sections/evals/components/evalCreateOnboarding";
 
 const TabOptions = [
   { label: "Data", value: "data" },
@@ -53,6 +69,7 @@ const TabOptions = [
 const DevelopDetailView = () => {
   const { dataset } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const { pathname } = location;
 
   // Check if we're in scenario context (using URL params)
@@ -84,6 +101,7 @@ const DevelopDetailView = () => {
     location?.state?.isCommonColumn,
   );
   const theme = useTheme();
+  const recordedSourceFixFocusRef = useRef(false);
   const [experimentSearch, setExperimentSearch] = useState("");
   const [selectedRowsCount, setSelectedRowsCount] = useState(0);
   const [selectedRowIds, setSelectedRowIds] = useState([]);
@@ -119,6 +137,43 @@ const DevelopDetailView = () => {
     "tab",
     params.tab || TabOptions[0]?.value,
   );
+  const sourceFixOnboardingParams = useMemo(
+    () => getEvalSourceFixOnboardingParams(location.search),
+    [location.search],
+  );
+  const onboardingQuickStartAttribution = useMemo(
+    () => evalSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const sourceFixOnboardingCopy = useMemo(
+    () =>
+      getEvalSourceFixOnboardingCopy({
+        sourceType: sourceFixOnboardingParams.sourceType,
+      }),
+    [sourceFixOnboardingParams.sourceType],
+  );
+  const showEvalSourceFixBanner =
+    sourceFixOnboardingParams.isOnboarding &&
+    sourceFixOnboardingParams.sourceType === "dataset" &&
+    sourceFixOnboardingParams.sourceId === dataset;
+  const sourceFixRerunHref = useMemo(() => {
+    if (!showEvalSourceFixBanner || !sourceFixOnboardingParams.evalId) {
+      return null;
+    }
+
+    return buildEvalRunStepHref({
+      evalId: sourceFixOnboardingParams.evalId,
+      previousRunId: sourceFixOnboardingParams.runId,
+      quickStartAttribution: onboardingQuickStartAttribution,
+      rerunFrom: EVAL_FIX_RERUN_ORIGINS.SOURCE_FIX,
+      sourceId: sourceFixOnboardingParams.sourceId,
+      sourceType: sourceFixOnboardingParams.sourceType,
+    });
+  }, [
+    onboardingQuickStartAttribution,
+    showEvalSourceFixBanner,
+    sourceFixOnboardingParams,
+  ]);
 
   const SkeletonHeader = () => {
     return <Skeleton width="60%" />;
@@ -283,6 +338,48 @@ const DevelopDetailView = () => {
     });
   }, [dataset]);
 
+  useEffect(() => {
+    if (!showEvalSourceFixBanner || recordedSourceFixFocusRef.current) return;
+
+    recordedSourceFixFocusRef.current = true;
+    void recordActivationEventRequest(
+      buildEvalSourceFixRouteFocusPayload({
+        evalId: sourceFixOnboardingParams.evalId,
+        quickStartAttribution: onboardingQuickStartAttribution,
+        route: "develop_dataset",
+        runId: sourceFixOnboardingParams.runId,
+        sourceId: sourceFixOnboardingParams.sourceId,
+        sourceType: sourceFixOnboardingParams.sourceType,
+      }),
+    ).catch(() => undefined);
+  }, [
+    onboardingQuickStartAttribution,
+    showEvalSourceFixBanner,
+    sourceFixOnboardingParams,
+  ]);
+
+  const handleSourceFixRerun = useCallback(() => {
+    if (!sourceFixRerunHref) return;
+
+    const navigateToRerun = () => navigate(sourceFixRerunHref);
+    void recordActivationEventRequest(
+      buildEvalSourceFixRerunClickedPayload({
+        evalId: sourceFixOnboardingParams.evalId,
+        quickStartAttribution: onboardingQuickStartAttribution,
+        rerunRoute: sourceFixRerunHref,
+        route: "develop_dataset",
+        runId: sourceFixOnboardingParams.runId,
+        sourceId: sourceFixOnboardingParams.sourceId,
+        sourceType: sourceFixOnboardingParams.sourceType,
+      }),
+    ).finally(navigateToRerun);
+  }, [
+    navigate,
+    onboardingQuickStartAttribution,
+    sourceFixOnboardingParams,
+    sourceFixRerunHref,
+  ]);
+
   const getRightSection = () => {
     if (isCompareDataset && currentTab === "data") {
       return (
@@ -378,6 +475,26 @@ const DevelopDetailView = () => {
           shouldHideDevelopBar={shouldHideDevelopBar}
           hideScenarioFeatures={hideScenarioFeatures}
         />
+
+        {showEvalSourceFixBanner && (
+          <Alert
+            action={
+              sourceFixRerunHref ? (
+                <Button
+                  color="inherit"
+                  size="small"
+                  onClick={handleSourceFixRerun}
+                >
+                  Rerun eval
+                </Button>
+              ) : null
+            }
+            severity="info"
+            sx={{ mx: 2, mt: 1, flexShrink: 0 }}
+          >
+            {sourceFixOnboardingCopy.description}
+          </Alert>
+        )}
 
         {!shouldHideDevelopBar && (
           <DevelopBar

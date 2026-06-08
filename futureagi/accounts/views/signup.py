@@ -48,7 +48,7 @@ from accounts.serializers.contracts import (
     UserIdsRequestSerializer,
 )
 from accounts.serializers.user import UpdateUserSerializer
-from accounts.utils import first_signup
+from accounts.utils import SignupValidationError, first_signup
 from accounts.views.workspace_management import clear_user_redis_cache
 from analytics.utils import (
     MixpanelEvents,
@@ -171,20 +171,35 @@ def user_signup(request):
         if User.objects.filter(email=email).exists():
             return _gm.bad_request("User with this email already exists.")
 
+        if data.get("password"):
+            try:
+                validate_password(data["password"])
+            except ValidationError as exc:
+                return _gm.bad_request("\n".join(exc.messages))
+
         # Allowlist fields to prevent hidden-parameter attacks
         allowed_fields = {
             "email",
             "full_name",
             "company_name",
+            "password",
             "allow_email",
         }
         sanitized_data = {k: v for k, v in data.items() if k in allowed_fields}
         first_signup(sanitized_data)
+        message = "User Created Successfully"
+        if not sanitized_data.get("password"):
+            message = "User Created Successfully, Please Check your email to proceed"
 
-        return _gm.success_response(
-            {"message": "User Created Successfully, Please Check your email to proceed"}
+        return _gm.success_response({"message": message})
+
+    except SignupValidationError as exc:
+        logger.info(
+            "signup_rejected",
+            reason=getattr(exc, "code", "signup_validation_error"),
+            email=email if "email" in locals() else None,
         )
-
+        return _gm.bad_request(str(exc))
     except Exception:
         logger.exception("Error during signup")
         return _gm.bad_request("An error occurred during signup.")

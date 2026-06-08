@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Connect a model so the gateway can route{% endblock %}
+{% block heading %}Add the first model behind your gateway{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, you want to route LLM traffic safely, and {{ workspace_name }} has a gateway waiting for its first model provider.</p>
+  <p style="margin:0;">Connect one provider and you have a real backend to route to. After that, a single test request shows you the provider, latency, and cost the gateway sees on every call.</p>
+{% endblock %}

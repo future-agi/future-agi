@@ -202,7 +202,7 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
         by_id = {s.id: s for s in fetched}
         observation_spans = [by_id[str(s)] for s in span_ids if str(s) in by_id]
 
-        # Codex consolidated review P0 (2026-05-26): silently dropping
+        # Consolidated review P0 (2026-05-26): silently dropping
         # missing-CH spans is data loss. Caller derived span_ids from a
         # PG queryset — the legacy ORM path would have built dataset rows
         # for ALL of them. We FAIL FAST so Celery retry can absorb

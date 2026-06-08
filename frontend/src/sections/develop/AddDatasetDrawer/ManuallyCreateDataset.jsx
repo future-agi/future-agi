@@ -24,7 +24,14 @@ import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
 
-const ManuallyCreateDataset = ({ open, onClose, refreshGrid }) => {
+const getDatasetId = (result = {}) => result?.datasetId || result?.dataset_id;
+
+const ManuallyCreateDataset = ({
+  open,
+  onClose,
+  onDatasetCreated,
+  refreshGrid,
+}) => {
   const defaultValues = {
     name: "",
     modelType: "GenerativeLLM",
@@ -68,7 +75,17 @@ const ManuallyCreateDataset = ({ open, onClose, refreshGrid }) => {
       queryClient.invalidateQueries({
         queryKey: ["develop", "dataset-name-list"],
       });
-      navigate(`/dashboard/develop/${data?.data?.result?.datasetId}?tab=data`);
+      const datasetId = getDatasetId(data?.data?.result);
+      const nextHref = onDatasetCreated?.({
+        datasetId,
+        sourceMethod: "manual",
+      });
+      navigate(
+        nextHref ||
+          (datasetId
+            ? `/dashboard/develop/${datasetId}?tab=data`
+            : "/dashboard/develop"),
+      );
       refreshGrid();
     },
     onError: (error) => {
@@ -239,6 +256,7 @@ const ManuallyCreateDataset = ({ open, onClose, refreshGrid }) => {
 ManuallyCreateDataset.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
+  onDatasetCreated: PropTypes.func,
   refreshGrid: PropTypes.func,
 };
 

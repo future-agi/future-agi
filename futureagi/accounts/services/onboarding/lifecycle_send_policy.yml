@@ -1,0 +1,94 @@
+schema_version: onboarding-lifecycle-send-policy-2026-05-31.v1
+
+preference_groups:
+  welcome: first_action_recovery_enabled
+  recovery: first_action_recovery_enabled
+  sample: sample_bridge_enabled
+  first_signal: first_action_recovery_enabled
+  prompt: first_action_recovery_enabled
+  agent: first_action_recovery_enabled
+  gateway: first_action_recovery_enabled
+  eval: first_action_recovery_enabled
+  voice: first_action_recovery_enabled
+  next_loop: next_loop_enabled
+  activation_success: daily_digest_enabled
+
+eligibility_frequency_caps:
+  - id: user_7d
+    scope: user
+    window_hours: 168
+    limit: 3
+    reason: frequency_cap_user_7d
+  - id: user_24h
+    scope: user
+    window_hours: 24
+    limit: 1
+    reason: frequency_cap_user_24h
+  - id: workspace_24h
+    scope: workspace
+    window_hours: 24
+    limit: 5
+    reason: frequency_cap_workspace_24h
+  - id: campaign_user_7d
+    scope: campaign_user
+    window_hours: 168
+    limit: 1
+    reason: frequency_cap_campaign_7d
+
+send_frequency_caps:
+  - id: user_24h
+    scope: user
+    window_hours: 24
+    limit: 1
+    reason: frequency_capped
+  - id: group_72h
+    scope: campaign_group
+    window_hours: 72
+    limit: 1
+    reason: frequency_capped
+  - id: daily_digest_24h
+    scope: campaign_group
+    window_hours: 24
+    limit: 1
+    campaign_groups:
+      - activation_success
+    frequency_cap_keys:
+      - daily_digest
+    reason: frequency_capped
+  - id: dormant_reactivation_lifetime
+    scope: campaign_key
+    window_hours: null
+    limit: 1
+    campaign_keys:
+      - dormant_reactivation
+    reason: frequency_capped
+  - id: recovery_group_lifetime
+    scope: campaign_group
+    window_hours: null
+    limit: 2
+    campaign_groups:
+      - recovery
+      - first_signal
+      - next_loop
+    reason: frequency_capped
+
+send_environment:
+  cloud_required: true
+  non_cloud_suppression_reason: cloud_deployment_required
+
+external_delivery:
+  channels:
+    - slack
+    - webhook
+  campaign_groups:
+    - welcome
+    - recovery
+    - sample
+    - first_signal
+    - prompt
+    - agent
+    - gateway
+    - eval
+    - voice
+    - next_loop
+    - activation_success

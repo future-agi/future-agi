@@ -1,0 +1,17 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}What needs your review in {{ workspace_name }} today{% endblock %}
+{% block heading %}Today's quality items, ready for a quick review{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, Daily Quality found <strong>{{ digest_summary.action_count_label }}</strong> in {{ workspace_name }}{% if digest_summary.overdue_count %}, including <strong>{{ digest_summary.overdue_count_label }}</strong>{% endif %}.</p>
+  {% if digest_preview.actions %}
+    <ul style="margin:0 0 16px;padding-left:20px;">
+      {% for action in digest_preview.actions %}
+        <li style="margin:0 0 8px;"><strong>{{ action.label }}</strong></li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+  {% if digest_summary.omitted_count %}
+    <p style="margin:0 0 16px;">There are {{ digest_summary.omitted_count_label }} after these.</p>
+  {% endif %}
+  <p style="margin:0;">Open Daily Quality to inspect the highest-priority item first, then resolve, assign, or dismiss each one.</p>
+{% endblock %}

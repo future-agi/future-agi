@@ -14,6 +14,47 @@ def assert_unknown_field(response, field_name):
     assert response.json()["details"][field_name] == ["Unknown field."]
 
 
+def create_active_workspace_member(
+    *,
+    organization,
+    workspace,
+    email,
+    invited_by=None,
+):
+    from accounts.models import User
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    member = User.objects.create_user(
+        email=email,
+        password="testpassword123",
+        name=email.split("@")[0],
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER,
+        invited_by=invited_by,
+    )
+    org_membership = OrganizationMembership.no_workspace_objects.create(
+        user=member,
+        organization=organization,
+        role=OrganizationRoles.MEMBER,
+        level=Level.MEMBER,
+        is_active=True,
+        invited_by=invited_by,
+    )
+    WorkspaceMembership.no_workspace_objects.create(
+        workspace=workspace,
+        user=member,
+        role=OrganizationRoles.WORKSPACE_MEMBER,
+        level=Level.WORKSPACE_MEMBER,
+        organization_membership=org_membership,
+        invited_by=invited_by,
+        is_active=True,
+    )
+    return member
+
+
 @pytest.fixture
 def clear_cache():
     """Clear cache before and after tests."""
@@ -207,6 +248,185 @@ class TestGetUserInfoAPI:
         data = response.json()
         assert "remember_me" in data
 
+    def test_invited_user_repeats_first_run_when_org_only_has_profile_setup(
+        self, api_client, user, organization, workspace
+    ):
+        """Another member's role/goals are not real product setup."""
+
+        user.role = "AI Builder"
+        user.goals = ["Connect your agent"]
+        user.save(update_fields=["role", "goals"])
+
+        invitee = create_active_workspace_member(
+            organization=organization,
+            workspace=workspace,
+            email="new-member-onboarding@futureagi.com",
+            invited_by=user,
+        )
+
+        api_client.force_authenticate(user=invitee)
+        api_client.set_workspace(workspace)
+
+        try:
+            response = api_client.get("/accounts/user-info/")
+        finally:
+            api_client.stop_workspace_injection()
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["onboarding_completed"] is False
+
+    def test_invited_user_skips_first_run_when_org_has_product_setup(
+        self, api_client, user, organization, workspace
+    ):
+        """New members should not repeat first-run setup after product activation."""
+        from accounts.services.onboarding.activation_events import record_event
+
+        record_event(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            event_name="first_quality_loop_completed",
+            source="test",
+            product_path="observe",
+            is_sample=False,
+            allow_observe_loop_completion=True,
+        )
+
+        invitee = create_active_workspace_member(
+            organization=organization,
+            workspace=workspace,
+            email="activated-org-member@futureagi.com",
+            invited_by=user,
+        )
+
+        api_client.force_authenticate(user=invitee)
+        api_client.set_workspace(workspace)
+
+        try:
+            response = api_client.get("/accounts/user-info/")
+        finally:
+            api_client.stop_workspace_injection()
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["onboarding_completed"] is True
+
+    def test_invited_user_does_not_skip_first_run_for_sample_product_setup(
+        self, api_client, user, organization, workspace
+    ):
+        """Sample activation events must not suppress first-run setup."""
+        from accounts.services.onboarding.activation_events import record_event
+
+        record_event(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            event_name="first_quality_loop_completed",
+            source="test",
+            product_path="prompt",
+            is_sample=True,
+        )
+
+        invitee = create_active_workspace_member(
+            organization=organization,
+            workspace=workspace,
+            email="sample-only-org-member@futureagi.com",
+            invited_by=user,
+        )
+
+        api_client.force_authenticate(user=invitee)
+        api_client.set_workspace(workspace)
+
+        try:
+            response = api_client.get("/accounts/user-info/")
+        finally:
+            api_client.stop_workspace_injection()
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["onboarding_completed"] is False
+
+    def test_active_org_member_skips_first_run_after_product_setup_without_invite(
+        self, api_client, user, organization, workspace
+    ):
+        """Active org members added outside invite flow still use org setup state."""
+        from accounts.services.onboarding.activation_events import record_event
+
+        record_event(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            event_name="first_quality_loop_completed",
+            source="test",
+            product_path="prompt",
+            is_sample=False,
+        )
+
+        member = create_active_workspace_member(
+            organization=organization,
+            workspace=workspace,
+            email="direct-added-member@futureagi.com",
+        )
+
+        api_client.force_authenticate(user=member)
+        api_client.set_workspace(workspace)
+
+        try:
+            response = api_client.get("/accounts/user-info/")
+        finally:
+            api_client.stop_workspace_injection()
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["onboarding_completed"] is True
+
+    def test_user_info_uses_real_observe_evidence_without_completion_event(
+        self, api_client, user, organization, workspace
+    ):
+        """Trace review plus a real check counts even without a completion event."""
+        from accounts.services.onboarding.activation_events import record_event
+        from accounts.tests.onboarding_model_factories import (
+            create_custom_eval,
+            create_observe_project,
+            create_trace,
+        )
+
+        project = create_observe_project(
+            organization=organization,
+            workspace=workspace,
+            user=user,
+        )
+        create_trace(project=project)
+        create_custom_eval(
+            organization=organization,
+            workspace=workspace,
+            project=project,
+        )
+        record_event(
+            user=user,
+            organization=organization,
+            workspace=workspace,
+            event_name="trace_reviewed",
+            source="test",
+            product_path="observe",
+            is_sample=False,
+        )
+
+        invitee = create_active_workspace_member(
+            organization=organization,
+            workspace=workspace,
+            email="observe-evidence-member@futureagi.com",
+            invited_by=user,
+        )
+
+        api_client.force_authenticate(user=invitee)
+        api_client.set_workspace(workspace)
+
+        try:
+            response = api_client.get("/accounts/user-info/")
+        finally:
+            api_client.stop_workspace_injection()
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["onboarding_completed"] is True
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -395,6 +615,39 @@ class TestUserOnboardingAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_200_OK
+
+    def test_post_onboarding_persists_activation_goal(
+        self,
+        auth_client,
+        workspace,
+    ):
+        """Profile save picks the first supported goal as the activation path."""
+        from accounts.models import OnboardingActivationEvent, OnboardingGoal
+
+        response = auth_client.post(
+            "/accounts/onboarding/",
+            {
+                "role": "AI Builder",
+                "goals": ["Monitor LLMs and Agents", "Run Evaluations"],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        goal = OnboardingGoal.no_workspace_objects.get(
+            workspace=workspace,
+            is_active=True,
+        )
+        assert goal.goal == "monitor_production_ai_app"
+        assert goal.primary_path == "observe"
+        assert goal.source == "setup_org_profile"
+        assert goal.reason == "profile_completed"
+        assert goal.metadata["persona"] == "AI Builder"
+        assert OnboardingActivationEvent.no_workspace_objects.filter(
+            event_name="onboarding_goal_selected",
+            product_path="observe",
+            workspace=workspace,
+        ).exists()
 
     def test_post_onboarding_rejects_unknown_request_fields(self, auth_client):
         response = auth_client.post(

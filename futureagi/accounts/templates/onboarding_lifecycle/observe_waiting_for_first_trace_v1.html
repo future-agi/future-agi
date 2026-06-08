@@ -1,0 +1,30 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}One request away from your first trace{% endblock %}
+{% block heading %}Send one request and watch your first trace arrive{% endblock %}
+{% block body %}
+  {% if observe_credentials_ready %}
+    {% if observe_setup_package_label %}
+      <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has {{ observe_setup_package_label }} setup credentials ready. You are one request away from your first real trace.</p>
+      <p style="margin:0;">Paste the copied values into the {{ observe_setup_provider_label }} snippet, run one request, and FutureAGI will open the trace when it arrives so you can inspect latency, model calls, cost, and failures.</p>
+    {% else %}
+      <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has credentials ready for the first observe trace. You are one request away from your first real signal.</p>
+      <p style="margin:0;">Paste the copied values into the matching package snippet, run one request, and FutureAGI will open the trace when it arrives so you can inspect latency, model calls, cost, and failures.</p>
+    {% endif %}
+  {% else %}
+    {% if observe_setup_package_label %}
+      <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has an observe project for {{ observe_setup_package_label }} but no real trace yet. The signal you set this up for is one request away.</p>
+      <p style="margin:0;">Open the {{ observe_setup_package_label }} setup, send one request from your app, and FutureAGI will guide you from trace review to evaluator creation.</p>
+    {% else %}
+      <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has an observe project but no real trace yet. The signal you set this up for is one request away.</p>
+      <p style="margin:0;">Open setup, choose the package your app uses, send one trace, and FutureAGI will guide you from trace review to evaluator creation.</p>
+    {% endif %}
+  {% endif %}
+  <div style="margin:18px 0 0;padding:14px 16px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;">
+    <p style="margin:0 0 8px;font-weight:600;color:#111827;">{{ observe_trace_check_title }}</p>
+    <ul style="margin:0;padding-left:18px;">
+      {% for check in observe_trace_checks %}
+        <li style="margin:0 0 6px;">{{ check }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endblock %}

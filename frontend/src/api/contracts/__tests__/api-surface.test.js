@@ -112,6 +112,9 @@ describe("api surface contract", () => {
 
   it("keeps the endpoint registry fully backed by generated contracts", () => {
     expect(API_CONTRACT_EXCEPTIONS).toEqual({});
+    expect(isContractedApiPath("/accounts/test-trace/")).toBe(true);
+    expect(apiPath("/accounts/test-trace/")).toBe("/accounts/test-trace/");
+    expect(isApiContractExceptionPath("/accounts/test-trace/")).toBe(false);
     expect(isApiContractExceptionPath("/usage/v2/usage-overview/")).toBe(false);
     expect(() => uncontractedApiPath("/model-hub/legacy/")).toThrow(
       "API contract exception path is not registered",

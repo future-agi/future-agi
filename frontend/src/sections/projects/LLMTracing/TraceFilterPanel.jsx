@@ -188,7 +188,7 @@ const ANNOTATOR_OPS = [
 
 // Direct UUID identifiers support exact multi-select through the canonical
 // list operators. Avoid substring/null operators for these fields.
-const ID_ONLY_FIELDS = new Set(["trace_id", "span_id", "session"]);
+const TRACE_FILTER_ID_ONLY_FIELDS = new Set([...ID_ONLY_FIELDS, "session"]);
 const ID_ONLY_OPS = [
   { value: "in", label: "equals" },
   { value: "not_in", label: "not equals" },
@@ -276,7 +276,9 @@ const getOperators = (fieldType) => {
 // validation; keep `getOperators` as the pure type → ops mapping (Query
 // tab + AI filter schema rely on the type-only behavior).
 const getOperatorsForFilter = (filter) => {
-  if (filter?.field && ID_ONLY_FIELDS.has(filter.field)) return ID_ONLY_OPS;
+  if (filter?.field && TRACE_FILTER_ID_ONLY_FIELDS.has(filter.field)) {
+    return ID_ONLY_OPS;
+  }
   return getOperators(filter?.fieldType);
 };
 
@@ -1721,7 +1723,7 @@ const TraceFilterPanel = ({
         name: f.label,
         // trace_id / span_id are direct column filters — omit category so
         // col_type is not injected (the backend handles them without it).
-        ...(!ID_ONLY_FIELDS.has(f.value) && { category: "system" }),
+        ...(!TRACE_FILTER_ID_ONLY_FIELDS.has(f.value) && { category: "system" }),
         type: f.type === "enum" ? "string" : f.type,
         ...(f.choices ? { choices: f.choices } : {}),
       };
@@ -1834,7 +1836,7 @@ const TraceFilterPanel = ({
             not_equals: "not_in",
             "!=": "not_in",
           };
-          const hydratedOp = ID_ONLY_FIELDS.has(f.field)
+          const hydratedOp = TRACE_FILTER_ID_ONLY_FIELDS.has(f.field)
             ? ID_OP_HYDRATE[f.operator] || f.operator
             : (fieldType === "string" || fieldType === "text") &&
                 HYDRATE_STRING_OP[f.operator]

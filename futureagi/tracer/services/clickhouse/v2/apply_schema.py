@@ -69,7 +69,7 @@ def build_argparser() -> argparse.ArgumentParser:
         "--schema-dir", type=Path,
         # Default is THIS module's schema dir (v2). Earlier the default pointed
         # to ../schema which resolved to the legacy CH 24.10 schema directory
-        # — codex review P1 finding. Tests sweep the v2 dir explicitly so they
+        # — review P1 finding. Tests sweep the v2 dir explicitly so they
         # didn't catch this, but a CLI user could have applied legacy SQL to
         # CH 25.3 by accident.
         default=Path(__file__).parent / "schema",
@@ -101,7 +101,7 @@ def build_argparser() -> argparse.ArgumentParser:
                          "away from the legacy '/clickhouse/tables/{shard}/<table>' paths "
                          "used by the existing CH 24.10 tables (per schema.py:760). Sharing "
                          "the path would cause replica-metadata collisions on the same "
-                         "Keeper instance — codex review P0 finding."))
+                         "Keeper instance — review P0 finding."))
     return p
 
 
@@ -279,7 +279,7 @@ def main(argv: list[str] | None = None) -> int:
     # Walk files in their (already lexically sorted) order from discover_files.
     # Decide per-file: skip / apply-as-new / drifted. With --force, drifted files
     # are queued IN PLACE so the final to_apply list is still in lexical order
-    # (codex P2: appending drifted at the end caused 002 to run after 005).
+    # (review P2: appending drifted at the end caused 002 to run after 005).
     drift = []
     to_apply: list[SchemaFile] = []
     for sf in files:

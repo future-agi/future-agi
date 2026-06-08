@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Get your first quality score{% endblock %}
+{% block heading %}Run the eval and see where quality stands{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, your source and scorer are both ready in {{ workspace_name }}. Everything is set for the result.</p>
+  <p style="margin:0;">Run it once and you get a baseline: the pass-fail distribution and the weakest examples, so you know where quality stands before any prompt, model, or agent change.</p>
+{% endblock %}

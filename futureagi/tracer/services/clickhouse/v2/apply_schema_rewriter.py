@@ -58,7 +58,7 @@ def split_statements(sql: str) -> list[str]:
 
 # Object-name pattern: each segment can be bare, backtick-quoted, or
 # double-quoted; a qualified name is two segments joined by `.`.
-# Schema-qualified names are codex review P1 finding.
+# Schema-qualified names are review P1 finding.
 _SEGMENT = r"(?:`[^`]+`|\"[^\"]+\"|[A-Za-z_][A-Za-z0-9_]*)"
 _OBJECT_NAME = rf"(?P<obj>{_SEGMENT}(?:\.{_SEGMENT})?)"
 _CREATE_TABLE_RE = re.compile(
@@ -117,7 +117,7 @@ class ReplicatedRewriteError(Exception):
     """Raised when a CREATE TABLE in replicated mode uses an engine the
     rewriter doesn't know how to replace, or when the rewrite is otherwise
     ambiguous. Fail-closed prevents the apply runner from silently writing
-    a non-replicated table on a production cluster (codex review P1).
+    a non-replicated table on a production cluster (review P1).
     """
 
 

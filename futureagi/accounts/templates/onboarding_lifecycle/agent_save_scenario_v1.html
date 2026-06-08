@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Keep this scenario as a permanent test{% endblock %}
+{% block heading %}Save this run so it never silently breaks{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, you have reviewed an agent run in {{ workspace_name }} and know what good behavior looks like for it.</p>
+  <p style="margin:0;">Save that scenario as coverage. It becomes a test the agent must keep passing, so the next prompt or tool change cannot quietly regress this case.</p>
+{% endblock %}

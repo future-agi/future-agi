@@ -1,6 +1,6 @@
 /* eslint-disable react/prop-types */
 import React, { useState, useMemo, useCallback } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   Box,
   Typography,
@@ -38,6 +38,10 @@ import { useGatewayContext } from "../context/useGatewayContext";
 import SetBudgetDialog from "./SetBudgetDialog";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost } from "../utils/formatters";
+import {
+  GATEWAY_ONBOARDING_MODES,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
 
 const TAB_SLUGS = ["dashboard", "config", "access", "audit"];
 
@@ -653,6 +657,7 @@ const AuditLogTab = ({ gatewayId }) => {
 const BudgetRBACSection = () => {
   const { tab: tabSlug } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const tab = tabSlugToIndex(tabSlug);
 
   const handleTabChange = useCallback(
@@ -689,6 +694,13 @@ const BudgetRBACSection = () => {
 
   const budgets = useMemo(() => extractBudgets(config), [config]);
   const roles = useMemo(() => extractRBAC(config), [config]);
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const isOnboardingRoute =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_POLICY);
+  const onboardingRequestId = onboardingParams.requestId;
+  const isFailureRepair = onboardingParams.isFailureRepair;
 
   if (gwLoading || configLoading) {
     return (
@@ -752,6 +764,9 @@ const BudgetRBACSection = () => {
         open={budgetDialogOpen}
         onClose={() => setBudgetDialogOpen(false)}
         gatewayId={gatewayId}
+        onboardingRequestId={onboardingRequestId}
+        shouldRecordOnboardingCompletion={isOnboardingRoute}
+        shouldRecordOnboardingRepair={isFailureRepair}
       />
     </Box>
   );

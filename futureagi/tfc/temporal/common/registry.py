@@ -6,17 +6,17 @@ Uses separate loading for workflows (no Django) and activities (has Django)
 to avoid sandbox validation issues.
 """
 
-from typing import Callable, Dict, List, Type
+from collections.abc import Callable
 
 # =============================================================================
 # Registry Storage
 # =============================================================================
 
 # Maps queue name -> list of workflow classes
-_workflow_registry: Dict[str, List[Type]] = {}
+_workflow_registry: dict[str, list[type]] = {}
 
 # Maps queue name -> list of activity functions
-_activity_registry: Dict[str, List[Callable]] = {}
+_activity_registry: dict[str, list[Callable]] = {}
 
 # Track registration state
 _workflows_registered: bool = False
@@ -75,6 +75,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "integrations.transformers.langfuse_transformer",
     # billing tasks (Phase 4.6 — budget catch-up)
     "tfc.temporal.schedules.billing",
+    "tfc.temporal.schedules.onboarding",
 ]
 
 
@@ -83,7 +84,7 @@ TEMPORAL_ACTIVITY_MODULES = [
 # =============================================================================
 
 
-def register_workflows(queue: str, workflows: List[Type]) -> None:
+def register_workflows(queue: str, workflows: list[type]) -> None:
     """Register workflow classes for a specific queue."""
     if queue not in _workflow_registry:
         _workflow_registry[queue] = []
@@ -93,7 +94,7 @@ def register_workflows(queue: str, workflows: List[Type]) -> None:
             _workflow_registry[queue].append(workflow_class)
 
 
-def register_activities(queue: str, activities: List[Callable]) -> None:
+def register_activities(queue: str, activities: list[Callable]) -> None:
     """Register activity functions for a specific queue."""
     if queue not in _activity_registry:
         _activity_registry[queue] = []
@@ -104,9 +105,9 @@ def register_activities(queue: str, activities: List[Callable]) -> None:
 
 
 def register_for_queues(
-    queues: List[str],
-    workflows: List[Type] = None,
-    activities: List[Callable] = None,
+    queues: list[str],
+    workflows: list[type] = None,
+    activities: list[Callable] = None,
 ) -> None:
     """Register workflows and activities for multiple queues at once."""
     for queue in queues:
@@ -745,7 +746,9 @@ def _ensure_activities_registered() -> None:
                 queues=["default"],
                 activities=usage_activities,
             )
-            log.info("registered_usage_metering_activities", count=len(usage_activities))
+            log.info(
+                "registered_usage_metering_activities", count=len(usage_activities)
+            )
     except ImportError as e:
         log.warning("could_not_load_usage_metering_activities", error=str(e))
 
@@ -776,7 +779,7 @@ def _import_temporal_activity_modules() -> None:
 # =============================================================================
 
 
-def get_workflows_for_queue(queue: str) -> List[Type]:
+def get_workflows_for_queue(queue: str) -> list[type]:
     """
     Get workflow classes for a queue.
     Does NOT import Django - safe to call before Worker creation.
@@ -785,7 +788,7 @@ def get_workflows_for_queue(queue: str) -> List[Type]:
     return _workflow_registry.get(queue, [])
 
 
-def get_activities_for_queue(queue: str) -> List[Callable]:
+def get_activities_for_queue(queue: str) -> list[Callable]:
     """
     Get activity functions for a queue.
     DOES import Django - only call when setting up Worker activities.
@@ -794,14 +797,14 @@ def get_activities_for_queue(queue: str) -> List[Callable]:
     return _activity_registry.get(queue, [])
 
 
-def get_all_queues() -> List[str]:
+def get_all_queues() -> list[str]:
     """Get all queues that have registered workflows or activities."""
     _ensure_workflows_registered()
     _ensure_activities_registered()
     return list(set(list(_workflow_registry.keys()) + list(_activity_registry.keys())))
 
 
-def get_all_workflows() -> List[Type]:
+def get_all_workflows() -> list[type]:
     """Get all unique workflow classes across all queues."""
     _ensure_workflows_registered()
     all_workflows = []
@@ -814,7 +817,7 @@ def get_all_workflows() -> List[Type]:
     return all_workflows
 
 
-def get_all_activities() -> List[Callable]:
+def get_all_activities() -> list[Callable]:
     """Get all unique activity functions across all queues."""
     _ensure_activities_registered()
     all_activities = []

@@ -153,8 +153,12 @@ const moreActionOptionsPropTypes = {
   handleRename: PropTypes.func,
   saveDefault: PropTypes.func,
   setSaveCommitOpen: PropTypes.func,
-  data: PropTypes.object,
+  data: PropTypes.shape({
+    isDraft: PropTypes.bool,
+  }),
 };
+
+MoreActionOptionsChild.propTypes = moreActionOptionsPropTypes;
 
 // @ts-ignore
 export const MoreActionOptions = forwardRef(MoreActionOptionsChild);

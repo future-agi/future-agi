@@ -86,6 +86,11 @@ const calculateNodePosition = (nodes) => {
   };
 };
 
+const isCompletePromptConfig = (type, config) =>
+  type === NODE_TYPES.LLM_PROMPT &&
+  Boolean(config?.modelConfig?.model) &&
+  Array.isArray(config?.messages);
+
 export const useAgentPlaygroundStore = create(
   devtools(
     (set, get, store) => ({
@@ -342,10 +347,23 @@ export const useAgentPlaygroundStore = create(
                 prompt_version_id: null,
               }
             : {};
+        const shouldPersistProvidedConfig = isCompletePromptConfig(
+          type,
+          config,
+        );
+        const persistedConfig = shouldPersistProvidedConfig
+          ? { ...baseConfig, ...config }
+          : baseConfig;
 
-        // Caller-provided config is transient — only for form population, not persisted
+        // Partial caller-provided config is transient, only for form population.
+        // Complete prompt configs are already sent to the node-create API and
+        // should not make the drawer look unsaved.
         const initialConfig =
-          config && Object.keys(config).length > 0 ? config : null;
+          !shouldPersistProvidedConfig &&
+          config &&
+          Object.keys(config).length > 0
+            ? config
+            : null;
 
         const isAgent = type === NODE_TYPES.AGENT;
         const ports = isAgent
@@ -369,7 +387,9 @@ export const useAgentPlaygroundStore = create(
             label,
             ...(ports && { ports }),
             ...(nodeTemplateId && { node_template_id: nodeTemplateId }),
-            ...(Object.keys(baseConfig).length > 0 && { config: baseConfig }),
+            ...(Object.keys(persistedConfig).length > 0 && {
+              config: persistedConfig,
+            }),
             ...(initialConfig && { _initialConfig: initialConfig }),
           },
         };
@@ -386,7 +406,7 @@ export const useAgentPlaygroundStore = create(
           newEdge,
           position: newNode.position,
           ports,
-          config: baseConfig,
+          config: persistedConfig,
         };
       },
 

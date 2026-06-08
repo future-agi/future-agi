@@ -12,7 +12,7 @@ or systemctl into the picture.
 
 For prod K8s: use the sidecar pattern instead. See EMBEDDED.md. The
 supervisor here is "best-effort" — Python's atexit/SIGTERM semantics are
-not robust enough for prod-K8s graceful drain on pod preemption (codex
+not robust enough for prod-K8s graceful drain on pod preemption (review
 review High-1). Treat this module as suitable for single-host / docker-
 compose / local dev only, and use the sidecar pattern in K8s.
 """
@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 # Module-level state — there's only one collector per Django process.
 _proc: Optional[subprocess.Popen] = None
 _stop = threading.Event()
-_starting = False                                                # codex H-2: guard against concurrent start() races
+_starting = False                                                # review H-2: guard against concurrent start() races
 _lock = threading.Lock()
 _log_thread: Optional[threading.Thread] = None
 
@@ -52,7 +52,7 @@ def start(
     capped exponential backoff. Idempotent — safe to call from multiple
     Django app-startup hooks (we lock around the start).
 
-    Concurrency / SIGTERM notes (codex review High-1, High-2):
+    Concurrency / SIGTERM notes (review High-1, High-2):
       - The whole start critical section is inside `_lock` AND uses the
         `_starting` sentinel, so two concurrent callers cannot both pass
         the alive-check and spawn duplicate supervisors.
@@ -90,7 +90,7 @@ def start(
         ).start()
 
         # Signal forwarding: atexit alone is not reliable on SIGTERM /
-        # OOM-kill / hard crash (codex review High-1). Installing
+        # OOM-kill / hard crash (review High-1). Installing
         # explicit handlers means PID 1 (container init) → us → child.
         if install_signal_handlers:
             try:
@@ -152,7 +152,7 @@ def _supervise(binary: str, env: dict, backoff_init: float, backoff_max: float) 
     while not _stop.is_set():
         log.info("fi-collector: launching", extra={"binary": binary})
         try:
-            # Do NOT pass start_new_session=True (codex H-1): we want the
+            # Do NOT pass start_new_session=True (review H-1): we want the
             # child to live in our process group so a SIGTERM to PID 1
             # propagates naturally. We also still install our own handlers
             # in start() to forward SIGTERM explicitly via stop().
@@ -179,7 +179,7 @@ def _supervise(binary: str, env: dict, backoff_init: float, backoff_max: float) 
             _log_thread = log_thread
 
         rc = proc.wait()
-        # Codex M-3: close the pipe and join the log thread bounded so
+        # Review M-3: close the pipe and join the log thread bounded so
         # FDs don't accumulate across restarts.
         try:
             if proc.stdout is not None:

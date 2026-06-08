@@ -25,7 +25,7 @@ export function useEvalUsageChart(templateId, period = "30d") {
  */
 export function useEvalUsageLogs(
   templateId,
-  { page = 0, pageSize = 25, period = "30d" } = {},
+  { page = 0, pageSize = 25, period = "30d", refetchInterval = false } = {},
 ) {
   return useQuery({
     queryKey: ["evals", "usage-logs", templateId, period, page, pageSize],
@@ -38,5 +38,6 @@ export function useEvalUsageLogs(
     },
     enabled: !!templateId,
     keepPreviousData: true,
+    refetchInterval,
   });
 }

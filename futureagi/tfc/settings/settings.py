@@ -41,6 +41,23 @@ def _split_env(name: str, default: str = "") -> list[str]:
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.lower() in ("true", "1", "t", "yes", "y")
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw in {None, ""}:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return default
+
+
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv("DEBUG", "True" if _IS_LOCAL else "False").lower() in (
     "true",
@@ -227,6 +244,7 @@ WSGI_APPLICATION = "tfc.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+
 def _pg_config(host, port=None, *, name=None, disable_cursors=True, options=None):
     """
     Build a Postgres config dict for a Django DATABASES alias.
@@ -273,7 +291,9 @@ if _read_host:
         port=os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
         name=os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
     )
-    DATABASES["replica"]["TEST"] = {"MIRROR": "default"}  # Tests use default DB, not a real replica
+    DATABASES["replica"]["TEST"] = {
+        "MIRROR": "default"
+    }  # Tests use default DB, not a real replica
 
 # Direct connection (bypasses PgBouncer) — used for migrations that need
 # `lock_timeout` set at connection time. PgBouncer transaction-pool mode
@@ -311,7 +331,9 @@ if _direct_host:
 # router re-reads settings per call, but feature-key constants in hot paths
 # are computed at import time.
 _opt_in_raw = os.getenv("READ_REPLICA_OPT_IN", "")
-READ_REPLICA_OPT_IN: list[str] = [s.strip() for s in _opt_in_raw.split(",") if s.strip()]
+READ_REPLICA_OPT_IN: list[str] = [
+    s.strip() for s in _opt_in_raw.split(",") if s.strip()
+]
 
 DATABASE_ROUTERS = ["tfc.routers.ReadReplicaRouter"]
 
@@ -462,6 +484,102 @@ DEFAULT_FROM_EMAIL = os.getenv(
 SERVER_EMAIL = os.getenv("SERVER_EMAIL")  # ditto (default from-email for Django errors)
 
 APP_URL = os.getenv("APP_URL")
+
+# ── Product onboarding activation/lifecycle jobs ─────────────────────────
+# Fail closed by default: Cloud deployments must explicitly opt in before
+# scheduled onboarding jobs write/export/deliver activation data.
+ONBOARDING_CLOUD_ACTIVATION_JOBS_ENABLED = _env_bool(
+    "ONBOARDING_CLOUD_ACTIVATION_JOBS_ENABLED",
+    False,
+)
+ONBOARDING_LIFECYCLE_DRY_RUN_SCHEDULE_LIMIT = _env_int(
+    "ONBOARDING_LIFECYCLE_DRY_RUN_SCHEDULE_LIMIT",
+    500,
+)
+ONBOARDING_ACTIVATION_EXPORT_SCHEDULE_LIMIT = _env_int(
+    "ONBOARDING_ACTIVATION_EXPORT_SCHEDULE_LIMIT",
+    500,
+)
+ONBOARDING_ACTIVATION_EXPORT_DELIVERY_SCHEDULE_LIMIT = _env_int(
+    "ONBOARDING_ACTIVATION_EXPORT_DELIVERY_SCHEDULE_LIMIT",
+    250,
+)
+ONBOARDING_ACTIVATION_FACT_LIFECYCLE_IMPORT_SCHEDULE_LIMIT = _env_int(
+    "ONBOARDING_ACTIVATION_FACT_LIFECYCLE_IMPORT_SCHEDULE_LIMIT",
+    500,
+)
+ONBOARDING_LIFECYCLE_SEND_SCHEDULE_ENABLED = _env_bool(
+    "ONBOARDING_LIFECYCLE_SEND_SCHEDULE_ENABLED",
+    False,
+)
+ONBOARDING_LIFECYCLE_SEND_SCHEDULE_COHORT = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_SCHEDULE_COHORT",
+    "internal",
+)
+ONBOARDING_LIFECYCLE_SEND_SCHEDULE_LIMIT = _env_int(
+    "ONBOARDING_LIFECYCLE_SEND_SCHEDULE_LIMIT",
+    25,
+)
+ONBOARDING_LIFECYCLE_SEND_SCHEDULE_MAX_LIMIT = _env_int(
+    "ONBOARDING_LIFECYCLE_SEND_SCHEDULE_MAX_LIMIT",
+    100,
+)
+ONBOARDING_LIFECYCLE_SEND_SCHEDULE_CAMPAIGN_GROUP = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_SCHEDULE_CAMPAIGN_GROUP",
+    "",
+)
+ONBOARDING_LIFECYCLE_SEND_SCHEDULE_USER_ID = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_SCHEDULE_USER_ID",
+    "",
+)
+ONBOARDING_LIFECYCLE_SEND_SCHEDULE_WORKSPACE_ID = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_SCHEDULE_WORKSPACE_ID",
+    "",
+)
+ONBOARDING_LIFECYCLE_SEND_APPROVAL_MANIFEST = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_APPROVAL_MANIFEST",
+    "",
+)
+ONBOARDING_LIFECYCLE_SEND_APPROVAL_RECORD = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_APPROVAL_RECORD",
+    "",
+)
+ONBOARDING_LIFECYCLE_SEND_DRY_RUN_REPORT = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_DRY_RUN_REPORT",
+    "",
+)
+ONBOARDING_LIFECYCLE_SEND_DRY_RUN_REPORT_REVIEW_RECORD = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_DRY_RUN_REPORT_REVIEW_RECORD",
+    "",
+)
+ONBOARDING_LIFECYCLE_SEND_LAUNCH_PACKET = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_LAUNCH_PACKET",
+    "",
+)
+ONBOARDING_ACTIVATION_EXPORT_DELIVERY_URL = os.getenv(
+    "ONBOARDING_ACTIVATION_EXPORT_DELIVERY_URL",
+    "",
+)
+ONBOARDING_ACTIVATION_EXPORT_SHARED_SECRET = os.getenv(
+    "ONBOARDING_ACTIVATION_EXPORT_SHARED_SECRET",
+    "",
+)
+ONBOARDING_ACTIVATION_EXPORT_TIMEOUT_SECONDS = _env_int(
+    "ONBOARDING_ACTIVATION_EXPORT_TIMEOUT_SECONDS",
+    5,
+)
+ONBOARDING_LIFECYCLE_EMAIL_BASE_URL = os.getenv(
+    "ONBOARDING_LIFECYCLE_EMAIL_BASE_URL",
+    "",
+)
+ONBOARDING_LIFECYCLE_EMAIL_POSTAL_ADDRESS = os.getenv(
+    "ONBOARDING_LIFECYCLE_EMAIL_POSTAL_ADDRESS",
+    "Future AGI, Inc., 600 California St, San Francisco, CA 94108",
+)
+ONBOARDING_LIFECYCLE_SEND_ENVIRONMENT = os.getenv(
+    "ONBOARDING_LIFECYCLE_SEND_ENVIRONMENT",
+    "local",
+)
 
 # ── Billing ───────────────────────────────────────────────────
 BILLING_CONFIG_PATH = os.environ.get(
@@ -637,7 +755,7 @@ _ssl = "http://" if _is_local else "https://"
 ssl = _ssl  # exported — used by accounts.utils, accounts.views.workspace_management
 
 BASE_URL = os.getenv(
-    "BASE_URL", "http://localhost:8000" if _is_local else f"https://api.futureagi.com"
+    "BASE_URL", "http://localhost:8000" if _is_local else "https://api.futureagi.com"
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
 MINIO_URL = os.getenv(
@@ -780,19 +898,19 @@ WEBAUTHN_CHALLENGE_TTL = 120  # 2 minutes
 # to the legacy CLICKHOUSE dict above for connection details if not set
 # explicitly — see tracer/services/clickhouse/v2/__init__.py:get_v2_config().
 CLICKHOUSE_V2 = {
-    "CH25_HOST":      os.getenv("CH25_HOST"),
+    "CH25_HOST": os.getenv("CH25_HOST"),
     "CH25_HTTP_PORT": os.getenv("CH25_HTTP_PORT", "8123"),
-    "CH25_TCP_PORT":  os.getenv("CH25_TCP_PORT", "9000"),
-    "CH25_USER":      os.getenv("CH25_USER", "default"),
-    "CH25_PASSWORD":  os.getenv("CH25_PASSWORD", ""),
-    "CH25_DATABASE":  os.getenv("CH25_DATABASE", "default"),
+    "CH25_TCP_PORT": os.getenv("CH25_TCP_PORT", "9000"),
+    "CH25_USER": os.getenv("CH25_USER", "default"),
+    "CH25_PASSWORD": os.getenv("CH25_PASSWORD", ""),
+    "CH25_DATABASE": os.getenv("CH25_DATABASE", "default"),
     # ─── Per-query-type routing for the shadow-mode rollout ──────────────────
     # Comma-separated query type names. See tracer/services/clickhouse/v2/shadow.py
     # for RoutingMode definitions. Anything not listed defaults to V1_ONLY.
     "QUERY_TYPES_V2_PRIMARY": os.getenv("CH25_QUERY_TYPES_V2_PRIMARY", ""),
-    "QUERY_TYPES_V2_ONLY":    os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
-    "QUERY_TYPES_SHADOW":     os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
-    "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
+    "QUERY_TYPES_V2_ONLY": os.getenv("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
 # Eval-logger table read by the trace/voice/user eval-config discovery queries.

@@ -257,6 +257,7 @@ class GatewayPlaygroundTestResultSerializer(serializers.Serializer):
     body = serializers.JSONField()
     guardrail_headers = serializers.DictField(child=serializers.CharField())
     model = serializers.CharField()
+    request_id = serializers.CharField(required=False, allow_blank=True)
     blocked = serializers.BooleanField()
     warned = serializers.BooleanField()
 

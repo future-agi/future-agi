@@ -86,7 +86,7 @@ class ListTraceScoresTool(BaseTool):
             # means "scores for this specific span on this specific trace" —
             # intersect, don't OR. ORing would surface scores for spans
             # belonging to a DIFFERENT trace under the requested trace's
-            # title (codex review finding).
+            # title (review review finding).
             if params.trace_id:
                 scores = scores.filter(
                     observation_span_id=params.observation_span_id,

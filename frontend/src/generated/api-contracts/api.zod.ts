@@ -352,6 +352,1987 @@ export const AccountsAcceptInvitationCreateResponse = zod.object({
 
 
 
+export const accountsActivationEventsCreateBodyIdempotencyKeyMax = 160;
+
+export const accountsActivationEventsCreateBodyIsSampleDefault = false;
+
+export const AccountsActivationEventsCreateBody = zod.object({
+  "event_name": zod.string().min(1),
+  "primary_path": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "source": zod.string().optional(),
+  "artifact_type": zod.enum(['trace', 'observe_project', 'observe_setup', 'project', 'agent', 'agent_node', 'graph_execution', 'test_execution', 'call_execution', 'voice_agent', 'voice_call', 'voice_scenario', 'voice_test', 'dataset', 'eval', 'eval_group', 'eval_run', 'eval_scorer', 'eval_task', 'gateway', 'gateway_provider', 'gateway_key', 'gateway_request', 'gateway_policy', 'request_log']).optional(),
+  "artifact_id": zod.string().optional(),
+  "project_id": zod.string().optional(),
+  "metadata": zod.record(zod.string(), zod.string()).optional(),
+  "idempotency_key": zod.string().max(accountsActivationEventsCreateBodyIdempotencyKeyMax).optional(),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateBodyIsSampleDefault),
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "stale_reason": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']).optional()
+})
+
+export const accountsActivationEventsCreateResponseStatusDefault = true;
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateRecommendedActionIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateFallbackActionIsSampleDefault = false;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsProviderKeysDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsProviderKeysMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsDatasetsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsDatasetsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalRunsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalRunsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalSourceCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalSourceCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalScorerCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalScorerCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalGroupCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalGroupCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalRunCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalRunCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalFailureCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalFailureCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasSourceDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasScorerDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasCompletedRunDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasFailuresDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasReviewDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasFailureActionDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalFirstLoopCompletedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalIsSampleOnlyDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalSampleSourceCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalSampleSourceCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsEvalPermissionLimitedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptTemplatesDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptTemplatesMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptVersionsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptVersionsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptComparisonsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptComparisonsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptSampleTemplatesDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptSampleTemplatesMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptComparableVersionsExistDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptRunExistsDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptCommittedVersionExistsDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptComparisonCompletedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptNextLoopActionExistsDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsPromptFirstLoopCompletedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentPrototypeRunsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentPrototypeRunsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentSampleCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentSampleCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasAgentDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasAgentVersionDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasStepDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasScenarioDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasRunDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentRunFailedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasReviewDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasEvalCoverageDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentMultipleScenariosDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentFirstLoopCompletedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentVoiceFeatureUnavailableDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAgentPermissionLimitedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsObserveProjectsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsObserveProjectsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsTracesDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsTracesMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsTraceReviewsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsTraceReviewsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayKeysDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayKeysMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayPoliciesDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayPoliciesMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayAvailableDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayProviderCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayProviderCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayProviderModelCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayProviderModelCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasProviderDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasKeyDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasRequestDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestIsErrorDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestLatencyMsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestCacheHitDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestFallbackUsedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasReviewDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasFailureRepairDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasPolicyDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayPolicySyncedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayIsSampleOnlyDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewaySampleRequestCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewaySampleRequestCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayPermissionLimitedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayGuardBlockedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayFirstLoopCompletedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceAgentsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceAgentsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceSimulationsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceSimulationsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceReviewsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceReviewsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallDurationSecondsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallResponseTimeMsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallInterruptionCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceTranscriptAvailableDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceRecordingAvailableDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasAgentDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasScenarioDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasTestDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasCallDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasCompletedCallDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallFailedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasReviewDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasSuccessCriteriaDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceFirstLoopCompletedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceIsSampleOnlyDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceSampleCallCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceSampleCallCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsVoicePermissionLimitedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsTeamInvitesDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsTeamInvitesMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsDashboardsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsDashboardsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAlertsDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsAlertsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsSampleProjectOpenedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsSampleTraceAvailableDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsSampleSignalViewedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateSignalsSampleTraceReviewedDefault = false;
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault = false;
+
+
+
+
+
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateSampleProjectLabelDefault = `Sample`;
+export const accountsActivationEventsCreateResponseResultActivationStateSampleProjectIsRepairableDefault = false;
+
+export const accountsActivationEventsCreateResponseResultActivationStatePromptHasComparableVersionsDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStatePromptIsSampleDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStatePromptSamplePromptCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStatePromptSamplePromptCountMin = 0;
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateAgentIsSampleDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateAgentSampleAgentCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateAgentSampleAgentCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateAgentVoiceFeatureUnavailableDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateAgentPermissionLimitedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalFailureCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalFailureCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateEvalHasSourceDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalHasScorerDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalHasCompletedRunDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalHasFailuresDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalHasReviewDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalHasFailureActionDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalIsSampleDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalSampleSourceCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateEvalSampleSourceCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateEvalPermissionLimitedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceCallDurationSecondsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceCallResponseTimeMsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceCallInterruptionCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceTranscriptAvailableDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceRecordingAvailableDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceHasAgentDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceHasScenarioDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceHasTestDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceHasCallDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceHasCompletedCallDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceCallFailedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceHasReviewDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceHasSuccessCriteriaDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceIsSampleDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceSampleCallCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateVoiceSampleCallCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateVoicePermissionLimitedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayProviderCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayProviderCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayProviderModelCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayProviderModelCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayHasProviderDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayHasKeyDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayHasRequestDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayRequestIsErrorDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayRequestLatencyMsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayRequestCacheHitDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayRequestFallbackUsedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayHasReviewDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayHasFailureRepairDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayHasPolicyDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayPolicySyncedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayIsSampleDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewaySampleRequestCountDefault = 0;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewaySampleRequestCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayPermissionLimitedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateGatewayGuardBlockedDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateLifecycleSendEnabledDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateLifecycleDryRunOnlyDefault = true;
+
+
+
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityTopSignalIsSampleDefault = false;
+
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityPrimaryActionRouteAvailableDefault = true;
+
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityPrimaryActionIsOverdueDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityPrimaryActionIsPrimaryDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityPrimaryActionIsSampleDefault = false;
+
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityActionCardsItemRouteAvailableDefault = true;
+
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityActionCardsItemIsOverdueDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityActionCardsItemIsPrimaryDefault = false;
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityActionCardsItemIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityWeeklyReviewUnresolvedCountMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateDailyQualityWeeklyReviewCompletedCountMin = 0;
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateEmailEligibilityFrequencyCapRemainingMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateEmailEligibilityDryRunOnlyDefault = true;
+
+
+export const accountsActivationEventsCreateResponseResultActivationStateLastMeaningfulEventIsSampleDefault = false;
+
+export const accountsActivationEventsCreateResponseResultActivationStateValueSignalLatencyMsMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateValueSignalCostMin = 0;
+
+export const accountsActivationEventsCreateResponseResultActivationStateValueSignalTotalTokensMin = 0;
+
+
+
+
+
+
+
+
+
+
+export const AccountsActivationEventsCreateResponse = zod.object({
+  "status": zod.boolean().default(accountsActivationEventsCreateResponseStatusDefault),
+  "result": zod.object({
+  "event_id": zod.string().min(1),
+  "event_name": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_package_selected', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparable_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_node_added', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']),
+  "activation_state": zod.object({
+  "schema_version": zod.string().min(1),
+  "request_id": zod.string().min(1),
+  "server_time": zod.string().datetime({"offset":true}),
+  "workspace_id": zod.string().min(1),
+  "organization_id": zod.string().min(1),
+  "user_id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "persona": zod.string(),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "stage_copy": zod.object({
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1)
+}).optional(),
+  "home_mode": zod.enum(['first_run', 'daily_quality', 'fallback']),
+  "is_activated": zod.boolean(),
+  "activated_via": zod.enum(['workspace', 'organization']).optional(),
+  "activated_at": zod.string().datetime({"offset":true}),
+  "recommended_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateRecommendedActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "fallback_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateFallbackActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "progress": zod.object({
+  "build": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "test": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "observe": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "ship": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "improve": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only'])
+}),
+  "signals": zod.object({
+  "provider_keys": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsProviderKeysMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsProviderKeysDefault),
+  "datasets": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsDatasetsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsDatasetsDefault),
+  "evals": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalsDefault),
+  "eval_runs": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalRunsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalRunsDefault),
+  "eval_source_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalSourceCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalSourceCountDefault),
+  "eval_source_type": zod.string().optional(),
+  "eval_source_id": zod.string().optional(),
+  "eval_source_name": zod.string().optional(),
+  "eval_scorer_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalScorerCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalScorerCountDefault),
+  "eval_scorer_id": zod.string().optional(),
+  "eval_scorer_template_id": zod.string().optional(),
+  "eval_scorer_name": zod.string().optional(),
+  "eval_group_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalGroupCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalGroupCountDefault),
+  "eval_group_id": zod.string().optional(),
+  "eval_run_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalRunCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalRunCountDefault),
+  "eval_run_id": zod.string().optional(),
+  "eval_run_status": zod.string().optional(),
+  "eval_run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_failure_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalFailureCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalFailureCountDefault),
+  "eval_has_source": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasSourceDefault),
+  "eval_has_scorer": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasScorerDefault),
+  "eval_has_completed_run": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasCompletedRunDefault),
+  "eval_has_failures": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasFailuresDefault),
+  "eval_has_review": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasReviewDefault),
+  "eval_has_failure_action": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalHasFailureActionDefault),
+  "eval_first_loop_completed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalFirstLoopCompletedDefault),
+  "eval_is_sample_only": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalIsSampleOnlyDefault),
+  "eval_sample_source_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalSampleSourceCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalSampleSourceCountDefault),
+  "eval_permission_limited": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsEvalPermissionLimitedDefault),
+  "prompt_templates": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptTemplatesMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptTemplatesDefault),
+  "prompt_versions": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptVersionsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptVersionsDefault),
+  "prompt_comparisons": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptComparisonsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptComparisonsDefault),
+  "first_prompt_id": zod.string().optional(),
+  "latest_prompt_id": zod.string().optional(),
+  "prompt_sample_templates": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptSampleTemplatesMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptSampleTemplatesDefault),
+  "prompt_comparable_versions_exist": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptComparableVersionsExistDefault),
+  "prompt_run_exists": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptRunExistsDefault),
+  "prompt_committed_version_exists": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptCommittedVersionExistsDefault),
+  "prompt_comparison_completed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptComparisonCompletedDefault),
+  "prompt_next_loop_action_exists": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptNextLoopActionExistsDefault),
+  "prompt_first_loop_completed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsPromptFirstLoopCompletedDefault),
+  "agents": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentsDefault),
+  "agent_prototype_runs": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentPrototypeRunsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentPrototypeRunsDefault),
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "agent_scenario_id": zod.string().optional(),
+  "agent_test_id": zod.string().optional(),
+  "agent_execution_id": zod.string().optional(),
+  "agent_call_execution_id": zod.string().optional(),
+  "agent_graph_execution_id": zod.string().optional(),
+  "agent_run_status": zod.string().optional(),
+  "agent_sample_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentSampleCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentSampleCountDefault),
+  "agent_has_agent": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasAgentDefault),
+  "agent_has_agent_version": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasAgentVersionDefault),
+  "agent_has_step": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasStepDefault),
+  "agent_has_scenario": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasScenarioDefault),
+  "agent_has_run": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasRunDefault),
+  "agent_run_failed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentRunFailedDefault),
+  "agent_has_review": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasReviewDefault),
+  "agent_has_eval_coverage": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentHasEvalCoverageDefault),
+  "agent_multiple_scenarios": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentMultipleScenariosDefault),
+  "agent_first_loop_completed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentFirstLoopCompletedDefault),
+  "agent_voice_feature_unavailable": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentVoiceFeatureUnavailableDefault),
+  "agent_permission_limited": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsAgentPermissionLimitedDefault),
+  "observe_projects": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsObserveProjectsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsObserveProjectsDefault),
+  "traces": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsTracesMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsTracesDefault),
+  "trace_reviews": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsTraceReviewsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsTraceReviewsDefault),
+  "gateway_keys": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayKeysMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayKeysDefault),
+  "gateway_requests": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestsDefault),
+  "gateway_policies": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayPoliciesMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayPoliciesDefault),
+  "gateway_available": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayAvailableDefault),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "gateway_provider_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayProviderCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayProviderCountDefault),
+  "gateway_provider_credential_id": zod.string().optional(),
+  "gateway_provider_name": zod.string().optional(),
+  "gateway_provider_health_status": zod.string().optional(),
+  "gateway_provider_model_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayProviderModelCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayProviderModelCountDefault),
+  "gateway_has_provider": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasProviderDefault),
+  "gateway_has_key": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "gateway_key_prefix": zod.string().optional(),
+  "gateway_key_status": zod.string().optional(),
+  "gateway_has_request": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasRequestDefault),
+  "gateway_request_log_id": zod.string().optional(),
+  "gateway_request_id": zod.string().optional(),
+  "gateway_request_status_code": zod.number().optional(),
+  "gateway_request_is_error": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestIsErrorDefault),
+  "gateway_request_error_message": zod.string().optional(),
+  "gateway_request_provider": zod.string().optional(),
+  "gateway_request_model": zod.string().optional(),
+  "gateway_request_resolved_model": zod.string().optional(),
+  "gateway_request_latency_ms": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestLatencyMsMin).optional(),
+  "gateway_request_cost": zod.string().optional(),
+  "gateway_request_cache_hit": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestCacheHitDefault),
+  "gateway_request_fallback_used": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestFallbackUsedDefault),
+  "gateway_request_guardrail_triggered": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayRequestGuardrailTriggeredDefault),
+  "gateway_has_review": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasReviewDefault),
+  "gateway_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "gateway_has_failure_repair": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasFailureRepairDefault),
+  "gateway_has_policy": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayHasPolicyDefault),
+  "gateway_policy_type": zod.string().optional(),
+  "gateway_policy_id": zod.string().optional(),
+  "gateway_policy_route": zod.string().optional(),
+  "gateway_policy_synced": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayPolicySyncedDefault),
+  "gateway_is_sample_only": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayIsSampleOnlyDefault),
+  "gateway_sample_request_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewaySampleRequestCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewaySampleRequestCountDefault),
+  "gateway_permission_limited": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayPermissionLimitedDefault),
+  "gateway_guard_blocked": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayGuardBlockedDefault),
+  "gateway_first_loop_completed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsGatewayFirstLoopCompletedDefault),
+  "voice_agents": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceAgentsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceAgentsDefault),
+  "voice_simulations": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceSimulationsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceSimulationsDefault),
+  "voice_calls": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallsDefault),
+  "voice_reviews": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceReviewsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceReviewsDefault),
+  "voice_agent_id": zod.string().optional(),
+  "voice_agent_name": zod.string().optional(),
+  "voice_agent_provider": zod.string().optional(),
+  "voice_agent_version_id": zod.string().optional(),
+  "voice_scenario_id": zod.string().optional(),
+  "voice_run_test_id": zod.string().optional(),
+  "voice_test_execution_id": zod.string().optional(),
+  "voice_call_execution_id": zod.string().optional(),
+  "voice_call_status": zod.string().optional(),
+  "voice_call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "voice_call_duration_seconds": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallDurationSecondsMin).optional(),
+  "voice_call_response_time_ms": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallResponseTimeMsMin).optional(),
+  "voice_call_interruption_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallInterruptionCountMin).optional(),
+  "voice_transcript_available": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceTranscriptAvailableDefault),
+  "voice_recording_available": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceRecordingAvailableDefault),
+  "voice_has_agent": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasAgentDefault),
+  "voice_has_scenario": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasScenarioDefault),
+  "voice_has_test": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasTestDefault),
+  "voice_has_call": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasCallDefault),
+  "voice_has_completed_call": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasCompletedCallDefault),
+  "voice_call_failed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceCallFailedDefault),
+  "voice_has_review": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasReviewDefault),
+  "voice_has_success_criteria": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceHasSuccessCriteriaDefault),
+  "voice_first_loop_completed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceFirstLoopCompletedDefault),
+  "voice_is_sample_only": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceIsSampleOnlyDefault),
+  "voice_sample_call_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceSampleCallCountMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoiceSampleCallCountDefault),
+  "voice_permission_limited": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsVoicePermissionLimitedDefault),
+  "team_invites": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsTeamInvitesMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsTeamInvitesDefault),
+  "dashboards": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsDashboardsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsDashboardsDefault),
+  "alerts": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateSignalsAlertsMin).default(accountsActivationEventsCreateResponseResultActivationStateSignalsAlertsDefault),
+  "first_trace_id": zod.string().optional(),
+  "first_observe_id": zod.string().optional(),
+  "sample_project_opened": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsSampleProjectOpenedDefault),
+  "sample_trace_available": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsSampleTraceAvailableDefault),
+  "sample_signal_viewed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsSampleSignalViewedDefault),
+  "sample_trace_reviewed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSignalsSampleTraceReviewedDefault)
+}),
+  "available_goals": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "outcome_preview": zod.string().optional(),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "disabled": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault),
+  "disabled_reason": zod.string().optional()
+})).optional(),
+  "available_paths": zod.array(zod.object({
+  "id": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only', 'hidden']),
+  "href": zod.string().min(1),
+  "is_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "first_action_id": zod.string().optional()
+})),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_package_selected', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparable_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_node_added', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
+  "sample_project": zod.object({
+  "available": zod.boolean(),
+  "created": zod.boolean(),
+  "status": zod.enum(['not_created', 'unavailable', 'available', 'creating', 'ready_for_observe', 'partially_ready', 'ready', 'partial', 'hidden', 'stale_manifest', 'repair_required', 'repair_failed']),
+  "href": zod.string(),
+  "version": zod.string(),
+  "manifest_id": zod.string().optional(),
+  "manifest_version": zod.string().optional(),
+  "label": zod.string().default(accountsActivationEventsCreateResponseResultActivationStateSampleProjectLabelDefault),
+  "entry_route": zod.string().optional(),
+  "is_repairable": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateSampleProjectIsRepairableDefault),
+  "blocked_reason": zod.string().optional(),
+  "artifact_refs": zod.object({
+
+}).passthrough().optional(),
+  "health": zod.object({
+
+}).passthrough().optional(),
+  "real_setup_href": zod.string().optional(),
+  "is_hidden": zod.boolean(),
+  "hidden_reason": zod.string().optional(),
+  "entry_routes": zod.array(zod.string().min(1)),
+  "missing_artifacts": zod.array(zod.string().min(1)),
+  "last_opened_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "prompt": zod.object({
+  "prompt_id": zod.string().optional(),
+  "prompt_name": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_real_prompt": zod.boolean(),
+  "has_test_run": zod.boolean(),
+  "has_committed_version": zod.boolean(),
+  "has_comparable_versions": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStatePromptHasComparableVersionsDefault),
+  "has_comparison": zod.boolean(),
+  "has_next_loop_action": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStatePromptIsSampleDefault),
+  "sample_prompt_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStatePromptSamplePromptCountMin).default(accountsActivationEventsCreateResponseResultActivationStatePromptSamplePromptCountDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "agent": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "test_id": zod.string().optional(),
+  "execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "graph_execution_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean(),
+  "has_agent_version": zod.boolean(),
+  "has_step": zod.boolean(),
+  "has_scenario": zod.boolean(),
+  "has_run": zod.boolean(),
+  "has_review": zod.boolean(),
+  "has_eval_coverage": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateAgentIsSampleDefault),
+  "sample_agent_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateAgentSampleAgentCountMin).default(accountsActivationEventsCreateResponseResultActivationStateAgentSampleAgentCountDefault),
+  "voice_feature_unavailable": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateAgentVoiceFeatureUnavailableDefault),
+  "permission_limited": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateAgentPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "eval": zod.object({
+  "source_type": zod.string().optional(),
+  "source_id": zod.string().optional(),
+  "source_name": zod.string().optional(),
+  "scorer_id": zod.string().optional(),
+  "scorer_template_id": zod.string().optional(),
+  "scorer_name": zod.string().optional(),
+  "eval_group_id": zod.string().optional(),
+  "run_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateEvalFailureCountMin).default(accountsActivationEventsCreateResponseResultActivationStateEvalFailureCountDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_action_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_source": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateEvalHasSourceDefault),
+  "has_scorer": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateEvalHasScorerDefault),
+  "has_completed_run": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateEvalHasCompletedRunDefault),
+  "has_failures": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateEvalHasFailuresDefault),
+  "has_review": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateEvalHasReviewDefault),
+  "has_failure_action": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateEvalHasFailureActionDefault),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateEvalIsSampleDefault),
+  "sample_source_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateEvalSampleSourceCountMin).default(accountsActivationEventsCreateResponseResultActivationStateEvalSampleSourceCountDefault),
+  "permission_limited": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateEvalPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "voice": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_name": zod.string().optional(),
+  "agent_provider": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "run_test_id": zod.string().optional(),
+  "test_execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "call_status": zod.string().optional(),
+  "call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "call_duration_seconds": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateVoiceCallDurationSecondsMin).optional(),
+  "call_response_time_ms": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateVoiceCallResponseTimeMsMin).optional(),
+  "call_interruption_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateVoiceCallInterruptionCountMin).optional(),
+  "transcript_available": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceTranscriptAvailableDefault),
+  "recording_available": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceRecordingAvailableDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "success_criteria_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_config_id": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceHasAgentDefault),
+  "has_scenario": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceHasScenarioDefault),
+  "has_test": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceHasTestDefault),
+  "has_call": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceHasCallDefault),
+  "has_completed_call": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceHasCompletedCallDefault),
+  "call_failed": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceCallFailedDefault),
+  "has_review": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceHasReviewDefault),
+  "has_success_criteria": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceHasSuccessCriteriaDefault),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoiceIsSampleDefault),
+  "sample_call_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateVoiceSampleCallCountMin).default(accountsActivationEventsCreateResponseResultActivationStateVoiceSampleCallCountDefault),
+  "permission_limited": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateVoicePermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "gateway": zod.object({
+  "gateway_available": zod.boolean(),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "provider_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateGatewayProviderCountMin).default(accountsActivationEventsCreateResponseResultActivationStateGatewayProviderCountDefault),
+  "provider_credential_id": zod.string().optional(),
+  "provider_name": zod.string().optional(),
+  "provider_health_status": zod.string().optional(),
+  "provider_model_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateGatewayProviderModelCountMin).default(accountsActivationEventsCreateResponseResultActivationStateGatewayProviderModelCountDefault),
+  "has_provider": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayHasProviderDefault),
+  "has_key": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "key_prefix": zod.string().optional(),
+  "key_status": zod.string().optional(),
+  "has_request": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayHasRequestDefault),
+  "request_log_id": zod.string().optional(),
+  "request_id": zod.string().optional(),
+  "request_status_code": zod.number().optional(),
+  "request_is_error": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayRequestIsErrorDefault),
+  "request_error_message": zod.string().optional(),
+  "request_provider": zod.string().optional(),
+  "request_model": zod.string().optional(),
+  "request_resolved_model": zod.string().optional(),
+  "request_latency_ms": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateGatewayRequestLatencyMsMin).optional(),
+  "request_cost": zod.string().optional(),
+  "request_cache_hit": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayRequestCacheHitDefault),
+  "request_fallback_used": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayRequestFallbackUsedDefault),
+  "request_guardrail_triggered": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayRequestGuardrailTriggeredDefault),
+  "has_review": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayHasReviewDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "has_failure_repair": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayHasFailureRepairDefault),
+  "has_policy": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayHasPolicyDefault),
+  "policy_type": zod.string().optional(),
+  "policy_id": zod.string().optional(),
+  "policy_route": zod.string().optional(),
+  "policy_synced": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayPolicySyncedDefault),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayIsSampleDefault),
+  "sample_request_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateGatewaySampleRequestCountMin).default(accountsActivationEventsCreateResponseResultActivationStateGatewaySampleRequestCountDefault),
+  "permission_limited": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayPermissionLimitedDefault),
+  "guard_blocked": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateGatewayGuardBlockedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data'])
+}).optional(),
+  "lifecycle": zod.object({
+  "dry_run_enabled": zod.boolean(),
+  "send_enabled": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateLifecycleSendEnabledDefault),
+  "status": zod.enum(['eligible', 'suppressed', 'skipped', 'error']),
+  "next_campaign_key": zod.string().optional(),
+  "template_key": zod.string().optional(),
+  "eligible_at": zod.string().datetime({"offset":true}).optional(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "target_success_event": zod.string().optional(),
+  "target_action_id": zod.string().optional(),
+  "target_url": zod.string().optional(),
+  "dry_run_only": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateLifecycleDryRunOnlyDefault)
+}).optional(),
+  "daily_quality": zod.object({
+  "mode": zod.enum(['new_signal', 'open_action', 'no_new_signal', 'permission_limited', 'unavailable']),
+  "last_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "top_signal": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "type": zod.enum(['trace_failure', 'prompt_quality_review', 'span_latency', 'span_cost', 'agent_run_issue', 'gateway_request_issue', 'eval_failure', 'voice_call_issue', 'alert_triggered', 'feed_issue', 'dashboard_missing', 'alert_missing', 'evaluator_missing', 'saved_view_missing']),
+  "severity": zod.enum(['critical', 'warning', 'info']),
+  "title": zod.string().min(1),
+  "body": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1),
+  "project_id": zod.string().min(1).optional(),
+  "route": zod.string().min(1),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateDailyQualityTopSignalIsSampleDefault),
+  "created_at": zod.string().datetime({"offset":true})
+}).optional(),
+  "primary_action": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateDailyQualityPrimaryActionRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateDailyQualityPrimaryActionIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateDailyQualityPrimaryActionIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateDailyQualityPrimaryActionIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+}).optional(),
+  "action_cards": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateDailyQualityActionCardsItemRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateDailyQualityActionCardsItemIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateDailyQualityActionCardsItemIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateDailyQualityActionCardsItemIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+})).optional(),
+  "product_cards": zod.array(zod.object({
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "status": zod.string().min(1),
+  "label": zod.string().min(1),
+  "summary": zod.string().min(1),
+  "metric": zod.string().min(1),
+  "change": zod.string().optional(),
+  "route": zod.string().min(1)
+})).optional(),
+  "weekly_review": zod.object({
+  "due": zod.boolean(),
+  "status": zod.enum(['due', 'not_due', 'permission_limited', 'flag_disabled', 'no_useful_signal', 'completed_recently']),
+  "route": zod.string().min(1),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "summary": zod.string().min(1),
+  "unresolved_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateDailyQualityWeeklyReviewUnresolvedCountMin),
+  "completed_count": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateDailyQualityWeeklyReviewCompletedCountMin),
+  "last_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "action_label": zod.string().optional()
+}).optional(),
+  "digest_eligible": zod.boolean(),
+  "digest_suppression_reason": zod.string().optional(),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "email_eligibility": zod.object({
+  "eligible": zod.boolean(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "next_email_key": zod.string().optional(),
+  "next_email_after": zod.string().datetime({"offset":true}).optional(),
+  "digest_eligible": zod.boolean(),
+  "last_email_sent_at": zod.string().datetime({"offset":true}).optional(),
+  "frequency_cap_remaining": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateEmailEligibilityFrequencyCapRemainingMin),
+  "dry_run_only": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateEmailEligibilityDryRunOnlyDefault)
+}),
+  "permissions": zod.object({
+  "role": zod.string(),
+  "can_read": zod.boolean(),
+  "can_write": zod.boolean(),
+  "can_manage_workspace": zod.boolean(),
+  "missing_permissions": zod.array(zod.string().min(1)),
+  "request_access_href": zod.string().optional(),
+  "permission_limited": zod.boolean()
+}),
+  "feature_flags": zod.record(zod.string(), zod.boolean()),
+  "route_availability": zod.object({
+
+}).passthrough(),
+  "email_context": zod.object({
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "target_route": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']),
+  "stale_reason": zod.string().optional(),
+  "resolved_href": zod.string().min(1)
+}),
+  "last_meaningful_event": zod.object({
+  "name": zod.string().min(1),
+  "occurred_at": zod.string().datetime({"offset":true}),
+  "is_sample": zod.boolean().default(accountsActivationEventsCreateResponseResultActivationStateLastMeaningfulEventIsSampleDefault),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "metadata": zod.record(zod.string(), zod.string()).optional()
+}),
+  "value_signal": zod.object({
+  "kind": zod.enum(['observe_trace_metrics', 'prompt_quality_loop', 'agent_quality_loop', 'gateway_routing_loop', 'eval_quality_loop', 'voice_quality_loop']).optional(),
+  "headline": zod.string().optional(),
+  "summary": zod.string().optional(),
+  "metrics": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "value": zod.string().min(1)
+})).optional(),
+  "latency_ms": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateValueSignalLatencyMsMin).optional(),
+  "cost": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateValueSignalCostMin).optional(),
+  "total_tokens": zod.number().min(accountsActivationEventsCreateResponseResultActivationStateValueSignalTotalTokensMin).optional()
+}).optional(),
+  "diagnostics": zod.object({
+  "resolver_version": zod.string().min(1),
+  "decision_reason": zod.string().min(1),
+  "matched_rule": zod.string().min(1),
+  "candidate_actions": zod.array(zod.string().min(1)),
+  "suppressed_actions": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "reason": zod.string().min(1)
+})),
+  "evaluated_at": zod.string().datetime({"offset":true})
+}),
+  "warnings": zod.array(zod.string().min(1))
+})
+})
+})
+
+
+export const accountsActivationStateListQueryQuickStartIdRegExp = new RegExp('^[a-z0-9_:-]{1,80}$');
+
+
+export const AccountsActivationStateListQueryParams = zod.object({
+  "source": zod.string().optional(),
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "target_route": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "status": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "stale_reason": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']).optional(),
+  "mode": zod.string().optional(),
+  "quick_start_goal": zod.string().optional(),
+  "quick_start_id": zod.string().regex(accountsActivationStateListQueryQuickStartIdRegExp).optional(),
+  "quick_start_primary_path": zod.string().optional(),
+  "debug": zod.boolean().optional()
+})
+
+export const accountsActivationStateListResponseStatusDefault = true;
+
+
+
+
+
+
+
+
+
+
+
+
+export const accountsActivationStateListResponseResultRecommendedActionIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsActivationStateListResponseResultFallbackActionIsSampleDefault = false;
+
+export const accountsActivationStateListResponseResultSignalsProviderKeysDefault = 0;
+export const accountsActivationStateListResponseResultSignalsProviderKeysMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsDatasetsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsDatasetsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsEvalsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsEvalsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsEvalRunsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsEvalRunsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsEvalSourceCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsEvalSourceCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsEvalScorerCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsEvalScorerCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsEvalGroupCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsEvalGroupCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsEvalRunCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsEvalRunCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsEvalFailureCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsEvalFailureCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsEvalHasSourceDefault = false;
+export const accountsActivationStateListResponseResultSignalsEvalHasScorerDefault = false;
+export const accountsActivationStateListResponseResultSignalsEvalHasCompletedRunDefault = false;
+export const accountsActivationStateListResponseResultSignalsEvalHasFailuresDefault = false;
+export const accountsActivationStateListResponseResultSignalsEvalHasReviewDefault = false;
+export const accountsActivationStateListResponseResultSignalsEvalHasFailureActionDefault = false;
+export const accountsActivationStateListResponseResultSignalsEvalFirstLoopCompletedDefault = false;
+export const accountsActivationStateListResponseResultSignalsEvalIsSampleOnlyDefault = false;
+export const accountsActivationStateListResponseResultSignalsEvalSampleSourceCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsEvalSampleSourceCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsEvalPermissionLimitedDefault = false;
+export const accountsActivationStateListResponseResultSignalsPromptTemplatesDefault = 0;
+export const accountsActivationStateListResponseResultSignalsPromptTemplatesMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsPromptVersionsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsPromptVersionsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsPromptComparisonsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsPromptComparisonsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsPromptSampleTemplatesDefault = 0;
+export const accountsActivationStateListResponseResultSignalsPromptSampleTemplatesMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsPromptComparableVersionsExistDefault = false;
+export const accountsActivationStateListResponseResultSignalsPromptRunExistsDefault = false;
+export const accountsActivationStateListResponseResultSignalsPromptCommittedVersionExistsDefault = false;
+export const accountsActivationStateListResponseResultSignalsPromptComparisonCompletedDefault = false;
+export const accountsActivationStateListResponseResultSignalsPromptNextLoopActionExistsDefault = false;
+export const accountsActivationStateListResponseResultSignalsPromptFirstLoopCompletedDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsAgentsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsAgentPrototypeRunsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsAgentPrototypeRunsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsAgentSampleCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsAgentSampleCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsAgentHasAgentDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentHasAgentVersionDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentHasStepDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentHasScenarioDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentHasRunDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentRunFailedDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentHasReviewDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentHasEvalCoverageDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentMultipleScenariosDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentFirstLoopCompletedDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentVoiceFeatureUnavailableDefault = false;
+export const accountsActivationStateListResponseResultSignalsAgentPermissionLimitedDefault = false;
+export const accountsActivationStateListResponseResultSignalsObserveProjectsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsObserveProjectsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsTracesDefault = 0;
+export const accountsActivationStateListResponseResultSignalsTracesMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsTraceReviewsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsTraceReviewsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsGatewayKeysDefault = 0;
+export const accountsActivationStateListResponseResultSignalsGatewayKeysMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsGatewayRequestsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsGatewayRequestsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsGatewayPoliciesDefault = 0;
+export const accountsActivationStateListResponseResultSignalsGatewayPoliciesMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsGatewayAvailableDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayProviderCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsGatewayProviderCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsGatewayProviderModelCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsGatewayProviderModelCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsGatewayHasProviderDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayHasKeyDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayHasRequestDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayRequestIsErrorDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayRequestLatencyMsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsGatewayRequestCacheHitDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayRequestFallbackUsedDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayHasReviewDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayHasFailureRepairDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayHasPolicyDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayPolicySyncedDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayIsSampleOnlyDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewaySampleRequestCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsGatewaySampleRequestCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsGatewayPermissionLimitedDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayGuardBlockedDefault = false;
+export const accountsActivationStateListResponseResultSignalsGatewayFirstLoopCompletedDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceAgentsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsVoiceAgentsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsVoiceSimulationsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsVoiceSimulationsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsVoiceCallsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsVoiceCallsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsVoiceReviewsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsVoiceReviewsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsVoiceCallDurationSecondsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsVoiceCallResponseTimeMsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsVoiceCallInterruptionCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsVoiceTranscriptAvailableDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceRecordingAvailableDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceHasAgentDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceHasScenarioDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceHasTestDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceHasCallDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceHasCompletedCallDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceCallFailedDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceHasReviewDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceHasSuccessCriteriaDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceFirstLoopCompletedDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceIsSampleOnlyDefault = false;
+export const accountsActivationStateListResponseResultSignalsVoiceSampleCallCountDefault = 0;
+export const accountsActivationStateListResponseResultSignalsVoiceSampleCallCountMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsVoicePermissionLimitedDefault = false;
+export const accountsActivationStateListResponseResultSignalsTeamInvitesDefault = 0;
+export const accountsActivationStateListResponseResultSignalsTeamInvitesMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsDashboardsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsDashboardsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsAlertsDefault = 0;
+export const accountsActivationStateListResponseResultSignalsAlertsMin = 0;
+
+export const accountsActivationStateListResponseResultSignalsSampleProjectOpenedDefault = false;
+export const accountsActivationStateListResponseResultSignalsSampleTraceAvailableDefault = false;
+export const accountsActivationStateListResponseResultSignalsSampleSignalViewedDefault = false;
+export const accountsActivationStateListResponseResultSignalsSampleTraceReviewedDefault = false;
+
+
+
+export const accountsActivationStateListResponseResultAvailableGoalsItemDisabledDefault = false;
+
+
+
+
+
+
+
+
+export const accountsActivationStateListResponseResultJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
+export const accountsActivationStateListResponseResultSampleProjectLabelDefault = `Sample`;
+export const accountsActivationStateListResponseResultSampleProjectIsRepairableDefault = false;
+
+export const accountsActivationStateListResponseResultPromptHasComparableVersionsDefault = false;
+export const accountsActivationStateListResponseResultPromptIsSampleDefault = false;
+export const accountsActivationStateListResponseResultPromptSamplePromptCountDefault = 0;
+export const accountsActivationStateListResponseResultPromptSamplePromptCountMin = 0;
+
+
+export const accountsActivationStateListResponseResultAgentIsSampleDefault = false;
+export const accountsActivationStateListResponseResultAgentSampleAgentCountDefault = 0;
+export const accountsActivationStateListResponseResultAgentSampleAgentCountMin = 0;
+
+export const accountsActivationStateListResponseResultAgentVoiceFeatureUnavailableDefault = false;
+export const accountsActivationStateListResponseResultAgentPermissionLimitedDefault = false;
+export const accountsActivationStateListResponseResultEvalFailureCountDefault = 0;
+export const accountsActivationStateListResponseResultEvalFailureCountMin = 0;
+
+export const accountsActivationStateListResponseResultEvalHasSourceDefault = false;
+export const accountsActivationStateListResponseResultEvalHasScorerDefault = false;
+export const accountsActivationStateListResponseResultEvalHasCompletedRunDefault = false;
+export const accountsActivationStateListResponseResultEvalHasFailuresDefault = false;
+export const accountsActivationStateListResponseResultEvalHasReviewDefault = false;
+export const accountsActivationStateListResponseResultEvalHasFailureActionDefault = false;
+export const accountsActivationStateListResponseResultEvalIsSampleDefault = false;
+export const accountsActivationStateListResponseResultEvalSampleSourceCountDefault = 0;
+export const accountsActivationStateListResponseResultEvalSampleSourceCountMin = 0;
+
+export const accountsActivationStateListResponseResultEvalPermissionLimitedDefault = false;
+export const accountsActivationStateListResponseResultVoiceCallDurationSecondsMin = 0;
+
+export const accountsActivationStateListResponseResultVoiceCallResponseTimeMsMin = 0;
+
+export const accountsActivationStateListResponseResultVoiceCallInterruptionCountMin = 0;
+
+export const accountsActivationStateListResponseResultVoiceTranscriptAvailableDefault = false;
+export const accountsActivationStateListResponseResultVoiceRecordingAvailableDefault = false;
+export const accountsActivationStateListResponseResultVoiceHasAgentDefault = false;
+export const accountsActivationStateListResponseResultVoiceHasScenarioDefault = false;
+export const accountsActivationStateListResponseResultVoiceHasTestDefault = false;
+export const accountsActivationStateListResponseResultVoiceHasCallDefault = false;
+export const accountsActivationStateListResponseResultVoiceHasCompletedCallDefault = false;
+export const accountsActivationStateListResponseResultVoiceCallFailedDefault = false;
+export const accountsActivationStateListResponseResultVoiceHasReviewDefault = false;
+export const accountsActivationStateListResponseResultVoiceHasSuccessCriteriaDefault = false;
+export const accountsActivationStateListResponseResultVoiceIsSampleDefault = false;
+export const accountsActivationStateListResponseResultVoiceSampleCallCountDefault = 0;
+export const accountsActivationStateListResponseResultVoiceSampleCallCountMin = 0;
+
+export const accountsActivationStateListResponseResultVoicePermissionLimitedDefault = false;
+export const accountsActivationStateListResponseResultGatewayProviderCountDefault = 0;
+export const accountsActivationStateListResponseResultGatewayProviderCountMin = 0;
+
+export const accountsActivationStateListResponseResultGatewayProviderModelCountDefault = 0;
+export const accountsActivationStateListResponseResultGatewayProviderModelCountMin = 0;
+
+export const accountsActivationStateListResponseResultGatewayHasProviderDefault = false;
+export const accountsActivationStateListResponseResultGatewayHasKeyDefault = false;
+export const accountsActivationStateListResponseResultGatewayHasRequestDefault = false;
+export const accountsActivationStateListResponseResultGatewayRequestIsErrorDefault = false;
+export const accountsActivationStateListResponseResultGatewayRequestLatencyMsMin = 0;
+
+export const accountsActivationStateListResponseResultGatewayRequestCacheHitDefault = false;
+export const accountsActivationStateListResponseResultGatewayRequestFallbackUsedDefault = false;
+export const accountsActivationStateListResponseResultGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsActivationStateListResponseResultGatewayHasReviewDefault = false;
+export const accountsActivationStateListResponseResultGatewayHasFailureRepairDefault = false;
+export const accountsActivationStateListResponseResultGatewayHasPolicyDefault = false;
+export const accountsActivationStateListResponseResultGatewayPolicySyncedDefault = false;
+export const accountsActivationStateListResponseResultGatewayIsSampleDefault = false;
+export const accountsActivationStateListResponseResultGatewaySampleRequestCountDefault = 0;
+export const accountsActivationStateListResponseResultGatewaySampleRequestCountMin = 0;
+
+export const accountsActivationStateListResponseResultGatewayPermissionLimitedDefault = false;
+export const accountsActivationStateListResponseResultGatewayGuardBlockedDefault = false;
+export const accountsActivationStateListResponseResultLifecycleSendEnabledDefault = false;
+export const accountsActivationStateListResponseResultLifecycleDryRunOnlyDefault = true;
+
+
+
+
+
+
+export const accountsActivationStateListResponseResultDailyQualityTopSignalIsSampleDefault = false;
+
+
+
+
+export const accountsActivationStateListResponseResultDailyQualityPrimaryActionRouteAvailableDefault = true;
+
+export const accountsActivationStateListResponseResultDailyQualityPrimaryActionIsOverdueDefault = false;
+export const accountsActivationStateListResponseResultDailyQualityPrimaryActionIsPrimaryDefault = false;
+export const accountsActivationStateListResponseResultDailyQualityPrimaryActionIsSampleDefault = false;
+
+
+
+
+export const accountsActivationStateListResponseResultDailyQualityActionCardsItemRouteAvailableDefault = true;
+
+export const accountsActivationStateListResponseResultDailyQualityActionCardsItemIsOverdueDefault = false;
+export const accountsActivationStateListResponseResultDailyQualityActionCardsItemIsPrimaryDefault = false;
+export const accountsActivationStateListResponseResultDailyQualityActionCardsItemIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsActivationStateListResponseResultDailyQualityWeeklyReviewUnresolvedCountMin = 0;
+
+export const accountsActivationStateListResponseResultDailyQualityWeeklyReviewCompletedCountMin = 0;
+
+
+export const accountsActivationStateListResponseResultEmailEligibilityFrequencyCapRemainingMin = 0;
+
+export const accountsActivationStateListResponseResultEmailEligibilityDryRunOnlyDefault = true;
+
+
+export const accountsActivationStateListResponseResultLastMeaningfulEventIsSampleDefault = false;
+
+export const accountsActivationStateListResponseResultValueSignalLatencyMsMin = 0;
+
+export const accountsActivationStateListResponseResultValueSignalCostMin = 0;
+
+export const accountsActivationStateListResponseResultValueSignalTotalTokensMin = 0;
+
+
+
+
+
+
+
+
+
+
+export const AccountsActivationStateListResponse = zod.object({
+  "status": zod.boolean().default(accountsActivationStateListResponseStatusDefault),
+  "result": zod.object({
+  "schema_version": zod.string().min(1),
+  "request_id": zod.string().min(1),
+  "server_time": zod.string().datetime({"offset":true}),
+  "workspace_id": zod.string().min(1),
+  "organization_id": zod.string().min(1),
+  "user_id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "persona": zod.string(),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "stage_copy": zod.object({
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1)
+}).optional(),
+  "home_mode": zod.enum(['first_run', 'daily_quality', 'fallback']),
+  "is_activated": zod.boolean(),
+  "activated_via": zod.enum(['workspace', 'organization']).optional(),
+  "activated_at": zod.string().datetime({"offset":true}),
+  "recommended_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultRecommendedActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "fallback_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultFallbackActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "progress": zod.object({
+  "build": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "test": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "observe": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "ship": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "improve": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only'])
+}),
+  "signals": zod.object({
+  "provider_keys": zod.number().min(accountsActivationStateListResponseResultSignalsProviderKeysMin).default(accountsActivationStateListResponseResultSignalsProviderKeysDefault),
+  "datasets": zod.number().min(accountsActivationStateListResponseResultSignalsDatasetsMin).default(accountsActivationStateListResponseResultSignalsDatasetsDefault),
+  "evals": zod.number().min(accountsActivationStateListResponseResultSignalsEvalsMin).default(accountsActivationStateListResponseResultSignalsEvalsDefault),
+  "eval_runs": zod.number().min(accountsActivationStateListResponseResultSignalsEvalRunsMin).default(accountsActivationStateListResponseResultSignalsEvalRunsDefault),
+  "eval_source_count": zod.number().min(accountsActivationStateListResponseResultSignalsEvalSourceCountMin).default(accountsActivationStateListResponseResultSignalsEvalSourceCountDefault),
+  "eval_source_type": zod.string().optional(),
+  "eval_source_id": zod.string().optional(),
+  "eval_source_name": zod.string().optional(),
+  "eval_scorer_count": zod.number().min(accountsActivationStateListResponseResultSignalsEvalScorerCountMin).default(accountsActivationStateListResponseResultSignalsEvalScorerCountDefault),
+  "eval_scorer_id": zod.string().optional(),
+  "eval_scorer_template_id": zod.string().optional(),
+  "eval_scorer_name": zod.string().optional(),
+  "eval_group_count": zod.number().min(accountsActivationStateListResponseResultSignalsEvalGroupCountMin).default(accountsActivationStateListResponseResultSignalsEvalGroupCountDefault),
+  "eval_group_id": zod.string().optional(),
+  "eval_run_count": zod.number().min(accountsActivationStateListResponseResultSignalsEvalRunCountMin).default(accountsActivationStateListResponseResultSignalsEvalRunCountDefault),
+  "eval_run_id": zod.string().optional(),
+  "eval_run_status": zod.string().optional(),
+  "eval_run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_failure_count": zod.number().min(accountsActivationStateListResponseResultSignalsEvalFailureCountMin).default(accountsActivationStateListResponseResultSignalsEvalFailureCountDefault),
+  "eval_has_source": zod.boolean().default(accountsActivationStateListResponseResultSignalsEvalHasSourceDefault),
+  "eval_has_scorer": zod.boolean().default(accountsActivationStateListResponseResultSignalsEvalHasScorerDefault),
+  "eval_has_completed_run": zod.boolean().default(accountsActivationStateListResponseResultSignalsEvalHasCompletedRunDefault),
+  "eval_has_failures": zod.boolean().default(accountsActivationStateListResponseResultSignalsEvalHasFailuresDefault),
+  "eval_has_review": zod.boolean().default(accountsActivationStateListResponseResultSignalsEvalHasReviewDefault),
+  "eval_has_failure_action": zod.boolean().default(accountsActivationStateListResponseResultSignalsEvalHasFailureActionDefault),
+  "eval_first_loop_completed": zod.boolean().default(accountsActivationStateListResponseResultSignalsEvalFirstLoopCompletedDefault),
+  "eval_is_sample_only": zod.boolean().default(accountsActivationStateListResponseResultSignalsEvalIsSampleOnlyDefault),
+  "eval_sample_source_count": zod.number().min(accountsActivationStateListResponseResultSignalsEvalSampleSourceCountMin).default(accountsActivationStateListResponseResultSignalsEvalSampleSourceCountDefault),
+  "eval_permission_limited": zod.boolean().default(accountsActivationStateListResponseResultSignalsEvalPermissionLimitedDefault),
+  "prompt_templates": zod.number().min(accountsActivationStateListResponseResultSignalsPromptTemplatesMin).default(accountsActivationStateListResponseResultSignalsPromptTemplatesDefault),
+  "prompt_versions": zod.number().min(accountsActivationStateListResponseResultSignalsPromptVersionsMin).default(accountsActivationStateListResponseResultSignalsPromptVersionsDefault),
+  "prompt_comparisons": zod.number().min(accountsActivationStateListResponseResultSignalsPromptComparisonsMin).default(accountsActivationStateListResponseResultSignalsPromptComparisonsDefault),
+  "first_prompt_id": zod.string().optional(),
+  "latest_prompt_id": zod.string().optional(),
+  "prompt_sample_templates": zod.number().min(accountsActivationStateListResponseResultSignalsPromptSampleTemplatesMin).default(accountsActivationStateListResponseResultSignalsPromptSampleTemplatesDefault),
+  "prompt_comparable_versions_exist": zod.boolean().default(accountsActivationStateListResponseResultSignalsPromptComparableVersionsExistDefault),
+  "prompt_run_exists": zod.boolean().default(accountsActivationStateListResponseResultSignalsPromptRunExistsDefault),
+  "prompt_committed_version_exists": zod.boolean().default(accountsActivationStateListResponseResultSignalsPromptCommittedVersionExistsDefault),
+  "prompt_comparison_completed": zod.boolean().default(accountsActivationStateListResponseResultSignalsPromptComparisonCompletedDefault),
+  "prompt_next_loop_action_exists": zod.boolean().default(accountsActivationStateListResponseResultSignalsPromptNextLoopActionExistsDefault),
+  "prompt_first_loop_completed": zod.boolean().default(accountsActivationStateListResponseResultSignalsPromptFirstLoopCompletedDefault),
+  "agents": zod.number().min(accountsActivationStateListResponseResultSignalsAgentsMin).default(accountsActivationStateListResponseResultSignalsAgentsDefault),
+  "agent_prototype_runs": zod.number().min(accountsActivationStateListResponseResultSignalsAgentPrototypeRunsMin).default(accountsActivationStateListResponseResultSignalsAgentPrototypeRunsDefault),
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "agent_scenario_id": zod.string().optional(),
+  "agent_test_id": zod.string().optional(),
+  "agent_execution_id": zod.string().optional(),
+  "agent_call_execution_id": zod.string().optional(),
+  "agent_graph_execution_id": zod.string().optional(),
+  "agent_run_status": zod.string().optional(),
+  "agent_sample_count": zod.number().min(accountsActivationStateListResponseResultSignalsAgentSampleCountMin).default(accountsActivationStateListResponseResultSignalsAgentSampleCountDefault),
+  "agent_has_agent": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentHasAgentDefault),
+  "agent_has_agent_version": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentHasAgentVersionDefault),
+  "agent_has_step": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentHasStepDefault),
+  "agent_has_scenario": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentHasScenarioDefault),
+  "agent_has_run": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentHasRunDefault),
+  "agent_run_failed": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentRunFailedDefault),
+  "agent_has_review": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentHasReviewDefault),
+  "agent_has_eval_coverage": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentHasEvalCoverageDefault),
+  "agent_multiple_scenarios": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentMultipleScenariosDefault),
+  "agent_first_loop_completed": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentFirstLoopCompletedDefault),
+  "agent_voice_feature_unavailable": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentVoiceFeatureUnavailableDefault),
+  "agent_permission_limited": zod.boolean().default(accountsActivationStateListResponseResultSignalsAgentPermissionLimitedDefault),
+  "observe_projects": zod.number().min(accountsActivationStateListResponseResultSignalsObserveProjectsMin).default(accountsActivationStateListResponseResultSignalsObserveProjectsDefault),
+  "traces": zod.number().min(accountsActivationStateListResponseResultSignalsTracesMin).default(accountsActivationStateListResponseResultSignalsTracesDefault),
+  "trace_reviews": zod.number().min(accountsActivationStateListResponseResultSignalsTraceReviewsMin).default(accountsActivationStateListResponseResultSignalsTraceReviewsDefault),
+  "gateway_keys": zod.number().min(accountsActivationStateListResponseResultSignalsGatewayKeysMin).default(accountsActivationStateListResponseResultSignalsGatewayKeysDefault),
+  "gateway_requests": zod.number().min(accountsActivationStateListResponseResultSignalsGatewayRequestsMin).default(accountsActivationStateListResponseResultSignalsGatewayRequestsDefault),
+  "gateway_policies": zod.number().min(accountsActivationStateListResponseResultSignalsGatewayPoliciesMin).default(accountsActivationStateListResponseResultSignalsGatewayPoliciesDefault),
+  "gateway_available": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayAvailableDefault),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "gateway_provider_count": zod.number().min(accountsActivationStateListResponseResultSignalsGatewayProviderCountMin).default(accountsActivationStateListResponseResultSignalsGatewayProviderCountDefault),
+  "gateway_provider_credential_id": zod.string().optional(),
+  "gateway_provider_name": zod.string().optional(),
+  "gateway_provider_health_status": zod.string().optional(),
+  "gateway_provider_model_count": zod.number().min(accountsActivationStateListResponseResultSignalsGatewayProviderModelCountMin).default(accountsActivationStateListResponseResultSignalsGatewayProviderModelCountDefault),
+  "gateway_has_provider": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayHasProviderDefault),
+  "gateway_has_key": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "gateway_key_prefix": zod.string().optional(),
+  "gateway_key_status": zod.string().optional(),
+  "gateway_has_request": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayHasRequestDefault),
+  "gateway_request_log_id": zod.string().optional(),
+  "gateway_request_id": zod.string().optional(),
+  "gateway_request_status_code": zod.number().optional(),
+  "gateway_request_is_error": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayRequestIsErrorDefault),
+  "gateway_request_error_message": zod.string().optional(),
+  "gateway_request_provider": zod.string().optional(),
+  "gateway_request_model": zod.string().optional(),
+  "gateway_request_resolved_model": zod.string().optional(),
+  "gateway_request_latency_ms": zod.number().min(accountsActivationStateListResponseResultSignalsGatewayRequestLatencyMsMin).optional(),
+  "gateway_request_cost": zod.string().optional(),
+  "gateway_request_cache_hit": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayRequestCacheHitDefault),
+  "gateway_request_fallback_used": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayRequestFallbackUsedDefault),
+  "gateway_request_guardrail_triggered": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayRequestGuardrailTriggeredDefault),
+  "gateway_has_review": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayHasReviewDefault),
+  "gateway_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "gateway_has_failure_repair": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayHasFailureRepairDefault),
+  "gateway_has_policy": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayHasPolicyDefault),
+  "gateway_policy_type": zod.string().optional(),
+  "gateway_policy_id": zod.string().optional(),
+  "gateway_policy_route": zod.string().optional(),
+  "gateway_policy_synced": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayPolicySyncedDefault),
+  "gateway_is_sample_only": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayIsSampleOnlyDefault),
+  "gateway_sample_request_count": zod.number().min(accountsActivationStateListResponseResultSignalsGatewaySampleRequestCountMin).default(accountsActivationStateListResponseResultSignalsGatewaySampleRequestCountDefault),
+  "gateway_permission_limited": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayPermissionLimitedDefault),
+  "gateway_guard_blocked": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayGuardBlockedDefault),
+  "gateway_first_loop_completed": zod.boolean().default(accountsActivationStateListResponseResultSignalsGatewayFirstLoopCompletedDefault),
+  "voice_agents": zod.number().min(accountsActivationStateListResponseResultSignalsVoiceAgentsMin).default(accountsActivationStateListResponseResultSignalsVoiceAgentsDefault),
+  "voice_simulations": zod.number().min(accountsActivationStateListResponseResultSignalsVoiceSimulationsMin).default(accountsActivationStateListResponseResultSignalsVoiceSimulationsDefault),
+  "voice_calls": zod.number().min(accountsActivationStateListResponseResultSignalsVoiceCallsMin).default(accountsActivationStateListResponseResultSignalsVoiceCallsDefault),
+  "voice_reviews": zod.number().min(accountsActivationStateListResponseResultSignalsVoiceReviewsMin).default(accountsActivationStateListResponseResultSignalsVoiceReviewsDefault),
+  "voice_agent_id": zod.string().optional(),
+  "voice_agent_name": zod.string().optional(),
+  "voice_agent_provider": zod.string().optional(),
+  "voice_agent_version_id": zod.string().optional(),
+  "voice_scenario_id": zod.string().optional(),
+  "voice_run_test_id": zod.string().optional(),
+  "voice_test_execution_id": zod.string().optional(),
+  "voice_call_execution_id": zod.string().optional(),
+  "voice_call_status": zod.string().optional(),
+  "voice_call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "voice_call_duration_seconds": zod.number().min(accountsActivationStateListResponseResultSignalsVoiceCallDurationSecondsMin).optional(),
+  "voice_call_response_time_ms": zod.number().min(accountsActivationStateListResponseResultSignalsVoiceCallResponseTimeMsMin).optional(),
+  "voice_call_interruption_count": zod.number().min(accountsActivationStateListResponseResultSignalsVoiceCallInterruptionCountMin).optional(),
+  "voice_transcript_available": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceTranscriptAvailableDefault),
+  "voice_recording_available": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceRecordingAvailableDefault),
+  "voice_has_agent": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceHasAgentDefault),
+  "voice_has_scenario": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceHasScenarioDefault),
+  "voice_has_test": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceHasTestDefault),
+  "voice_has_call": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceHasCallDefault),
+  "voice_has_completed_call": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceHasCompletedCallDefault),
+  "voice_call_failed": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceCallFailedDefault),
+  "voice_has_review": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceHasReviewDefault),
+  "voice_has_success_criteria": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceHasSuccessCriteriaDefault),
+  "voice_first_loop_completed": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceFirstLoopCompletedDefault),
+  "voice_is_sample_only": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoiceIsSampleOnlyDefault),
+  "voice_sample_call_count": zod.number().min(accountsActivationStateListResponseResultSignalsVoiceSampleCallCountMin).default(accountsActivationStateListResponseResultSignalsVoiceSampleCallCountDefault),
+  "voice_permission_limited": zod.boolean().default(accountsActivationStateListResponseResultSignalsVoicePermissionLimitedDefault),
+  "team_invites": zod.number().min(accountsActivationStateListResponseResultSignalsTeamInvitesMin).default(accountsActivationStateListResponseResultSignalsTeamInvitesDefault),
+  "dashboards": zod.number().min(accountsActivationStateListResponseResultSignalsDashboardsMin).default(accountsActivationStateListResponseResultSignalsDashboardsDefault),
+  "alerts": zod.number().min(accountsActivationStateListResponseResultSignalsAlertsMin).default(accountsActivationStateListResponseResultSignalsAlertsDefault),
+  "first_trace_id": zod.string().optional(),
+  "first_observe_id": zod.string().optional(),
+  "sample_project_opened": zod.boolean().default(accountsActivationStateListResponseResultSignalsSampleProjectOpenedDefault),
+  "sample_trace_available": zod.boolean().default(accountsActivationStateListResponseResultSignalsSampleTraceAvailableDefault),
+  "sample_signal_viewed": zod.boolean().default(accountsActivationStateListResponseResultSignalsSampleSignalViewedDefault),
+  "sample_trace_reviewed": zod.boolean().default(accountsActivationStateListResponseResultSignalsSampleTraceReviewedDefault)
+}),
+  "available_goals": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "outcome_preview": zod.string().optional(),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "disabled": zod.boolean().default(accountsActivationStateListResponseResultAvailableGoalsItemDisabledDefault),
+  "disabled_reason": zod.string().optional()
+})).optional(),
+  "available_paths": zod.array(zod.object({
+  "id": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only', 'hidden']),
+  "href": zod.string().min(1),
+  "is_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "first_action_id": zod.string().optional()
+})),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsActivationStateListResponseResultJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_package_selected', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparable_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_node_added', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
+  "sample_project": zod.object({
+  "available": zod.boolean(),
+  "created": zod.boolean(),
+  "status": zod.enum(['not_created', 'unavailable', 'available', 'creating', 'ready_for_observe', 'partially_ready', 'ready', 'partial', 'hidden', 'stale_manifest', 'repair_required', 'repair_failed']),
+  "href": zod.string(),
+  "version": zod.string(),
+  "manifest_id": zod.string().optional(),
+  "manifest_version": zod.string().optional(),
+  "label": zod.string().default(accountsActivationStateListResponseResultSampleProjectLabelDefault),
+  "entry_route": zod.string().optional(),
+  "is_repairable": zod.boolean().default(accountsActivationStateListResponseResultSampleProjectIsRepairableDefault),
+  "blocked_reason": zod.string().optional(),
+  "artifact_refs": zod.object({
+
+}).passthrough().optional(),
+  "health": zod.object({
+
+}).passthrough().optional(),
+  "real_setup_href": zod.string().optional(),
+  "is_hidden": zod.boolean(),
+  "hidden_reason": zod.string().optional(),
+  "entry_routes": zod.array(zod.string().min(1)),
+  "missing_artifacts": zod.array(zod.string().min(1)),
+  "last_opened_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "prompt": zod.object({
+  "prompt_id": zod.string().optional(),
+  "prompt_name": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_real_prompt": zod.boolean(),
+  "has_test_run": zod.boolean(),
+  "has_committed_version": zod.boolean(),
+  "has_comparable_versions": zod.boolean().default(accountsActivationStateListResponseResultPromptHasComparableVersionsDefault),
+  "has_comparison": zod.boolean(),
+  "has_next_loop_action": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultPromptIsSampleDefault),
+  "sample_prompt_count": zod.number().min(accountsActivationStateListResponseResultPromptSamplePromptCountMin).default(accountsActivationStateListResponseResultPromptSamplePromptCountDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "agent": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "test_id": zod.string().optional(),
+  "execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "graph_execution_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean(),
+  "has_agent_version": zod.boolean(),
+  "has_step": zod.boolean(),
+  "has_scenario": zod.boolean(),
+  "has_run": zod.boolean(),
+  "has_review": zod.boolean(),
+  "has_eval_coverage": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultAgentIsSampleDefault),
+  "sample_agent_count": zod.number().min(accountsActivationStateListResponseResultAgentSampleAgentCountMin).default(accountsActivationStateListResponseResultAgentSampleAgentCountDefault),
+  "voice_feature_unavailable": zod.boolean().default(accountsActivationStateListResponseResultAgentVoiceFeatureUnavailableDefault),
+  "permission_limited": zod.boolean().default(accountsActivationStateListResponseResultAgentPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "eval": zod.object({
+  "source_type": zod.string().optional(),
+  "source_id": zod.string().optional(),
+  "source_name": zod.string().optional(),
+  "scorer_id": zod.string().optional(),
+  "scorer_template_id": zod.string().optional(),
+  "scorer_name": zod.string().optional(),
+  "eval_group_id": zod.string().optional(),
+  "run_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_count": zod.number().min(accountsActivationStateListResponseResultEvalFailureCountMin).default(accountsActivationStateListResponseResultEvalFailureCountDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_action_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_source": zod.boolean().default(accountsActivationStateListResponseResultEvalHasSourceDefault),
+  "has_scorer": zod.boolean().default(accountsActivationStateListResponseResultEvalHasScorerDefault),
+  "has_completed_run": zod.boolean().default(accountsActivationStateListResponseResultEvalHasCompletedRunDefault),
+  "has_failures": zod.boolean().default(accountsActivationStateListResponseResultEvalHasFailuresDefault),
+  "has_review": zod.boolean().default(accountsActivationStateListResponseResultEvalHasReviewDefault),
+  "has_failure_action": zod.boolean().default(accountsActivationStateListResponseResultEvalHasFailureActionDefault),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultEvalIsSampleDefault),
+  "sample_source_count": zod.number().min(accountsActivationStateListResponseResultEvalSampleSourceCountMin).default(accountsActivationStateListResponseResultEvalSampleSourceCountDefault),
+  "permission_limited": zod.boolean().default(accountsActivationStateListResponseResultEvalPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "voice": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_name": zod.string().optional(),
+  "agent_provider": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "run_test_id": zod.string().optional(),
+  "test_execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "call_status": zod.string().optional(),
+  "call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "call_duration_seconds": zod.number().min(accountsActivationStateListResponseResultVoiceCallDurationSecondsMin).optional(),
+  "call_response_time_ms": zod.number().min(accountsActivationStateListResponseResultVoiceCallResponseTimeMsMin).optional(),
+  "call_interruption_count": zod.number().min(accountsActivationStateListResponseResultVoiceCallInterruptionCountMin).optional(),
+  "transcript_available": zod.boolean().default(accountsActivationStateListResponseResultVoiceTranscriptAvailableDefault),
+  "recording_available": zod.boolean().default(accountsActivationStateListResponseResultVoiceRecordingAvailableDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "success_criteria_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_config_id": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean().default(accountsActivationStateListResponseResultVoiceHasAgentDefault),
+  "has_scenario": zod.boolean().default(accountsActivationStateListResponseResultVoiceHasScenarioDefault),
+  "has_test": zod.boolean().default(accountsActivationStateListResponseResultVoiceHasTestDefault),
+  "has_call": zod.boolean().default(accountsActivationStateListResponseResultVoiceHasCallDefault),
+  "has_completed_call": zod.boolean().default(accountsActivationStateListResponseResultVoiceHasCompletedCallDefault),
+  "call_failed": zod.boolean().default(accountsActivationStateListResponseResultVoiceCallFailedDefault),
+  "has_review": zod.boolean().default(accountsActivationStateListResponseResultVoiceHasReviewDefault),
+  "has_success_criteria": zod.boolean().default(accountsActivationStateListResponseResultVoiceHasSuccessCriteriaDefault),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultVoiceIsSampleDefault),
+  "sample_call_count": zod.number().min(accountsActivationStateListResponseResultVoiceSampleCallCountMin).default(accountsActivationStateListResponseResultVoiceSampleCallCountDefault),
+  "permission_limited": zod.boolean().default(accountsActivationStateListResponseResultVoicePermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "gateway": zod.object({
+  "gateway_available": zod.boolean(),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "provider_count": zod.number().min(accountsActivationStateListResponseResultGatewayProviderCountMin).default(accountsActivationStateListResponseResultGatewayProviderCountDefault),
+  "provider_credential_id": zod.string().optional(),
+  "provider_name": zod.string().optional(),
+  "provider_health_status": zod.string().optional(),
+  "provider_model_count": zod.number().min(accountsActivationStateListResponseResultGatewayProviderModelCountMin).default(accountsActivationStateListResponseResultGatewayProviderModelCountDefault),
+  "has_provider": zod.boolean().default(accountsActivationStateListResponseResultGatewayHasProviderDefault),
+  "has_key": zod.boolean().default(accountsActivationStateListResponseResultGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "key_prefix": zod.string().optional(),
+  "key_status": zod.string().optional(),
+  "has_request": zod.boolean().default(accountsActivationStateListResponseResultGatewayHasRequestDefault),
+  "request_log_id": zod.string().optional(),
+  "request_id": zod.string().optional(),
+  "request_status_code": zod.number().optional(),
+  "request_is_error": zod.boolean().default(accountsActivationStateListResponseResultGatewayRequestIsErrorDefault),
+  "request_error_message": zod.string().optional(),
+  "request_provider": zod.string().optional(),
+  "request_model": zod.string().optional(),
+  "request_resolved_model": zod.string().optional(),
+  "request_latency_ms": zod.number().min(accountsActivationStateListResponseResultGatewayRequestLatencyMsMin).optional(),
+  "request_cost": zod.string().optional(),
+  "request_cache_hit": zod.boolean().default(accountsActivationStateListResponseResultGatewayRequestCacheHitDefault),
+  "request_fallback_used": zod.boolean().default(accountsActivationStateListResponseResultGatewayRequestFallbackUsedDefault),
+  "request_guardrail_triggered": zod.boolean().default(accountsActivationStateListResponseResultGatewayRequestGuardrailTriggeredDefault),
+  "has_review": zod.boolean().default(accountsActivationStateListResponseResultGatewayHasReviewDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "has_failure_repair": zod.boolean().default(accountsActivationStateListResponseResultGatewayHasFailureRepairDefault),
+  "has_policy": zod.boolean().default(accountsActivationStateListResponseResultGatewayHasPolicyDefault),
+  "policy_type": zod.string().optional(),
+  "policy_id": zod.string().optional(),
+  "policy_route": zod.string().optional(),
+  "policy_synced": zod.boolean().default(accountsActivationStateListResponseResultGatewayPolicySyncedDefault),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultGatewayIsSampleDefault),
+  "sample_request_count": zod.number().min(accountsActivationStateListResponseResultGatewaySampleRequestCountMin).default(accountsActivationStateListResponseResultGatewaySampleRequestCountDefault),
+  "permission_limited": zod.boolean().default(accountsActivationStateListResponseResultGatewayPermissionLimitedDefault),
+  "guard_blocked": zod.boolean().default(accountsActivationStateListResponseResultGatewayGuardBlockedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data'])
+}).optional(),
+  "lifecycle": zod.object({
+  "dry_run_enabled": zod.boolean(),
+  "send_enabled": zod.boolean().default(accountsActivationStateListResponseResultLifecycleSendEnabledDefault),
+  "status": zod.enum(['eligible', 'suppressed', 'skipped', 'error']),
+  "next_campaign_key": zod.string().optional(),
+  "template_key": zod.string().optional(),
+  "eligible_at": zod.string().datetime({"offset":true}).optional(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "target_success_event": zod.string().optional(),
+  "target_action_id": zod.string().optional(),
+  "target_url": zod.string().optional(),
+  "dry_run_only": zod.boolean().default(accountsActivationStateListResponseResultLifecycleDryRunOnlyDefault)
+}).optional(),
+  "daily_quality": zod.object({
+  "mode": zod.enum(['new_signal', 'open_action', 'no_new_signal', 'permission_limited', 'unavailable']),
+  "last_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "top_signal": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "type": zod.enum(['trace_failure', 'prompt_quality_review', 'span_latency', 'span_cost', 'agent_run_issue', 'gateway_request_issue', 'eval_failure', 'voice_call_issue', 'alert_triggered', 'feed_issue', 'dashboard_missing', 'alert_missing', 'evaluator_missing', 'saved_view_missing']),
+  "severity": zod.enum(['critical', 'warning', 'info']),
+  "title": zod.string().min(1),
+  "body": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1),
+  "project_id": zod.string().min(1).optional(),
+  "route": zod.string().min(1),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultDailyQualityTopSignalIsSampleDefault),
+  "created_at": zod.string().datetime({"offset":true})
+}).optional(),
+  "primary_action": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsActivationStateListResponseResultDailyQualityPrimaryActionRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsActivationStateListResponseResultDailyQualityPrimaryActionIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsActivationStateListResponseResultDailyQualityPrimaryActionIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultDailyQualityPrimaryActionIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+}).optional(),
+  "action_cards": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsActivationStateListResponseResultDailyQualityActionCardsItemRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsActivationStateListResponseResultDailyQualityActionCardsItemIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsActivationStateListResponseResultDailyQualityActionCardsItemIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultDailyQualityActionCardsItemIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+})).optional(),
+  "product_cards": zod.array(zod.object({
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "status": zod.string().min(1),
+  "label": zod.string().min(1),
+  "summary": zod.string().min(1),
+  "metric": zod.string().min(1),
+  "change": zod.string().optional(),
+  "route": zod.string().min(1)
+})).optional(),
+  "weekly_review": zod.object({
+  "due": zod.boolean(),
+  "status": zod.enum(['due', 'not_due', 'permission_limited', 'flag_disabled', 'no_useful_signal', 'completed_recently']),
+  "route": zod.string().min(1),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "summary": zod.string().min(1),
+  "unresolved_count": zod.number().min(accountsActivationStateListResponseResultDailyQualityWeeklyReviewUnresolvedCountMin),
+  "completed_count": zod.number().min(accountsActivationStateListResponseResultDailyQualityWeeklyReviewCompletedCountMin),
+  "last_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "action_label": zod.string().optional()
+}).optional(),
+  "digest_eligible": zod.boolean(),
+  "digest_suppression_reason": zod.string().optional(),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "email_eligibility": zod.object({
+  "eligible": zod.boolean(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "next_email_key": zod.string().optional(),
+  "next_email_after": zod.string().datetime({"offset":true}).optional(),
+  "digest_eligible": zod.boolean(),
+  "last_email_sent_at": zod.string().datetime({"offset":true}).optional(),
+  "frequency_cap_remaining": zod.number().min(accountsActivationStateListResponseResultEmailEligibilityFrequencyCapRemainingMin),
+  "dry_run_only": zod.boolean().default(accountsActivationStateListResponseResultEmailEligibilityDryRunOnlyDefault)
+}),
+  "permissions": zod.object({
+  "role": zod.string(),
+  "can_read": zod.boolean(),
+  "can_write": zod.boolean(),
+  "can_manage_workspace": zod.boolean(),
+  "missing_permissions": zod.array(zod.string().min(1)),
+  "request_access_href": zod.string().optional(),
+  "permission_limited": zod.boolean()
+}),
+  "feature_flags": zod.record(zod.string(), zod.boolean()),
+  "route_availability": zod.object({
+
+}).passthrough(),
+  "email_context": zod.object({
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "target_route": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']),
+  "stale_reason": zod.string().optional(),
+  "resolved_href": zod.string().min(1)
+}),
+  "last_meaningful_event": zod.object({
+  "name": zod.string().min(1),
+  "occurred_at": zod.string().datetime({"offset":true}),
+  "is_sample": zod.boolean().default(accountsActivationStateListResponseResultLastMeaningfulEventIsSampleDefault),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "metadata": zod.record(zod.string(), zod.string()).optional()
+}),
+  "value_signal": zod.object({
+  "kind": zod.enum(['observe_trace_metrics', 'prompt_quality_loop', 'agent_quality_loop', 'gateway_routing_loop', 'eval_quality_loop', 'voice_quality_loop']).optional(),
+  "headline": zod.string().optional(),
+  "summary": zod.string().optional(),
+  "metrics": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "value": zod.string().min(1)
+})).optional(),
+  "latency_ms": zod.number().min(accountsActivationStateListResponseResultValueSignalLatencyMsMin).optional(),
+  "cost": zod.number().min(accountsActivationStateListResponseResultValueSignalCostMin).optional(),
+  "total_tokens": zod.number().min(accountsActivationStateListResponseResultValueSignalTotalTokensMin).optional()
+}).optional(),
+  "diagnostics": zod.object({
+  "resolver_version": zod.string().min(1),
+  "decision_reason": zod.string().min(1),
+  "matched_rule": zod.string().min(1),
+  "candidate_actions": zod.array(zod.string().min(1)),
+  "suppressed_actions": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "reason": zod.string().min(1)
+})),
+  "evaluated_at": zod.string().datetime({"offset":true})
+}),
+  "warnings": zod.array(zod.string().min(1))
+})
+})
+
+
+
 
 
 
@@ -742,6 +2723,239 @@ export const AccountsMeTimezoneCreateResponse = zod.object({
 })
 
 
+export const AccountsNotificationChannelsTestCreateParams = zod.object({
+  "channel_id": zod.string()
+})
+
+export const AccountsNotificationChannelsTestCreateBody = zod.object({
+
+})
+
+
+export const accountsNotificationChannelsTestCreateResponseResultChannelIsActiveDefault = true;
+
+export const AccountsNotificationChannelsTestCreateResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "channel": zod.object({
+  "id": zod.string().uuid().optional(),
+  "scope": zod.enum(['organization', 'workspace']).optional(),
+  "type": zod.enum(['email_list', 'slack_webhook', 'webhook']),
+  "display_name": zod.string().min(1),
+  "target_identifier": zod.string().optional(),
+  "config": zod.object({
+
+}).passthrough().optional(),
+  "is_active": zod.boolean().default(accountsNotificationChannelsTestCreateResponseResultChannelIsActiveDefault),
+  "last_tested_at": zod.string().datetime({"offset":true}).optional(),
+  "last_test_status": zod.enum(['untested', 'ready', 'failed']).optional(),
+  "metadata": zod.object({
+
+}).passthrough().optional()
+})
+})
+})
+
+
+
+
+
+export const accountsNotificationPreferencesListResponseResultChannelsItemIsActiveDefault = true;
+
+
+
+
+
+export const AccountsNotificationPreferencesListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "families": zod.array(zod.object({
+  "id": zod.enum(['product_onboarding', 'daily_quality_digest', 'usage_budget', 'gateway_alert', 'observe_monitor', 'eval_quality_alert', 'workspace_admin']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "default_channels": zod.array(zod.enum(['email', 'slack', 'webhook'])),
+  "non_critical": zod.boolean(),
+  "user_controllable": zod.boolean(),
+  "workspace_controllable": zod.boolean()
+})),
+  "channels": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "scope": zod.enum(['organization', 'workspace']).optional(),
+  "type": zod.enum(['email_list', 'slack_webhook', 'webhook']),
+  "display_name": zod.string().min(1),
+  "target_identifier": zod.string().optional(),
+  "config": zod.object({
+
+}).passthrough().optional(),
+  "is_active": zod.boolean().default(accountsNotificationPreferencesListResponseResultChannelsItemIsActiveDefault),
+  "last_tested_at": zod.string().datetime({"offset":true}).optional(),
+  "last_test_status": zod.enum(['untested', 'ready', 'failed']).optional(),
+  "metadata": zod.object({
+
+}).passthrough().optional()
+})),
+  "preferences": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "scope": zod.enum(['organization', 'workspace', 'user', 'user_workspace']),
+  "family": zod.enum(['product_onboarding', 'daily_quality_digest', 'usage_budget', 'gateway_alert', 'observe_monitor', 'eval_quality_alert', 'workspace_admin']),
+  "channel": zod.enum(['email', 'slack', 'webhook']),
+  "enabled": zod.boolean(),
+  "mute_until": zod.string().datetime({"offset":true}).optional(),
+  "frequency_cap_minutes": zod.number().min(1).optional(),
+  "settings": zod.object({
+
+}).passthrough().optional(),
+  "source": zod.string().min(1).optional()
+})),
+  "decisions": zod.array(zod.object({
+  "allowed": zod.boolean(),
+  "family": zod.enum(['product_onboarding', 'daily_quality_digest', 'usage_budget', 'gateway_alert', 'observe_monitor', 'eval_quality_alert', 'workspace_admin']),
+  "channel": zod.enum(['email', 'slack', 'webhook']),
+  "reason": zod.string().optional(),
+  "source": zod.string().min(1),
+  "preference_id": zod.string().uuid().optional()
+})),
+  "delivery_logs": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "family": zod.enum(['product_onboarding', 'daily_quality_digest', 'usage_budget', 'gateway_alert', 'observe_monitor', 'eval_quality_alert', 'workspace_admin']),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().optional(),
+  "channel": zod.enum(['email', 'slack', 'webhook']),
+  "recipient_type": zod.string().optional(),
+  "recipient_identifier_masked": zod.string().optional(),
+  "notification_key": zod.string().optional(),
+  "stage": zod.string().optional(),
+  "severity": zod.string().optional(),
+  "status": zod.enum(['eligible', 'suppressed', 'sent', 'failed', 'clicked', 'completed']),
+  "suppressed_reason": zod.string().optional(),
+  "route_url": zod.string().optional(),
+  "sent_at": zod.string().datetime({"offset":true}).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "metadata": zod.object({
+
+}).passthrough().optional()
+})),
+  "can_manage_workspace": zod.boolean()
+})
+})
+
+
+export const accountsNotificationPreferencesPartialUpdateBodyPreferencesItemScopeDefault = `user`;
+export const accountsNotificationPreferencesPartialUpdateBodyChannelsItemScopeDefault = `workspace`;
+export const accountsNotificationPreferencesPartialUpdateBodyChannelsItemDisplayNameMax = 120;
+
+export const accountsNotificationPreferencesPartialUpdateBodyChannelsItemIsActiveDefault = true;
+
+export const AccountsNotificationPreferencesPartialUpdateBody = zod.object({
+  "preferences": zod.array(zod.object({
+  "scope": zod.enum(['organization', 'workspace', 'user', 'user_workspace']).default(accountsNotificationPreferencesPartialUpdateBodyPreferencesItemScopeDefault),
+  "family": zod.enum(['product_onboarding', 'daily_quality_digest', 'usage_budget', 'gateway_alert', 'observe_monitor', 'eval_quality_alert', 'workspace_admin']),
+  "channel": zod.enum(['email', 'slack', 'webhook']),
+  "enabled": zod.boolean(),
+  "mute_until": zod.string().datetime({"offset":true}).optional(),
+  "frequency_cap_minutes": zod.number().min(1).optional(),
+  "settings": zod.object({
+
+}).passthrough().optional()
+})).optional(),
+  "channels": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "scope": zod.enum(['organization', 'workspace']).default(accountsNotificationPreferencesPartialUpdateBodyChannelsItemScopeDefault),
+  "type": zod.enum(['email_list', 'slack_webhook', 'webhook']),
+  "display_name": zod.string().min(1).max(accountsNotificationPreferencesPartialUpdateBodyChannelsItemDisplayNameMax),
+  "config": zod.object({
+
+}).passthrough().optional(),
+  "is_active": zod.boolean().default(accountsNotificationPreferencesPartialUpdateBodyChannelsItemIsActiveDefault),
+  "metadata": zod.object({
+
+}).passthrough().optional()
+})).optional()
+})
+
+
+
+
+export const accountsNotificationPreferencesPartialUpdateResponseResultChannelsItemIsActiveDefault = true;
+
+
+
+
+
+export const AccountsNotificationPreferencesPartialUpdateResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "families": zod.array(zod.object({
+  "id": zod.enum(['product_onboarding', 'daily_quality_digest', 'usage_budget', 'gateway_alert', 'observe_monitor', 'eval_quality_alert', 'workspace_admin']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "default_channels": zod.array(zod.enum(['email', 'slack', 'webhook'])),
+  "non_critical": zod.boolean(),
+  "user_controllable": zod.boolean(),
+  "workspace_controllable": zod.boolean()
+})),
+  "channels": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "scope": zod.enum(['organization', 'workspace']).optional(),
+  "type": zod.enum(['email_list', 'slack_webhook', 'webhook']),
+  "display_name": zod.string().min(1),
+  "target_identifier": zod.string().optional(),
+  "config": zod.object({
+
+}).passthrough().optional(),
+  "is_active": zod.boolean().default(accountsNotificationPreferencesPartialUpdateResponseResultChannelsItemIsActiveDefault),
+  "last_tested_at": zod.string().datetime({"offset":true}).optional(),
+  "last_test_status": zod.enum(['untested', 'ready', 'failed']).optional(),
+  "metadata": zod.object({
+
+}).passthrough().optional()
+})),
+  "preferences": zod.array(zod.object({
+  "id": zod.string().uuid().optional(),
+  "scope": zod.enum(['organization', 'workspace', 'user', 'user_workspace']),
+  "family": zod.enum(['product_onboarding', 'daily_quality_digest', 'usage_budget', 'gateway_alert', 'observe_monitor', 'eval_quality_alert', 'workspace_admin']),
+  "channel": zod.enum(['email', 'slack', 'webhook']),
+  "enabled": zod.boolean(),
+  "mute_until": zod.string().datetime({"offset":true}).optional(),
+  "frequency_cap_minutes": zod.number().min(1).optional(),
+  "settings": zod.object({
+
+}).passthrough().optional(),
+  "source": zod.string().min(1).optional()
+})),
+  "decisions": zod.array(zod.object({
+  "allowed": zod.boolean(),
+  "family": zod.enum(['product_onboarding', 'daily_quality_digest', 'usage_budget', 'gateway_alert', 'observe_monitor', 'eval_quality_alert', 'workspace_admin']),
+  "channel": zod.enum(['email', 'slack', 'webhook']),
+  "reason": zod.string().optional(),
+  "source": zod.string().min(1),
+  "preference_id": zod.string().uuid().optional()
+})),
+  "delivery_logs": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "family": zod.enum(['product_onboarding', 'daily_quality_digest', 'usage_budget', 'gateway_alert', 'observe_monitor', 'eval_quality_alert', 'workspace_admin']),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().optional(),
+  "channel": zod.enum(['email', 'slack', 'webhook']),
+  "recipient_type": zod.string().optional(),
+  "recipient_identifier_masked": zod.string().optional(),
+  "notification_key": zod.string().optional(),
+  "stage": zod.string().optional(),
+  "severity": zod.string().optional(),
+  "status": zod.enum(['eligible', 'suppressed', 'sent', 'failed', 'clicked', 'completed']),
+  "suppressed_reason": zod.string().optional(),
+  "route_url": zod.string().optional(),
+  "sent_at": zod.string().datetime({"offset":true}).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "metadata": zod.object({
+
+}).passthrough().optional()
+})),
+  "can_manage_workspace": zod.boolean()
+})
+})
+
+
 /**
  * Snooze the realtime track for N days (default 7). Daily still fires.
  */
@@ -797,6 +3011,1202 @@ export const AccountsOnboardingCreateResponse = zod.object({
   "role": zod.string().min(1),
   "goals": zod.array(zod.string().min(1))
 })
+})
+})
+
+
+export const accountsOnboardingActivationFactsCreateBodyTypeMax = 64;
+
+export const accountsOnboardingActivationFactsCreateBodyIdempotencyKeyMax = 220;
+
+export const accountsOnboardingActivationFactsCreateBodySchemaVersionMax = 96;
+
+export const accountsOnboardingActivationFactsCreateBodyEventCursorMax = 160;
+
+
+
+export const AccountsOnboardingActivationFactsCreateBody = zod.object({
+  "type": zod.string().min(1).max(accountsOnboardingActivationFactsCreateBodyTypeMax),
+  "export_log_id": zod.string().uuid(),
+  "idempotency_key": zod.string().min(1).max(accountsOnboardingActivationFactsCreateBodyIdempotencyKeyMax),
+  "schema_version": zod.string().min(1).max(accountsOnboardingActivationFactsCreateBodySchemaVersionMax),
+  "event_cursor": zod.string().max(accountsOnboardingActivationFactsCreateBodyEventCursorMax).optional(),
+  "evaluated_at": zod.string().datetime({"offset":true}),
+  "fact": zod.object({
+
+}).passthrough()
+})
+
+export const accountsOnboardingActivationFactsCreateResponseStatusDefault = true;
+
+
+
+
+
+export const AccountsOnboardingActivationFactsCreateResponse = zod.object({
+  "status": zod.boolean().default(accountsOnboardingActivationFactsCreateResponseStatusDefault),
+  "result": zod.object({
+  "receipt_id": zod.string().uuid(),
+  "created": zod.boolean(),
+  "idempotency_key": zod.string().min(1),
+  "workspace_id": zod.string().uuid(),
+  "user_id": zod.string().uuid().optional(),
+  "activation_stage": zod.string().min(1),
+  "primary_path": zod.string().min(1),
+  "cohort_keys": zod.array(zod.string().min(1))
+})
+})
+
+
+
+
+
+export const AccountsOnboardingGoalCreateBody = zod.object({
+  "goal": zod.string().min(1),
+  "primary_path": zod.string().optional(),
+  "persona": zod.string().optional(),
+  "source": zod.string().optional(),
+  "campaign_key": zod.string().optional(),
+  "reason": zod.enum(['first_selection', 'path_change', 'email_link', 'manual_switch']).optional(),
+  "expected_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "known_goal_id": zod.string().optional()
+})
+
+export const accountsOnboardingGoalCreateResponseStatusDefault = true;
+
+
+
+
+
+
+
+
+
+
+
+
+export const accountsOnboardingGoalCreateResponseResultRecommendedActionIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsOnboardingGoalCreateResponseResultFallbackActionIsSampleDefault = false;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsProviderKeysDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsProviderKeysMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsDatasetsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsDatasetsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalRunsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalRunsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalSourceCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalSourceCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalScorerCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalScorerCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalGroupCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalGroupCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalRunCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalRunCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalFailureCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalFailureCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalHasSourceDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalHasScorerDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalHasCompletedRunDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalHasFailuresDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalHasReviewDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalHasFailureActionDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalFirstLoopCompletedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalIsSampleOnlyDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalSampleSourceCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalSampleSourceCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsEvalPermissionLimitedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptTemplatesDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptTemplatesMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptVersionsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptVersionsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptComparisonsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptComparisonsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptSampleTemplatesDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptSampleTemplatesMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptComparableVersionsExistDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptRunExistsDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptCommittedVersionExistsDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptComparisonCompletedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptNextLoopActionExistsDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsPromptFirstLoopCompletedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentPrototypeRunsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentPrototypeRunsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentSampleCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentSampleCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentHasAgentDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentHasAgentVersionDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentHasStepDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentHasScenarioDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentHasRunDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentRunFailedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentHasReviewDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentHasEvalCoverageDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentMultipleScenariosDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentFirstLoopCompletedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentVoiceFeatureUnavailableDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsAgentPermissionLimitedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsObserveProjectsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsObserveProjectsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsTracesDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsTracesMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsTraceReviewsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsTraceReviewsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayKeysDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayKeysMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayPoliciesDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayPoliciesMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayAvailableDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayProviderCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayProviderCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayProviderModelCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayProviderModelCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayHasProviderDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayHasKeyDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayHasRequestDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestIsErrorDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestLatencyMsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestCacheHitDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestFallbackUsedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayHasReviewDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayHasFailureRepairDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayHasPolicyDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayPolicySyncedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayIsSampleOnlyDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewaySampleRequestCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewaySampleRequestCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayPermissionLimitedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayGuardBlockedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsGatewayFirstLoopCompletedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceAgentsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceAgentsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceSimulationsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceSimulationsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceCallsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceCallsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceReviewsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceReviewsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceCallDurationSecondsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceCallResponseTimeMsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceCallInterruptionCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceTranscriptAvailableDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceRecordingAvailableDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceHasAgentDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceHasScenarioDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceHasTestDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceHasCallDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceHasCompletedCallDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceCallFailedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceHasReviewDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceHasSuccessCriteriaDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceFirstLoopCompletedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceIsSampleOnlyDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceSampleCallCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsVoiceSampleCallCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsVoicePermissionLimitedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsTeamInvitesDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsTeamInvitesMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsDashboardsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsDashboardsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsAlertsDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultSignalsAlertsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultSignalsSampleProjectOpenedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsSampleTraceAvailableDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsSampleSignalViewedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultSignalsSampleTraceReviewedDefault = false;
+
+
+
+export const accountsOnboardingGoalCreateResponseResultAvailableGoalsItemDisabledDefault = false;
+
+
+
+
+
+
+
+
+export const accountsOnboardingGoalCreateResponseResultJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
+export const accountsOnboardingGoalCreateResponseResultSampleProjectLabelDefault = `Sample`;
+export const accountsOnboardingGoalCreateResponseResultSampleProjectIsRepairableDefault = false;
+
+export const accountsOnboardingGoalCreateResponseResultPromptHasComparableVersionsDefault = false;
+export const accountsOnboardingGoalCreateResponseResultPromptIsSampleDefault = false;
+export const accountsOnboardingGoalCreateResponseResultPromptSamplePromptCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultPromptSamplePromptCountMin = 0;
+
+
+export const accountsOnboardingGoalCreateResponseResultAgentIsSampleDefault = false;
+export const accountsOnboardingGoalCreateResponseResultAgentSampleAgentCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultAgentSampleAgentCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultAgentVoiceFeatureUnavailableDefault = false;
+export const accountsOnboardingGoalCreateResponseResultAgentPermissionLimitedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultEvalFailureCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultEvalFailureCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultEvalHasSourceDefault = false;
+export const accountsOnboardingGoalCreateResponseResultEvalHasScorerDefault = false;
+export const accountsOnboardingGoalCreateResponseResultEvalHasCompletedRunDefault = false;
+export const accountsOnboardingGoalCreateResponseResultEvalHasFailuresDefault = false;
+export const accountsOnboardingGoalCreateResponseResultEvalHasReviewDefault = false;
+export const accountsOnboardingGoalCreateResponseResultEvalHasFailureActionDefault = false;
+export const accountsOnboardingGoalCreateResponseResultEvalIsSampleDefault = false;
+export const accountsOnboardingGoalCreateResponseResultEvalSampleSourceCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultEvalSampleSourceCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultEvalPermissionLimitedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceCallDurationSecondsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultVoiceCallResponseTimeMsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultVoiceCallInterruptionCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultVoiceTranscriptAvailableDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceRecordingAvailableDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceHasAgentDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceHasScenarioDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceHasTestDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceHasCallDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceHasCompletedCallDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceCallFailedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceHasReviewDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceHasSuccessCriteriaDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceIsSampleDefault = false;
+export const accountsOnboardingGoalCreateResponseResultVoiceSampleCallCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultVoiceSampleCallCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultVoicePermissionLimitedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayProviderCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultGatewayProviderCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultGatewayProviderModelCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultGatewayProviderModelCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultGatewayHasProviderDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayHasKeyDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayHasRequestDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayRequestIsErrorDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayRequestLatencyMsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultGatewayRequestCacheHitDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayRequestFallbackUsedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayHasReviewDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayHasFailureRepairDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayHasPolicyDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayPolicySyncedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayIsSampleDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewaySampleRequestCountDefault = 0;
+export const accountsOnboardingGoalCreateResponseResultGatewaySampleRequestCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultGatewayPermissionLimitedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultGatewayGuardBlockedDefault = false;
+export const accountsOnboardingGoalCreateResponseResultLifecycleSendEnabledDefault = false;
+export const accountsOnboardingGoalCreateResponseResultLifecycleDryRunOnlyDefault = true;
+
+
+
+
+
+
+export const accountsOnboardingGoalCreateResponseResultDailyQualityTopSignalIsSampleDefault = false;
+
+
+
+
+export const accountsOnboardingGoalCreateResponseResultDailyQualityPrimaryActionRouteAvailableDefault = true;
+
+export const accountsOnboardingGoalCreateResponseResultDailyQualityPrimaryActionIsOverdueDefault = false;
+export const accountsOnboardingGoalCreateResponseResultDailyQualityPrimaryActionIsPrimaryDefault = false;
+export const accountsOnboardingGoalCreateResponseResultDailyQualityPrimaryActionIsSampleDefault = false;
+
+
+
+
+export const accountsOnboardingGoalCreateResponseResultDailyQualityActionCardsItemRouteAvailableDefault = true;
+
+export const accountsOnboardingGoalCreateResponseResultDailyQualityActionCardsItemIsOverdueDefault = false;
+export const accountsOnboardingGoalCreateResponseResultDailyQualityActionCardsItemIsPrimaryDefault = false;
+export const accountsOnboardingGoalCreateResponseResultDailyQualityActionCardsItemIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsOnboardingGoalCreateResponseResultDailyQualityWeeklyReviewUnresolvedCountMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultDailyQualityWeeklyReviewCompletedCountMin = 0;
+
+
+export const accountsOnboardingGoalCreateResponseResultEmailEligibilityFrequencyCapRemainingMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultEmailEligibilityDryRunOnlyDefault = true;
+
+
+export const accountsOnboardingGoalCreateResponseResultLastMeaningfulEventIsSampleDefault = false;
+
+export const accountsOnboardingGoalCreateResponseResultValueSignalLatencyMsMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultValueSignalCostMin = 0;
+
+export const accountsOnboardingGoalCreateResponseResultValueSignalTotalTokensMin = 0;
+
+
+
+
+
+
+
+
+
+
+export const AccountsOnboardingGoalCreateResponse = zod.object({
+  "status": zod.boolean().default(accountsOnboardingGoalCreateResponseStatusDefault),
+  "result": zod.object({
+  "schema_version": zod.string().min(1),
+  "request_id": zod.string().min(1),
+  "server_time": zod.string().datetime({"offset":true}),
+  "workspace_id": zod.string().min(1),
+  "organization_id": zod.string().min(1),
+  "user_id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "persona": zod.string(),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "stage_copy": zod.object({
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1)
+}).optional(),
+  "home_mode": zod.enum(['first_run', 'daily_quality', 'fallback']),
+  "is_activated": zod.boolean(),
+  "activated_via": zod.enum(['workspace', 'organization']).optional(),
+  "activated_at": zod.string().datetime({"offset":true}),
+  "recommended_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultRecommendedActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "fallback_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultFallbackActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "progress": zod.object({
+  "build": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "test": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "observe": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "ship": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "improve": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only'])
+}),
+  "signals": zod.object({
+  "provider_keys": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsProviderKeysMin).default(accountsOnboardingGoalCreateResponseResultSignalsProviderKeysDefault),
+  "datasets": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsDatasetsMin).default(accountsOnboardingGoalCreateResponseResultSignalsDatasetsDefault),
+  "evals": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsEvalsMin).default(accountsOnboardingGoalCreateResponseResultSignalsEvalsDefault),
+  "eval_runs": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsEvalRunsMin).default(accountsOnboardingGoalCreateResponseResultSignalsEvalRunsDefault),
+  "eval_source_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsEvalSourceCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsEvalSourceCountDefault),
+  "eval_source_type": zod.string().optional(),
+  "eval_source_id": zod.string().optional(),
+  "eval_source_name": zod.string().optional(),
+  "eval_scorer_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsEvalScorerCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsEvalScorerCountDefault),
+  "eval_scorer_id": zod.string().optional(),
+  "eval_scorer_template_id": zod.string().optional(),
+  "eval_scorer_name": zod.string().optional(),
+  "eval_group_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsEvalGroupCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsEvalGroupCountDefault),
+  "eval_group_id": zod.string().optional(),
+  "eval_run_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsEvalRunCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsEvalRunCountDefault),
+  "eval_run_id": zod.string().optional(),
+  "eval_run_status": zod.string().optional(),
+  "eval_run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_failure_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsEvalFailureCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsEvalFailureCountDefault),
+  "eval_has_source": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsEvalHasSourceDefault),
+  "eval_has_scorer": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsEvalHasScorerDefault),
+  "eval_has_completed_run": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsEvalHasCompletedRunDefault),
+  "eval_has_failures": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsEvalHasFailuresDefault),
+  "eval_has_review": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsEvalHasReviewDefault),
+  "eval_has_failure_action": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsEvalHasFailureActionDefault),
+  "eval_first_loop_completed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsEvalFirstLoopCompletedDefault),
+  "eval_is_sample_only": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsEvalIsSampleOnlyDefault),
+  "eval_sample_source_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsEvalSampleSourceCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsEvalSampleSourceCountDefault),
+  "eval_permission_limited": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsEvalPermissionLimitedDefault),
+  "prompt_templates": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsPromptTemplatesMin).default(accountsOnboardingGoalCreateResponseResultSignalsPromptTemplatesDefault),
+  "prompt_versions": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsPromptVersionsMin).default(accountsOnboardingGoalCreateResponseResultSignalsPromptVersionsDefault),
+  "prompt_comparisons": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsPromptComparisonsMin).default(accountsOnboardingGoalCreateResponseResultSignalsPromptComparisonsDefault),
+  "first_prompt_id": zod.string().optional(),
+  "latest_prompt_id": zod.string().optional(),
+  "prompt_sample_templates": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsPromptSampleTemplatesMin).default(accountsOnboardingGoalCreateResponseResultSignalsPromptSampleTemplatesDefault),
+  "prompt_comparable_versions_exist": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsPromptComparableVersionsExistDefault),
+  "prompt_run_exists": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsPromptRunExistsDefault),
+  "prompt_committed_version_exists": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsPromptCommittedVersionExistsDefault),
+  "prompt_comparison_completed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsPromptComparisonCompletedDefault),
+  "prompt_next_loop_action_exists": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsPromptNextLoopActionExistsDefault),
+  "prompt_first_loop_completed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsPromptFirstLoopCompletedDefault),
+  "agents": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsAgentsMin).default(accountsOnboardingGoalCreateResponseResultSignalsAgentsDefault),
+  "agent_prototype_runs": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsAgentPrototypeRunsMin).default(accountsOnboardingGoalCreateResponseResultSignalsAgentPrototypeRunsDefault),
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "agent_scenario_id": zod.string().optional(),
+  "agent_test_id": zod.string().optional(),
+  "agent_execution_id": zod.string().optional(),
+  "agent_call_execution_id": zod.string().optional(),
+  "agent_graph_execution_id": zod.string().optional(),
+  "agent_run_status": zod.string().optional(),
+  "agent_sample_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsAgentSampleCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsAgentSampleCountDefault),
+  "agent_has_agent": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentHasAgentDefault),
+  "agent_has_agent_version": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentHasAgentVersionDefault),
+  "agent_has_step": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentHasStepDefault),
+  "agent_has_scenario": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentHasScenarioDefault),
+  "agent_has_run": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentHasRunDefault),
+  "agent_run_failed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentRunFailedDefault),
+  "agent_has_review": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentHasReviewDefault),
+  "agent_has_eval_coverage": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentHasEvalCoverageDefault),
+  "agent_multiple_scenarios": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentMultipleScenariosDefault),
+  "agent_first_loop_completed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentFirstLoopCompletedDefault),
+  "agent_voice_feature_unavailable": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentVoiceFeatureUnavailableDefault),
+  "agent_permission_limited": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsAgentPermissionLimitedDefault),
+  "observe_projects": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsObserveProjectsMin).default(accountsOnboardingGoalCreateResponseResultSignalsObserveProjectsDefault),
+  "traces": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsTracesMin).default(accountsOnboardingGoalCreateResponseResultSignalsTracesDefault),
+  "trace_reviews": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsTraceReviewsMin).default(accountsOnboardingGoalCreateResponseResultSignalsTraceReviewsDefault),
+  "gateway_keys": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsGatewayKeysMin).default(accountsOnboardingGoalCreateResponseResultSignalsGatewayKeysDefault),
+  "gateway_requests": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestsMin).default(accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestsDefault),
+  "gateway_policies": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsGatewayPoliciesMin).default(accountsOnboardingGoalCreateResponseResultSignalsGatewayPoliciesDefault),
+  "gateway_available": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayAvailableDefault),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "gateway_provider_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsGatewayProviderCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsGatewayProviderCountDefault),
+  "gateway_provider_credential_id": zod.string().optional(),
+  "gateway_provider_name": zod.string().optional(),
+  "gateway_provider_health_status": zod.string().optional(),
+  "gateway_provider_model_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsGatewayProviderModelCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsGatewayProviderModelCountDefault),
+  "gateway_has_provider": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayHasProviderDefault),
+  "gateway_has_key": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "gateway_key_prefix": zod.string().optional(),
+  "gateway_key_status": zod.string().optional(),
+  "gateway_has_request": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayHasRequestDefault),
+  "gateway_request_log_id": zod.string().optional(),
+  "gateway_request_id": zod.string().optional(),
+  "gateway_request_status_code": zod.number().optional(),
+  "gateway_request_is_error": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestIsErrorDefault),
+  "gateway_request_error_message": zod.string().optional(),
+  "gateway_request_provider": zod.string().optional(),
+  "gateway_request_model": zod.string().optional(),
+  "gateway_request_resolved_model": zod.string().optional(),
+  "gateway_request_latency_ms": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestLatencyMsMin).optional(),
+  "gateway_request_cost": zod.string().optional(),
+  "gateway_request_cache_hit": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestCacheHitDefault),
+  "gateway_request_fallback_used": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestFallbackUsedDefault),
+  "gateway_request_guardrail_triggered": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayRequestGuardrailTriggeredDefault),
+  "gateway_has_review": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayHasReviewDefault),
+  "gateway_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "gateway_has_failure_repair": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayHasFailureRepairDefault),
+  "gateway_has_policy": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayHasPolicyDefault),
+  "gateway_policy_type": zod.string().optional(),
+  "gateway_policy_id": zod.string().optional(),
+  "gateway_policy_route": zod.string().optional(),
+  "gateway_policy_synced": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayPolicySyncedDefault),
+  "gateway_is_sample_only": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayIsSampleOnlyDefault),
+  "gateway_sample_request_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsGatewaySampleRequestCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsGatewaySampleRequestCountDefault),
+  "gateway_permission_limited": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayPermissionLimitedDefault),
+  "gateway_guard_blocked": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayGuardBlockedDefault),
+  "gateway_first_loop_completed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsGatewayFirstLoopCompletedDefault),
+  "voice_agents": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsVoiceAgentsMin).default(accountsOnboardingGoalCreateResponseResultSignalsVoiceAgentsDefault),
+  "voice_simulations": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsVoiceSimulationsMin).default(accountsOnboardingGoalCreateResponseResultSignalsVoiceSimulationsDefault),
+  "voice_calls": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsVoiceCallsMin).default(accountsOnboardingGoalCreateResponseResultSignalsVoiceCallsDefault),
+  "voice_reviews": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsVoiceReviewsMin).default(accountsOnboardingGoalCreateResponseResultSignalsVoiceReviewsDefault),
+  "voice_agent_id": zod.string().optional(),
+  "voice_agent_name": zod.string().optional(),
+  "voice_agent_provider": zod.string().optional(),
+  "voice_agent_version_id": zod.string().optional(),
+  "voice_scenario_id": zod.string().optional(),
+  "voice_run_test_id": zod.string().optional(),
+  "voice_test_execution_id": zod.string().optional(),
+  "voice_call_execution_id": zod.string().optional(),
+  "voice_call_status": zod.string().optional(),
+  "voice_call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "voice_call_duration_seconds": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsVoiceCallDurationSecondsMin).optional(),
+  "voice_call_response_time_ms": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsVoiceCallResponseTimeMsMin).optional(),
+  "voice_call_interruption_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsVoiceCallInterruptionCountMin).optional(),
+  "voice_transcript_available": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceTranscriptAvailableDefault),
+  "voice_recording_available": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceRecordingAvailableDefault),
+  "voice_has_agent": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceHasAgentDefault),
+  "voice_has_scenario": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceHasScenarioDefault),
+  "voice_has_test": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceHasTestDefault),
+  "voice_has_call": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceHasCallDefault),
+  "voice_has_completed_call": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceHasCompletedCallDefault),
+  "voice_call_failed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceCallFailedDefault),
+  "voice_has_review": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceHasReviewDefault),
+  "voice_has_success_criteria": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceHasSuccessCriteriaDefault),
+  "voice_first_loop_completed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceFirstLoopCompletedDefault),
+  "voice_is_sample_only": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoiceIsSampleOnlyDefault),
+  "voice_sample_call_count": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsVoiceSampleCallCountMin).default(accountsOnboardingGoalCreateResponseResultSignalsVoiceSampleCallCountDefault),
+  "voice_permission_limited": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsVoicePermissionLimitedDefault),
+  "team_invites": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsTeamInvitesMin).default(accountsOnboardingGoalCreateResponseResultSignalsTeamInvitesDefault),
+  "dashboards": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsDashboardsMin).default(accountsOnboardingGoalCreateResponseResultSignalsDashboardsDefault),
+  "alerts": zod.number().min(accountsOnboardingGoalCreateResponseResultSignalsAlertsMin).default(accountsOnboardingGoalCreateResponseResultSignalsAlertsDefault),
+  "first_trace_id": zod.string().optional(),
+  "first_observe_id": zod.string().optional(),
+  "sample_project_opened": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsSampleProjectOpenedDefault),
+  "sample_trace_available": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsSampleTraceAvailableDefault),
+  "sample_signal_viewed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsSampleSignalViewedDefault),
+  "sample_trace_reviewed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSignalsSampleTraceReviewedDefault)
+}),
+  "available_goals": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "outcome_preview": zod.string().optional(),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "disabled": zod.boolean().default(accountsOnboardingGoalCreateResponseResultAvailableGoalsItemDisabledDefault),
+  "disabled_reason": zod.string().optional()
+})).optional(),
+  "available_paths": zod.array(zod.object({
+  "id": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only', 'hidden']),
+  "href": zod.string().min(1),
+  "is_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "first_action_id": zod.string().optional()
+})),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsOnboardingGoalCreateResponseResultJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_package_selected', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparable_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_node_added', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
+  "sample_project": zod.object({
+  "available": zod.boolean(),
+  "created": zod.boolean(),
+  "status": zod.enum(['not_created', 'unavailable', 'available', 'creating', 'ready_for_observe', 'partially_ready', 'ready', 'partial', 'hidden', 'stale_manifest', 'repair_required', 'repair_failed']),
+  "href": zod.string(),
+  "version": zod.string(),
+  "manifest_id": zod.string().optional(),
+  "manifest_version": zod.string().optional(),
+  "label": zod.string().default(accountsOnboardingGoalCreateResponseResultSampleProjectLabelDefault),
+  "entry_route": zod.string().optional(),
+  "is_repairable": zod.boolean().default(accountsOnboardingGoalCreateResponseResultSampleProjectIsRepairableDefault),
+  "blocked_reason": zod.string().optional(),
+  "artifact_refs": zod.object({
+
+}).passthrough().optional(),
+  "health": zod.object({
+
+}).passthrough().optional(),
+  "real_setup_href": zod.string().optional(),
+  "is_hidden": zod.boolean(),
+  "hidden_reason": zod.string().optional(),
+  "entry_routes": zod.array(zod.string().min(1)),
+  "missing_artifacts": zod.array(zod.string().min(1)),
+  "last_opened_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "prompt": zod.object({
+  "prompt_id": zod.string().optional(),
+  "prompt_name": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_real_prompt": zod.boolean(),
+  "has_test_run": zod.boolean(),
+  "has_committed_version": zod.boolean(),
+  "has_comparable_versions": zod.boolean().default(accountsOnboardingGoalCreateResponseResultPromptHasComparableVersionsDefault),
+  "has_comparison": zod.boolean(),
+  "has_next_loop_action": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultPromptIsSampleDefault),
+  "sample_prompt_count": zod.number().min(accountsOnboardingGoalCreateResponseResultPromptSamplePromptCountMin).default(accountsOnboardingGoalCreateResponseResultPromptSamplePromptCountDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "agent": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "test_id": zod.string().optional(),
+  "execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "graph_execution_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean(),
+  "has_agent_version": zod.boolean(),
+  "has_step": zod.boolean(),
+  "has_scenario": zod.boolean(),
+  "has_run": zod.boolean(),
+  "has_review": zod.boolean(),
+  "has_eval_coverage": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultAgentIsSampleDefault),
+  "sample_agent_count": zod.number().min(accountsOnboardingGoalCreateResponseResultAgentSampleAgentCountMin).default(accountsOnboardingGoalCreateResponseResultAgentSampleAgentCountDefault),
+  "voice_feature_unavailable": zod.boolean().default(accountsOnboardingGoalCreateResponseResultAgentVoiceFeatureUnavailableDefault),
+  "permission_limited": zod.boolean().default(accountsOnboardingGoalCreateResponseResultAgentPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "eval": zod.object({
+  "source_type": zod.string().optional(),
+  "source_id": zod.string().optional(),
+  "source_name": zod.string().optional(),
+  "scorer_id": zod.string().optional(),
+  "scorer_template_id": zod.string().optional(),
+  "scorer_name": zod.string().optional(),
+  "eval_group_id": zod.string().optional(),
+  "run_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_count": zod.number().min(accountsOnboardingGoalCreateResponseResultEvalFailureCountMin).default(accountsOnboardingGoalCreateResponseResultEvalFailureCountDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_action_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_source": zod.boolean().default(accountsOnboardingGoalCreateResponseResultEvalHasSourceDefault),
+  "has_scorer": zod.boolean().default(accountsOnboardingGoalCreateResponseResultEvalHasScorerDefault),
+  "has_completed_run": zod.boolean().default(accountsOnboardingGoalCreateResponseResultEvalHasCompletedRunDefault),
+  "has_failures": zod.boolean().default(accountsOnboardingGoalCreateResponseResultEvalHasFailuresDefault),
+  "has_review": zod.boolean().default(accountsOnboardingGoalCreateResponseResultEvalHasReviewDefault),
+  "has_failure_action": zod.boolean().default(accountsOnboardingGoalCreateResponseResultEvalHasFailureActionDefault),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultEvalIsSampleDefault),
+  "sample_source_count": zod.number().min(accountsOnboardingGoalCreateResponseResultEvalSampleSourceCountMin).default(accountsOnboardingGoalCreateResponseResultEvalSampleSourceCountDefault),
+  "permission_limited": zod.boolean().default(accountsOnboardingGoalCreateResponseResultEvalPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "voice": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_name": zod.string().optional(),
+  "agent_provider": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "run_test_id": zod.string().optional(),
+  "test_execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "call_status": zod.string().optional(),
+  "call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "call_duration_seconds": zod.number().min(accountsOnboardingGoalCreateResponseResultVoiceCallDurationSecondsMin).optional(),
+  "call_response_time_ms": zod.number().min(accountsOnboardingGoalCreateResponseResultVoiceCallResponseTimeMsMin).optional(),
+  "call_interruption_count": zod.number().min(accountsOnboardingGoalCreateResponseResultVoiceCallInterruptionCountMin).optional(),
+  "transcript_available": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceTranscriptAvailableDefault),
+  "recording_available": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceRecordingAvailableDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "success_criteria_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_config_id": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceHasAgentDefault),
+  "has_scenario": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceHasScenarioDefault),
+  "has_test": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceHasTestDefault),
+  "has_call": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceHasCallDefault),
+  "has_completed_call": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceHasCompletedCallDefault),
+  "call_failed": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceCallFailedDefault),
+  "has_review": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceHasReviewDefault),
+  "has_success_criteria": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceHasSuccessCriteriaDefault),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoiceIsSampleDefault),
+  "sample_call_count": zod.number().min(accountsOnboardingGoalCreateResponseResultVoiceSampleCallCountMin).default(accountsOnboardingGoalCreateResponseResultVoiceSampleCallCountDefault),
+  "permission_limited": zod.boolean().default(accountsOnboardingGoalCreateResponseResultVoicePermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "gateway": zod.object({
+  "gateway_available": zod.boolean(),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "provider_count": zod.number().min(accountsOnboardingGoalCreateResponseResultGatewayProviderCountMin).default(accountsOnboardingGoalCreateResponseResultGatewayProviderCountDefault),
+  "provider_credential_id": zod.string().optional(),
+  "provider_name": zod.string().optional(),
+  "provider_health_status": zod.string().optional(),
+  "provider_model_count": zod.number().min(accountsOnboardingGoalCreateResponseResultGatewayProviderModelCountMin).default(accountsOnboardingGoalCreateResponseResultGatewayProviderModelCountDefault),
+  "has_provider": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayHasProviderDefault),
+  "has_key": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "key_prefix": zod.string().optional(),
+  "key_status": zod.string().optional(),
+  "has_request": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayHasRequestDefault),
+  "request_log_id": zod.string().optional(),
+  "request_id": zod.string().optional(),
+  "request_status_code": zod.number().optional(),
+  "request_is_error": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayRequestIsErrorDefault),
+  "request_error_message": zod.string().optional(),
+  "request_provider": zod.string().optional(),
+  "request_model": zod.string().optional(),
+  "request_resolved_model": zod.string().optional(),
+  "request_latency_ms": zod.number().min(accountsOnboardingGoalCreateResponseResultGatewayRequestLatencyMsMin).optional(),
+  "request_cost": zod.string().optional(),
+  "request_cache_hit": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayRequestCacheHitDefault),
+  "request_fallback_used": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayRequestFallbackUsedDefault),
+  "request_guardrail_triggered": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayRequestGuardrailTriggeredDefault),
+  "has_review": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayHasReviewDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "has_failure_repair": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayHasFailureRepairDefault),
+  "has_policy": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayHasPolicyDefault),
+  "policy_type": zod.string().optional(),
+  "policy_id": zod.string().optional(),
+  "policy_route": zod.string().optional(),
+  "policy_synced": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayPolicySyncedDefault),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayIsSampleDefault),
+  "sample_request_count": zod.number().min(accountsOnboardingGoalCreateResponseResultGatewaySampleRequestCountMin).default(accountsOnboardingGoalCreateResponseResultGatewaySampleRequestCountDefault),
+  "permission_limited": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayPermissionLimitedDefault),
+  "guard_blocked": zod.boolean().default(accountsOnboardingGoalCreateResponseResultGatewayGuardBlockedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data'])
+}).optional(),
+  "lifecycle": zod.object({
+  "dry_run_enabled": zod.boolean(),
+  "send_enabled": zod.boolean().default(accountsOnboardingGoalCreateResponseResultLifecycleSendEnabledDefault),
+  "status": zod.enum(['eligible', 'suppressed', 'skipped', 'error']),
+  "next_campaign_key": zod.string().optional(),
+  "template_key": zod.string().optional(),
+  "eligible_at": zod.string().datetime({"offset":true}).optional(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "target_success_event": zod.string().optional(),
+  "target_action_id": zod.string().optional(),
+  "target_url": zod.string().optional(),
+  "dry_run_only": zod.boolean().default(accountsOnboardingGoalCreateResponseResultLifecycleDryRunOnlyDefault)
+}).optional(),
+  "daily_quality": zod.object({
+  "mode": zod.enum(['new_signal', 'open_action', 'no_new_signal', 'permission_limited', 'unavailable']),
+  "last_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "top_signal": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "type": zod.enum(['trace_failure', 'prompt_quality_review', 'span_latency', 'span_cost', 'agent_run_issue', 'gateway_request_issue', 'eval_failure', 'voice_call_issue', 'alert_triggered', 'feed_issue', 'dashboard_missing', 'alert_missing', 'evaluator_missing', 'saved_view_missing']),
+  "severity": zod.enum(['critical', 'warning', 'info']),
+  "title": zod.string().min(1),
+  "body": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1),
+  "project_id": zod.string().min(1).optional(),
+  "route": zod.string().min(1),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultDailyQualityTopSignalIsSampleDefault),
+  "created_at": zod.string().datetime({"offset":true})
+}).optional(),
+  "primary_action": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsOnboardingGoalCreateResponseResultDailyQualityPrimaryActionRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsOnboardingGoalCreateResponseResultDailyQualityPrimaryActionIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsOnboardingGoalCreateResponseResultDailyQualityPrimaryActionIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultDailyQualityPrimaryActionIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+}).optional(),
+  "action_cards": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsOnboardingGoalCreateResponseResultDailyQualityActionCardsItemRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsOnboardingGoalCreateResponseResultDailyQualityActionCardsItemIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsOnboardingGoalCreateResponseResultDailyQualityActionCardsItemIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultDailyQualityActionCardsItemIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+})).optional(),
+  "product_cards": zod.array(zod.object({
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "status": zod.string().min(1),
+  "label": zod.string().min(1),
+  "summary": zod.string().min(1),
+  "metric": zod.string().min(1),
+  "change": zod.string().optional(),
+  "route": zod.string().min(1)
+})).optional(),
+  "weekly_review": zod.object({
+  "due": zod.boolean(),
+  "status": zod.enum(['due', 'not_due', 'permission_limited', 'flag_disabled', 'no_useful_signal', 'completed_recently']),
+  "route": zod.string().min(1),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "summary": zod.string().min(1),
+  "unresolved_count": zod.number().min(accountsOnboardingGoalCreateResponseResultDailyQualityWeeklyReviewUnresolvedCountMin),
+  "completed_count": zod.number().min(accountsOnboardingGoalCreateResponseResultDailyQualityWeeklyReviewCompletedCountMin),
+  "last_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "action_label": zod.string().optional()
+}).optional(),
+  "digest_eligible": zod.boolean(),
+  "digest_suppression_reason": zod.string().optional(),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "email_eligibility": zod.object({
+  "eligible": zod.boolean(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "next_email_key": zod.string().optional(),
+  "next_email_after": zod.string().datetime({"offset":true}).optional(),
+  "digest_eligible": zod.boolean(),
+  "last_email_sent_at": zod.string().datetime({"offset":true}).optional(),
+  "frequency_cap_remaining": zod.number().min(accountsOnboardingGoalCreateResponseResultEmailEligibilityFrequencyCapRemainingMin),
+  "dry_run_only": zod.boolean().default(accountsOnboardingGoalCreateResponseResultEmailEligibilityDryRunOnlyDefault)
+}),
+  "permissions": zod.object({
+  "role": zod.string(),
+  "can_read": zod.boolean(),
+  "can_write": zod.boolean(),
+  "can_manage_workspace": zod.boolean(),
+  "missing_permissions": zod.array(zod.string().min(1)),
+  "request_access_href": zod.string().optional(),
+  "permission_limited": zod.boolean()
+}),
+  "feature_flags": zod.record(zod.string(), zod.boolean()),
+  "route_availability": zod.object({
+
+}).passthrough(),
+  "email_context": zod.object({
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "target_route": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']),
+  "stale_reason": zod.string().optional(),
+  "resolved_href": zod.string().min(1)
+}),
+  "last_meaningful_event": zod.object({
+  "name": zod.string().min(1),
+  "occurred_at": zod.string().datetime({"offset":true}),
+  "is_sample": zod.boolean().default(accountsOnboardingGoalCreateResponseResultLastMeaningfulEventIsSampleDefault),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "metadata": zod.record(zod.string(), zod.string()).optional()
+}),
+  "value_signal": zod.object({
+  "kind": zod.enum(['observe_trace_metrics', 'prompt_quality_loop', 'agent_quality_loop', 'gateway_routing_loop', 'eval_quality_loop', 'voice_quality_loop']).optional(),
+  "headline": zod.string().optional(),
+  "summary": zod.string().optional(),
+  "metrics": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "value": zod.string().min(1)
+})).optional(),
+  "latency_ms": zod.number().min(accountsOnboardingGoalCreateResponseResultValueSignalLatencyMsMin).optional(),
+  "cost": zod.number().min(accountsOnboardingGoalCreateResponseResultValueSignalCostMin).optional(),
+  "total_tokens": zod.number().min(accountsOnboardingGoalCreateResponseResultValueSignalTotalTokensMin).optional()
+}).optional(),
+  "diagnostics": zod.object({
+  "resolver_version": zod.string().min(1),
+  "decision_reason": zod.string().min(1),
+  "matched_rule": zod.string().min(1),
+  "candidate_actions": zod.array(zod.string().min(1)),
+  "suppressed_actions": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "reason": zod.string().min(1)
+})),
+  "evaluated_at": zod.string().datetime({"offset":true})
+}),
+  "warnings": zod.array(zod.string().min(1))
+})
+})
+
+
+export const accountsOnboardingLifecycleDigestPreviewsListQueryLimitDefault = 25;
+export const accountsOnboardingLifecycleDigestPreviewsListQueryLimitMax = 100;
+
+
+
+export const AccountsOnboardingLifecycleDigestPreviewsListQueryParams = zod.object({
+  "campaign_key": zod.enum(['daily_quality_open_actions']).optional(),
+  "limit": zod.number().min(1).max(accountsOnboardingLifecycleDigestPreviewsListQueryLimitMax).default(accountsOnboardingLifecycleDigestPreviewsListQueryLimitDefault)
+})
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultLimitMax = 100;
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultCountMin = 0;
+
+
+
+
+
+
+
+
+
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemPreviewActionCountMin = 0;
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemPreviewOmittedActionCountMin = 0;
+
+
+
+
+
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemPreviewActionsItemAgeMinutesMin = 0;
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemPreviewActionsItemIsOverdueDefault = false;
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryActionCountMin = 0;
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryVisibleActionCountMin = 0;
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryOmittedActionCountMin = 0;
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryOverdueCountMin = 0;
+
+export const accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryAssignedCountMin = 0;
+
+
+
+
+export const AccountsOnboardingLifecycleDigestPreviewsListResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "generated_at": zod.string().datetime({"offset":true}),
+  "limit": zod.number().min(1).max(accountsOnboardingLifecycleDigestPreviewsListResponseResultLimitMax),
+  "campaign_key": zod.string().optional(),
+  "count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsListResponseResultCountMin),
+  "items": zod.array(zod.object({
+  "source_type": zod.enum(['evaluation_log', 'send_log']),
+  "source_id": zod.string().uuid(),
+  "campaign_key": zod.string().min(1),
+  "campaign_group": zod.string().min(1).optional(),
+  "template_key": zod.string().min(1).optional(),
+  "template_version": zod.string().min(1).optional(),
+  "status": zod.string().min(1),
+  "suppression_reason": zod.string().optional(),
+  "user_id": zod.string().uuid(),
+  "workspace_id": zod.string().uuid().optional(),
+  "evaluated_at": zod.string().datetime({"offset":true}).optional(),
+  "queued_at": zod.string().datetime({"offset":true}).optional(),
+  "sent_at": zod.string().datetime({"offset":true}).optional(),
+  "created_at": zod.string().datetime({"offset":true}),
+  "preview": zod.object({
+  "kind": zod.string().min(1),
+  "campaign_key": zod.string().min(1),
+  "template_key": zod.string().min(1),
+  "generated_at": zod.string().datetime({"offset":true}).optional(),
+  "workspace_id": zod.string().min(1),
+  "action_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemPreviewActionCountMin),
+  "omitted_action_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemPreviewOmittedActionCountMin),
+  "actions": zod.array(zod.object({
+  "action_id": zod.string().min(1),
+  "label": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().optional(),
+  "primary_path": zod.string().optional(),
+  "status": zod.string().optional(),
+  "age_minutes": zod.number().min(accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemPreviewActionsItemAgeMinutesMin),
+  "last_event_at": zod.string().datetime({"offset":true}).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemPreviewActionsItemIsOverdueDefault)
+}))
+}),
+  "summary": zod.object({
+  "action_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryActionCountMin),
+  "visible_action_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryVisibleActionCountMin),
+  "omitted_action_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryOmittedActionCountMin),
+  "overdue_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryOverdueCountMin),
+  "assigned_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsListResponseResultItemsItemSummaryAssignedCountMin)
+}),
+  "delivery_logs": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "channel": zod.string().min(1),
+  "status": zod.enum(['eligible', 'suppressed', 'sent', 'failed', 'clicked', 'completed']),
+  "suppressed_reason": zod.string().optional(),
+  "sent_at": zod.string().datetime({"offset":true}).optional(),
+  "created_at": zod.string().datetime({"offset":true})
+}))
+}))
+})
+})
+
+
+export const accountsOnboardingLifecycleDigestPreviewsPromoteCreateBodyScopeTypeDefault = `user`;
+export const accountsOnboardingLifecycleDigestPreviewsPromoteCreateBodyDryRunDefault = false;
+export const accountsOnboardingLifecycleDigestPreviewsPromoteCreateBodyReasonMax = 180;
+
+
+
+export const AccountsOnboardingLifecycleDigestPreviewsPromoteCreateBody = zod.object({
+  "sources": zod.array(zod.object({
+  "source_type": zod.enum(['evaluation_log', 'send_log']),
+  "source_id": zod.string().uuid()
+})),
+  "scope_type": zod.enum(['user', 'workspace']).default(accountsOnboardingLifecycleDigestPreviewsPromoteCreateBodyScopeTypeDefault),
+  "dry_run": zod.boolean().default(accountsOnboardingLifecycleDigestPreviewsPromoteCreateBodyDryRunDefault),
+  "reason": zod.string().max(accountsOnboardingLifecycleDigestPreviewsPromoteCreateBodyReasonMax).optional()
+})
+
+
+
+export const accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseResultPromotedCountMin = 0;
+
+export const accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseResultSkippedCountMin = 0;
+
+export const accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseResultCreatedCountMin = 0;
+
+export const accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseResultUpdatedCountMin = 0;
+
+
+
+
+
+export const AccountsOnboardingLifecycleDigestPreviewsPromoteCreateResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "generated_at": zod.string().datetime({"offset":true}),
+  "environment": zod.string().min(1),
+  "campaign_key": zod.string().min(1),
+  "scope_type": zod.enum(['user', 'workspace']),
+  "dry_run": zod.boolean(),
+  "promoted_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseResultPromotedCountMin),
+  "skipped_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseResultSkippedCountMin),
+  "created_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseResultCreatedCountMin),
+  "updated_count": zod.number().min(accountsOnboardingLifecycleDigestPreviewsPromoteCreateResponseResultUpdatedCountMin),
+  "entries": zod.array(zod.object({
+  "source_type": zod.enum(['evaluation_log', 'send_log']),
+  "source_id": zod.string().uuid(),
+  "allowlist_id": zod.string().uuid().optional(),
+  "operation": zod.enum(['created', 'updated', 'would_create', 'would_update']),
+  "scope_type": zod.enum(['user', 'workspace']),
+  "scope_value": zod.string().min(1),
+  "campaign_group": zod.string().min(1).optional(),
+  "user_id": zod.string().uuid(),
+  "workspace_id": zod.string().uuid()
+})),
+  "skipped": zod.array(zod.object({
+  "source_type": zod.enum(['evaluation_log', 'send_log']),
+  "source_id": zod.string().uuid(),
+  "reason": zod.enum(['duplicate_source', 'duplicate_target', 'missing_digest_preview', 'not_found', 'unsupported_campaign'])
+}))
 })
 })
 
@@ -1563,6 +4973,2026 @@ export const AccountsResendInvitationEmailsCreateResponseItem = zod.object({
 export const AccountsResendInvitationEmailsCreateResponse = zod.array(AccountsResendInvitationEmailsCreateResponseItem)
 
 
+export const accountsSampleProjectCreateBodyPathDefault = `observe`;
+
+export const accountsSampleProjectCreateBodyOpenAfterCreateDefault = false;
+export const accountsSampleProjectCreateBodyQuickStartIdRegExp = new RegExp('^[a-z0-9_:-]{1,80}$');
+
+
+export const AccountsSampleProjectCreateBody = zod.object({
+  "path": zod.string().min(1).default(accountsSampleProjectCreateBodyPathDefault),
+  "manifest_id": zod.string().optional(),
+  "manifest_version": zod.string().optional(),
+  "source": zod.string().optional(),
+  "reason": zod.string().optional(),
+  "open_after_create": zod.boolean().default(accountsSampleProjectCreateBodyOpenAfterCreateDefault),
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "stale_reason": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']).optional(),
+  "quick_start_goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']).optional(),
+  "quick_start_id": zod.string().regex(accountsSampleProjectCreateBodyQuickStartIdRegExp).optional(),
+  "quick_start_primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+
+export const accountsSampleProjectCreateResponseStatusDefault = true;
+export const accountsSampleProjectCreateResponseResultSampleProjectLabelDefault = `Sample`;
+export const accountsSampleProjectCreateResponseResultSampleProjectIsRepairableDefault = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateRecommendedActionIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateFallbackActionIsSampleDefault = false;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsProviderKeysDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsProviderKeysMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsDatasetsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsDatasetsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalRunsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalRunsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalSourceCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalSourceCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalScorerCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalScorerCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalGroupCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalGroupCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalRunCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalRunCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalFailureCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalFailureCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasSourceDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasScorerDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasCompletedRunDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasFailuresDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasReviewDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasFailureActionDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalFirstLoopCompletedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalIsSampleOnlyDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalSampleSourceCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalSampleSourceCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsEvalPermissionLimitedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptTemplatesDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptTemplatesMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptVersionsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptVersionsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptComparisonsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptComparisonsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptSampleTemplatesDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptSampleTemplatesMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptComparableVersionsExistDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptRunExistsDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptCommittedVersionExistsDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptComparisonCompletedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptNextLoopActionExistsDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsPromptFirstLoopCompletedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentPrototypeRunsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentPrototypeRunsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentSampleCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentSampleCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasAgentDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasAgentVersionDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasStepDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasScenarioDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasRunDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentRunFailedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasReviewDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasEvalCoverageDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentMultipleScenariosDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentFirstLoopCompletedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentVoiceFeatureUnavailableDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAgentPermissionLimitedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsObserveProjectsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsObserveProjectsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsTracesDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsTracesMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsTraceReviewsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsTraceReviewsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayKeysDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayKeysMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayPoliciesDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayPoliciesMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayAvailableDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayProviderCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayProviderCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayProviderModelCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayProviderModelCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasProviderDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasKeyDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasRequestDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestIsErrorDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestLatencyMsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestCacheHitDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestFallbackUsedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasReviewDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasFailureRepairDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasPolicyDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayPolicySyncedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayIsSampleOnlyDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewaySampleRequestCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewaySampleRequestCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayPermissionLimitedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayGuardBlockedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayFirstLoopCompletedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceAgentsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceAgentsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceSimulationsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceSimulationsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceReviewsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceReviewsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallDurationSecondsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallResponseTimeMsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallInterruptionCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceTranscriptAvailableDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceRecordingAvailableDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasAgentDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasScenarioDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasTestDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasCallDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasCompletedCallDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallFailedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasReviewDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasSuccessCriteriaDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceFirstLoopCompletedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceIsSampleOnlyDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceSampleCallCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceSampleCallCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsVoicePermissionLimitedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsTeamInvitesDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsTeamInvitesMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsDashboardsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsDashboardsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAlertsDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsAlertsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsSampleProjectOpenedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsSampleTraceAvailableDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsSampleSignalViewedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateSignalsSampleTraceReviewedDefault = false;
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault = false;
+
+
+
+
+
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateSampleProjectLabelDefault = `Sample`;
+export const accountsSampleProjectCreateResponseResultActivationStateSampleProjectIsRepairableDefault = false;
+
+export const accountsSampleProjectCreateResponseResultActivationStatePromptHasComparableVersionsDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStatePromptIsSampleDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStatePromptSamplePromptCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStatePromptSamplePromptCountMin = 0;
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateAgentIsSampleDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateAgentSampleAgentCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateAgentSampleAgentCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateAgentVoiceFeatureUnavailableDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateAgentPermissionLimitedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalFailureCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalFailureCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateEvalHasSourceDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalHasScorerDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalHasCompletedRunDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalHasFailuresDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalHasReviewDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalHasFailureActionDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalIsSampleDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalSampleSourceCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateEvalSampleSourceCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateEvalPermissionLimitedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceCallDurationSecondsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceCallResponseTimeMsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceCallInterruptionCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceTranscriptAvailableDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceRecordingAvailableDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceHasAgentDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceHasScenarioDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceHasTestDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceHasCallDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceHasCompletedCallDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceCallFailedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceHasReviewDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceHasSuccessCriteriaDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceIsSampleDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceSampleCallCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateVoiceSampleCallCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateVoicePermissionLimitedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayProviderCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayProviderCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayProviderModelCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayProviderModelCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayHasProviderDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayHasKeyDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayHasRequestDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayRequestIsErrorDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayRequestLatencyMsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayRequestCacheHitDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayRequestFallbackUsedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayHasReviewDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayHasFailureRepairDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayHasPolicyDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayPolicySyncedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayIsSampleDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewaySampleRequestCountDefault = 0;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewaySampleRequestCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayPermissionLimitedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateGatewayGuardBlockedDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateLifecycleSendEnabledDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateLifecycleDryRunOnlyDefault = true;
+
+
+
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityTopSignalIsSampleDefault = false;
+
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityPrimaryActionRouteAvailableDefault = true;
+
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityPrimaryActionIsOverdueDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityPrimaryActionIsPrimaryDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityPrimaryActionIsSampleDefault = false;
+
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityActionCardsItemRouteAvailableDefault = true;
+
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityActionCardsItemIsOverdueDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityActionCardsItemIsPrimaryDefault = false;
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityActionCardsItemIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityWeeklyReviewUnresolvedCountMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateDailyQualityWeeklyReviewCompletedCountMin = 0;
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateEmailEligibilityFrequencyCapRemainingMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateEmailEligibilityDryRunOnlyDefault = true;
+
+
+export const accountsSampleProjectCreateResponseResultActivationStateLastMeaningfulEventIsSampleDefault = false;
+
+export const accountsSampleProjectCreateResponseResultActivationStateValueSignalLatencyMsMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateValueSignalCostMin = 0;
+
+export const accountsSampleProjectCreateResponseResultActivationStateValueSignalTotalTokensMin = 0;
+
+
+
+
+
+
+
+
+
+
+export const AccountsSampleProjectCreateResponse = zod.object({
+  "status": zod.boolean().default(accountsSampleProjectCreateResponseStatusDefault),
+  "result": zod.object({
+  "sample_project": zod.object({
+  "available": zod.boolean(),
+  "created": zod.boolean(),
+  "status": zod.enum(['not_created', 'unavailable', 'available', 'creating', 'ready_for_observe', 'partially_ready', 'ready', 'partial', 'hidden', 'stale_manifest', 'repair_required', 'repair_failed']),
+  "href": zod.string(),
+  "version": zod.string(),
+  "manifest_id": zod.string().optional(),
+  "manifest_version": zod.string().optional(),
+  "label": zod.string().default(accountsSampleProjectCreateResponseResultSampleProjectLabelDefault),
+  "entry_route": zod.string().optional(),
+  "is_repairable": zod.boolean().default(accountsSampleProjectCreateResponseResultSampleProjectIsRepairableDefault),
+  "blocked_reason": zod.string().optional(),
+  "artifact_refs": zod.object({
+
+}).passthrough().optional(),
+  "health": zod.object({
+
+}).passthrough().optional(),
+  "real_setup_href": zod.string().optional(),
+  "is_hidden": zod.boolean(),
+  "hidden_reason": zod.string().optional(),
+  "entry_routes": zod.array(zod.string().min(1)),
+  "missing_artifacts": zod.array(zod.string().min(1)),
+  "last_opened_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "activation_state": zod.object({
+  "schema_version": zod.string().min(1),
+  "request_id": zod.string().min(1),
+  "server_time": zod.string().datetime({"offset":true}),
+  "workspace_id": zod.string().min(1),
+  "organization_id": zod.string().min(1),
+  "user_id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "persona": zod.string(),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "stage_copy": zod.object({
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1)
+}).optional(),
+  "home_mode": zod.enum(['first_run', 'daily_quality', 'fallback']),
+  "is_activated": zod.boolean(),
+  "activated_via": zod.enum(['workspace', 'organization']).optional(),
+  "activated_at": zod.string().datetime({"offset":true}),
+  "recommended_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateRecommendedActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "fallback_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateFallbackActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "progress": zod.object({
+  "build": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "test": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "observe": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "ship": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "improve": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only'])
+}),
+  "signals": zod.object({
+  "provider_keys": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsProviderKeysMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsProviderKeysDefault),
+  "datasets": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsDatasetsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsDatasetsDefault),
+  "evals": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalsDefault),
+  "eval_runs": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalRunsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalRunsDefault),
+  "eval_source_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalSourceCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalSourceCountDefault),
+  "eval_source_type": zod.string().optional(),
+  "eval_source_id": zod.string().optional(),
+  "eval_source_name": zod.string().optional(),
+  "eval_scorer_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalScorerCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalScorerCountDefault),
+  "eval_scorer_id": zod.string().optional(),
+  "eval_scorer_template_id": zod.string().optional(),
+  "eval_scorer_name": zod.string().optional(),
+  "eval_group_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalGroupCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalGroupCountDefault),
+  "eval_group_id": zod.string().optional(),
+  "eval_run_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalRunCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalRunCountDefault),
+  "eval_run_id": zod.string().optional(),
+  "eval_run_status": zod.string().optional(),
+  "eval_run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_failure_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalFailureCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalFailureCountDefault),
+  "eval_has_source": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasSourceDefault),
+  "eval_has_scorer": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasScorerDefault),
+  "eval_has_completed_run": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasCompletedRunDefault),
+  "eval_has_failures": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasFailuresDefault),
+  "eval_has_review": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasReviewDefault),
+  "eval_has_failure_action": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalHasFailureActionDefault),
+  "eval_first_loop_completed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalFirstLoopCompletedDefault),
+  "eval_is_sample_only": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalIsSampleOnlyDefault),
+  "eval_sample_source_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalSampleSourceCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalSampleSourceCountDefault),
+  "eval_permission_limited": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsEvalPermissionLimitedDefault),
+  "prompt_templates": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptTemplatesMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptTemplatesDefault),
+  "prompt_versions": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptVersionsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptVersionsDefault),
+  "prompt_comparisons": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptComparisonsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptComparisonsDefault),
+  "first_prompt_id": zod.string().optional(),
+  "latest_prompt_id": zod.string().optional(),
+  "prompt_sample_templates": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptSampleTemplatesMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptSampleTemplatesDefault),
+  "prompt_comparable_versions_exist": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptComparableVersionsExistDefault),
+  "prompt_run_exists": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptRunExistsDefault),
+  "prompt_committed_version_exists": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptCommittedVersionExistsDefault),
+  "prompt_comparison_completed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptComparisonCompletedDefault),
+  "prompt_next_loop_action_exists": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptNextLoopActionExistsDefault),
+  "prompt_first_loop_completed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsPromptFirstLoopCompletedDefault),
+  "agents": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentsDefault),
+  "agent_prototype_runs": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentPrototypeRunsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentPrototypeRunsDefault),
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "agent_scenario_id": zod.string().optional(),
+  "agent_test_id": zod.string().optional(),
+  "agent_execution_id": zod.string().optional(),
+  "agent_call_execution_id": zod.string().optional(),
+  "agent_graph_execution_id": zod.string().optional(),
+  "agent_run_status": zod.string().optional(),
+  "agent_sample_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentSampleCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentSampleCountDefault),
+  "agent_has_agent": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasAgentDefault),
+  "agent_has_agent_version": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasAgentVersionDefault),
+  "agent_has_step": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasStepDefault),
+  "agent_has_scenario": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasScenarioDefault),
+  "agent_has_run": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasRunDefault),
+  "agent_run_failed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentRunFailedDefault),
+  "agent_has_review": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasReviewDefault),
+  "agent_has_eval_coverage": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentHasEvalCoverageDefault),
+  "agent_multiple_scenarios": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentMultipleScenariosDefault),
+  "agent_first_loop_completed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentFirstLoopCompletedDefault),
+  "agent_voice_feature_unavailable": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentVoiceFeatureUnavailableDefault),
+  "agent_permission_limited": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsAgentPermissionLimitedDefault),
+  "observe_projects": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsObserveProjectsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsObserveProjectsDefault),
+  "traces": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsTracesMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsTracesDefault),
+  "trace_reviews": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsTraceReviewsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsTraceReviewsDefault),
+  "gateway_keys": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayKeysMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayKeysDefault),
+  "gateway_requests": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestsDefault),
+  "gateway_policies": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayPoliciesMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayPoliciesDefault),
+  "gateway_available": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayAvailableDefault),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "gateway_provider_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayProviderCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayProviderCountDefault),
+  "gateway_provider_credential_id": zod.string().optional(),
+  "gateway_provider_name": zod.string().optional(),
+  "gateway_provider_health_status": zod.string().optional(),
+  "gateway_provider_model_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayProviderModelCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayProviderModelCountDefault),
+  "gateway_has_provider": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasProviderDefault),
+  "gateway_has_key": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "gateway_key_prefix": zod.string().optional(),
+  "gateway_key_status": zod.string().optional(),
+  "gateway_has_request": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasRequestDefault),
+  "gateway_request_log_id": zod.string().optional(),
+  "gateway_request_id": zod.string().optional(),
+  "gateway_request_status_code": zod.number().optional(),
+  "gateway_request_is_error": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestIsErrorDefault),
+  "gateway_request_error_message": zod.string().optional(),
+  "gateway_request_provider": zod.string().optional(),
+  "gateway_request_model": zod.string().optional(),
+  "gateway_request_resolved_model": zod.string().optional(),
+  "gateway_request_latency_ms": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestLatencyMsMin).optional(),
+  "gateway_request_cost": zod.string().optional(),
+  "gateway_request_cache_hit": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestCacheHitDefault),
+  "gateway_request_fallback_used": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestFallbackUsedDefault),
+  "gateway_request_guardrail_triggered": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayRequestGuardrailTriggeredDefault),
+  "gateway_has_review": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasReviewDefault),
+  "gateway_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "gateway_has_failure_repair": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasFailureRepairDefault),
+  "gateway_has_policy": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayHasPolicyDefault),
+  "gateway_policy_type": zod.string().optional(),
+  "gateway_policy_id": zod.string().optional(),
+  "gateway_policy_route": zod.string().optional(),
+  "gateway_policy_synced": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayPolicySyncedDefault),
+  "gateway_is_sample_only": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayIsSampleOnlyDefault),
+  "gateway_sample_request_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewaySampleRequestCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewaySampleRequestCountDefault),
+  "gateway_permission_limited": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayPermissionLimitedDefault),
+  "gateway_guard_blocked": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayGuardBlockedDefault),
+  "gateway_first_loop_completed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsGatewayFirstLoopCompletedDefault),
+  "voice_agents": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceAgentsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceAgentsDefault),
+  "voice_simulations": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceSimulationsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceSimulationsDefault),
+  "voice_calls": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallsDefault),
+  "voice_reviews": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceReviewsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceReviewsDefault),
+  "voice_agent_id": zod.string().optional(),
+  "voice_agent_name": zod.string().optional(),
+  "voice_agent_provider": zod.string().optional(),
+  "voice_agent_version_id": zod.string().optional(),
+  "voice_scenario_id": zod.string().optional(),
+  "voice_run_test_id": zod.string().optional(),
+  "voice_test_execution_id": zod.string().optional(),
+  "voice_call_execution_id": zod.string().optional(),
+  "voice_call_status": zod.string().optional(),
+  "voice_call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "voice_call_duration_seconds": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallDurationSecondsMin).optional(),
+  "voice_call_response_time_ms": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallResponseTimeMsMin).optional(),
+  "voice_call_interruption_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallInterruptionCountMin).optional(),
+  "voice_transcript_available": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceTranscriptAvailableDefault),
+  "voice_recording_available": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceRecordingAvailableDefault),
+  "voice_has_agent": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasAgentDefault),
+  "voice_has_scenario": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasScenarioDefault),
+  "voice_has_test": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasTestDefault),
+  "voice_has_call": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasCallDefault),
+  "voice_has_completed_call": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasCompletedCallDefault),
+  "voice_call_failed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceCallFailedDefault),
+  "voice_has_review": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasReviewDefault),
+  "voice_has_success_criteria": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceHasSuccessCriteriaDefault),
+  "voice_first_loop_completed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceFirstLoopCompletedDefault),
+  "voice_is_sample_only": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceIsSampleOnlyDefault),
+  "voice_sample_call_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceSampleCallCountMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoiceSampleCallCountDefault),
+  "voice_permission_limited": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsVoicePermissionLimitedDefault),
+  "team_invites": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsTeamInvitesMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsTeamInvitesDefault),
+  "dashboards": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsDashboardsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsDashboardsDefault),
+  "alerts": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateSignalsAlertsMin).default(accountsSampleProjectCreateResponseResultActivationStateSignalsAlertsDefault),
+  "first_trace_id": zod.string().optional(),
+  "first_observe_id": zod.string().optional(),
+  "sample_project_opened": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsSampleProjectOpenedDefault),
+  "sample_trace_available": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsSampleTraceAvailableDefault),
+  "sample_signal_viewed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsSampleSignalViewedDefault),
+  "sample_trace_reviewed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSignalsSampleTraceReviewedDefault)
+}),
+  "available_goals": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "outcome_preview": zod.string().optional(),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "disabled": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault),
+  "disabled_reason": zod.string().optional()
+})).optional(),
+  "available_paths": zod.array(zod.object({
+  "id": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only', 'hidden']),
+  "href": zod.string().min(1),
+  "is_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "first_action_id": zod.string().optional()
+})),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_package_selected', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparable_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_node_added', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
+  "sample_project": zod.object({
+  "available": zod.boolean(),
+  "created": zod.boolean(),
+  "status": zod.enum(['not_created', 'unavailable', 'available', 'creating', 'ready_for_observe', 'partially_ready', 'ready', 'partial', 'hidden', 'stale_manifest', 'repair_required', 'repair_failed']),
+  "href": zod.string(),
+  "version": zod.string(),
+  "manifest_id": zod.string().optional(),
+  "manifest_version": zod.string().optional(),
+  "label": zod.string().default(accountsSampleProjectCreateResponseResultActivationStateSampleProjectLabelDefault),
+  "entry_route": zod.string().optional(),
+  "is_repairable": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateSampleProjectIsRepairableDefault),
+  "blocked_reason": zod.string().optional(),
+  "artifact_refs": zod.object({
+
+}).passthrough().optional(),
+  "health": zod.object({
+
+}).passthrough().optional(),
+  "real_setup_href": zod.string().optional(),
+  "is_hidden": zod.boolean(),
+  "hidden_reason": zod.string().optional(),
+  "entry_routes": zod.array(zod.string().min(1)),
+  "missing_artifacts": zod.array(zod.string().min(1)),
+  "last_opened_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "prompt": zod.object({
+  "prompt_id": zod.string().optional(),
+  "prompt_name": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_real_prompt": zod.boolean(),
+  "has_test_run": zod.boolean(),
+  "has_committed_version": zod.boolean(),
+  "has_comparable_versions": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStatePromptHasComparableVersionsDefault),
+  "has_comparison": zod.boolean(),
+  "has_next_loop_action": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStatePromptIsSampleDefault),
+  "sample_prompt_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStatePromptSamplePromptCountMin).default(accountsSampleProjectCreateResponseResultActivationStatePromptSamplePromptCountDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "agent": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "test_id": zod.string().optional(),
+  "execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "graph_execution_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean(),
+  "has_agent_version": zod.boolean(),
+  "has_step": zod.boolean(),
+  "has_scenario": zod.boolean(),
+  "has_run": zod.boolean(),
+  "has_review": zod.boolean(),
+  "has_eval_coverage": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateAgentIsSampleDefault),
+  "sample_agent_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateAgentSampleAgentCountMin).default(accountsSampleProjectCreateResponseResultActivationStateAgentSampleAgentCountDefault),
+  "voice_feature_unavailable": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateAgentVoiceFeatureUnavailableDefault),
+  "permission_limited": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateAgentPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "eval": zod.object({
+  "source_type": zod.string().optional(),
+  "source_id": zod.string().optional(),
+  "source_name": zod.string().optional(),
+  "scorer_id": zod.string().optional(),
+  "scorer_template_id": zod.string().optional(),
+  "scorer_name": zod.string().optional(),
+  "eval_group_id": zod.string().optional(),
+  "run_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateEvalFailureCountMin).default(accountsSampleProjectCreateResponseResultActivationStateEvalFailureCountDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_action_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_source": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateEvalHasSourceDefault),
+  "has_scorer": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateEvalHasScorerDefault),
+  "has_completed_run": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateEvalHasCompletedRunDefault),
+  "has_failures": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateEvalHasFailuresDefault),
+  "has_review": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateEvalHasReviewDefault),
+  "has_failure_action": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateEvalHasFailureActionDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateEvalIsSampleDefault),
+  "sample_source_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateEvalSampleSourceCountMin).default(accountsSampleProjectCreateResponseResultActivationStateEvalSampleSourceCountDefault),
+  "permission_limited": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateEvalPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "voice": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_name": zod.string().optional(),
+  "agent_provider": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "run_test_id": zod.string().optional(),
+  "test_execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "call_status": zod.string().optional(),
+  "call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "call_duration_seconds": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateVoiceCallDurationSecondsMin).optional(),
+  "call_response_time_ms": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateVoiceCallResponseTimeMsMin).optional(),
+  "call_interruption_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateVoiceCallInterruptionCountMin).optional(),
+  "transcript_available": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceTranscriptAvailableDefault),
+  "recording_available": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceRecordingAvailableDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "success_criteria_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_config_id": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceHasAgentDefault),
+  "has_scenario": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceHasScenarioDefault),
+  "has_test": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceHasTestDefault),
+  "has_call": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceHasCallDefault),
+  "has_completed_call": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceHasCompletedCallDefault),
+  "call_failed": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceCallFailedDefault),
+  "has_review": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceHasReviewDefault),
+  "has_success_criteria": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceHasSuccessCriteriaDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoiceIsSampleDefault),
+  "sample_call_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateVoiceSampleCallCountMin).default(accountsSampleProjectCreateResponseResultActivationStateVoiceSampleCallCountDefault),
+  "permission_limited": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateVoicePermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "gateway": zod.object({
+  "gateway_available": zod.boolean(),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "provider_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateGatewayProviderCountMin).default(accountsSampleProjectCreateResponseResultActivationStateGatewayProviderCountDefault),
+  "provider_credential_id": zod.string().optional(),
+  "provider_name": zod.string().optional(),
+  "provider_health_status": zod.string().optional(),
+  "provider_model_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateGatewayProviderModelCountMin).default(accountsSampleProjectCreateResponseResultActivationStateGatewayProviderModelCountDefault),
+  "has_provider": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayHasProviderDefault),
+  "has_key": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "key_prefix": zod.string().optional(),
+  "key_status": zod.string().optional(),
+  "has_request": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayHasRequestDefault),
+  "request_log_id": zod.string().optional(),
+  "request_id": zod.string().optional(),
+  "request_status_code": zod.number().optional(),
+  "request_is_error": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayRequestIsErrorDefault),
+  "request_error_message": zod.string().optional(),
+  "request_provider": zod.string().optional(),
+  "request_model": zod.string().optional(),
+  "request_resolved_model": zod.string().optional(),
+  "request_latency_ms": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateGatewayRequestLatencyMsMin).optional(),
+  "request_cost": zod.string().optional(),
+  "request_cache_hit": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayRequestCacheHitDefault),
+  "request_fallback_used": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayRequestFallbackUsedDefault),
+  "request_guardrail_triggered": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayRequestGuardrailTriggeredDefault),
+  "has_review": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayHasReviewDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "has_failure_repair": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayHasFailureRepairDefault),
+  "has_policy": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayHasPolicyDefault),
+  "policy_type": zod.string().optional(),
+  "policy_id": zod.string().optional(),
+  "policy_route": zod.string().optional(),
+  "policy_synced": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayPolicySyncedDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayIsSampleDefault),
+  "sample_request_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateGatewaySampleRequestCountMin).default(accountsSampleProjectCreateResponseResultActivationStateGatewaySampleRequestCountDefault),
+  "permission_limited": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayPermissionLimitedDefault),
+  "guard_blocked": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateGatewayGuardBlockedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data'])
+}).optional(),
+  "lifecycle": zod.object({
+  "dry_run_enabled": zod.boolean(),
+  "send_enabled": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateLifecycleSendEnabledDefault),
+  "status": zod.enum(['eligible', 'suppressed', 'skipped', 'error']),
+  "next_campaign_key": zod.string().optional(),
+  "template_key": zod.string().optional(),
+  "eligible_at": zod.string().datetime({"offset":true}).optional(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "target_success_event": zod.string().optional(),
+  "target_action_id": zod.string().optional(),
+  "target_url": zod.string().optional(),
+  "dry_run_only": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateLifecycleDryRunOnlyDefault)
+}).optional(),
+  "daily_quality": zod.object({
+  "mode": zod.enum(['new_signal', 'open_action', 'no_new_signal', 'permission_limited', 'unavailable']),
+  "last_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "top_signal": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "type": zod.enum(['trace_failure', 'prompt_quality_review', 'span_latency', 'span_cost', 'agent_run_issue', 'gateway_request_issue', 'eval_failure', 'voice_call_issue', 'alert_triggered', 'feed_issue', 'dashboard_missing', 'alert_missing', 'evaluator_missing', 'saved_view_missing']),
+  "severity": zod.enum(['critical', 'warning', 'info']),
+  "title": zod.string().min(1),
+  "body": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1),
+  "project_id": zod.string().min(1).optional(),
+  "route": zod.string().min(1),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateDailyQualityTopSignalIsSampleDefault),
+  "created_at": zod.string().datetime({"offset":true})
+}).optional(),
+  "primary_action": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateDailyQualityPrimaryActionRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateDailyQualityPrimaryActionIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateDailyQualityPrimaryActionIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateDailyQualityPrimaryActionIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+}).optional(),
+  "action_cards": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateDailyQualityActionCardsItemRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateDailyQualityActionCardsItemIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateDailyQualityActionCardsItemIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateDailyQualityActionCardsItemIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+})).optional(),
+  "product_cards": zod.array(zod.object({
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "status": zod.string().min(1),
+  "label": zod.string().min(1),
+  "summary": zod.string().min(1),
+  "metric": zod.string().min(1),
+  "change": zod.string().optional(),
+  "route": zod.string().min(1)
+})).optional(),
+  "weekly_review": zod.object({
+  "due": zod.boolean(),
+  "status": zod.enum(['due', 'not_due', 'permission_limited', 'flag_disabled', 'no_useful_signal', 'completed_recently']),
+  "route": zod.string().min(1),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "summary": zod.string().min(1),
+  "unresolved_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateDailyQualityWeeklyReviewUnresolvedCountMin),
+  "completed_count": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateDailyQualityWeeklyReviewCompletedCountMin),
+  "last_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "action_label": zod.string().optional()
+}).optional(),
+  "digest_eligible": zod.boolean(),
+  "digest_suppression_reason": zod.string().optional(),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "email_eligibility": zod.object({
+  "eligible": zod.boolean(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "next_email_key": zod.string().optional(),
+  "next_email_after": zod.string().datetime({"offset":true}).optional(),
+  "digest_eligible": zod.boolean(),
+  "last_email_sent_at": zod.string().datetime({"offset":true}).optional(),
+  "frequency_cap_remaining": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateEmailEligibilityFrequencyCapRemainingMin),
+  "dry_run_only": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateEmailEligibilityDryRunOnlyDefault)
+}),
+  "permissions": zod.object({
+  "role": zod.string(),
+  "can_read": zod.boolean(),
+  "can_write": zod.boolean(),
+  "can_manage_workspace": zod.boolean(),
+  "missing_permissions": zod.array(zod.string().min(1)),
+  "request_access_href": zod.string().optional(),
+  "permission_limited": zod.boolean()
+}),
+  "feature_flags": zod.record(zod.string(), zod.boolean()),
+  "route_availability": zod.object({
+
+}).passthrough(),
+  "email_context": zod.object({
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "target_route": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']),
+  "stale_reason": zod.string().optional(),
+  "resolved_href": zod.string().min(1)
+}),
+  "last_meaningful_event": zod.object({
+  "name": zod.string().min(1),
+  "occurred_at": zod.string().datetime({"offset":true}),
+  "is_sample": zod.boolean().default(accountsSampleProjectCreateResponseResultActivationStateLastMeaningfulEventIsSampleDefault),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "metadata": zod.record(zod.string(), zod.string()).optional()
+}),
+  "value_signal": zod.object({
+  "kind": zod.enum(['observe_trace_metrics', 'prompt_quality_loop', 'agent_quality_loop', 'gateway_routing_loop', 'eval_quality_loop', 'voice_quality_loop']).optional(),
+  "headline": zod.string().optional(),
+  "summary": zod.string().optional(),
+  "metrics": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "value": zod.string().min(1)
+})).optional(),
+  "latency_ms": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateValueSignalLatencyMsMin).optional(),
+  "cost": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateValueSignalCostMin).optional(),
+  "total_tokens": zod.number().min(accountsSampleProjectCreateResponseResultActivationStateValueSignalTotalTokensMin).optional()
+}).optional(),
+  "diagnostics": zod.object({
+  "resolver_version": zod.string().min(1),
+  "decision_reason": zod.string().min(1),
+  "matched_rule": zod.string().min(1),
+  "candidate_actions": zod.array(zod.string().min(1)),
+  "suppressed_actions": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "reason": zod.string().min(1)
+})),
+  "evaluated_at": zod.string().datetime({"offset":true})
+}),
+  "warnings": zod.array(zod.string().min(1))
+})
+})
+})
+
+
+export const AccountsSampleProjectHideCreateBody = zod.object({
+  "source": zod.string().optional(),
+  "reason": zod.string().optional()
+})
+
+export const accountsSampleProjectHideCreateResponseStatusDefault = true;
+export const accountsSampleProjectHideCreateResponseResultSampleProjectLabelDefault = `Sample`;
+export const accountsSampleProjectHideCreateResponseResultSampleProjectIsRepairableDefault = false;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateRecommendedActionIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateFallbackActionIsSampleDefault = false;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsProviderKeysDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsProviderKeysMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsDatasetsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsDatasetsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalRunsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalRunsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalSourceCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalSourceCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalScorerCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalScorerCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalGroupCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalGroupCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalRunCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalRunCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalFailureCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalFailureCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasSourceDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasScorerDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasCompletedRunDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasFailuresDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasReviewDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasFailureActionDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalFirstLoopCompletedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalIsSampleOnlyDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalSampleSourceCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalSampleSourceCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalPermissionLimitedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptTemplatesDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptTemplatesMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptVersionsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptVersionsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptComparisonsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptComparisonsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptSampleTemplatesDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptSampleTemplatesMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptComparableVersionsExistDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptRunExistsDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptCommittedVersionExistsDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptComparisonCompletedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptNextLoopActionExistsDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptFirstLoopCompletedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentPrototypeRunsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentPrototypeRunsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentSampleCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentSampleCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasAgentDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasAgentVersionDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasStepDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasScenarioDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasRunDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentRunFailedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasReviewDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasEvalCoverageDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentMultipleScenariosDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentFirstLoopCompletedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentVoiceFeatureUnavailableDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentPermissionLimitedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsObserveProjectsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsObserveProjectsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsTracesDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsTracesMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsTraceReviewsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsTraceReviewsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayKeysDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayKeysMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayPoliciesDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayPoliciesMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayAvailableDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayProviderCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayProviderCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayProviderModelCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayProviderModelCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasProviderDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasKeyDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasRequestDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestIsErrorDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestLatencyMsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestCacheHitDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestFallbackUsedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasReviewDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasFailureRepairDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasPolicyDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayPolicySyncedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayIsSampleOnlyDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewaySampleRequestCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewaySampleRequestCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayPermissionLimitedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayGuardBlockedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayFirstLoopCompletedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceAgentsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceAgentsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceSimulationsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceSimulationsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceReviewsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceReviewsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallDurationSecondsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallResponseTimeMsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallInterruptionCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceTranscriptAvailableDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceRecordingAvailableDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasAgentDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasScenarioDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasTestDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasCallDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasCompletedCallDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallFailedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasReviewDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasSuccessCriteriaDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceFirstLoopCompletedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceIsSampleOnlyDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceSampleCallCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceSampleCallCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoicePermissionLimitedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsTeamInvitesDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsTeamInvitesMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsDashboardsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsDashboardsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAlertsDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsAlertsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsSampleProjectOpenedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsSampleTraceAvailableDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsSampleSignalViewedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSignalsSampleTraceReviewedDefault = false;
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault = false;
+
+
+
+
+
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateSampleProjectLabelDefault = `Sample`;
+export const accountsSampleProjectHideCreateResponseResultActivationStateSampleProjectIsRepairableDefault = false;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStatePromptHasComparableVersionsDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStatePromptIsSampleDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStatePromptSamplePromptCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStatePromptSamplePromptCountMin = 0;
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateAgentIsSampleDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateAgentSampleAgentCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateAgentSampleAgentCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateAgentVoiceFeatureUnavailableDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateAgentPermissionLimitedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalFailureCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalFailureCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalHasSourceDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalHasScorerDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalHasCompletedRunDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalHasFailuresDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalHasReviewDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalHasFailureActionDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalIsSampleDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalSampleSourceCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalSampleSourceCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateEvalPermissionLimitedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceCallDurationSecondsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceCallResponseTimeMsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceCallInterruptionCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceTranscriptAvailableDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceRecordingAvailableDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasAgentDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasScenarioDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasTestDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasCallDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasCompletedCallDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceCallFailedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasReviewDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasSuccessCriteriaDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceIsSampleDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceSampleCallCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoiceSampleCallCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateVoicePermissionLimitedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayProviderCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayProviderCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayProviderModelCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayProviderModelCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasProviderDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasKeyDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasRequestDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestIsErrorDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestLatencyMsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestCacheHitDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestFallbackUsedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasReviewDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasFailureRepairDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasPolicyDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayPolicySyncedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayIsSampleDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewaySampleRequestCountDefault = 0;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewaySampleRequestCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayPermissionLimitedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateGatewayGuardBlockedDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateLifecycleSendEnabledDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateLifecycleDryRunOnlyDefault = true;
+
+
+
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityTopSignalIsSampleDefault = false;
+
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityPrimaryActionRouteAvailableDefault = true;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityPrimaryActionIsOverdueDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityPrimaryActionIsPrimaryDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityPrimaryActionIsSampleDefault = false;
+
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityActionCardsItemRouteAvailableDefault = true;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityActionCardsItemIsOverdueDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityActionCardsItemIsPrimaryDefault = false;
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityActionCardsItemIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityWeeklyReviewUnresolvedCountMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityWeeklyReviewCompletedCountMin = 0;
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateEmailEligibilityFrequencyCapRemainingMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateEmailEligibilityDryRunOnlyDefault = true;
+
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateLastMeaningfulEventIsSampleDefault = false;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateValueSignalLatencyMsMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateValueSignalCostMin = 0;
+
+export const accountsSampleProjectHideCreateResponseResultActivationStateValueSignalTotalTokensMin = 0;
+
+
+
+
+
+
+
+
+
+
+export const AccountsSampleProjectHideCreateResponse = zod.object({
+  "status": zod.boolean().default(accountsSampleProjectHideCreateResponseStatusDefault),
+  "result": zod.object({
+  "sample_project": zod.object({
+  "available": zod.boolean(),
+  "created": zod.boolean(),
+  "status": zod.enum(['not_created', 'unavailable', 'available', 'creating', 'ready_for_observe', 'partially_ready', 'ready', 'partial', 'hidden', 'stale_manifest', 'repair_required', 'repair_failed']),
+  "href": zod.string(),
+  "version": zod.string(),
+  "manifest_id": zod.string().optional(),
+  "manifest_version": zod.string().optional(),
+  "label": zod.string().default(accountsSampleProjectHideCreateResponseResultSampleProjectLabelDefault),
+  "entry_route": zod.string().optional(),
+  "is_repairable": zod.boolean().default(accountsSampleProjectHideCreateResponseResultSampleProjectIsRepairableDefault),
+  "blocked_reason": zod.string().optional(),
+  "artifact_refs": zod.object({
+
+}).passthrough().optional(),
+  "health": zod.object({
+
+}).passthrough().optional(),
+  "real_setup_href": zod.string().optional(),
+  "is_hidden": zod.boolean(),
+  "hidden_reason": zod.string().optional(),
+  "entry_routes": zod.array(zod.string().min(1)),
+  "missing_artifacts": zod.array(zod.string().min(1)),
+  "last_opened_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "activation_state": zod.object({
+  "schema_version": zod.string().min(1),
+  "request_id": zod.string().min(1),
+  "server_time": zod.string().datetime({"offset":true}),
+  "workspace_id": zod.string().min(1),
+  "organization_id": zod.string().min(1),
+  "user_id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "persona": zod.string(),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "stage_copy": zod.object({
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1)
+}).optional(),
+  "home_mode": zod.enum(['first_run', 'daily_quality', 'fallback']),
+  "is_activated": zod.boolean(),
+  "activated_via": zod.enum(['workspace', 'organization']).optional(),
+  "activated_at": zod.string().datetime({"offset":true}),
+  "recommended_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateRecommendedActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "fallback_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateFallbackActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "progress": zod.object({
+  "build": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "test": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "observe": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "ship": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "improve": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only'])
+}),
+  "signals": zod.object({
+  "provider_keys": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsProviderKeysMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsProviderKeysDefault),
+  "datasets": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsDatasetsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsDatasetsDefault),
+  "evals": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalsDefault),
+  "eval_runs": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalRunsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalRunsDefault),
+  "eval_source_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalSourceCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalSourceCountDefault),
+  "eval_source_type": zod.string().optional(),
+  "eval_source_id": zod.string().optional(),
+  "eval_source_name": zod.string().optional(),
+  "eval_scorer_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalScorerCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalScorerCountDefault),
+  "eval_scorer_id": zod.string().optional(),
+  "eval_scorer_template_id": zod.string().optional(),
+  "eval_scorer_name": zod.string().optional(),
+  "eval_group_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalGroupCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalGroupCountDefault),
+  "eval_group_id": zod.string().optional(),
+  "eval_run_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalRunCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalRunCountDefault),
+  "eval_run_id": zod.string().optional(),
+  "eval_run_status": zod.string().optional(),
+  "eval_run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_failure_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalFailureCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalFailureCountDefault),
+  "eval_has_source": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasSourceDefault),
+  "eval_has_scorer": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasScorerDefault),
+  "eval_has_completed_run": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasCompletedRunDefault),
+  "eval_has_failures": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasFailuresDefault),
+  "eval_has_review": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasReviewDefault),
+  "eval_has_failure_action": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalHasFailureActionDefault),
+  "eval_first_loop_completed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalFirstLoopCompletedDefault),
+  "eval_is_sample_only": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalIsSampleOnlyDefault),
+  "eval_sample_source_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalSampleSourceCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalSampleSourceCountDefault),
+  "eval_permission_limited": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsEvalPermissionLimitedDefault),
+  "prompt_templates": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptTemplatesMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptTemplatesDefault),
+  "prompt_versions": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptVersionsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptVersionsDefault),
+  "prompt_comparisons": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptComparisonsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptComparisonsDefault),
+  "first_prompt_id": zod.string().optional(),
+  "latest_prompt_id": zod.string().optional(),
+  "prompt_sample_templates": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptSampleTemplatesMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptSampleTemplatesDefault),
+  "prompt_comparable_versions_exist": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptComparableVersionsExistDefault),
+  "prompt_run_exists": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptRunExistsDefault),
+  "prompt_committed_version_exists": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptCommittedVersionExistsDefault),
+  "prompt_comparison_completed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptComparisonCompletedDefault),
+  "prompt_next_loop_action_exists": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptNextLoopActionExistsDefault),
+  "prompt_first_loop_completed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsPromptFirstLoopCompletedDefault),
+  "agents": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentsDefault),
+  "agent_prototype_runs": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentPrototypeRunsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentPrototypeRunsDefault),
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "agent_scenario_id": zod.string().optional(),
+  "agent_test_id": zod.string().optional(),
+  "agent_execution_id": zod.string().optional(),
+  "agent_call_execution_id": zod.string().optional(),
+  "agent_graph_execution_id": zod.string().optional(),
+  "agent_run_status": zod.string().optional(),
+  "agent_sample_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentSampleCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentSampleCountDefault),
+  "agent_has_agent": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasAgentDefault),
+  "agent_has_agent_version": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasAgentVersionDefault),
+  "agent_has_step": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasStepDefault),
+  "agent_has_scenario": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasScenarioDefault),
+  "agent_has_run": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasRunDefault),
+  "agent_run_failed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentRunFailedDefault),
+  "agent_has_review": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasReviewDefault),
+  "agent_has_eval_coverage": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentHasEvalCoverageDefault),
+  "agent_multiple_scenarios": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentMultipleScenariosDefault),
+  "agent_first_loop_completed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentFirstLoopCompletedDefault),
+  "agent_voice_feature_unavailable": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentVoiceFeatureUnavailableDefault),
+  "agent_permission_limited": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAgentPermissionLimitedDefault),
+  "observe_projects": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsObserveProjectsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsObserveProjectsDefault),
+  "traces": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsTracesMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsTracesDefault),
+  "trace_reviews": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsTraceReviewsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsTraceReviewsDefault),
+  "gateway_keys": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayKeysMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayKeysDefault),
+  "gateway_requests": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestsDefault),
+  "gateway_policies": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayPoliciesMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayPoliciesDefault),
+  "gateway_available": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayAvailableDefault),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "gateway_provider_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayProviderCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayProviderCountDefault),
+  "gateway_provider_credential_id": zod.string().optional(),
+  "gateway_provider_name": zod.string().optional(),
+  "gateway_provider_health_status": zod.string().optional(),
+  "gateway_provider_model_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayProviderModelCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayProviderModelCountDefault),
+  "gateway_has_provider": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasProviderDefault),
+  "gateway_has_key": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "gateway_key_prefix": zod.string().optional(),
+  "gateway_key_status": zod.string().optional(),
+  "gateway_has_request": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasRequestDefault),
+  "gateway_request_log_id": zod.string().optional(),
+  "gateway_request_id": zod.string().optional(),
+  "gateway_request_status_code": zod.number().optional(),
+  "gateway_request_is_error": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestIsErrorDefault),
+  "gateway_request_error_message": zod.string().optional(),
+  "gateway_request_provider": zod.string().optional(),
+  "gateway_request_model": zod.string().optional(),
+  "gateway_request_resolved_model": zod.string().optional(),
+  "gateway_request_latency_ms": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestLatencyMsMin).optional(),
+  "gateway_request_cost": zod.string().optional(),
+  "gateway_request_cache_hit": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestCacheHitDefault),
+  "gateway_request_fallback_used": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestFallbackUsedDefault),
+  "gateway_request_guardrail_triggered": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayRequestGuardrailTriggeredDefault),
+  "gateway_has_review": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasReviewDefault),
+  "gateway_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "gateway_has_failure_repair": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasFailureRepairDefault),
+  "gateway_has_policy": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayHasPolicyDefault),
+  "gateway_policy_type": zod.string().optional(),
+  "gateway_policy_id": zod.string().optional(),
+  "gateway_policy_route": zod.string().optional(),
+  "gateway_policy_synced": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayPolicySyncedDefault),
+  "gateway_is_sample_only": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayIsSampleOnlyDefault),
+  "gateway_sample_request_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewaySampleRequestCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewaySampleRequestCountDefault),
+  "gateway_permission_limited": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayPermissionLimitedDefault),
+  "gateway_guard_blocked": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayGuardBlockedDefault),
+  "gateway_first_loop_completed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsGatewayFirstLoopCompletedDefault),
+  "voice_agents": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceAgentsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceAgentsDefault),
+  "voice_simulations": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceSimulationsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceSimulationsDefault),
+  "voice_calls": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallsDefault),
+  "voice_reviews": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceReviewsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceReviewsDefault),
+  "voice_agent_id": zod.string().optional(),
+  "voice_agent_name": zod.string().optional(),
+  "voice_agent_provider": zod.string().optional(),
+  "voice_agent_version_id": zod.string().optional(),
+  "voice_scenario_id": zod.string().optional(),
+  "voice_run_test_id": zod.string().optional(),
+  "voice_test_execution_id": zod.string().optional(),
+  "voice_call_execution_id": zod.string().optional(),
+  "voice_call_status": zod.string().optional(),
+  "voice_call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "voice_call_duration_seconds": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallDurationSecondsMin).optional(),
+  "voice_call_response_time_ms": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallResponseTimeMsMin).optional(),
+  "voice_call_interruption_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallInterruptionCountMin).optional(),
+  "voice_transcript_available": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceTranscriptAvailableDefault),
+  "voice_recording_available": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceRecordingAvailableDefault),
+  "voice_has_agent": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasAgentDefault),
+  "voice_has_scenario": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasScenarioDefault),
+  "voice_has_test": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasTestDefault),
+  "voice_has_call": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasCallDefault),
+  "voice_has_completed_call": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasCompletedCallDefault),
+  "voice_call_failed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceCallFailedDefault),
+  "voice_has_review": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasReviewDefault),
+  "voice_has_success_criteria": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceHasSuccessCriteriaDefault),
+  "voice_first_loop_completed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceFirstLoopCompletedDefault),
+  "voice_is_sample_only": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceIsSampleOnlyDefault),
+  "voice_sample_call_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceSampleCallCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoiceSampleCallCountDefault),
+  "voice_permission_limited": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsVoicePermissionLimitedDefault),
+  "team_invites": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsTeamInvitesMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsTeamInvitesDefault),
+  "dashboards": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsDashboardsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsDashboardsDefault),
+  "alerts": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAlertsMin).default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsAlertsDefault),
+  "first_trace_id": zod.string().optional(),
+  "first_observe_id": zod.string().optional(),
+  "sample_project_opened": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsSampleProjectOpenedDefault),
+  "sample_trace_available": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsSampleTraceAvailableDefault),
+  "sample_signal_viewed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsSampleSignalViewedDefault),
+  "sample_trace_reviewed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSignalsSampleTraceReviewedDefault)
+}),
+  "available_goals": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "outcome_preview": zod.string().optional(),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "disabled": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault),
+  "disabled_reason": zod.string().optional()
+})).optional(),
+  "available_paths": zod.array(zod.object({
+  "id": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only', 'hidden']),
+  "href": zod.string().min(1),
+  "is_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "first_action_id": zod.string().optional()
+})),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_package_selected', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparable_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_node_added', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
+  "sample_project": zod.object({
+  "available": zod.boolean(),
+  "created": zod.boolean(),
+  "status": zod.enum(['not_created', 'unavailable', 'available', 'creating', 'ready_for_observe', 'partially_ready', 'ready', 'partial', 'hidden', 'stale_manifest', 'repair_required', 'repair_failed']),
+  "href": zod.string(),
+  "version": zod.string(),
+  "manifest_id": zod.string().optional(),
+  "manifest_version": zod.string().optional(),
+  "label": zod.string().default(accountsSampleProjectHideCreateResponseResultActivationStateSampleProjectLabelDefault),
+  "entry_route": zod.string().optional(),
+  "is_repairable": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateSampleProjectIsRepairableDefault),
+  "blocked_reason": zod.string().optional(),
+  "artifact_refs": zod.object({
+
+}).passthrough().optional(),
+  "health": zod.object({
+
+}).passthrough().optional(),
+  "real_setup_href": zod.string().optional(),
+  "is_hidden": zod.boolean(),
+  "hidden_reason": zod.string().optional(),
+  "entry_routes": zod.array(zod.string().min(1)),
+  "missing_artifacts": zod.array(zod.string().min(1)),
+  "last_opened_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "prompt": zod.object({
+  "prompt_id": zod.string().optional(),
+  "prompt_name": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_real_prompt": zod.boolean(),
+  "has_test_run": zod.boolean(),
+  "has_committed_version": zod.boolean(),
+  "has_comparable_versions": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStatePromptHasComparableVersionsDefault),
+  "has_comparison": zod.boolean(),
+  "has_next_loop_action": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStatePromptIsSampleDefault),
+  "sample_prompt_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStatePromptSamplePromptCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStatePromptSamplePromptCountDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "agent": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "test_id": zod.string().optional(),
+  "execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "graph_execution_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean(),
+  "has_agent_version": zod.boolean(),
+  "has_step": zod.boolean(),
+  "has_scenario": zod.boolean(),
+  "has_run": zod.boolean(),
+  "has_review": zod.boolean(),
+  "has_eval_coverage": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateAgentIsSampleDefault),
+  "sample_agent_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateAgentSampleAgentCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateAgentSampleAgentCountDefault),
+  "voice_feature_unavailable": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateAgentVoiceFeatureUnavailableDefault),
+  "permission_limited": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateAgentPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "eval": zod.object({
+  "source_type": zod.string().optional(),
+  "source_id": zod.string().optional(),
+  "source_name": zod.string().optional(),
+  "scorer_id": zod.string().optional(),
+  "scorer_template_id": zod.string().optional(),
+  "scorer_name": zod.string().optional(),
+  "eval_group_id": zod.string().optional(),
+  "run_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateEvalFailureCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateEvalFailureCountDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_action_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_source": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateEvalHasSourceDefault),
+  "has_scorer": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateEvalHasScorerDefault),
+  "has_completed_run": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateEvalHasCompletedRunDefault),
+  "has_failures": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateEvalHasFailuresDefault),
+  "has_review": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateEvalHasReviewDefault),
+  "has_failure_action": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateEvalHasFailureActionDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateEvalIsSampleDefault),
+  "sample_source_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateEvalSampleSourceCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateEvalSampleSourceCountDefault),
+  "permission_limited": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateEvalPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "voice": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_name": zod.string().optional(),
+  "agent_provider": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "run_test_id": zod.string().optional(),
+  "test_execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "call_status": zod.string().optional(),
+  "call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "call_duration_seconds": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateVoiceCallDurationSecondsMin).optional(),
+  "call_response_time_ms": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateVoiceCallResponseTimeMsMin).optional(),
+  "call_interruption_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateVoiceCallInterruptionCountMin).optional(),
+  "transcript_available": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceTranscriptAvailableDefault),
+  "recording_available": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceRecordingAvailableDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "success_criteria_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_config_id": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasAgentDefault),
+  "has_scenario": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasScenarioDefault),
+  "has_test": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasTestDefault),
+  "has_call": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasCallDefault),
+  "has_completed_call": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasCompletedCallDefault),
+  "call_failed": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceCallFailedDefault),
+  "has_review": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasReviewDefault),
+  "has_success_criteria": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceHasSuccessCriteriaDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceIsSampleDefault),
+  "sample_call_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateVoiceSampleCallCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateVoiceSampleCallCountDefault),
+  "permission_limited": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateVoicePermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "gateway": zod.object({
+  "gateway_available": zod.boolean(),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "provider_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateGatewayProviderCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayProviderCountDefault),
+  "provider_credential_id": zod.string().optional(),
+  "provider_name": zod.string().optional(),
+  "provider_health_status": zod.string().optional(),
+  "provider_model_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateGatewayProviderModelCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayProviderModelCountDefault),
+  "has_provider": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasProviderDefault),
+  "has_key": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "key_prefix": zod.string().optional(),
+  "key_status": zod.string().optional(),
+  "has_request": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasRequestDefault),
+  "request_log_id": zod.string().optional(),
+  "request_id": zod.string().optional(),
+  "request_status_code": zod.number().optional(),
+  "request_is_error": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestIsErrorDefault),
+  "request_error_message": zod.string().optional(),
+  "request_provider": zod.string().optional(),
+  "request_model": zod.string().optional(),
+  "request_resolved_model": zod.string().optional(),
+  "request_latency_ms": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestLatencyMsMin).optional(),
+  "request_cost": zod.string().optional(),
+  "request_cache_hit": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestCacheHitDefault),
+  "request_fallback_used": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestFallbackUsedDefault),
+  "request_guardrail_triggered": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayRequestGuardrailTriggeredDefault),
+  "has_review": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasReviewDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "has_failure_repair": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasFailureRepairDefault),
+  "has_policy": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayHasPolicyDefault),
+  "policy_type": zod.string().optional(),
+  "policy_id": zod.string().optional(),
+  "policy_route": zod.string().optional(),
+  "policy_synced": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayPolicySyncedDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayIsSampleDefault),
+  "sample_request_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateGatewaySampleRequestCountMin).default(accountsSampleProjectHideCreateResponseResultActivationStateGatewaySampleRequestCountDefault),
+  "permission_limited": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayPermissionLimitedDefault),
+  "guard_blocked": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateGatewayGuardBlockedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data'])
+}).optional(),
+  "lifecycle": zod.object({
+  "dry_run_enabled": zod.boolean(),
+  "send_enabled": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateLifecycleSendEnabledDefault),
+  "status": zod.enum(['eligible', 'suppressed', 'skipped', 'error']),
+  "next_campaign_key": zod.string().optional(),
+  "template_key": zod.string().optional(),
+  "eligible_at": zod.string().datetime({"offset":true}).optional(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "target_success_event": zod.string().optional(),
+  "target_action_id": zod.string().optional(),
+  "target_url": zod.string().optional(),
+  "dry_run_only": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateLifecycleDryRunOnlyDefault)
+}).optional(),
+  "daily_quality": zod.object({
+  "mode": zod.enum(['new_signal', 'open_action', 'no_new_signal', 'permission_limited', 'unavailable']),
+  "last_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "top_signal": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "type": zod.enum(['trace_failure', 'prompt_quality_review', 'span_latency', 'span_cost', 'agent_run_issue', 'gateway_request_issue', 'eval_failure', 'voice_call_issue', 'alert_triggered', 'feed_issue', 'dashboard_missing', 'alert_missing', 'evaluator_missing', 'saved_view_missing']),
+  "severity": zod.enum(['critical', 'warning', 'info']),
+  "title": zod.string().min(1),
+  "body": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1),
+  "project_id": zod.string().min(1).optional(),
+  "route": zod.string().min(1),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityTopSignalIsSampleDefault),
+  "created_at": zod.string().datetime({"offset":true})
+}).optional(),
+  "primary_action": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityPrimaryActionRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityPrimaryActionIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityPrimaryActionIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityPrimaryActionIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+}).optional(),
+  "action_cards": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityActionCardsItemRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityActionCardsItemIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityActionCardsItemIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityActionCardsItemIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+})).optional(),
+  "product_cards": zod.array(zod.object({
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "status": zod.string().min(1),
+  "label": zod.string().min(1),
+  "summary": zod.string().min(1),
+  "metric": zod.string().min(1),
+  "change": zod.string().optional(),
+  "route": zod.string().min(1)
+})).optional(),
+  "weekly_review": zod.object({
+  "due": zod.boolean(),
+  "status": zod.enum(['due', 'not_due', 'permission_limited', 'flag_disabled', 'no_useful_signal', 'completed_recently']),
+  "route": zod.string().min(1),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "summary": zod.string().min(1),
+  "unresolved_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityWeeklyReviewUnresolvedCountMin),
+  "completed_count": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateDailyQualityWeeklyReviewCompletedCountMin),
+  "last_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "action_label": zod.string().optional()
+}).optional(),
+  "digest_eligible": zod.boolean(),
+  "digest_suppression_reason": zod.string().optional(),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "email_eligibility": zod.object({
+  "eligible": zod.boolean(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "next_email_key": zod.string().optional(),
+  "next_email_after": zod.string().datetime({"offset":true}).optional(),
+  "digest_eligible": zod.boolean(),
+  "last_email_sent_at": zod.string().datetime({"offset":true}).optional(),
+  "frequency_cap_remaining": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateEmailEligibilityFrequencyCapRemainingMin),
+  "dry_run_only": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateEmailEligibilityDryRunOnlyDefault)
+}),
+  "permissions": zod.object({
+  "role": zod.string(),
+  "can_read": zod.boolean(),
+  "can_write": zod.boolean(),
+  "can_manage_workspace": zod.boolean(),
+  "missing_permissions": zod.array(zod.string().min(1)),
+  "request_access_href": zod.string().optional(),
+  "permission_limited": zod.boolean()
+}),
+  "feature_flags": zod.record(zod.string(), zod.boolean()),
+  "route_availability": zod.object({
+
+}).passthrough(),
+  "email_context": zod.object({
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "target_route": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']),
+  "stale_reason": zod.string().optional(),
+  "resolved_href": zod.string().min(1)
+}),
+  "last_meaningful_event": zod.object({
+  "name": zod.string().min(1),
+  "occurred_at": zod.string().datetime({"offset":true}),
+  "is_sample": zod.boolean().default(accountsSampleProjectHideCreateResponseResultActivationStateLastMeaningfulEventIsSampleDefault),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "metadata": zod.record(zod.string(), zod.string()).optional()
+}),
+  "value_signal": zod.object({
+  "kind": zod.enum(['observe_trace_metrics', 'prompt_quality_loop', 'agent_quality_loop', 'gateway_routing_loop', 'eval_quality_loop', 'voice_quality_loop']).optional(),
+  "headline": zod.string().optional(),
+  "summary": zod.string().optional(),
+  "metrics": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "value": zod.string().min(1)
+})).optional(),
+  "latency_ms": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateValueSignalLatencyMsMin).optional(),
+  "cost": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateValueSignalCostMin).optional(),
+  "total_tokens": zod.number().min(accountsSampleProjectHideCreateResponseResultActivationStateValueSignalTotalTokensMin).optional()
+}).optional(),
+  "diagnostics": zod.object({
+  "resolver_version": zod.string().min(1),
+  "decision_reason": zod.string().min(1),
+  "matched_rule": zod.string().min(1),
+  "candidate_actions": zod.array(zod.string().min(1)),
+  "suppressed_actions": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "reason": zod.string().min(1)
+})),
+  "evaluated_at": zod.string().datetime({"offset":true})
+}),
+  "warnings": zod.array(zod.string().min(1))
+})
+})
+})
+
+
 
 
 export const accountsSignupCreateBodyAllowEmailDefault = false;
@@ -1744,6 +7174,998 @@ export const AccountsTeamUsersReadResponse = zod.object({
 })).optional()
 })),
   "total": zod.number()
+})
+})
+
+
+export const accountsTestTraceCreateBodyPathDefault = `observe`;
+
+export const accountsTestTraceCreateBodyQuickStartIdRegExp = new RegExp('^[a-z0-9_:-]{1,80}$');
+
+
+export const AccountsTestTraceCreateBody = zod.object({
+  "path": zod.string().min(1).default(accountsTestTraceCreateBodyPathDefault),
+  "project_id": zod.string().uuid(),
+  "source": zod.string().optional(),
+  "reason": zod.string().optional(),
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "stale_reason": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']).optional(),
+  "quick_start_goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']).optional(),
+  "quick_start_id": zod.string().regex(accountsTestTraceCreateBodyQuickStartIdRegExp).optional(),
+  "quick_start_primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+
+export const accountsTestTraceCreateResponseStatusDefault = true;
+
+
+
+
+
+
+
+
+
+
+
+
+export const accountsTestTraceCreateResponseResultActivationStateRecommendedActionIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsTestTraceCreateResponseResultActivationStateFallbackActionIsSampleDefault = false;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsProviderKeysDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsProviderKeysMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsDatasetsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsDatasetsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalRunsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalRunsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalSourceCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalSourceCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalScorerCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalScorerCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalGroupCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalGroupCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalRunCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalRunCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalFailureCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalFailureCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasSourceDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasScorerDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasCompletedRunDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasFailuresDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasReviewDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasFailureActionDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalFirstLoopCompletedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalIsSampleOnlyDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalSampleSourceCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalSampleSourceCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsEvalPermissionLimitedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptTemplatesDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptTemplatesMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptVersionsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptVersionsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptComparisonsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptComparisonsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptSampleTemplatesDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptSampleTemplatesMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptComparableVersionsExistDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptRunExistsDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptCommittedVersionExistsDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptComparisonCompletedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptNextLoopActionExistsDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsPromptFirstLoopCompletedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentPrototypeRunsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentPrototypeRunsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentSampleCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentSampleCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasAgentDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasAgentVersionDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasStepDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasScenarioDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasRunDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentRunFailedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasReviewDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasEvalCoverageDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentMultipleScenariosDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentFirstLoopCompletedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentVoiceFeatureUnavailableDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAgentPermissionLimitedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsObserveProjectsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsObserveProjectsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsTracesDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsTracesMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsTraceReviewsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsTraceReviewsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayKeysDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayKeysMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayPoliciesDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayPoliciesMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayAvailableDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayProviderCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayProviderCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayProviderModelCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayProviderModelCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasProviderDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasKeyDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasRequestDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestIsErrorDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestLatencyMsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestCacheHitDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestFallbackUsedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasReviewDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasFailureRepairDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasPolicyDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayPolicySyncedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayIsSampleOnlyDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewaySampleRequestCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewaySampleRequestCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayPermissionLimitedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayGuardBlockedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsGatewayFirstLoopCompletedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceAgentsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceAgentsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceSimulationsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceSimulationsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceReviewsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceReviewsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallDurationSecondsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallResponseTimeMsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallInterruptionCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceTranscriptAvailableDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceRecordingAvailableDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasAgentDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasScenarioDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasTestDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasCallDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasCompletedCallDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallFailedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasReviewDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasSuccessCriteriaDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceFirstLoopCompletedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceIsSampleOnlyDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceSampleCallCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoiceSampleCallCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsVoicePermissionLimitedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsTeamInvitesDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsTeamInvitesMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsDashboardsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsDashboardsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAlertsDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsAlertsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateSignalsSampleProjectOpenedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsSampleTraceAvailableDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsSampleSignalViewedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateSignalsSampleTraceReviewedDefault = false;
+
+
+
+export const accountsTestTraceCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault = false;
+
+
+
+
+
+
+
+
+export const accountsTestTraceCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin = 0;
+
+
+
+
+
+
+export const accountsTestTraceCreateResponseResultActivationStateSampleProjectLabelDefault = `Sample`;
+export const accountsTestTraceCreateResponseResultActivationStateSampleProjectIsRepairableDefault = false;
+
+export const accountsTestTraceCreateResponseResultActivationStatePromptHasComparableVersionsDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStatePromptIsSampleDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStatePromptSamplePromptCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStatePromptSamplePromptCountMin = 0;
+
+
+export const accountsTestTraceCreateResponseResultActivationStateAgentIsSampleDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateAgentSampleAgentCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateAgentSampleAgentCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateAgentVoiceFeatureUnavailableDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateAgentPermissionLimitedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateEvalFailureCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateEvalFailureCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateEvalHasSourceDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateEvalHasScorerDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateEvalHasCompletedRunDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateEvalHasFailuresDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateEvalHasReviewDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateEvalHasFailureActionDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateEvalIsSampleDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateEvalSampleSourceCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateEvalSampleSourceCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateEvalPermissionLimitedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceCallDurationSecondsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateVoiceCallResponseTimeMsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateVoiceCallInterruptionCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateVoiceTranscriptAvailableDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceRecordingAvailableDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceHasAgentDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceHasScenarioDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceHasTestDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceHasCallDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceHasCompletedCallDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceCallFailedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceHasReviewDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceHasSuccessCriteriaDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceIsSampleDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceSampleCallCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateVoiceSampleCallCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateVoicePermissionLimitedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayProviderCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayProviderCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateGatewayProviderModelCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayProviderModelCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateGatewayHasProviderDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayHasKeyDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayHasRequestDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayRequestIsErrorDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayRequestLatencyMsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateGatewayRequestCacheHitDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayRequestFallbackUsedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayRequestGuardrailTriggeredDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayHasReviewDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayHasFailureRepairDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayHasPolicyDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayPolicySyncedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayIsSampleDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewaySampleRequestCountDefault = 0;
+export const accountsTestTraceCreateResponseResultActivationStateGatewaySampleRequestCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateGatewayPermissionLimitedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateGatewayGuardBlockedDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateLifecycleSendEnabledDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateLifecycleDryRunOnlyDefault = true;
+
+
+
+
+
+
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityTopSignalIsSampleDefault = false;
+
+
+
+
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityPrimaryActionRouteAvailableDefault = true;
+
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityPrimaryActionIsOverdueDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityPrimaryActionIsPrimaryDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityPrimaryActionIsSampleDefault = false;
+
+
+
+
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityActionCardsItemRouteAvailableDefault = true;
+
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityActionCardsItemIsOverdueDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityActionCardsItemIsPrimaryDefault = false;
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityActionCardsItemIsSampleDefault = false;
+
+
+
+
+
+
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityWeeklyReviewUnresolvedCountMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateDailyQualityWeeklyReviewCompletedCountMin = 0;
+
+
+export const accountsTestTraceCreateResponseResultActivationStateEmailEligibilityFrequencyCapRemainingMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateEmailEligibilityDryRunOnlyDefault = true;
+
+
+export const accountsTestTraceCreateResponseResultActivationStateLastMeaningfulEventIsSampleDefault = false;
+
+export const accountsTestTraceCreateResponseResultActivationStateValueSignalLatencyMsMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateValueSignalCostMin = 0;
+
+export const accountsTestTraceCreateResponseResultActivationStateValueSignalTotalTokensMin = 0;
+
+
+
+
+
+
+
+
+
+
+export const AccountsTestTraceCreateResponse = zod.object({
+  "status": zod.boolean().default(accountsTestTraceCreateResponseStatusDefault),
+  "result": zod.object({
+  "trace_id": zod.string().uuid(),
+  "project_id": zod.string().uuid(),
+  "created": zod.boolean(),
+  "activation_state": zod.object({
+  "schema_version": zod.string().min(1),
+  "request_id": zod.string().min(1),
+  "server_time": zod.string().datetime({"offset":true}),
+  "workspace_id": zod.string().min(1),
+  "organization_id": zod.string().min(1),
+  "user_id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "persona": zod.string(),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "stage_copy": zod.object({
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1)
+}).optional(),
+  "home_mode": zod.enum(['first_run', 'daily_quality', 'fallback']),
+  "is_activated": zod.boolean(),
+  "activated_via": zod.enum(['workspace', 'organization']).optional(),
+  "activated_at": zod.string().datetime({"offset":true}),
+  "recommended_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateRecommendedActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "fallback_action": zod.object({
+  "id": zod.string().min(1),
+  "kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "href": zod.string(),
+  "cta_label": zod.string().min(1),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "priority": zod.number(),
+  "blocked": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "completion_event": zod.string().optional(),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateFallbackActionIsSampleDefault),
+  "route_available": zod.boolean(),
+  "fallback_href": zod.string().min(1),
+  "analytics": zod.object({
+  "event_name": zod.string().min(1),
+  "source": zod.string().optional(),
+  "target_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional()
+})
+}),
+  "progress": zod.object({
+  "build": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "test": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "observe": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "ship": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only']),
+  "improve": zod.enum(['not_started', 'available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only'])
+}),
+  "signals": zod.object({
+  "provider_keys": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsProviderKeysMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsProviderKeysDefault),
+  "datasets": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsDatasetsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsDatasetsDefault),
+  "evals": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsEvalsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalsDefault),
+  "eval_runs": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsEvalRunsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalRunsDefault),
+  "eval_source_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsEvalSourceCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalSourceCountDefault),
+  "eval_source_type": zod.string().optional(),
+  "eval_source_id": zod.string().optional(),
+  "eval_source_name": zod.string().optional(),
+  "eval_scorer_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsEvalScorerCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalScorerCountDefault),
+  "eval_scorer_id": zod.string().optional(),
+  "eval_scorer_template_id": zod.string().optional(),
+  "eval_scorer_name": zod.string().optional(),
+  "eval_group_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsEvalGroupCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalGroupCountDefault),
+  "eval_group_id": zod.string().optional(),
+  "eval_run_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsEvalRunCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalRunCountDefault),
+  "eval_run_id": zod.string().optional(),
+  "eval_run_status": zod.string().optional(),
+  "eval_run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_failure_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsEvalFailureCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalFailureCountDefault),
+  "eval_has_source": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasSourceDefault),
+  "eval_has_scorer": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasScorerDefault),
+  "eval_has_completed_run": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasCompletedRunDefault),
+  "eval_has_failures": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasFailuresDefault),
+  "eval_has_review": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasReviewDefault),
+  "eval_has_failure_action": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalHasFailureActionDefault),
+  "eval_first_loop_completed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalFirstLoopCompletedDefault),
+  "eval_is_sample_only": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalIsSampleOnlyDefault),
+  "eval_sample_source_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsEvalSampleSourceCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalSampleSourceCountDefault),
+  "eval_permission_limited": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsEvalPermissionLimitedDefault),
+  "prompt_templates": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsPromptTemplatesMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptTemplatesDefault),
+  "prompt_versions": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsPromptVersionsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptVersionsDefault),
+  "prompt_comparisons": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsPromptComparisonsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptComparisonsDefault),
+  "first_prompt_id": zod.string().optional(),
+  "latest_prompt_id": zod.string().optional(),
+  "prompt_sample_templates": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsPromptSampleTemplatesMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptSampleTemplatesDefault),
+  "prompt_comparable_versions_exist": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptComparableVersionsExistDefault),
+  "prompt_run_exists": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptRunExistsDefault),
+  "prompt_committed_version_exists": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptCommittedVersionExistsDefault),
+  "prompt_comparison_completed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptComparisonCompletedDefault),
+  "prompt_next_loop_action_exists": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptNextLoopActionExistsDefault),
+  "prompt_first_loop_completed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsPromptFirstLoopCompletedDefault),
+  "agents": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsAgentsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentsDefault),
+  "agent_prototype_runs": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsAgentPrototypeRunsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentPrototypeRunsDefault),
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "agent_scenario_id": zod.string().optional(),
+  "agent_test_id": zod.string().optional(),
+  "agent_execution_id": zod.string().optional(),
+  "agent_call_execution_id": zod.string().optional(),
+  "agent_graph_execution_id": zod.string().optional(),
+  "agent_run_status": zod.string().optional(),
+  "agent_sample_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsAgentSampleCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentSampleCountDefault),
+  "agent_has_agent": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasAgentDefault),
+  "agent_has_agent_version": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasAgentVersionDefault),
+  "agent_has_step": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasStepDefault),
+  "agent_has_scenario": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasScenarioDefault),
+  "agent_has_run": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasRunDefault),
+  "agent_run_failed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentRunFailedDefault),
+  "agent_has_review": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasReviewDefault),
+  "agent_has_eval_coverage": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentHasEvalCoverageDefault),
+  "agent_multiple_scenarios": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentMultipleScenariosDefault),
+  "agent_first_loop_completed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentFirstLoopCompletedDefault),
+  "agent_voice_feature_unavailable": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentVoiceFeatureUnavailableDefault),
+  "agent_permission_limited": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsAgentPermissionLimitedDefault),
+  "observe_projects": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsObserveProjectsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsObserveProjectsDefault),
+  "traces": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsTracesMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsTracesDefault),
+  "trace_reviews": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsTraceReviewsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsTraceReviewsDefault),
+  "gateway_keys": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayKeysMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayKeysDefault),
+  "gateway_requests": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestsDefault),
+  "gateway_policies": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayPoliciesMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayPoliciesDefault),
+  "gateway_available": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayAvailableDefault),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "gateway_provider_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayProviderCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayProviderCountDefault),
+  "gateway_provider_credential_id": zod.string().optional(),
+  "gateway_provider_name": zod.string().optional(),
+  "gateway_provider_health_status": zod.string().optional(),
+  "gateway_provider_model_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayProviderModelCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayProviderModelCountDefault),
+  "gateway_has_provider": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasProviderDefault),
+  "gateway_has_key": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "gateway_key_prefix": zod.string().optional(),
+  "gateway_key_status": zod.string().optional(),
+  "gateway_has_request": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasRequestDefault),
+  "gateway_request_log_id": zod.string().optional(),
+  "gateway_request_id": zod.string().optional(),
+  "gateway_request_status_code": zod.number().optional(),
+  "gateway_request_is_error": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestIsErrorDefault),
+  "gateway_request_error_message": zod.string().optional(),
+  "gateway_request_provider": zod.string().optional(),
+  "gateway_request_model": zod.string().optional(),
+  "gateway_request_resolved_model": zod.string().optional(),
+  "gateway_request_latency_ms": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestLatencyMsMin).optional(),
+  "gateway_request_cost": zod.string().optional(),
+  "gateway_request_cache_hit": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestCacheHitDefault),
+  "gateway_request_fallback_used": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestFallbackUsedDefault),
+  "gateway_request_guardrail_triggered": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayRequestGuardrailTriggeredDefault),
+  "gateway_has_review": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasReviewDefault),
+  "gateway_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "gateway_has_failure_repair": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasFailureRepairDefault),
+  "gateway_has_policy": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayHasPolicyDefault),
+  "gateway_policy_type": zod.string().optional(),
+  "gateway_policy_id": zod.string().optional(),
+  "gateway_policy_route": zod.string().optional(),
+  "gateway_policy_synced": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayPolicySyncedDefault),
+  "gateway_is_sample_only": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayIsSampleOnlyDefault),
+  "gateway_sample_request_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsGatewaySampleRequestCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewaySampleRequestCountDefault),
+  "gateway_permission_limited": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayPermissionLimitedDefault),
+  "gateway_guard_blocked": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayGuardBlockedDefault),
+  "gateway_first_loop_completed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsGatewayFirstLoopCompletedDefault),
+  "voice_agents": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceAgentsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceAgentsDefault),
+  "voice_simulations": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceSimulationsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceSimulationsDefault),
+  "voice_calls": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallsDefault),
+  "voice_reviews": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceReviewsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceReviewsDefault),
+  "voice_agent_id": zod.string().optional(),
+  "voice_agent_name": zod.string().optional(),
+  "voice_agent_provider": zod.string().optional(),
+  "voice_agent_version_id": zod.string().optional(),
+  "voice_scenario_id": zod.string().optional(),
+  "voice_run_test_id": zod.string().optional(),
+  "voice_test_execution_id": zod.string().optional(),
+  "voice_call_execution_id": zod.string().optional(),
+  "voice_call_status": zod.string().optional(),
+  "voice_call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "voice_call_duration_seconds": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallDurationSecondsMin).optional(),
+  "voice_call_response_time_ms": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallResponseTimeMsMin).optional(),
+  "voice_call_interruption_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallInterruptionCountMin).optional(),
+  "voice_transcript_available": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceTranscriptAvailableDefault),
+  "voice_recording_available": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceRecordingAvailableDefault),
+  "voice_has_agent": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasAgentDefault),
+  "voice_has_scenario": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasScenarioDefault),
+  "voice_has_test": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasTestDefault),
+  "voice_has_call": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasCallDefault),
+  "voice_has_completed_call": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasCompletedCallDefault),
+  "voice_call_failed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceCallFailedDefault),
+  "voice_has_review": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasReviewDefault),
+  "voice_has_success_criteria": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceHasSuccessCriteriaDefault),
+  "voice_first_loop_completed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceFirstLoopCompletedDefault),
+  "voice_is_sample_only": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceIsSampleOnlyDefault),
+  "voice_sample_call_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceSampleCallCountMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsVoiceSampleCallCountDefault),
+  "voice_permission_limited": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsVoicePermissionLimitedDefault),
+  "team_invites": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsTeamInvitesMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsTeamInvitesDefault),
+  "dashboards": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsDashboardsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsDashboardsDefault),
+  "alerts": zod.number().min(accountsTestTraceCreateResponseResultActivationStateSignalsAlertsMin).default(accountsTestTraceCreateResponseResultActivationStateSignalsAlertsDefault),
+  "first_trace_id": zod.string().optional(),
+  "first_observe_id": zod.string().optional(),
+  "sample_project_opened": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsSampleProjectOpenedDefault),
+  "sample_trace_available": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsSampleTraceAvailableDefault),
+  "sample_signal_viewed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsSampleSignalViewedDefault),
+  "sample_trace_reviewed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSignalsSampleTraceReviewedDefault)
+}),
+  "available_goals": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "goal": zod.enum(['monitor_production_ai_app', 'improve_prompts', 'build_ai_agent', 'control_model_traffic', 'evaluate_quality', 'connect_voice_ai_agent', 'explore_sample_data']),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "outcome_preview": zod.string().optional(),
+  "estimated_minutes": zod.number().min(1).optional(),
+  "disabled": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateAvailableGoalsItemDisabledDefault),
+  "disabled_reason": zod.string().optional()
+})).optional(),
+  "available_paths": zod.array(zod.object({
+  "id": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['available', 'selected', 'in_progress', 'blocked', 'complete', 'sample_only', 'hidden']),
+  "href": zod.string().min(1),
+  "is_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional(),
+  "first_action_id": zod.string().optional()
+})),
+  "journey_plan": zod.object({
+  "id": zod.string().min(1),
+  "primary_path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "eyebrow": zod.string().min(1),
+  "title": zod.string().min(1),
+  "description": zod.string().min(1),
+  "chips": zod.array(zod.string().min(1)),
+  "current_step_id": zod.string().min(1),
+  "current_step_index": zod.number().min(accountsTestTraceCreateResponseResultActivationStateJourneyPlanCurrentStepIndexMin),
+  "steps": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "action_id": zod.string().min(1),
+  "success_event": zod.enum(['onboarding_transition_viewed', 'onboarding_home_viewed', 'onboarding_goal_selected', 'onboarding_goal_changed', 'onboarding_recommended_action_viewed', 'onboarding_recommended_action_clicked', 'onboarding_path_card_clicked', 'onboarding_blocked_state_viewed', 'onboarding_diagnostics_opened', 'onboarding_sample_project_opened', 'onboarding_fallback_action_clicked', 'sample_trace_available', 'sample_signal_viewed', 'sample_to_real_setup_clicked', 'first_quality_loop_completed', 'daily_quality_home_viewed', 'daily_quality_top_signal_shown', 'daily_quality_top_change_reviewed', 'daily_quality_item_reviewed', 'daily_quality_action_created', 'daily_quality_action_opened', 'daily_quality_action_assigned', 'daily_quality_action_completed', 'daily_quality_action_dismissed', 'daily_quality_no_signal_viewed', 'daily_quality_empty_state_viewed', 'daily_quality_digest_destination_opened', 'daily_quality_route_fallback_used', 'weekly_quality_review_opened', 'weekly_quality_action_assigned', 'weekly_quality_action_completed', 'weekly_quality_review_completed', 'weekly_quality_digest_sent', 'weekly_quality_digest_suppressed', 'lifecycle_email_send_queued', 'lifecycle_email_sent', 'lifecycle_email_send_failed', 'lifecycle_email_send_suppressed', 'lifecycle_email_clicked', 'lifecycle_email_unsubscribed', 'lifecycle_email_snoozed', 'lifecycle_email_completed', 'reactivation_reason_clicked', 'observe_project_created', 'onboarding_observe_package_selected', 'onboarding_observe_route_focus_viewed', 'trace_received', 'trace_reviewed', 'trace_detail_opened', 'prompt_created', 'prompt_test_input_added', 'prompt_test_run_completed', 'prompt_version_created', 'prompt_comparable_version_created', 'prompt_comparison_completed', 'dataset_example_added', 'eval_dataset_created', 'eval_scorer_created', 'eval_run_started', 'eval_run_completed', 'eval_failures_reviewed', 'eval_failure_action_created', 'eval_group_created', 'onboarding_eval_source_selected', 'onboarding_eval_route_focus_viewed', 'onboarding_eval_run_clicked', 'onboarding_eval_failure_detail_opened', 'onboarding_eval_source_fix_cta_clicked', 'onboarding_eval_source_fix_route_viewed', 'onboarding_eval_source_fix_rerun_clicked', 'onboarding_eval_scorer_edit_cta_clicked', 'onboarding_eval_fix_rerun_completed', 'onboarding_eval_fix_rerun_reviewed', 'onboarding_eval_sample_viewed', 'voice_agent_created', 'voice_scenario_created', 'voice_test_call_started', 'voice_test_call_completed', 'voice_call_reviewed', 'voice_success_criteria_added', 'voice_call_monitor_opened', 'onboarding_voice_route_focus_viewed', 'onboarding_voice_call_detail_opened', 'onboarding_voice_success_criteria_cta_clicked', 'onboarding_voice_sample_viewed', 'prompt_version_promoted', 'agent_created', 'agent_node_added', 'agent_scenario_created', 'agent_prototype_run_completed', 'agent_trace_reviewed', 'agent_scenario_saved_as_eval', 'agent_eval_created', 'agent_live_trace_received', 'gateway_provider_added', 'gateway_key_created', 'gateway_test_request_sent', 'gateway_request_seen', 'gateway_log_opened', 'gateway_failure_resolved', 'gateway_policy_created', 'gateway_dashboard_created', 'team_member_invited', 'trace_failure_detected']).optional(),
+  "tour_anchor": zod.string().optional(),
+  "label": zod.string().min(1),
+  "description": zod.string().min(1),
+  "status": zod.enum(['complete', 'current', 'queued']),
+  "href": zod.string(),
+  "fallback_href": zod.string().min(1),
+  "route_available": zod.boolean(),
+  "blocked_reason": zod.string().optional(),
+  "requires_permission": zod.string().optional()
+}))
+}).optional(),
+  "sample_project": zod.object({
+  "available": zod.boolean(),
+  "created": zod.boolean(),
+  "status": zod.enum(['not_created', 'unavailable', 'available', 'creating', 'ready_for_observe', 'partially_ready', 'ready', 'partial', 'hidden', 'stale_manifest', 'repair_required', 'repair_failed']),
+  "href": zod.string(),
+  "version": zod.string(),
+  "manifest_id": zod.string().optional(),
+  "manifest_version": zod.string().optional(),
+  "label": zod.string().default(accountsTestTraceCreateResponseResultActivationStateSampleProjectLabelDefault),
+  "entry_route": zod.string().optional(),
+  "is_repairable": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateSampleProjectIsRepairableDefault),
+  "blocked_reason": zod.string().optional(),
+  "artifact_refs": zod.object({
+
+}).passthrough().optional(),
+  "health": zod.object({
+
+}).passthrough().optional(),
+  "real_setup_href": zod.string().optional(),
+  "is_hidden": zod.boolean(),
+  "hidden_reason": zod.string().optional(),
+  "entry_routes": zod.array(zod.string().min(1)),
+  "missing_artifacts": zod.array(zod.string().min(1)),
+  "last_opened_at": zod.string().datetime({"offset":true}).optional()
+}),
+  "prompt": zod.object({
+  "prompt_id": zod.string().optional(),
+  "prompt_name": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_real_prompt": zod.boolean(),
+  "has_test_run": zod.boolean(),
+  "has_committed_version": zod.boolean(),
+  "has_comparable_versions": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStatePromptHasComparableVersionsDefault),
+  "has_comparison": zod.boolean(),
+  "has_next_loop_action": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStatePromptIsSampleDefault),
+  "sample_prompt_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStatePromptSamplePromptCountMin).default(accountsTestTraceCreateResponseResultActivationStatePromptSamplePromptCountDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "agent": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_source": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "test_id": zod.string().optional(),
+  "execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "graph_execution_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean(),
+  "has_agent_version": zod.boolean(),
+  "has_step": zod.boolean(),
+  "has_scenario": zod.boolean(),
+  "has_run": zod.boolean(),
+  "has_review": zod.boolean(),
+  "has_eval_coverage": zod.boolean(),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateAgentIsSampleDefault),
+  "sample_agent_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateAgentSampleAgentCountMin).default(accountsTestTraceCreateResponseResultActivationStateAgentSampleAgentCountDefault),
+  "voice_feature_unavailable": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateAgentVoiceFeatureUnavailableDefault),
+  "permission_limited": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateAgentPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "eval": zod.object({
+  "source_type": zod.string().optional(),
+  "source_id": zod.string().optional(),
+  "source_name": zod.string().optional(),
+  "scorer_id": zod.string().optional(),
+  "scorer_template_id": zod.string().optional(),
+  "scorer_name": zod.string().optional(),
+  "eval_group_id": zod.string().optional(),
+  "run_id": zod.string().optional(),
+  "run_status": zod.string().optional(),
+  "run_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateEvalFailureCountMin).default(accountsTestTraceCreateResponseResultActivationStateEvalFailureCountDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "failure_action_at": zod.string().datetime({"offset":true}).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_source": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateEvalHasSourceDefault),
+  "has_scorer": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateEvalHasScorerDefault),
+  "has_completed_run": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateEvalHasCompletedRunDefault),
+  "has_failures": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateEvalHasFailuresDefault),
+  "has_review": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateEvalHasReviewDefault),
+  "has_failure_action": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateEvalHasFailureActionDefault),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateEvalIsSampleDefault),
+  "sample_source_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateEvalSampleSourceCountMin).default(accountsTestTraceCreateResponseResultActivationStateEvalSampleSourceCountDefault),
+  "permission_limited": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateEvalPermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "voice": zod.object({
+  "agent_id": zod.string().optional(),
+  "agent_name": zod.string().optional(),
+  "agent_provider": zod.string().optional(),
+  "agent_version_id": zod.string().optional(),
+  "scenario_id": zod.string().optional(),
+  "run_test_id": zod.string().optional(),
+  "test_execution_id": zod.string().optional(),
+  "call_execution_id": zod.string().optional(),
+  "call_status": zod.string().optional(),
+  "call_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "call_duration_seconds": zod.number().min(accountsTestTraceCreateResponseResultActivationStateVoiceCallDurationSecondsMin).optional(),
+  "call_response_time_ms": zod.number().min(accountsTestTraceCreateResponseResultActivationStateVoiceCallResponseTimeMsMin).optional(),
+  "call_interruption_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateVoiceCallInterruptionCountMin).optional(),
+  "transcript_available": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceTranscriptAvailableDefault),
+  "recording_available": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceRecordingAvailableDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "success_criteria_at": zod.string().datetime({"offset":true}).optional(),
+  "eval_config_id": zod.string().optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']),
+  "has_agent": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceHasAgentDefault),
+  "has_scenario": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceHasScenarioDefault),
+  "has_test": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceHasTestDefault),
+  "has_call": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceHasCallDefault),
+  "has_completed_call": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceHasCompletedCallDefault),
+  "call_failed": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceCallFailedDefault),
+  "has_review": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceHasReviewDefault),
+  "has_success_criteria": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceHasSuccessCriteriaDefault),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoiceIsSampleDefault),
+  "sample_call_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateVoiceSampleCallCountMin).default(accountsTestTraceCreateResponseResultActivationStateVoiceSampleCallCountDefault),
+  "permission_limited": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateVoicePermissionLimitedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "gateway": zod.object({
+  "gateway_available": zod.boolean(),
+  "gateway_id": zod.string().optional(),
+  "gateway_status": zod.string().optional(),
+  "gateway_public_url": zod.string().optional(),
+  "provider_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateGatewayProviderCountMin).default(accountsTestTraceCreateResponseResultActivationStateGatewayProviderCountDefault),
+  "provider_credential_id": zod.string().optional(),
+  "provider_name": zod.string().optional(),
+  "provider_health_status": zod.string().optional(),
+  "provider_model_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateGatewayProviderModelCountMin).default(accountsTestTraceCreateResponseResultActivationStateGatewayProviderModelCountDefault),
+  "has_provider": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayHasProviderDefault),
+  "has_key": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayHasKeyDefault),
+  "gateway_key_id": zod.string().optional(),
+  "key_prefix": zod.string().optional(),
+  "key_status": zod.string().optional(),
+  "has_request": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayHasRequestDefault),
+  "request_log_id": zod.string().optional(),
+  "request_id": zod.string().optional(),
+  "request_status_code": zod.number().optional(),
+  "request_is_error": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayRequestIsErrorDefault),
+  "request_error_message": zod.string().optional(),
+  "request_provider": zod.string().optional(),
+  "request_model": zod.string().optional(),
+  "request_resolved_model": zod.string().optional(),
+  "request_latency_ms": zod.number().min(accountsTestTraceCreateResponseResultActivationStateGatewayRequestLatencyMsMin).optional(),
+  "request_cost": zod.string().optional(),
+  "request_cache_hit": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayRequestCacheHitDefault),
+  "request_fallback_used": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayRequestFallbackUsedDefault),
+  "request_guardrail_triggered": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayRequestGuardrailTriggeredDefault),
+  "has_review": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayHasReviewDefault),
+  "reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "has_failure_repair": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayHasFailureRepairDefault),
+  "has_policy": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayHasPolicyDefault),
+  "policy_type": zod.string().optional(),
+  "policy_id": zod.string().optional(),
+  "policy_route": zod.string().optional(),
+  "policy_synced": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayPolicySyncedDefault),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayIsSampleDefault),
+  "sample_request_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateGatewaySampleRequestCountMin).default(accountsTestTraceCreateResponseResultActivationStateGatewaySampleRequestCountDefault),
+  "permission_limited": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayPermissionLimitedDefault),
+  "guard_blocked": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateGatewayGuardBlockedDefault),
+  "diagnostics": zod.array(zod.string().min(1)).optional(),
+  "stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data'])
+}).optional(),
+  "lifecycle": zod.object({
+  "dry_run_enabled": zod.boolean(),
+  "send_enabled": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateLifecycleSendEnabledDefault),
+  "status": zod.enum(['eligible', 'suppressed', 'skipped', 'error']),
+  "next_campaign_key": zod.string().optional(),
+  "template_key": zod.string().optional(),
+  "eligible_at": zod.string().datetime({"offset":true}).optional(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "target_success_event": zod.string().optional(),
+  "target_action_id": zod.string().optional(),
+  "target_url": zod.string().optional(),
+  "dry_run_only": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateLifecycleDryRunOnlyDefault)
+}).optional(),
+  "daily_quality": zod.object({
+  "mode": zod.enum(['new_signal', 'open_action', 'no_new_signal', 'permission_limited', 'unavailable']),
+  "last_reviewed_at": zod.string().datetime({"offset":true}).optional(),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "top_signal": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "type": zod.enum(['trace_failure', 'prompt_quality_review', 'span_latency', 'span_cost', 'agent_run_issue', 'gateway_request_issue', 'eval_failure', 'voice_call_issue', 'alert_triggered', 'feed_issue', 'dashboard_missing', 'alert_missing', 'evaluator_missing', 'saved_view_missing']),
+  "severity": zod.enum(['critical', 'warning', 'info']),
+  "title": zod.string().min(1),
+  "body": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1),
+  "project_id": zod.string().min(1).optional(),
+  "route": zod.string().min(1),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateDailyQualityTopSignalIsSampleDefault),
+  "created_at": zod.string().datetime({"offset":true})
+}).optional(),
+  "primary_action": zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateDailyQualityPrimaryActionRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateDailyQualityPrimaryActionIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateDailyQualityPrimaryActionIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateDailyQualityPrimaryActionIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+}).optional(),
+  "action_cards": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "label": zod.string().min(1),
+  "body": zod.string().min(1),
+  "route": zod.string().min(1),
+  "fallback_route": zod.string().min(1),
+  "route_available": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateDailyQualityActionCardsItemRouteAvailableDefault),
+  "source_type": zod.string().min(1),
+  "source_id": zod.string().min(1).optional(),
+  "assigned_to_user_id": zod.string().optional(),
+  "assigned_to_name": zod.string().optional(),
+  "assigned_at": zod.string().datetime({"offset":true}).optional(),
+  "due_at": zod.string().datetime({"offset":true}).optional(),
+  "is_overdue": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateDailyQualityActionCardsItemIsOverdueDefault),
+  "success_event": zod.string().optional(),
+  "is_primary": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateDailyQualityActionCardsItemIsPrimaryDefault),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateDailyQualityActionCardsItemIsSampleDefault),
+  "requires_permission": zod.string().optional(),
+  "activation_kind": zod.enum(['choose_goal', 'setup', 'send_signal', 'review', 'improve', 'sample_project', 'request_access', 'fallback', 'daily_quality', 'adjacent_loop']).optional()
+})).optional(),
+  "product_cards": zod.array(zod.object({
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']),
+  "status": zod.string().min(1),
+  "label": zod.string().min(1),
+  "summary": zod.string().min(1),
+  "metric": zod.string().min(1),
+  "change": zod.string().optional(),
+  "route": zod.string().min(1)
+})).optional(),
+  "weekly_review": zod.object({
+  "due": zod.boolean(),
+  "status": zod.enum(['due', 'not_due', 'permission_limited', 'flag_disabled', 'no_useful_signal', 'completed_recently']),
+  "route": zod.string().min(1),
+  "window": zod.object({
+  "start_at": zod.string().datetime({"offset":true}),
+  "end_at": zod.string().datetime({"offset":true})
+}),
+  "summary": zod.string().min(1),
+  "unresolved_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateDailyQualityWeeklyReviewUnresolvedCountMin),
+  "completed_count": zod.number().min(accountsTestTraceCreateResponseResultActivationStateDailyQualityWeeklyReviewCompletedCountMin),
+  "last_completed_at": zod.string().datetime({"offset":true}).optional(),
+  "action_label": zod.string().optional()
+}).optional(),
+  "digest_eligible": zod.boolean(),
+  "digest_suppression_reason": zod.string().optional(),
+  "diagnostics": zod.array(zod.string().min(1)).optional()
+}).optional(),
+  "email_eligibility": zod.object({
+  "eligible": zod.boolean(),
+  "suppressed": zod.boolean(),
+  "suppression_reason": zod.enum(['activated', 'target_event_complete', 'workspace_suppressed', 'user_unsubscribed', 'user_snoozed', 'sample_hidden', 'sample_not_allowed', 'route_unavailable', 'permission_limited', 'feature_disabled', 'dry_run_flag_off', 'send_flag_off', 'frequency_cap', 'frequency_cap_user_24h', 'frequency_cap_user_7d', 'frequency_cap_workspace_24h', 'frequency_cap_campaign_7d', 'wait_window_open', 'recent_goal_change', 'recent_same_task_activity', 'path_changed', 'missing_email', 'workspace_inactive', 'activation_state_error', 'no_matching_campaign', 'manual_pause', 'not_activated', 'sample_only', 'no_useful_signal', 'open_action', 'already_reviewed', 'frequency_capped', 'flag_disabled', 'preferences_blocked', 'missing_digest_preview']).optional(),
+  "next_email_key": zod.string().optional(),
+  "next_email_after": zod.string().datetime({"offset":true}).optional(),
+  "digest_eligible": zod.boolean(),
+  "last_email_sent_at": zod.string().datetime({"offset":true}).optional(),
+  "frequency_cap_remaining": zod.number().min(accountsTestTraceCreateResponseResultActivationStateEmailEligibilityFrequencyCapRemainingMin),
+  "dry_run_only": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateEmailEligibilityDryRunOnlyDefault)
+}),
+  "permissions": zod.object({
+  "role": zod.string(),
+  "can_read": zod.boolean(),
+  "can_write": zod.boolean(),
+  "can_manage_workspace": zod.boolean(),
+  "missing_permissions": zod.array(zod.string().min(1)),
+  "request_access_href": zod.string().optional(),
+  "permission_limited": zod.boolean()
+}),
+  "feature_flags": zod.record(zod.string(), zod.boolean()),
+  "route_availability": zod.object({
+
+}).passthrough(),
+  "email_context": zod.object({
+  "campaign_key": zod.string().optional(),
+  "email_key": zod.string().optional(),
+  "send_log_id": zod.string().optional(),
+  "email_status": zod.string().optional(),
+  "link_issued_at": zod.string().optional(),
+  "target_stage": zod.enum(['feature_disabled', 'workspace_missing', 'permission_limited', 'choose_goal', 'selected_path_unavailable', 'activated', 'daily_review', 'connect_observability', 'waiting_for_first_trace', 'waiting_for_first_trace_sample_available', 'review_first_trace', 'create_trace_evaluator', 'review_sample_signal', 'start_prompt', 'run_prompt_test', 'save_prompt_version', 'create_second_prompt_version', 'compare_prompt_versions', 'prompt_next_loop', 'create_agent', 'add_agent_node', 'run_agent_scenario', 'review_agent_trace', 'save_agent_eval', 'agent_create_eval', 'create_trace_dashboard', 'create_trace_alert', 'configure_gateway_provider', 'create_gateway_key', 'run_gateway_request', 'review_gateway_log', 'fix_gateway_failure', 'add_gateway_policy', 'create_voice_agent', 'run_voice_test_call', 'review_voice_call', 'add_voice_success_criteria', 'voice_monitor_calls', 'create_eval_dataset', 'add_eval_scorer', 'run_eval', 'review_eval_failures', 'eval_next_loop', 'open_sample_project', 'connect_real_data']).optional(),
+  "target_event": zod.string().optional(),
+  "target_route": zod.string().optional(),
+  "context_status": zod.enum(['current', 'stale', 'expired', 'invalid', 'complete', 'route_unavailable']),
+  "stale_reason": zod.string().optional(),
+  "resolved_href": zod.string().min(1)
+}),
+  "last_meaningful_event": zod.object({
+  "name": zod.string().min(1),
+  "occurred_at": zod.string().datetime({"offset":true}),
+  "is_sample": zod.boolean().default(accountsTestTraceCreateResponseResultActivationStateLastMeaningfulEventIsSampleDefault),
+  "path": zod.enum(['prompt', 'agent', 'observe', 'gateway', 'voice', 'evals', 'dashboards', 'sample']).optional(),
+  "metadata": zod.record(zod.string(), zod.string()).optional()
+}),
+  "value_signal": zod.object({
+  "kind": zod.enum(['observe_trace_metrics', 'prompt_quality_loop', 'agent_quality_loop', 'gateway_routing_loop', 'eval_quality_loop', 'voice_quality_loop']).optional(),
+  "headline": zod.string().optional(),
+  "summary": zod.string().optional(),
+  "metrics": zod.array(zod.object({
+  "label": zod.string().min(1),
+  "value": zod.string().min(1)
+})).optional(),
+  "latency_ms": zod.number().min(accountsTestTraceCreateResponseResultActivationStateValueSignalLatencyMsMin).optional(),
+  "cost": zod.number().min(accountsTestTraceCreateResponseResultActivationStateValueSignalCostMin).optional(),
+  "total_tokens": zod.number().min(accountsTestTraceCreateResponseResultActivationStateValueSignalTotalTokensMin).optional()
+}).optional(),
+  "diagnostics": zod.object({
+  "resolver_version": zod.string().min(1),
+  "decision_reason": zod.string().min(1),
+  "matched_rule": zod.string().min(1),
+  "candidate_actions": zod.array(zod.string().min(1)),
+  "suppressed_actions": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "reason": zod.string().min(1)
+})),
+  "evaluated_at": zod.string().datetime({"offset":true})
+}),
+  "warnings": zod.array(zod.string().min(1))
+})
 })
 })
 
@@ -5749,6 +12171,7 @@ export const AgentccGatewaysTestPlaygroundResponse = zod.object({
 }).passthrough(),
   "guardrail_headers": zod.record(zod.string(), zod.string().min(1)),
   "model": zod.string().min(1),
+  "request_id": zod.string().optional(),
   "blocked": zod.boolean(),
   "warned": zod.boolean()
 })
@@ -10605,80 +17028,79 @@ export const IntegrationsConnectionsUpdateParams = zod.object({
 
 export const integrationsConnectionsUpdateBodyDisplayNameMax = 255;
 
+export const integrationsConnectionsUpdateBodyPublicKeyMax = 500;
+
+export const integrationsConnectionsUpdateBodySecretKeyMax = 500;
+
 export const integrationsConnectionsUpdateBodyHostUrlMax = 500;
 
-export const integrationsConnectionsUpdateBodyExternalProjectNameMax = 255;
-
-export const integrationsConnectionsUpdateBodyTotalTracesSyncedMin = 0;
-export const integrationsConnectionsUpdateBodyTotalTracesSyncedMax = 2147483647;
-
-export const integrationsConnectionsUpdateBodyTotalSpansSyncedMin = 0;
-export const integrationsConnectionsUpdateBodyTotalSpansSyncedMax = 2147483647;
-
-export const integrationsConnectionsUpdateBodyTotalScoresSyncedMin = 0;
-export const integrationsConnectionsUpdateBodyTotalScoresSyncedMax = 2147483647;
-
 export const integrationsConnectionsUpdateBodySyncIntervalSecondsMin = 60;
-export const integrationsConnectionsUpdateBodySyncIntervalSecondsMax = 1800;
+export const integrationsConnectionsUpdateBodySyncIntervalSecondsMax = 3600;
 
 
 
 export const IntegrationsConnectionsUpdateBody = zod.object({
-  "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsUpdateBodyDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsUpdateBodyHostUrlMax),
-  "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
-  "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsUpdateBodyExternalProjectNameMax),
-  "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsUpdateBodyTotalTracesSyncedMin).max(integrationsConnectionsUpdateBodyTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsUpdateBodyTotalSpansSyncedMin).max(integrationsConnectionsUpdateBodyTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsUpdateBodyTotalScoresSyncedMin).max(integrationsConnectionsUpdateBodyTotalScoresSyncedMax).optional(),
-  "backfill_completed": zod.boolean().optional(),
-  "backfill_progress": zod.object({
-
-}).passthrough().optional(),
+  "display_name": zod.string().min(1).max(integrationsConnectionsUpdateBodyDisplayNameMax).optional(),
+  "public_key": zod.string().min(1).max(integrationsConnectionsUpdateBodyPublicKeyMax).optional(),
+  "secret_key": zod.string().min(1).max(integrationsConnectionsUpdateBodySecretKeyMax).optional(),
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsUpdateBodyHostUrlMax).optional(),
+  "ca_certificate": zod.string().optional(),
   "sync_interval_seconds": zod.number().min(integrationsConnectionsUpdateBodySyncIntervalSecondsMin).max(integrationsConnectionsUpdateBodySyncIntervalSecondsMax).optional()
 })
 
-export const integrationsConnectionsUpdateResponseDisplayNameMax = 255;
+export const integrationsConnectionsUpdateResponseStatusDefault = true;
+export const integrationsConnectionsUpdateResponseResultDisplayNameMax = 255;
 
-export const integrationsConnectionsUpdateResponseHostUrlMax = 500;
+export const integrationsConnectionsUpdateResponseResultHostUrlMax = 500;
 
-export const integrationsConnectionsUpdateResponseExternalProjectNameMax = 255;
+export const integrationsConnectionsUpdateResponseResultExternalProjectNameMax = 255;
 
-export const integrationsConnectionsUpdateResponseTotalTracesSyncedMin = 0;
-export const integrationsConnectionsUpdateResponseTotalTracesSyncedMax = 2147483647;
+export const integrationsConnectionsUpdateResponseResultSyncIntervalSecondsMin = 60;
+export const integrationsConnectionsUpdateResponseResultSyncIntervalSecondsMax = 1800;
 
-export const integrationsConnectionsUpdateResponseTotalSpansSyncedMin = 0;
-export const integrationsConnectionsUpdateResponseTotalSpansSyncedMax = 2147483647;
+export const integrationsConnectionsUpdateResponseResultTotalTracesSyncedMin = 0;
+export const integrationsConnectionsUpdateResponseResultTotalTracesSyncedMax = 2147483647;
 
-export const integrationsConnectionsUpdateResponseTotalScoresSyncedMin = 0;
-export const integrationsConnectionsUpdateResponseTotalScoresSyncedMax = 2147483647;
+export const integrationsConnectionsUpdateResponseResultTotalSpansSyncedMin = 0;
+export const integrationsConnectionsUpdateResponseResultTotalSpansSyncedMax = 2147483647;
 
-export const integrationsConnectionsUpdateResponseSyncIntervalSecondsMin = 60;
-export const integrationsConnectionsUpdateResponseSyncIntervalSecondsMax = 1800;
+export const integrationsConnectionsUpdateResponseResultTotalScoresSyncedMin = 0;
+export const integrationsConnectionsUpdateResponseResultTotalScoresSyncedMax = 2147483647;
 
 
 
 export const IntegrationsConnectionsUpdateResponse = zod.object({
+  "status": zod.boolean().default(integrationsConnectionsUpdateResponseStatusDefault),
+  "result": zod.object({
   "id": zod.string().uuid().optional(),
   "platform": zod.enum(['langfuse', 'datadog', 'posthog', 'pagerduty', 'mixpanel', 'cloud_storage', 'message_queue', 'linear']),
-  "display_name": zod.string().min(1).max(integrationsConnectionsUpdateResponseDisplayNameMax),
-  "host_url": zod.string().url().min(1).max(integrationsConnectionsUpdateResponseHostUrlMax),
+  "display_name": zod.string().min(1).max(integrationsConnectionsUpdateResponseResultDisplayNameMax),
+  "host_url": zod.string().url().min(1).max(integrationsConnectionsUpdateResponseResultHostUrlMax),
   "status": zod.enum(['active', 'paused', 'error', 'syncing', 'backfilling']).optional(),
   "status_message": zod.string().optional(),
-  "external_project_name": zod.string().min(1).max(integrationsConnectionsUpdateResponseExternalProjectNameMax),
+  "external_project_name": zod.string().min(1).max(integrationsConnectionsUpdateResponseResultExternalProjectNameMax),
+  "project": zod.string().uuid().optional(),
+  "project_name": zod.string().optional(),
+  "public_key_display": zod.string().optional(),
+  "secret_key_display": zod.string().optional(),
   "last_synced_at": zod.string().datetime({"offset":true}).optional(),
-  "total_traces_synced": zod.number().min(integrationsConnectionsUpdateResponseTotalTracesSyncedMin).max(integrationsConnectionsUpdateResponseTotalTracesSyncedMax).optional(),
-  "total_spans_synced": zod.number().min(integrationsConnectionsUpdateResponseTotalSpansSyncedMin).max(integrationsConnectionsUpdateResponseTotalSpansSyncedMax).optional(),
-  "total_scores_synced": zod.number().min(integrationsConnectionsUpdateResponseTotalScoresSyncedMin).max(integrationsConnectionsUpdateResponseTotalScoresSyncedMax).optional(),
+  "sync_cursor": zod.object({
+
+}).passthrough().optional(),
+  "sync_interval_seconds": zod.number().min(integrationsConnectionsUpdateResponseResultSyncIntervalSecondsMin).max(integrationsConnectionsUpdateResponseResultSyncIntervalSecondsMax).optional(),
+  "last_error_notified_at": zod.string().datetime({"offset":true}).optional(),
+  "backfill_from": zod.string().datetime({"offset":true}).optional(),
   "backfill_completed": zod.boolean().optional(),
   "backfill_progress": zod.object({
 
 }).passthrough().optional(),
-  "sync_interval_seconds": zod.number().min(integrationsConnectionsUpdateResponseSyncIntervalSecondsMin).max(integrationsConnectionsUpdateResponseSyncIntervalSecondsMax).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional()
+  "total_traces_synced": zod.number().min(integrationsConnectionsUpdateResponseResultTotalTracesSyncedMin).max(integrationsConnectionsUpdateResponseResultTotalTracesSyncedMax).optional(),
+  "total_spans_synced": zod.number().min(integrationsConnectionsUpdateResponseResultTotalSpansSyncedMin).max(integrationsConnectionsUpdateResponseResultTotalSpansSyncedMax).optional(),
+  "total_scores_synced": zod.number().min(integrationsConnectionsUpdateResponseResultTotalScoresSyncedMin).max(integrationsConnectionsUpdateResponseResultTotalScoresSyncedMax).optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "updated_at": zod.string().datetime({"offset":true}).optional(),
+  "created_by": zod.string().uuid().optional()
+})
 })
 
 
@@ -14183,7 +20605,8 @@ export const ModelHubAnnotationsLabelsListQueryParams = zod.object({
   "type": zod.enum(['text', 'numeric', 'categorical', 'star', 'thumbs_up_down']).optional(),
   "search": zod.string().optional(),
   "include_usage_count": zod.boolean().optional(),
-  "include_archived": zod.boolean().optional()
+  "include_archived": zod.boolean().optional(),
+  "archived": zod.boolean().optional()
 })
 
 export const modelHubAnnotationsLabelsListResponseNameMax = 255;
@@ -14203,7 +20626,8 @@ export const ModelHubAnnotationsLabelsListResponseItem = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 export const ModelHubAnnotationsLabelsListResponse = zod.array(ModelHubAnnotationsLabelsListResponseItem)
 
@@ -14248,7 +20672,8 @@ export const ModelHubAnnotationsLabelsReadResponse = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 
 
@@ -14288,7 +20713,8 @@ export const ModelHubAnnotationsLabelsUpdateResponse = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 
 
@@ -14328,7 +20754,8 @@ export const ModelHubAnnotationsLabelsPartialUpdateResponse = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 
 
@@ -14368,7 +20795,8 @@ export const ModelHubAnnotationsLabelsRestoreResponse = zod.object({
   "allow_notes": zod.boolean().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "trace_annotations_count": zod.number().optional(),
-  "annotation_count": zod.number().optional()
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
 })
 })
 
@@ -17961,11 +24389,14 @@ export const ModelHubDevelopsGetDatasetTableListQueryParams = zod.object({
 
 
 
+
 export const ModelHubDevelopsGetDatasetTableListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "metadata": zod.object({
   "dataset_name": zod.string().min(1),
+  "experiment_id": zod.string().uuid().optional(),
+  "experiment_name": zod.string().min(1).optional(),
   "total_rows": zod.number().optional(),
   "total_pages": zod.number().optional(),
   "error_messages": zod.array(zod.string().min(1)).optional(),
@@ -18358,11 +24789,14 @@ export const ModelHubDevelopsGetExperimentDatasetTableListParams = zod.object({
 
 
 
+
 export const ModelHubDevelopsGetExperimentDatasetTableListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "metadata": zod.object({
   "dataset_name": zod.string().min(1),
+  "experiment_id": zod.string().uuid().optional(),
+  "experiment_name": zod.string().min(1).optional(),
   "total_rows": zod.number().optional(),
   "total_pages": zod.number().optional(),
   "error_messages": zod.array(zod.string().min(1)).optional(),
@@ -18491,7 +24925,11 @@ export const ModelHubEmbeddingsReadResponse = zod.object({
 
 
 /**
- * List all eval groups for the user's organization
+ * Pure routing: three independent bulk reads in this method (main
+EvalGroup queryset, EvalGroup.eval_templates through-table, and
+EvalTemplate) all route to DATABASE_FOR_EVAL_GROUP_LIST when
+"feature:eval_group_list" is opted in. No query semantics change.
+ * @summary List all eval groups for the user's organization.
  */
 export const ModelHubEvalGroupsListQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
@@ -18856,16 +25294,14 @@ export const ModelHubEvalSummaryTemplatesDeleteResponse = zod.object({
 
 export const modelHubEvalTemplateCreateCreateBodyNameMax = 50;
 
-export const modelHubEvalTemplateCreateCreateBodyOwnerDefault = `system`;
-export const modelHubEvalTemplateCreateCreateBodyOwnerMax = 50;
-
+export const modelHubEvalTemplateCreateCreateBodyOwnerDefault = `user`;
 export const modelHubEvalTemplateCreateCreateBodyEvalTagsItemMax = 100;
 
 
 
 export const ModelHubEvalTemplateCreateCreateBody = zod.object({
   "name": zod.string().min(1).max(modelHubEvalTemplateCreateCreateBodyNameMax),
-  "owner": zod.string().min(1).max(modelHubEvalTemplateCreateCreateBodyOwnerMax).default(modelHubEvalTemplateCreateCreateBodyOwnerDefault),
+  "owner": zod.enum(['system', 'user']).default(modelHubEvalTemplateCreateCreateBodyOwnerDefault),
   "config": zod.object({
 
 }).passthrough(),
@@ -19014,6 +25450,9 @@ export const ModelHubEvalTemplatesCreateCompositeCreateBody = zod.object({
   "aggregation_enabled": zod.boolean().default(modelHubEvalTemplatesCreateCompositeCreateBodyAggregationEnabledDefault),
   "aggregation_function": zod.enum(['weighted_avg', 'avg', 'min', 'max', 'pass_rate']).default(modelHubEvalTemplatesCreateCompositeCreateBodyAggregationFunctionDefault),
   "child_weights": zod.object({
+
+}).passthrough().optional(),
+  "child_pinned_versions": zod.object({
 
 }).passthrough().optional(),
   "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).default(modelHubEvalTemplatesCreateCompositeCreateBodyCompositeChildAxisDefault)
@@ -19173,6 +25612,9 @@ export const modelHubEvalTemplatesListCreateBodyPageSizeMax = 100;
 export const modelHubEvalTemplatesListCreateBodyOwnerFilterDefault = `all`;
 
 
+
+
+
 export const modelHubEvalTemplatesListCreateBodySortByDefault = `updated_at`;
 export const modelHubEvalTemplatesListCreateBodySortOrderDefault = `desc`;
 
@@ -19183,11 +25625,17 @@ export const ModelHubEvalTemplatesListCreateBody = zod.object({
   "owner_filter": zod.enum(['all', 'user', 'system']).default(modelHubEvalTemplatesListCreateBodyOwnerFilterDefault),
   "filters": zod.object({
   "eval_type": zod.array(zod.enum(['llm', 'code', 'agent'])).optional(),
+  "eval_type_not": zod.array(zod.enum(['llm', 'code', 'agent'])).optional(),
   "output_type": zod.array(zod.enum(['pass_fail', 'percentage', 'deterministic'])).optional(),
+  "output_type_not": zod.array(zod.enum(['pass_fail', 'percentage', 'deterministic'])).optional(),
   "template_type": zod.array(zod.enum(['single', 'composite'])).optional(),
+  "template_type_not": zod.array(zod.enum(['single', 'composite'])).optional(),
   "tags": zod.array(zod.string().min(1)).optional(),
+  "tags_not": zod.array(zod.string().min(1)).optional(),
   "created_by": zod.array(zod.string().min(1)).optional(),
-  "names": zod.array(zod.string().min(1)).optional()
+  "created_by_not": zod.array(zod.string().min(1)).optional(),
+  "names": zod.array(zod.string().min(1)).optional(),
+  "names_not": zod.array(zod.string().min(1)).optional()
 }).optional(),
   "sort_by": zod.enum(['name', 'updated_at', 'created_at']).default(modelHubEvalTemplatesListCreateBodySortByDefault),
   "sort_order": zod.enum(['asc', 'desc']).default(modelHubEvalTemplatesListCreateBodySortOrderDefault)
@@ -19308,6 +25756,9 @@ export const ModelHubEvalTemplatesCompositePartialUpdateBody = zod.object({
   "aggregation_function": zod.enum(['weighted_avg', 'avg', 'min', 'max', 'pass_rate']).optional(),
   "child_template_ids": zod.array(zod.string().uuid()).optional(),
   "child_weights": zod.object({
+
+}).passthrough().optional(),
+  "child_pinned_versions": zod.object({
 
 }).passthrough().optional(),
   "composite_child_axis": zod.enum(['', 'pass_fail', 'percentage', 'choices', 'code']).optional()
@@ -21702,7 +28153,7 @@ export const modelHubGetEvalLogsDetailsListQueryCurrentPageIndexDefault = 0;
 export const modelHubGetEvalLogsDetailsListQueryCurrentPageIndexMin = 0;
 
 export const modelHubGetEvalLogsDetailsListQuerySourceDefault = `logs`;
-export const modelHubGetEvalLogsDetailsListQuerySearchDefault = ``;
+export const modelHubGetEvalLogsDetailsListQuerySearchDefault = {  };
 export const modelHubGetEvalLogsDetailsListQueryFiltersDefault = `[]`;
 
 export const modelHubGetEvalLogsDetailsListQuerySortDefault = `[]`;
@@ -22194,7 +28645,8 @@ export const ModelHubKbUpdateResponse = zod.object({
 
 
 /**
- * ViewSet for handling KnowledgeBase operations.
+ * Partially update a knowledge base.
+ * @summary Partially update a knowledge base.
  */
 export const ModelHubKbPartialUpdateParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this knowledge base.')
@@ -22213,21 +28665,21 @@ export const ModelHubKbPartialUpdateBody = zod.object({
   "chunk_size": zod.number().min(modelHubKbPartialUpdateBodyChunkSizeMin).max(modelHubKbPartialUpdateBodyChunkSizeMax)
 })
 
-export const modelHubKbPartialUpdateResponseNameMax = 2000;
 
-export const modelHubKbPartialUpdateResponseChunkSizeMin = 0;
-export const modelHubKbPartialUpdateResponseChunkSizeMax = 2147483647;
 
 
 
 export const ModelHubKbPartialUpdateResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "name": zod.string().min(1).max(modelHubKbPartialUpdateResponseNameMax),
-  "embedding_model": zod.enum(['BAAI/bge-small-en-v1.5']).optional(),
-  "chunk_size": zod.number().min(modelHubKbPartialUpdateResponseChunkSizeMin).max(modelHubKbPartialUpdateResponseChunkSizeMax),
-  "organization": zod.string().uuid().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional()
+  "status": zod.boolean(),
+  "result": zod.object({
+  "id": zod.string().uuid(),
+  "name": zod.string().min(1),
+  "embedding_model": zod.string().min(1),
+  "chunk_size": zod.number(),
+  "organization": zod.string().uuid(),
+  "created_at": zod.string().datetime({"offset":true}),
+  "updated_at": zod.string().datetime({"offset":true})
+})
 })
 
 
@@ -27405,7 +33857,6 @@ export const SimulateAgentDefinitionsReadParams = zod.object({
 
 
 
-
 export const SimulateAgentDefinitionsReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "agent_name": zod.string().min(1).optional().describe('Name of the AI agent'),
@@ -27425,7 +33876,7 @@ export const SimulateAgentDefinitionsReadResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().optional(),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
@@ -27512,7 +33963,6 @@ export const SimulateAgentDefinitionsEditUpdateBody = zod.object({
 
 
 
-
 export const SimulateAgentDefinitionsEditUpdateResponse = zod.object({
   "message": zod.string().min(1).optional(),
   "agent": zod.object({
@@ -27534,7 +33984,7 @@ export const SimulateAgentDefinitionsEditUpdateResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().optional(),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
@@ -27938,7 +34388,6 @@ export const SimulateApiAgentDefinitionOperationsListQueryParams = zod.object({
 
 
 
-
 export const SimulateApiAgentDefinitionOperationsListResponse = zod.object({
   "count": zod.number(),
   "next": zod.string().url().optional(),
@@ -27962,7 +34411,7 @@ export const SimulateApiAgentDefinitionOperationsListResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().optional(),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
@@ -28072,7 +34521,6 @@ export const SimulateApiAgentDefinitionOperationsReadParams = zod.object({
 
 
 
-
 export const SimulateApiAgentDefinitionOperationsReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "agent_name": zod.string().min(1).optional().describe('Name of the AI agent'),
@@ -28092,7 +34540,7 @@ export const SimulateApiAgentDefinitionOperationsReadResponse = zod.object({
   "workspace": zod.string().uuid().optional(),
   "knowledge_base": zod.string().uuid().optional(),
   "organization": zod.string().uuid().optional().describe('Organization this agent definition belongs to'),
-  "api_key": zod.string().min(1).optional().describe('API key for the agent'),
+  "api_key": zod.string().optional(),
   "observability_provider": zod.string().uuid().optional(),
   "created_at": zod.string().datetime({"offset":true}).optional(),
   "updated_at": zod.string().datetime({"offset":true}).optional(),
@@ -30205,7 +36653,10 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "agent_definition_used_id": zod.string().uuid().optional(),
   "call_summary": zod.string().optional().describe('Call summary from the service'),
   "recordings": zod.string().optional(),
+  "test_execution_id": zod.string().uuid().optional(),
   "scenario_id": zod.string().optional(),
+  "scenario_graph": zod.string().optional(),
+  "scenario_graph_id": zod.string().optional(),
   "avg_agent_latency": zod.number().optional(),
   "avg_agent_latency_ms": zod.number().min(simulateCallExecutionsReadResponseAvgAgentLatencyMsMin).max(simulateCallExecutionsReadResponseAvgAgentLatencyMsMax).optional().describe('Average agent latency in milliseconds (time taken by agent to respond after user\'s pause)'),
   "user_interruption_count": zod.number().min(simulateCallExecutionsReadResponseUserInterruptionCountMin).max(simulateCallExecutionsReadResponseUserInterruptionCountMax).optional().describe('Number of times user interrupted the AI'),
@@ -35134,66 +41585,6 @@ export const TracerEvalTaskListQueryParams = zod.object({
   "limit": zod.number().optional().describe('Number of results to return per page.')
 })
 
-export const tracerEvalTaskListResponseResultsItemNameMax = 255;
-
-export const tracerEvalTaskListResponseResultsItemFiltersDateRangeMin = 2;
-export const tracerEvalTaskListResponseResultsItemFiltersDateRangeMax = 2;
-
-export const tracerEvalTaskListResponseResultsItemFiltersDefault = {  };
-export const tracerEvalTaskListResponseResultsItemSamplingRateMax = 100;
-
-export const tracerEvalTaskListResponseResultsItemSpansLimitMax = 1000000;
-
-export const tracerEvalTaskListResponseResultsItemRowTypeDefault = `spans`;
-
-export const TracerEvalTaskListResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskListResponseResultsItemNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskListResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskListResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
-})
-})).optional()
-}).default(tracerEvalTaskListResponseResultsItemFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskListResponseResultsItemSamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskListResponseResultsItemSpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskListResponseResultsItemRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional(),
-  "progress": zod.string().optional()
-}))
-})
-
 
 export const tracerEvalTaskCreateBodyNameMax = 255;
 
@@ -35214,7 +41605,9 @@ export const TracerEvalTaskCreateBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskCreateBodyFiltersDateRangeMin).max(tracerEvalTaskCreateBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35252,196 +41645,16 @@ export const TracerEvalTaskGetEvalDetailsQueryParams = zod.object({
   "limit": zod.number().optional().describe('Number of results to return per page.')
 })
 
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemNameMax = 255;
-
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMin = 2;
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMax = 2;
-
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDefault = {  };
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingRateMax = 100;
-
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemSpansLimitMax = 1000000;
-
-export const tracerEvalTaskGetEvalDetailsResponseResultsItemRowTypeDefault = `spans`;
-
-export const TracerEvalTaskGetEvalDetailsResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskGetEvalDetailsResponseResultsItemNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
-})
-})).optional()
-}).default(tracerEvalTaskGetEvalDetailsResponseResultsItemFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskGetEvalDetailsResponseResultsItemSamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskGetEvalDetailsResponseResultsItemSpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskGetEvalDetailsResponseResultsItemRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional(),
-  "progress": zod.string().optional()
-}))
-})
-
 
 export const TracerEvalTaskGetEvalTaskLogsQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
   "limit": zod.number().optional().describe('Number of results to return per page.')
 })
 
-export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemNameMax = 255;
-
-export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDateRangeMin = 2;
-export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDateRangeMax = 2;
-
-export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDefault = {  };
-export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingRateMax = 100;
-
-export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemSpansLimitMax = 1000000;
-
-export const tracerEvalTaskGetEvalTaskLogsResponseResultsItemRowTypeDefault = `spans`;
-
-export const TracerEvalTaskGetEvalTaskLogsResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskGetEvalTaskLogsResponseResultsItemNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
-})
-})).optional()
-}).default(tracerEvalTaskGetEvalTaskLogsResponseResultsItemFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskGetEvalTaskLogsResponseResultsItemSamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskGetEvalTaskLogsResponseResultsItemSpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskGetEvalTaskLogsResponseResultsItemRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional(),
-  "progress": zod.string().optional()
-}))
-})
-
 
 export const TracerEvalTaskGetUsageQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
   "limit": zod.number().optional().describe('Number of results to return per page.')
-})
-
-export const tracerEvalTaskGetUsageResponseResultsItemNameMax = 255;
-
-export const tracerEvalTaskGetUsageResponseResultsItemFiltersDateRangeMin = 2;
-export const tracerEvalTaskGetUsageResponseResultsItemFiltersDateRangeMax = 2;
-
-export const tracerEvalTaskGetUsageResponseResultsItemFiltersDefault = {  };
-export const tracerEvalTaskGetUsageResponseResultsItemSamplingRateMax = 100;
-
-export const tracerEvalTaskGetUsageResponseResultsItemSpansLimitMax = 1000000;
-
-export const tracerEvalTaskGetUsageResponseResultsItemRowTypeDefault = `spans`;
-
-export const TracerEvalTaskGetUsageResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskGetUsageResponseResultsItemNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskGetUsageResponseResultsItemFiltersDateRangeMin).max(tracerEvalTaskGetUsageResponseResultsItemFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
-})
-})).optional()
-}).default(tracerEvalTaskGetUsageResponseResultsItemFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskGetUsageResponseResultsItemSamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskGetUsageResponseResultsItemSpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskGetUsageResponseResultsItemRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional(),
-  "progress": zod.string().optional()
-}))
 })
 
 
@@ -35469,62 +41682,6 @@ export const TracerEvalTaskListEvalTasksQueryParams = zod.object({
   "page_size": zod.number().min(1).max(tracerEvalTaskListEvalTasksQueryPageSizeMax).default(tracerEvalTaskListEvalTasksQueryPageSizeDefault)
 })
 
-export const tracerEvalTaskListEvalTasksResponseNameMax = 255;
-
-export const tracerEvalTaskListEvalTasksResponseFiltersDateRangeMin = 2;
-export const tracerEvalTaskListEvalTasksResponseFiltersDateRangeMax = 2;
-
-export const tracerEvalTaskListEvalTasksResponseFiltersDefault = {  };
-export const tracerEvalTaskListEvalTasksResponseSamplingRateMax = 100;
-
-export const tracerEvalTaskListEvalTasksResponseSpansLimitMax = 1000000;
-
-export const tracerEvalTaskListEvalTasksResponseRowTypeDefault = `spans`;
-
-export const TracerEvalTaskListEvalTasksResponseItem = zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskListEvalTasksResponseNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskListEvalTasksResponseFiltersDateRangeMin).max(tracerEvalTaskListEvalTasksResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
-})
-})).optional()
-}).default(tracerEvalTaskListEvalTasksResponseFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskListEvalTasksResponseSamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskListEvalTasksResponseSpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskListEvalTasksResponseRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional(),
-  "progress": zod.string().optional()
-})
-export const TracerEvalTaskListEvalTasksResponse = zod.array(TracerEvalTaskListEvalTasksResponseItem)
-
 
 /**
  * List Eval Tasks filtered
@@ -35550,216 +41707,39 @@ export const TracerEvalTaskListEvalTasksWithProjectNameQueryParams = zod.object(
   "page_size": zod.number().min(1).max(tracerEvalTaskListEvalTasksWithProjectNameQueryPageSizeMax).default(tracerEvalTaskListEvalTasksWithProjectNameQueryPageSizeDefault)
 })
 
-export const tracerEvalTaskListEvalTasksWithProjectNameResponseNameMax = 255;
-
-export const tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDateRangeMin = 2;
-export const tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDateRangeMax = 2;
-
-export const tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDefault = {  };
-export const tracerEvalTaskListEvalTasksWithProjectNameResponseSamplingRateMax = 100;
-
-export const tracerEvalTaskListEvalTasksWithProjectNameResponseSpansLimitMax = 1000000;
-
-export const tracerEvalTaskListEvalTasksWithProjectNameResponseRowTypeDefault = `spans`;
-
-export const TracerEvalTaskListEvalTasksWithProjectNameResponseItem = zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskListEvalTasksWithProjectNameResponseNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDateRangeMin).max(tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
-})
-})).optional()
-}).default(tracerEvalTaskListEvalTasksWithProjectNameResponseFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskListEvalTasksWithProjectNameResponseSamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskListEvalTasksWithProjectNameResponseSpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskListEvalTasksWithProjectNameResponseRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional(),
-  "progress": zod.string().optional()
-})
-export const TracerEvalTaskListEvalTasksWithProjectNameResponse = zod.array(TracerEvalTaskListEvalTasksWithProjectNameResponseItem)
-
-
-export const tracerEvalTaskMarkEvalTasksDeletedBodyNameMax = 255;
-
-export const tracerEvalTaskMarkEvalTasksDeletedBodyFiltersDateRangeMin = 2;
-export const tracerEvalTaskMarkEvalTasksDeletedBodyFiltersDateRangeMax = 2;
-
-export const tracerEvalTaskMarkEvalTasksDeletedBodyFiltersDefault = {  };
-export const tracerEvalTaskMarkEvalTasksDeletedBodySamplingRateMax = 100;
-
-export const tracerEvalTaskMarkEvalTasksDeletedBodySpansLimitMax = 1000000;
-
-export const tracerEvalTaskMarkEvalTasksDeletedBodyRowTypeDefault = `spans`;
 
 export const TracerEvalTaskMarkEvalTasksDeletedBody = zod.object({
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskMarkEvalTasksDeletedBodyNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskMarkEvalTasksDeletedBodyFiltersDateRangeMin).max(tracerEvalTaskMarkEvalTasksDeletedBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
-})
-})).optional()
-}).default(tracerEvalTaskMarkEvalTasksDeletedBodyFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskMarkEvalTasksDeletedBodySamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskMarkEvalTasksDeletedBodySpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskMarkEvalTasksDeletedBodyRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional()
+  "eval_task_ids": zod.array(zod.string().uuid())
 })
 
-
-export const tracerEvalTaskPauseEvalTaskBodyNameMax = 255;
-
-export const tracerEvalTaskPauseEvalTaskBodyFiltersDateRangeMin = 2;
-export const tracerEvalTaskPauseEvalTaskBodyFiltersDateRangeMax = 2;
-
-export const tracerEvalTaskPauseEvalTaskBodyFiltersDefault = {  };
-export const tracerEvalTaskPauseEvalTaskBodySamplingRateMax = 100;
-
-export const tracerEvalTaskPauseEvalTaskBodySpansLimitMax = 1000000;
-
-export const tracerEvalTaskPauseEvalTaskBodyRowTypeDefault = `spans`;
 
 export const TracerEvalTaskPauseEvalTaskBody = zod.object({
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskPauseEvalTaskBodyNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskPauseEvalTaskBodyFiltersDateRangeMin).max(tracerEvalTaskPauseEvalTaskBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
-})
-})).optional()
-}).default(tracerEvalTaskPauseEvalTaskBodyFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskPauseEvalTaskBodySamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskPauseEvalTaskBodySpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskPauseEvalTaskBodyRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
 
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional()
 })
 
+export const tracerEvalTaskPauseEvalTaskResponseStatusDefault = true;
 
-export const tracerEvalTaskUnpauseEvalTaskBodyNameMax = 255;
 
-export const tracerEvalTaskUnpauseEvalTaskBodyFiltersDateRangeMin = 2;
-export const tracerEvalTaskUnpauseEvalTaskBodyFiltersDateRangeMax = 2;
+export const TracerEvalTaskPauseEvalTaskResponse = zod.object({
+  "status": zod.boolean().default(tracerEvalTaskPauseEvalTaskResponseStatusDefault),
+  "result": zod.object({
+  "message": zod.string().min(1)
+})
+})
 
-export const tracerEvalTaskUnpauseEvalTaskBodyFiltersDefault = {  };
-export const tracerEvalTaskUnpauseEvalTaskBodySamplingRateMax = 100;
-
-export const tracerEvalTaskUnpauseEvalTaskBodySpansLimitMax = 1000000;
-
-export const tracerEvalTaskUnpauseEvalTaskBodyRowTypeDefault = `spans`;
 
 export const TracerEvalTaskUnpauseEvalTaskBody = zod.object({
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskUnpauseEvalTaskBodyNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskUnpauseEvalTaskBodyFiltersDateRangeMin).max(tracerEvalTaskUnpauseEvalTaskBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
+
 })
-})).optional()
-}).default(tracerEvalTaskUnpauseEvalTaskBodyFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskUnpauseEvalTaskBodySamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskUnpauseEvalTaskBodySpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskUnpauseEvalTaskBodyRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
 
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
+export const tracerEvalTaskUnpauseEvalTaskResponseStatusDefault = true;
 
-}).passthrough().optional()
+
+export const TracerEvalTaskUnpauseEvalTaskResponse = zod.object({
+  "status": zod.boolean().default(tracerEvalTaskUnpauseEvalTaskResponseStatusDefault),
+  "result": zod.object({
+  "message": zod.string().min(1)
+})
 })
 
 
@@ -35773,21 +41753,21 @@ export const tracerEvalTaskUpdateEvalTaskBodyNameMax = 255;
 export const tracerEvalTaskUpdateEvalTaskBodyFiltersDateRangeMin = 2;
 export const tracerEvalTaskUpdateEvalTaskBodyFiltersDateRangeMax = 2;
 
-export const tracerEvalTaskUpdateEvalTaskBodyFiltersDefault = {  };
 export const tracerEvalTaskUpdateEvalTaskBodySamplingRateMax = 100;
 
 export const tracerEvalTaskUpdateEvalTaskBodySpansLimitMax = 1000000;
 
-export const tracerEvalTaskUpdateEvalTaskBodyRowTypeDefault = `spans`;
+
 
 export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskUpdateEvalTaskBodyNameMax),
+  "name": zod.string().min(1).max(tracerEvalTaskUpdateEvalTaskBodyNameMax).optional(),
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateEvalTaskBodyFiltersDateRangeMin).max(tracerEvalTaskUpdateEvalTaskBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35801,22 +41781,14 @@ export const TracerEvalTaskUpdateEvalTaskBody = zod.object({
   "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
 })
 })).optional()
-}).default(tracerEvalTaskUpdateEvalTaskBodyFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskUpdateEvalTaskBodySamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
+}).optional(),
+  "sampling_rate": zod.number().min(1).max(tracerEvalTaskUpdateEvalTaskBodySamplingRateMax).optional(),
   "spans_limit": zod.number().min(1).max(tracerEvalTaskUpdateEvalTaskBodySpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskUpdateEvalTaskBodyRowTypeDefault),
+  "run_type": zod.enum(['continuous', 'historical']).optional(),
+  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).optional(),
   "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional()
+  "evals": zod.array(zod.string().uuid()).optional(),
+  "edit_type": zod.enum(['edit_rerun', 'fresh_run'])
 })
 
 export const tracerEvalTaskUpdateEvalTaskResponseNameMax = 255;
@@ -35824,22 +41796,21 @@ export const tracerEvalTaskUpdateEvalTaskResponseNameMax = 255;
 export const tracerEvalTaskUpdateEvalTaskResponseFiltersDateRangeMin = 2;
 export const tracerEvalTaskUpdateEvalTaskResponseFiltersDateRangeMax = 2;
 
-export const tracerEvalTaskUpdateEvalTaskResponseFiltersDefault = {  };
 export const tracerEvalTaskUpdateEvalTaskResponseSamplingRateMax = 100;
 
 export const tracerEvalTaskUpdateEvalTaskResponseSpansLimitMax = 1000000;
 
-export const tracerEvalTaskUpdateEvalTaskResponseRowTypeDefault = `spans`;
+
 
 export const TracerEvalTaskUpdateEvalTaskResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskUpdateEvalTaskResponseNameMax),
+  "name": zod.string().min(1).max(tracerEvalTaskUpdateEvalTaskResponseNameMax).optional(),
   "filters": zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateEvalTaskResponseFiltersDateRangeMin).max(tracerEvalTaskUpdateEvalTaskResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -35853,85 +41824,19 @@ export const TracerEvalTaskUpdateEvalTaskResponse = zod.object({
   "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
 })
 })).optional()
-}).default(tracerEvalTaskUpdateEvalTaskResponseFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskUpdateEvalTaskResponseSamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
+}).optional(),
+  "sampling_rate": zod.number().min(1).max(tracerEvalTaskUpdateEvalTaskResponseSamplingRateMax).optional(),
   "spans_limit": zod.number().min(1).max(tracerEvalTaskUpdateEvalTaskResponseSpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskUpdateEvalTaskResponseRowTypeDefault),
+  "run_type": zod.enum(['continuous', 'historical']).optional(),
+  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).optional(),
   "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional(),
-  "progress": zod.string().optional()
+  "evals": zod.array(zod.string().uuid()).optional(),
+  "edit_type": zod.enum(['edit_rerun', 'fresh_run'])
 })
 
 
 export const TracerEvalTaskReadParams = zod.object({
   "id": zod.string()
-})
-
-export const tracerEvalTaskReadResponseNameMax = 255;
-
-export const tracerEvalTaskReadResponseFiltersDateRangeMin = 2;
-export const tracerEvalTaskReadResponseFiltersDateRangeMax = 2;
-
-export const tracerEvalTaskReadResponseFiltersDefault = {  };
-export const tracerEvalTaskReadResponseSamplingRateMax = 100;
-
-export const tracerEvalTaskReadResponseSpansLimitMax = 1000000;
-
-export const tracerEvalTaskReadResponseRowTypeDefault = `spans`;
-
-export const TracerEvalTaskReadResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1).max(tracerEvalTaskReadResponseNameMax),
-  "filters": zod.object({
-  "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
-  "date_range": zod.array(zod.string()).min(tracerEvalTaskReadResponseFiltersDateRangeMin).max(tracerEvalTaskReadResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
-  "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
-  "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
-  "span_attributes_filters": zod.array(zod.object({
-  "column_id": zod.string().describe('Column or attribute id to filter on.'),
-  "display_name": zod.string().optional().describe('Optional UI label for chips and saved views.'),
-  "source": zod.string().optional().describe('Optional source surface for mixed-source filters, for example traces, datasets, or simulation.'),
-  "output_type": zod.string().optional().describe('Optional metric output type metadata used by eval and annotation filters.'),
-  "filter_config": zod.object({
-  "filter_type": zod.string().describe('Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array.'),
-  "filter_op": zod.string().describe('Canonical operator from api_contracts\/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null.'),
-  "filter_value": zod.unknown().optional().describe('Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type.'),
-  "col_type": zod.string().optional().describe('Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL.')
-})
-})).optional()
-}).default(tracerEvalTaskReadResponseFiltersDefault),
-  "sampling_rate": zod.number().min(1).max(tracerEvalTaskReadResponseSamplingRateMax),
-  "last_run": zod.string().datetime({"offset":true}).optional(),
-  "spans_limit": zod.number().min(1).max(tracerEvalTaskReadResponseSpansLimitMax).optional(),
-  "run_type": zod.enum(['continuous', 'historical']),
-  "row_type": zod.enum(['spans', 'traces', 'sessions', 'voiceCalls']).default(tracerEvalTaskReadResponseRowTypeDefault),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed', 'paused', 'deleted']).optional(),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "evals_details": zod.object({
-
-}).passthrough().optional(),
-  "evals": zod.array(zod.string().uuid()),
-  "failed_spans": zod.object({
-
-}).passthrough().optional(),
-  "progress": zod.string().optional()
 })
 
 
@@ -35958,7 +41863,9 @@ export const TracerEvalTaskUpdateBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateBodyFiltersDateRangeMin).max(tracerEvalTaskUpdateBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -36010,7 +41917,9 @@ export const TracerEvalTaskUpdateResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskUpdateResponseFiltersDateRangeMin).max(tracerEvalTaskUpdateResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -36069,7 +41978,9 @@ export const TracerEvalTaskPartialUpdateBody = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskPartialUpdateBodyFiltersDateRangeMin).max(tracerEvalTaskPartialUpdateBodyFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -36121,7 +42032,9 @@ export const TracerEvalTaskPartialUpdateResponse = zod.object({
   "project_id": zod.string().optional().describe('Project scope for the evaluation task.'),
   "date_range": zod.array(zod.string()).min(tracerEvalTaskPartialUpdateResponseFiltersDateRangeMin).max(tracerEvalTaskPartialUpdateResponseFiltersDateRangeMax).optional().describe('Inclusive start\/end ISO timestamps.'),
   "created_at": zod.string().optional().describe('Lower-bound ISO timestamp for legacy task filters.'),
-  "session_id": zod.string().optional().describe('Trace session id to constrain the task.'),
+  "session_id": zod.array(zod.string()).optional().describe('Trace session id(s) to constrain the task.'),
+  "trace_id": zod.array(zod.string()).optional().describe('Trace id(s) to constrain linked-source tasks.'),
+  "span_id": zod.array(zod.string()).optional().describe('Observation span id(s) to constrain linked-source tasks.'),
   "observation_type": zod.array(zod.string()).optional().describe('Observation span type(s), for example llm, tool, or chain.'),
   "span_attributes_filters": zod.array(zod.object({
   "column_id": zod.string().describe('Column or attribute id to filter on.'),
@@ -36486,6 +42399,7 @@ export const tracerFeedIssuesCreateLinearIssueCreateBodyPriorityDefault = 0;
 
 export const TracerFeedIssuesCreateLinearIssueCreateBody = zod.object({
   "team_id": zod.string().min(1),
+  "trace_id": zod.string().uuid().optional(),
   "title": zod.string().optional(),
   "description": zod.string().optional(),
   "priority": zod.number().default(tracerFeedIssuesCreateLinearIssueCreateBodyPriorityDefault)
@@ -42897,66 +48811,6 @@ export const TracerUserAlertsListQueryParams = zod.object({
 })
 
 
-export const tracerUserAlertsListResponseResultsItemMetricMax = 2556;
-
-export const tracerUserAlertsListResponseResultsItemThresholdMetricValueMax = 255;
-
-export const tracerUserAlertsListResponseResultsItemCriticalThresholdValueMin = 0;
-
-export const tracerUserAlertsListResponseResultsItemWarningThresholdValueMin = 0;
-
-export const tracerUserAlertsListResponseResultsItemAlertFrequencyMin = 5;
-export const tracerUserAlertsListResponseResultsItemAlertFrequencyMax = 2147483647;
-
-export const tracerUserAlertsListResponseResultsItemAutoThresholdTimeWindowMin = 0;
-export const tracerUserAlertsListResponseResultsItemAutoThresholdTimeWindowMax = 2147483647;
-
-export const tracerUserAlertsListResponseResultsItemNotificationEmailsItemMax = 254;
-
-export const tracerUserAlertsListResponseResultsItemSlackWebhookUrlMax = 200;
-
-
-
-export const TracerUserAlertsListResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1),
-  "metric_name": zod.string().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
-  "metric": zod.string().max(tracerUserAlertsListResponseResultsItemMetricMax).optional().describe('Id of the evaluation template.'),
-  "threshold_operator": zod.enum(['greater_than', 'less_than']),
-  "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
-  "threshold_metric_value": zod.string().max(tracerUserAlertsListResponseResultsItemThresholdMetricValueMax).optional().describe('For choice and pass\/fail evals, the specific metric value to monitor.'),
-  "critical_threshold_value": zod.number().min(tracerUserAlertsListResponseResultsItemCriticalThresholdValueMin).optional(),
-  "warning_threshold_value": zod.number().min(tracerUserAlertsListResponseResultsItemWarningThresholdValueMin).optional(),
-  "alert_frequency": zod.number().min(tracerUserAlertsListResponseResultsItemAlertFrequencyMin).max(tracerUserAlertsListResponseResultsItemAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
-  "auto_threshold_time_window": zod.number().min(tracerUserAlertsListResponseResultsItemAutoThresholdTimeWindowMin).max(tracerUserAlertsListResponseResultsItemAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
-  "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsListResponseResultsItemNotificationEmailsItemMax)).optional(),
-  "slack_webhook_url": zod.string().url().max(tracerUserAlertsListResponseResultsItemSlackWebhookUrlMax).optional(),
-  "slack_notes": zod.string().optional(),
-  "is_mute": zod.boolean().optional(),
-  "filters": zod.object({
-
-}).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
-  "organization": zod.string().uuid(),
-  "workspace": zod.string().uuid().optional(),
-  "created_by": zod.string().uuid().optional()
-}))
-})
-
-
 
 export const tracerUserAlertsCreateBodyMetricMax = 2556;
 
@@ -43009,55 +48863,16 @@ export const TracerUserAlertsCreateBody = zod.object({
 })
 
 
-
-export const tracerUserAlertsBulkMuteBodyMetricMax = 2556;
-
-export const tracerUserAlertsBulkMuteBodyThresholdMetricValueMax = 255;
-
-export const tracerUserAlertsBulkMuteBodyCriticalThresholdValueMin = 0;
-
-export const tracerUserAlertsBulkMuteBodyWarningThresholdValueMin = 0;
-
-export const tracerUserAlertsBulkMuteBodyAlertFrequencyMin = 5;
-export const tracerUserAlertsBulkMuteBodyAlertFrequencyMax = 2147483647;
-
-export const tracerUserAlertsBulkMuteBodyAutoThresholdTimeWindowMin = 0;
-export const tracerUserAlertsBulkMuteBodyAutoThresholdTimeWindowMax = 2147483647;
-
-export const tracerUserAlertsBulkMuteBodyNotificationEmailsItemMax = 254;
-
-export const tracerUserAlertsBulkMuteBodySlackWebhookUrlMax = 200;
-
-
+export const tracerUserAlertsBulkMuteBodyIdsDefault = [];
+export const tracerUserAlertsBulkMuteBodyIsMuteDefault = true;
+export const tracerUserAlertsBulkMuteBodySelectAllDefault = false;
+export const tracerUserAlertsBulkMuteBodyExcludeIdsDefault = [];
 
 export const TracerUserAlertsBulkMuteBody = zod.object({
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
-  "metric": zod.string().max(tracerUserAlertsBulkMuteBodyMetricMax).optional().describe('Id of the evaluation template.'),
-  "threshold_operator": zod.enum(['greater_than', 'less_than']),
-  "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
-  "threshold_metric_value": zod.string().max(tracerUserAlertsBulkMuteBodyThresholdMetricValueMax).optional().describe('For choice and pass\/fail evals, the specific metric value to monitor.'),
-  "critical_threshold_value": zod.number().min(tracerUserAlertsBulkMuteBodyCriticalThresholdValueMin).optional(),
-  "warning_threshold_value": zod.number().min(tracerUserAlertsBulkMuteBodyWarningThresholdValueMin).optional(),
-  "alert_frequency": zod.number().min(tracerUserAlertsBulkMuteBodyAlertFrequencyMin).max(tracerUserAlertsBulkMuteBodyAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
-  "auto_threshold_time_window": zod.number().min(tracerUserAlertsBulkMuteBodyAutoThresholdTimeWindowMin).max(tracerUserAlertsBulkMuteBodyAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
-  "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsBulkMuteBodyNotificationEmailsItemMax)).optional(),
-  "slack_webhook_url": zod.string().url().max(tracerUserAlertsBulkMuteBodySlackWebhookUrlMax).optional(),
-  "slack_notes": zod.string().optional(),
-  "is_mute": zod.boolean().optional(),
-  "filters": zod.object({
-
-}).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
-  "organization": zod.string().uuid(),
-  "workspace": zod.string().uuid().optional(),
-  "created_by": zod.string().uuid().optional()
+  "ids": zod.array(zod.string().uuid()).default(tracerUserAlertsBulkMuteBodyIdsDefault),
+  "is_mute": zod.boolean().default(tracerUserAlertsBulkMuteBodyIsMuteDefault),
+  "select_all": zod.boolean().default(tracerUserAlertsBulkMuteBodySelectAllDefault),
+  "exclude_ids": zod.array(zod.string().uuid()).default(tracerUserAlertsBulkMuteBodyExcludeIdsDefault)
 })
 
 
@@ -43085,66 +48900,6 @@ export const TracerUserAlertsDuplicateResponse = zod.object({
 export const TracerUserAlertsListMonitorsQueryParams = zod.object({
   "page": zod.number().optional().describe('A page number within the paginated result set.'),
   "limit": zod.number().optional().describe('Number of results to return per page.')
-})
-
-
-export const tracerUserAlertsListMonitorsResponseResultsItemMetricMax = 2556;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemThresholdMetricValueMax = 255;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemCriticalThresholdValueMin = 0;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemWarningThresholdValueMin = 0;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemAlertFrequencyMin = 5;
-export const tracerUserAlertsListMonitorsResponseResultsItemAlertFrequencyMax = 2147483647;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemAutoThresholdTimeWindowMin = 0;
-export const tracerUserAlertsListMonitorsResponseResultsItemAutoThresholdTimeWindowMax = 2147483647;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemNotificationEmailsItemMax = 254;
-
-export const tracerUserAlertsListMonitorsResponseResultsItemSlackWebhookUrlMax = 200;
-
-
-
-export const TracerUserAlertsListMonitorsResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1),
-  "metric_name": zod.string().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
-  "metric": zod.string().max(tracerUserAlertsListMonitorsResponseResultsItemMetricMax).optional().describe('Id of the evaluation template.'),
-  "threshold_operator": zod.enum(['greater_than', 'less_than']),
-  "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
-  "threshold_metric_value": zod.string().max(tracerUserAlertsListMonitorsResponseResultsItemThresholdMetricValueMax).optional().describe('For choice and pass\/fail evals, the specific metric value to monitor.'),
-  "critical_threshold_value": zod.number().min(tracerUserAlertsListMonitorsResponseResultsItemCriticalThresholdValueMin).optional(),
-  "warning_threshold_value": zod.number().min(tracerUserAlertsListMonitorsResponseResultsItemWarningThresholdValueMin).optional(),
-  "alert_frequency": zod.number().min(tracerUserAlertsListMonitorsResponseResultsItemAlertFrequencyMin).max(tracerUserAlertsListMonitorsResponseResultsItemAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
-  "auto_threshold_time_window": zod.number().min(tracerUserAlertsListMonitorsResponseResultsItemAutoThresholdTimeWindowMin).max(tracerUserAlertsListMonitorsResponseResultsItemAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
-  "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsListMonitorsResponseResultsItemNotificationEmailsItemMax)).optional(),
-  "slack_webhook_url": zod.string().url().max(tracerUserAlertsListMonitorsResponseResultsItemSlackWebhookUrlMax).optional(),
-  "slack_notes": zod.string().optional(),
-  "is_mute": zod.boolean().optional(),
-  "filters": zod.object({
-
-}).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
-  "organization": zod.string().uuid(),
-  "workspace": zod.string().uuid().optional(),
-  "created_by": zod.string().uuid().optional()
-}))
 })
 
 
@@ -43227,61 +48982,6 @@ export const TracerUserAlertsPreviewGraphBody = zod.object({
 
 export const TracerUserAlertsReadParams = zod.object({
   "id": zod.string()
-})
-
-
-export const tracerUserAlertsReadResponseMetricMax = 2556;
-
-export const tracerUserAlertsReadResponseThresholdMetricValueMax = 255;
-
-export const tracerUserAlertsReadResponseCriticalThresholdValueMin = 0;
-
-export const tracerUserAlertsReadResponseWarningThresholdValueMin = 0;
-
-export const tracerUserAlertsReadResponseAlertFrequencyMin = 5;
-export const tracerUserAlertsReadResponseAlertFrequencyMax = 2147483647;
-
-export const tracerUserAlertsReadResponseAutoThresholdTimeWindowMin = 0;
-export const tracerUserAlertsReadResponseAutoThresholdTimeWindowMax = 2147483647;
-
-export const tracerUserAlertsReadResponseNotificationEmailsItemMax = 254;
-
-export const tracerUserAlertsReadResponseSlackWebhookUrlMax = 200;
-
-
-
-export const TracerUserAlertsReadResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1),
-  "metric_name": zod.string().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
-  "metric": zod.string().max(tracerUserAlertsReadResponseMetricMax).optional().describe('Id of the evaluation template.'),
-  "threshold_operator": zod.enum(['greater_than', 'less_than']),
-  "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
-  "threshold_metric_value": zod.string().max(tracerUserAlertsReadResponseThresholdMetricValueMax).optional().describe('For choice and pass\/fail evals, the specific metric value to monitor.'),
-  "critical_threshold_value": zod.number().min(tracerUserAlertsReadResponseCriticalThresholdValueMin).optional(),
-  "warning_threshold_value": zod.number().min(tracerUserAlertsReadResponseWarningThresholdValueMin).optional(),
-  "alert_frequency": zod.number().min(tracerUserAlertsReadResponseAlertFrequencyMin).max(tracerUserAlertsReadResponseAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
-  "auto_threshold_time_window": zod.number().min(tracerUserAlertsReadResponseAutoThresholdTimeWindowMin).max(tracerUserAlertsReadResponseAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
-  "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsReadResponseNotificationEmailsItemMax)).optional(),
-  "slack_webhook_url": zod.string().url().max(tracerUserAlertsReadResponseSlackWebhookUrlMax).optional(),
-  "slack_notes": zod.string().optional(),
-  "is_mute": zod.boolean().optional(),
-  "filters": zod.object({
-
-}).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
-  "organization": zod.string().uuid(),
-  "workspace": zod.string().uuid().optional(),
-  "created_by": zod.string().uuid().optional()
 })
 
 
@@ -43517,61 +49217,6 @@ export const TracerUserAlertsMonitorDetailsParams = zod.object({
 })
 
 
-export const tracerUserAlertsMonitorDetailsResponseMetricMax = 2556;
-
-export const tracerUserAlertsMonitorDetailsResponseThresholdMetricValueMax = 255;
-
-export const tracerUserAlertsMonitorDetailsResponseCriticalThresholdValueMin = 0;
-
-export const tracerUserAlertsMonitorDetailsResponseWarningThresholdValueMin = 0;
-
-export const tracerUserAlertsMonitorDetailsResponseAlertFrequencyMin = 5;
-export const tracerUserAlertsMonitorDetailsResponseAlertFrequencyMax = 2147483647;
-
-export const tracerUserAlertsMonitorDetailsResponseAutoThresholdTimeWindowMin = 0;
-export const tracerUserAlertsMonitorDetailsResponseAutoThresholdTimeWindowMax = 2147483647;
-
-export const tracerUserAlertsMonitorDetailsResponseNotificationEmailsItemMax = 254;
-
-export const tracerUserAlertsMonitorDetailsResponseSlackWebhookUrlMax = 200;
-
-
-
-export const TracerUserAlertsMonitorDetailsResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1),
-  "metric_name": zod.string().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
-  "metric": zod.string().max(tracerUserAlertsMonitorDetailsResponseMetricMax).optional().describe('Id of the evaluation template.'),
-  "threshold_operator": zod.enum(['greater_than', 'less_than']),
-  "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
-  "threshold_metric_value": zod.string().max(tracerUserAlertsMonitorDetailsResponseThresholdMetricValueMax).optional().describe('For choice and pass\/fail evals, the specific metric value to monitor.'),
-  "critical_threshold_value": zod.number().min(tracerUserAlertsMonitorDetailsResponseCriticalThresholdValueMin).optional(),
-  "warning_threshold_value": zod.number().min(tracerUserAlertsMonitorDetailsResponseWarningThresholdValueMin).optional(),
-  "alert_frequency": zod.number().min(tracerUserAlertsMonitorDetailsResponseAlertFrequencyMin).max(tracerUserAlertsMonitorDetailsResponseAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
-  "auto_threshold_time_window": zod.number().min(tracerUserAlertsMonitorDetailsResponseAutoThresholdTimeWindowMin).max(tracerUserAlertsMonitorDetailsResponseAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
-  "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsMonitorDetailsResponseNotificationEmailsItemMax)).optional(),
-  "slack_webhook_url": zod.string().url().max(tracerUserAlertsMonitorDetailsResponseSlackWebhookUrlMax).optional(),
-  "slack_notes": zod.string().optional(),
-  "is_mute": zod.boolean().optional(),
-  "filters": zod.object({
-
-}).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
-  "organization": zod.string().uuid(),
-  "workspace": zod.string().uuid().optional(),
-  "created_by": zod.string().uuid().optional()
-})
-
-
 /**
  * Accepts `start_date` and `end_date` query parameters (ISO 8601 format).
 If not provided, it defaults to the last 7 days.
@@ -43579,61 +49224,6 @@ If not provided, it defaults to the last 7 days.
  */
 export const TracerUserAlertsGraphDataParams = zod.object({
   "id": zod.string()
-})
-
-
-export const tracerUserAlertsGraphDataResponseMetricMax = 2556;
-
-export const tracerUserAlertsGraphDataResponseThresholdMetricValueMax = 255;
-
-export const tracerUserAlertsGraphDataResponseCriticalThresholdValueMin = 0;
-
-export const tracerUserAlertsGraphDataResponseWarningThresholdValueMin = 0;
-
-export const tracerUserAlertsGraphDataResponseAlertFrequencyMin = 5;
-export const tracerUserAlertsGraphDataResponseAlertFrequencyMax = 2147483647;
-
-export const tracerUserAlertsGraphDataResponseAutoThresholdTimeWindowMin = 0;
-export const tracerUserAlertsGraphDataResponseAutoThresholdTimeWindowMax = 2147483647;
-
-export const tracerUserAlertsGraphDataResponseNotificationEmailsItemMax = 254;
-
-export const tracerUserAlertsGraphDataResponseSlackWebhookUrlMax = 200;
-
-
-
-export const TracerUserAlertsGraphDataResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "name": zod.string().min(1),
-  "metric_name": zod.string().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional(),
-  "deleted": zod.boolean().optional(),
-  "deleted_at": zod.string().datetime({"offset":true}).optional(),
-  "metric_type": zod.enum(['count_of_errors', 'error_rates_for_function_calling', 'error_free_session_rates', 'service_provider_error_rates', 'llm_api_failure_rates', 'span_response_time', 'llm_response_time', 'token_usage', 'daily_tokens_spent', 'monthly_tokens_spent', 'evaluation_metrics']),
-  "metric": zod.string().max(tracerUserAlertsGraphDataResponseMetricMax).optional().describe('Id of the evaluation template.'),
-  "threshold_operator": zod.enum(['greater_than', 'less_than']),
-  "threshold_type": zod.enum(['static', 'percentage_change']).optional().describe('Method to set the threshold for the monitor (Static or Percentage change).'),
-  "threshold_metric_value": zod.string().max(tracerUserAlertsGraphDataResponseThresholdMetricValueMax).optional().describe('For choice and pass\/fail evals, the specific metric value to monitor.'),
-  "critical_threshold_value": zod.number().min(tracerUserAlertsGraphDataResponseCriticalThresholdValueMin).optional(),
-  "warning_threshold_value": zod.number().min(tracerUserAlertsGraphDataResponseWarningThresholdValueMin).optional(),
-  "alert_frequency": zod.number().min(tracerUserAlertsGraphDataResponseAlertFrequencyMin).max(tracerUserAlertsGraphDataResponseAlertFrequencyMax).optional().describe('Frequency of alert checks in minutes.'),
-  "auto_threshold_time_window": zod.number().min(tracerUserAlertsGraphDataResponseAutoThresholdTimeWindowMin).max(tracerUserAlertsGraphDataResponseAutoThresholdTimeWindowMax).optional().describe('For auto-thresholding. The time window in minutes to calculate the historical mean'),
-  "last_checked_at": zod.string().datetime({"offset":true}).optional().describe('The last time the monitor was checked for alerts.'),
-  "notification_emails": zod.array(zod.string().email().min(1).max(tracerUserAlertsGraphDataResponseNotificationEmailsItemMax)).optional(),
-  "slack_webhook_url": zod.string().url().max(tracerUserAlertsGraphDataResponseSlackWebhookUrlMax).optional(),
-  "slack_notes": zod.string().optional(),
-  "is_mute": zod.boolean().optional(),
-  "filters": zod.object({
-
-}).passthrough().optional(),
-  "logs": zod.array(zod.object({
-
-}).passthrough()).optional(),
-  "organization": zod.string().uuid(),
-  "workspace": zod.string().uuid().optional(),
-  "created_by": zod.string().uuid().optional()
 })
 
 
@@ -45528,6 +51118,7 @@ export const UsageV2BillingOverviewListResponse = zod.object({
 
 
 
+
 export const UsageV2BudgetsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -45538,9 +51129,15 @@ export const UsageV2BudgetsListResponse = zod.object({
   "threshold_value": zod.string(),
   "action": zod.string().min(1),
   "notify_emails": zod.array(zod.string().email().min(1)).optional(),
+  "notify_slack_webhook": zod.string().url().optional(),
   "is_active": zod.boolean().optional(),
   "last_triggered_period": zod.string().min(1).optional(),
   "last_triggered_at": zod.string().datetime({"offset":true}).optional(),
+  "thresholds": zod.array(zod.object({
+  "percent": zod.number(),
+  "enabled": zod.boolean().optional(),
+  "severity": zod.string().min(1).optional()
+})).optional(),
   "created_at": zod.string().datetime({"offset":true}).optional()
 }))
 })
@@ -45555,6 +51152,7 @@ export const UsageV2BudgetsListResponse = zod.object({
 
 
 
+
 export const UsageV2BudgetsCreateBody = zod.object({
   "name": zod.string().min(1).optional(),
   "scope": zod.string().min(1).optional(),
@@ -45562,8 +51160,14 @@ export const UsageV2BudgetsCreateBody = zod.object({
   "action": zod.enum(['notify', 'warn', 'pause']).optional(),
   "notify_emails": zod.array(zod.string().email().min(1)).optional(),
   "notify_slack_webhook": zod.string().url().optional(),
+  "thresholds": zod.array(zod.object({
+  "percent": zod.number(),
+  "enabled": zod.boolean().optional(),
+  "severity": zod.string().min(1).optional()
+})).optional(),
   "is_active": zod.boolean().optional()
 })
+
 
 
 
@@ -45579,6 +51183,12 @@ export const UsageV2BudgetsCreateResponse = zod.object({
   "scope": zod.string().min(1).optional(),
   "threshold_value": zod.string().min(1),
   "action": zod.string().min(1),
+  "notify_slack_webhook": zod.string().url().optional(),
+  "thresholds": zod.array(zod.object({
+  "percent": zod.number(),
+  "enabled": zod.boolean().optional(),
+  "severity": zod.string().min(1).optional()
+})).optional(),
   "is_active": zod.boolean().optional()
 })
 })
@@ -45596,6 +51206,7 @@ export const UsageV2BudgetsUpdateParams = zod.object({
 
 
 
+
 export const UsageV2BudgetsUpdateBody = zod.object({
   "name": zod.string().min(1).optional(),
   "scope": zod.string().min(1).optional(),
@@ -45603,8 +51214,14 @@ export const UsageV2BudgetsUpdateBody = zod.object({
   "action": zod.enum(['notify', 'warn', 'pause']).optional(),
   "notify_emails": zod.array(zod.string().email().min(1)).optional(),
   "notify_slack_webhook": zod.string().url().optional(),
+  "thresholds": zod.array(zod.object({
+  "percent": zod.number(),
+  "enabled": zod.boolean().optional(),
+  "severity": zod.string().min(1).optional()
+})).optional(),
   "is_active": zod.boolean().optional()
 })
+
 
 
 
@@ -45620,6 +51237,12 @@ export const UsageV2BudgetsUpdateResponse = zod.object({
   "scope": zod.string().min(1).optional(),
   "threshold_value": zod.string().min(1),
   "action": zod.string().min(1),
+  "notify_slack_webhook": zod.string().url().optional(),
+  "thresholds": zod.array(zod.object({
+  "percent": zod.number(),
+  "enabled": zod.boolean().optional(),
+  "severity": zod.string().min(1).optional()
+})).optional(),
   "is_active": zod.boolean().optional()
 })
 })

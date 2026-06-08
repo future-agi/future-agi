@@ -5,6 +5,7 @@ import requests
 import structlog
 from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
+from django.core.exceptions import ValidationError
 from django.db.models import Q
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
@@ -43,6 +44,15 @@ from accounts.serializers.contracts import (
     UserOnboardingSaveResponseSerializer,
 )
 from accounts.serializers.user import UserOnboardingSerializer
+from accounts.services.onboarding.context import resolve_onboarding_context
+from accounts.services.onboarding.goals import (
+    OnboardingGoalConflict,
+    normalize_goal,
+    save_onboarding_goal,
+)
+from accounts.services.onboarding.org_completion import (
+    organization_has_completed_product_setup,
+)
 
 # from accounts.user_onboard import upload_demo_dataset
 from accounts.views.signup import verify_recaptcha
@@ -64,6 +74,64 @@ from tfc.utils.general_methods import GeneralMethods
 from tracer.models.project import Project
 
 logger = structlog.get_logger(__name__)
+
+
+def _select_profile_activation_goal(goals):
+    fallback_goal = None
+    for goal in goals or []:
+        if not goal:
+            continue
+        try:
+            canonical = normalize_goal(goal)
+        except ValidationError:
+            continue
+        if canonical == "monitor_production_ai_app":
+            return goal
+        if fallback_goal is None:
+            fallback_goal = goal
+    return fallback_goal
+
+
+def _save_profile_onboarding_goal(request, user, goals):
+    selected_goal = _select_profile_activation_goal(goals)
+    if not selected_goal:
+        return None
+
+    try:
+        context = resolve_onboarding_context(request)
+        return save_onboarding_goal(
+            user=user,
+            organization=context.organization,
+            workspace=context.workspace,
+            goal=selected_goal,
+            source="setup_org_profile",
+            reason="profile_completed",
+            metadata={"persona": user.role},
+        )
+    except (OnboardingGoalConflict, ValidationError) as exc:
+        logger.warning(
+            "Profile onboarding goal sync skipped",
+            error=str(exc),
+            user_id=str(getattr(user, "id", "")),
+            goal=selected_goal,
+        )
+        return None
+    except Exception as exc:
+        logger.exception(
+            "Profile onboarding goal sync failed",
+            error=str(exc),
+            user_id=str(getattr(user, "id", "")),
+            goal=selected_goal,
+        )
+        return None
+
+
+def _organization_has_completed_product_setup(organization, *, user, workspace=None):
+    return organization_has_completed_product_setup(
+        organization=organization,
+        user=user,
+        workspace=workspace,
+    )
 
 
 @swagger_auto_schema(
@@ -138,7 +206,10 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
     @validated_request(
         request_serializer=LoginRequestSerializer,
-        responses={200: AccountsTokenPairResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: AccountsTokenPairResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
@@ -718,12 +789,14 @@ def get_user_info(request):
     current_workspace_id = user.config.get("currentWorkspaceId") or user.config.get(
         "defaultWorkspaceId"
     )
+    current_workspace_for_onboarding = None
 
     if current_workspace_id:
         try:
             current_workspace = Workspace.objects.get(
                 id=current_workspace_id, organization=current_org, is_active=True
             )
+            current_workspace_for_onboarding = current_workspace
             data["default_workspace_id"] = str(current_workspace.id)
             data["default_workspace_name"] = current_workspace.name
             data["default_workspace_display_name"] = (
@@ -750,6 +823,7 @@ def get_user_info(request):
                 default_workspace = Workspace.objects.get(
                     organization=current_org, is_default=True, is_active=True
                 )
+                current_workspace_for_onboarding = default_workspace
                 data["default_workspace_id"] = str(default_workspace.id)
                 data["default_workspace_name"] = default_workspace.name
                 data["default_workspace_display_name"] = (
@@ -800,6 +874,7 @@ def get_user_info(request):
                 _fallback_ws = None
 
         if _fallback_ws:
+            current_workspace_for_onboarding = _fallback_ws
             data["default_workspace_id"] = str(_fallback_ws.id)
             data["default_workspace_name"] = _fallback_ws.name
             data["default_workspace_display_name"] = (
@@ -823,6 +898,18 @@ def get_user_info(request):
             data["default_workspace_name"] = None
             data["default_workspace_display_name"] = None
             data["default_workspace_role"] = None
+
+    if (
+        current_membership
+        and not onboarding_completed
+        and _organization_has_completed_product_setup(
+            current_org,
+            user=user,
+            workspace=current_workspace_for_onboarding,
+        )
+    ):
+        onboarding_completed = True
+        data["onboarding_completed"] = True
 
     # Add integer RBAC levels alongside existing string roles
     try:
@@ -1097,6 +1184,9 @@ def user_onboarding(request):
             user.config["onboarding_completed_at"] = timezone.now().isoformat()
 
             user.save(update_fields=["role", "goals", "config"])
+            _save_profile_onboarding_goal(
+                request, user, validated_data.get("goals", [])
+            )
 
             # Track event
             try:

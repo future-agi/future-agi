@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Add one safety control before production{% endblock %}
+{% block heading %}Make your gateway safe for real traffic{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, your first routed request worked in {{ workspace_name }}. Before you send production traffic, give the gateway a way to protect it.</p>
+  <p style="margin:0;">Add one production-safety control: a fallback, a retry, a budget, a rate limit, or a guardrail. Just one turns the gateway from a passthrough into real protection for your traffic.</p>
+{% endblock %}

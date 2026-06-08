@@ -14,10 +14,11 @@ import React, {
   Suspense,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
-import { useNavigate, useParams } from "react-router";
+import { useLocation, useNavigate, useParams } from "react-router";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
@@ -36,6 +37,18 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { useAuthContext } from "src/auth/hooks";
 import { useTestDetailContext } from "./context/TestDetailContext";
 import { SIMULATION_TYPE } from "src/components/run-tests/common";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  buildVoiceRouteFocusPayload,
+  getVoiceOnboardingParams,
+  voiceSetupQuickStartAttributionFromSearch,
+  VOICE_ONBOARDING_MODES,
+} from "./onboardingVoiceRouteEvents";
+import TestOnboardingFocusPanel from "./TestOnboardingFocusPanel";
+import {
+  isEvalOnboardingMode,
+  TEST_ONBOARDING_MODES,
+} from "./testOnboardingModes";
 
 const AgentDefinitionPopover = lazy(
   () => import("./TestRuns/AgentDefinitionPopover"),
@@ -76,6 +89,9 @@ const SavingStatus = {
 const TestDetailHeader = () => {
   const theme = useTheme();
   const { role } = useAuthContext();
+  const location = useLocation();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
+  const recordedFocusRef = useRef(false);
   const [testSelectDropDownOpen, setTestSelectDropDownOpen] = useState(false);
   const testSelectDropDownRef = useRef(null);
   // const [simulatorPopoverOpen, setSimulatorPopoverOpen] = useState(false);
@@ -119,6 +135,67 @@ const TestDetailHeader = () => {
   const agentType = configSnapshot?.agent_type ?? configSnapshot?.agentType;
   const sourceType = testData?.source_type ?? testData?.sourceType;
   const isPromptSimulation = sourceType === SIMULATION_TYPE.PROMPT;
+  const voiceParams = useMemo(
+    () => getVoiceOnboardingParams(location.search),
+    [location.search],
+  );
+  const voiceQuickStartAttribution = useMemo(
+    () => voiceSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const routeMode = new URLSearchParams(location.search).get("onboarding");
+  const isEvalRouteMode = isEvalOnboardingMode(routeMode);
+  const isSuccessCriteriaMode =
+    voiceParams.mode === VOICE_ONBOARDING_MODES.SUCCESS_CRITERIA;
+  const evalCount =
+    testData?.evals?.length ??
+    testData?.simulate_eval_configs_detail?.length ??
+    testData?.simulateEvalConfigsDetail?.length ??
+    testData?.evals_detail?.length ??
+    testData?.evalsDetail?.length ??
+    0;
+  const evalRouteCopy =
+    routeMode === TEST_ONBOARDING_MODES.CREATE_EVAL
+      ? {
+          title: "Create eval coverage",
+          description:
+            "Add one evaluation so this test can score behavior after each run.",
+        }
+      : {
+          title: "Save the first evaluation",
+          description:
+            "Save one evaluation on this test, then run it against selected rows to create a quality signal.",
+        };
+
+  useEffect(() => {
+    if (!isSuccessCriteriaMode || !testId) return;
+    setOpenTestEvaluation(true);
+    if (recordedFocusRef.current) return;
+    recordedFocusRef.current = true;
+    recordActivationEvent?.(
+      buildVoiceRouteFocusPayload({
+        mode: voiceParams.mode,
+        quickStartAttribution: voiceQuickStartAttribution,
+        source: "voice_success_criteria_route",
+        testId,
+        callId: voiceParams.callId,
+      }),
+    );
+  }, [
+    isSuccessCriteriaMode,
+    recordActivationEvent,
+    setOpenTestEvaluation,
+    testId,
+    voiceQuickStartAttribution,
+    voiceParams.callId,
+    voiceParams.mode,
+  ]);
+
+  useEffect(() => {
+    if (!isEvalRouteMode || !testId) return;
+    setOpenTestEvaluation(true);
+  }, [isEvalRouteMode, setOpenTestEvaluation, testId]);
+
   useEffect(() => {
     if (!selectedSimulatorAgent) {
       setSelectedSimulatorAgent(
@@ -163,9 +240,11 @@ const TestDetailHeader = () => {
 
       resetTestRunsState();
       resetState();
-      navigate(`/dashboard/simulate/test/${selectedTestId}/${lastParam}/`);
+      navigate(
+        `/dashboard/simulate/test/${selectedTestId}/${lastParam}${location.search || ""}`,
+      );
     },
-    [navigate],
+    [location.search, navigate],
   );
 
   const handleBack = useCallback(() => {
@@ -606,6 +685,22 @@ const TestDetailHeader = () => {
           </Box>
         </Box>
       </Box>
+      <TestOnboardingFocusPanel
+        currentStep="Evaluation"
+        description={evalRouteCopy.description}
+        hidden={!isEvalRouteMode}
+        primaryAction={{
+          label: evalCount > 0 ? "Open evaluations" : "Add Evaluation",
+          onClick: handleEvalClick,
+        }}
+        steps={[
+          { label: "Test", complete: Boolean(testId) },
+          { label: "Evaluation", complete: evalCount > 0 },
+          { label: "Run", complete: false },
+        ]}
+        title={evalRouteCopy.title}
+        tourAnchor={voiceParams.tourAnchor}
+      />
     </Box>
   );
 };

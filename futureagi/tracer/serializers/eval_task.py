@@ -21,9 +21,7 @@ class PaginationQuerySerializer(serializers.Serializer):
     """Shared query-params validator for eval-log endpoints."""
 
     page = serializers.IntegerField(required=False, default=0, min_value=0)
-    page_size = serializers.IntegerField(
-        required=False, default=25, min_value=1
-    )
+    page_size = serializers.IntegerField(required=False, default=25, min_value=1)
 
     def validate_page_size(self, value):
         return min(value, 100)
@@ -44,6 +42,22 @@ class EvalTaskListWithProjectNameQuerySerializer(EvalTaskListQuerySerializer):
     page_size = serializers.IntegerField(
         required=False, default=10, min_value=1, max_value=500
     )
+
+
+class EvalTaskDeleteRequestSerializer(StrictInputSerializer):
+    eval_task_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        allow_empty=False,
+    )
+
+
+class EvalTaskMessageResultSerializer(serializers.Serializer):
+    message = serializers.CharField()
+
+
+class EvalTaskMessageResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = EvalTaskMessageResultSerializer()
 
 
 class EvalTaskSerializer(serializers.ModelSerializer):

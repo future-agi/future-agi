@@ -627,7 +627,7 @@ def run_for_processed_spans(span_ids: list, eval_ids: list, eval_task_id: str):
         with get_reader() as reader:
             spans = reader.list_by_ids([str(sid) for sid in span_ids])
 
-        # Codex consolidated review P1 (2026-05-26): under-dispatch is a
+        # Consolidated review P1 (2026-05-26): under-dispatch is a
         # silent correctness gap — eval rows the caller selected can be
         # skipped if CH is lagging. Surface the divergence loudly so it
         # gets retried (Temporal will re-run on raised exceptions) or

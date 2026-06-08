@@ -23,7 +23,7 @@ def fetch_base_session_metrics(session_id: str, *, organization=None):
     if not session_id:
         raise ValueError("Session ID is required")
 
-    # Codex wave-3 P0 (2026-05-26): the legacy ORM path joined through
+    # Review wave-3 P0 (2026-05-26): the legacy ORM path joined through
     # `trace__session=session` which the caller had already org-scoped
     # via `CallExecution.objects.filter(test_execution__organization=)`.
     # The new CH path receives a raw `session_id` (from `Row.metadata`)
@@ -235,7 +235,7 @@ def fetch_comparison_metrics(call_execution: CallExecution, session_id: str):
     if not call_execution or not session_id:
         raise ValueError("Call execution and session ID are required")
 
-    # Codex wave-3 P0: thread the call_execution's organization through to
+    # Review wave-3 P0: thread the call_execution's organization through to
     # the session lookup so the CH read is tenant-scoped. The CallExecution
     # is the caller's org-scoped anchor (test_execution__organization gate
     # upstream); the session_id comes from Row.metadata which is untrusted.

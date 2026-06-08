@@ -40,13 +40,18 @@ vi.mock("src/hooks/use-debounce", () => ({
 
 vi.mock("ag-grid-react", async () => {
   const React = await import("react");
+  const { default: PropTypes } = await import("prop-types");
+  const AgGridReact = ({ onGridReady }) => {
+    React.useEffect(() => {
+      onGridReady?.({ api: agGridMock.api });
+    }, [onGridReady]);
+    return React.createElement("div", { "data-testid": "dataset-grid" });
+  };
+  AgGridReact.propTypes = {
+    onGridReady: PropTypes.func,
+  };
   return {
-    AgGridReact: ({ onGridReady }) => {
-      React.useEffect(() => {
-        onGridReady?.({ api: agGridMock.api });
-      }, [onGridReady]);
-      return React.createElement("div", { "data-testid": "dataset-grid" });
-    },
+    AgGridReact,
   };
 });
 

@@ -227,7 +227,7 @@ class TestTraceWorkspaceScopeAPI:
             lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ch down")),
         )
 
-        # AST-walk guard (per codex P2 findings 2026-05-25 and 2026-05-26):
+        # AST-walk guard (per review P2 findings 2026-05-25 and 2026-05-26):
         # asserting "got 400" is necessary but not sufficient — a future
         # regression could re-introduce the PG-fallback helper, have it ALSO
         # error, and still hand the operator a 400. The contract is "PG

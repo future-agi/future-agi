@@ -7,7 +7,12 @@ import { copyToClipboard } from "src/utils/utils";
 import { enqueueSnackbar } from "src/components/snackbar";
 import { primaryFont } from "src/theme/typography";
 
-const InstructionCodeCopy = ({ text, language, onCopy }) => {
+const InstructionCodeCopy = ({
+  ariaLabel = "Copy code",
+  text,
+  language,
+  onCopy,
+}) => {
   const onCopyClick = () => {
     copyToClipboard(text);
     enqueueSnackbar("Copied to clipboard", { variant: "success" });
@@ -18,6 +23,7 @@ const InstructionCodeCopy = ({ text, language, onCopy }) => {
   return (
     <Box sx={{ position: "relative", maxWidth: "100%" }}>
       <IconButton
+        aria-label={ariaLabel}
         sx={{ position: "absolute", right: "2px", top: "8px", zIndex: 1 }}
         onClick={onCopyClick}
       >
@@ -63,6 +69,7 @@ const InstructionCodeCopy = ({ text, language, onCopy }) => {
 };
 
 InstructionCodeCopy.propTypes = {
+  ariaLabel: PropTypes.string,
   text: PropTypes.string,
   language: PropTypes.string,
   onCopy: PropTypes.func,

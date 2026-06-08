@@ -6,13 +6,14 @@ import DatasetOptions from "./DatasetOptions";
 import UploadFileModal from "./UploadFileModal";
 import ManuallyCreateDataset from "./ManuallyCreateDataset";
 import ImportFromHuggingFace from "./ImportFromHuggingFace";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { paths } from "src/routes/paths";
 import AddSDKModal from "./AddSDKModal";
 import SyntheticDataDrawer from "../AddRowDrawer/CreateSyntheticData";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import ExistingDatasetModal from "../AddRowDrawer/ExistingDatasetModal";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { appendEvalOnboardingAttributionToHref } from "src/sections/evals/components/evalCreateOnboarding";
 
 const options = [
   {
@@ -77,7 +78,13 @@ const options = [
   // },
 ];
 
-const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
+const AddDatasetDrawer = ({
+  open,
+  onClose,
+  onDatasetCreated,
+  onboardingContext,
+  refreshGrid,
+}) => {
   const [uploadFileModalOpen, setUploadFileModalOpen] = useState(false);
   const [addSDK, setAddSDK] = useState(false);
   const [manuallyCreateDatasetModalOpen, setManuallyCreateDatasetModalOpen] =
@@ -89,16 +96,19 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
   const [syntheticDataDrawerOpen, setSyntheticDataDrawerOpen] = useState(false);
 
   const navigate = useNavigate();
+  const location = useLocation();
   const { isOSS } = useDeploymentMode();
   const filteredOptions = isOSS
     ? options.filter((o) => o.id !== "synthetic-data")
     : options;
+  const isEvalSourceContext = onboardingContext === "eval_source";
 
   return (
     <>
       <AddSDKModal
         open={addSDK}
         onClose={() => setAddSDK(false)}
+        onDatasetCreated={onDatasetCreated}
         refreshGrid={refreshGrid}
       />
       <UploadFileModal
@@ -107,16 +117,19 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
           setUploadFileModalOpen(false);
           onClose();
         }}
+        onDatasetCreated={onDatasetCreated}
         refreshGrid={refreshGrid}
       />
       <ManuallyCreateDataset
         open={manuallyCreateDatasetModalOpen}
         onClose={() => setManuallyCreateDatasetModalOpen(false)}
+        onDatasetCreated={onDatasetCreated}
         refreshGrid={refreshGrid}
       />
       <ImportFromHuggingFace
         open={importFromHuggingFaceModalOpen}
         onClose={() => setImportFromHuggingFaceModalOpen(false)}
+        onDatasetCreated={onDatasetCreated}
         refreshGrid={refreshGrid}
       />
       {/* <CloneDevelopDataset
@@ -176,7 +189,9 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
                       color="text.primary"
                       variant="m3"
                     >
-                      Add dataset
+                      {isEvalSourceContext
+                        ? "Create eval source"
+                        : "Add dataset"}
                     </Typography>
                     <Link
                       href="https://docs.futureagi.com/docs/dataset"
@@ -190,8 +205,30 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
                     </Link>
                   </Box>
                   <Typography typography="s1">
-                    Provide a dataset to experiment, evaluate, and optimize.
+                    {isEvalSourceContext
+                      ? "Create or import the dataset for this evaluation. The next step adds the scorer."
+                      : "Provide a dataset to experiment, evaluate, and optimize."}
                   </Typography>
+                  {isEvalSourceContext && (
+                    <Box
+                      sx={{
+                        mt: 1,
+                        p: 1,
+                        borderLeft: "3px solid",
+                        borderColor: "primary.main",
+                        borderRadius: "6px",
+                        bgcolor: "action.hover",
+                      }}
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ display: "block" }}
+                      >
+                        Eval setup: Source now, scorer next, run after that.
+                      </Typography>
+                    </Box>
+                  )}
                 </Box>
 
                 <IconButton
@@ -237,7 +274,14 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
                             "add from importFromHuggingFace",
                         });
                         trackEvent(Events.datasetFromHuggingFaceClicked);
-                        navigate(paths.dashboard.huggingface);
+                        navigate(
+                          isEvalSourceContext
+                            ? appendEvalOnboardingAttributionToHref(
+                                paths.dashboard.huggingface,
+                                location.search,
+                              )
+                            : paths.dashboard.huggingface,
+                        );
                       }
                       if (option.id === "addFromExistingDataset") {
                         trackEvent(Events.datasetTypeChoosed, {
@@ -252,7 +296,14 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
                         });
                         trackEvent(Events.syntheticDatasetCreationClicked);
                         // setSyntheticDataDrawerOpen(true);
-                        navigate("/dashboard/develop/create-synthetic-dataset");
+                        navigate(
+                          isEvalSourceContext
+                            ? appendEvalOnboardingAttributionToHref(
+                                "/dashboard/develop/create-synthetic-dataset?source=onboarding&action=create-eval-dataset",
+                                location.search,
+                              )
+                            : "/dashboard/develop/create-synthetic-dataset",
+                        );
                       }
                     }}
                   />
@@ -265,6 +316,7 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
             onClose={() => {
               setCloneDevelopDatasetModalOpen(false);
             }}
+            onDatasetCreated={onDatasetCreated}
             refreshGrid={refreshGrid}
             datasetId={null}
             closeDrawer={onClose}
@@ -278,6 +330,8 @@ const AddDatasetDrawer = ({ open, onClose, refreshGrid }) => {
 AddDatasetDrawer.propTypes = {
   open: PropTypes.bool,
   onClose: PropTypes.func,
+  onDatasetCreated: PropTypes.func,
+  onboardingContext: PropTypes.string,
   refreshGrid: PropTypes.func,
 };
 

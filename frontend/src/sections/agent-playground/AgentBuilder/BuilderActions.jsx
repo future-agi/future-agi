@@ -10,13 +10,20 @@ import {
   useWorkflowRunStoreShallow,
   useTemplateLoadingStoreShallow,
 } from "../store";
+import AgentOnboardingFocusPanel from "../components/AgentOnboardingFocusPanel";
 import StopTemplateLoadingDialog from "../components/StopTemplateLoadingDialog";
 import useWorkflowExecution from "../hooks/useWorkflowExecution";
 import { validateGraphForSave } from "../utils/workflowValidation";
 import { enqueueSnackbar } from "src/components/snackbar";
 
 // Main BuilderActions Component
-export default function BuilderActions({ width, hasNodes = true }) {
+export default function BuilderActions({
+  width,
+  hasNodes = true,
+  onboardingMode,
+  rightOffset = 0,
+  tourAnchor,
+}) {
   const { runWorkflow, stopWorkflow, isRunning, isInitiating } =
     useWorkflowExecution();
 
@@ -109,8 +116,110 @@ export default function BuilderActions({ width, hasNodes = true }) {
     setShowStopConfirmDialog(false);
   };
 
+  const showRunScenarioFocus = onboardingMode === "run-scenario" && hasNodes;
+  const showEvalCoverageFocus = onboardingMode === "add-eval" && hasNodes;
+  const showOnboardingFocus = showRunScenarioFocus || showEvalCoverageFocus;
+  const onboardingBlocker = (() => {
+    if (!hasNodes) {
+      return "Add one node first";
+    }
+    if (isLoadingTemplate) {
+      return "Template loading";
+    }
+    if (isRunning) {
+      return "Workflow running";
+    }
+    if (isDraft) {
+      return showEvalCoverageFocus
+        ? "Save this eval coverage first"
+        : "Save this version first";
+    }
+    return null;
+  })();
+  const runWorkflowLabel = (() => {
+    if (!hasNodes) {
+      return "Add nodes first";
+    }
+    if (isDraft) {
+      return "Save and run";
+    }
+    return hasRun ? "Rerun workflow" : "Run workflow";
+  })();
+  const runScenarioLabel =
+    showRunScenarioFocus && isDraft
+      ? "Save agent and run scenario"
+      : runWorkflowLabel;
+  const evalCoverageLabel = isDraft
+    ? "Save and run eval coverage"
+    : hasRun
+      ? "Rerun eval coverage"
+      : "Run eval coverage";
+  const onboardingActionLabel = showEvalCoverageFocus
+    ? evalCoverageLabel
+    : runScenarioLabel;
+
   return (
     <>
+      <Box
+        sx={{
+          position: "absolute",
+          top: 12,
+          left: `calc(${width} + 16px)`,
+          right: rightOffset ? `calc(${rightOffset}px + 16px)` : 16,
+          zIndex: 8,
+          pointerEvents: "auto",
+        }}
+      >
+        <AgentOnboardingFocusPanel
+          currentStep={showEvalCoverageFocus ? "Eval" : "Run"}
+          description={
+            showEvalCoverageFocus
+              ? "The eval node is ready. Save this coverage and run it once so the agent setup ends with a measurable check."
+              : "The prompt is ready. Save this version, then run one scenario to review the first output."
+          }
+          hidden={!showOnboardingFocus}
+          blocker={onboardingBlocker}
+          primaryAction={{
+            label: onboardingActionLabel,
+            onClick: handleRunWorkflow,
+            disabled: !hasNodes || isLoadingTemplate || isRunning,
+          }}
+          secondaryAction={
+            hasRun
+              ? {
+                  label: showOutput ? "Hide outcome" : "Show outcome",
+                  onClick: handleToggleOutput,
+                  disabled: isLoadingTemplate,
+                }
+              : null
+          }
+          singleActionFocus={showOnboardingFocus}
+          steps={
+            showEvalCoverageFocus
+              ? [
+                  { label: "Agent", complete: true },
+                  { label: "Scenario", complete: true },
+                  { label: "Review", complete: true },
+                  { label: "Coverage", complete: true },
+                  { label: "Eval", complete: hasRun },
+                ]
+              : [
+                  { label: "Create", complete: true },
+                  { label: "Prompt", complete: true },
+                  { label: "Run", complete: hasRun },
+                  { label: "Review output", complete: false },
+                ]
+          }
+          sx={{ mb: 0 }}
+          title={
+            showEvalCoverageFocus
+              ? "Run the agent eval coverage"
+              : "Run one test scenario"
+          }
+          tourAnchor={tourAnchor}
+        />
+      </Box>
+
       {/* Action Buttons */}
       <Box
         sx={{
@@ -166,33 +275,36 @@ export default function BuilderActions({ width, hasNodes = true }) {
         )}
 
         {/* Run Button - Show when has nodes, not loading, and not running */}
-        {hasNodes && !isLoadingTemplate && !isRunning && (
-          <LoadingButton
-            variant="contained"
-            color="primary"
-            size="small"
-            loading={isInitiating}
-            onClick={handleRunWorkflow}
-            sx={{
-              flexShrink: 0,
-            }}
-            startIcon={
-              hasRun ? (
-                <Iconify icon="mingcute:refresh-2-line" width={20} />
-              ) : (
-                <SvgColor
-                  sx={{
-                    height: 20,
-                    width: 20,
-                  }}
-                  src="/assets/icons/navbar/ic_get_started.svg"
-                />
-              )
-            }
-          >
-            {hasRun ? "Rerun Agent Workflow" : "Run Agent Workflow"}
-          </LoadingButton>
-        )}
+        {hasNodes &&
+          !isLoadingTemplate &&
+          !isRunning &&
+          !showOnboardingFocus && (
+            <LoadingButton
+              variant="contained"
+              color="primary"
+              size="small"
+              loading={isInitiating}
+              onClick={handleRunWorkflow}
+              sx={{
+                flexShrink: 0,
+              }}
+              startIcon={
+                hasRun ? (
+                  <Iconify icon="mingcute:refresh-2-line" width={20} />
+                ) : (
+                  <SvgColor
+                    sx={{
+                      height: 20,
+                      width: 20,
+                    }}
+                    src="/assets/icons/navbar/ic_get_started.svg"
+                  />
+                )
+              }
+            >
+              {runWorkflowLabel}
+            </LoadingButton>
+          )}
 
         {/* Show/Hide Outcome Button */}
         {hasNodes && hasRun && !isLoadingTemplate && (
@@ -258,4 +370,7 @@ export default function BuilderActions({ width, hasNodes = true }) {
 BuilderActions.propTypes = {
   width: PropTypes.string.isRequired,
   hasNodes: PropTypes.bool,
+  onboardingMode: PropTypes.string,
+  rightOffset: PropTypes.number,
+  tourAnchor: PropTypes.string,
 };

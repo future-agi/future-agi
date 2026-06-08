@@ -6,7 +6,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   createAgentDefinitionSchema,
   defaultAgentDefinitionValues,
@@ -18,7 +18,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import axios, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
-import { useNavigate } from "react-router";
+import { useLocation, useNavigate } from "react-router";
 import { paths } from "src/routes/paths";
 import { useSnackbar } from "notistack";
 import SvgColor from "src/components/svg-color";
@@ -35,9 +35,25 @@ import { LoadingButton } from "@mui/lab";
 import { AGENT_TYPES, isLiveKitProvider } from "./constants";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  appendVoiceOnboardingAttributionToHref,
+  buildVoiceAgentCreatedPayload,
+  buildVoiceCreateTestHref,
+  buildVoiceRouteFocusPayload,
+  getVoiceOnboardingParams,
+  voiceSetupQuickStartAttributionFromSearch,
+  VOICE_ONBOARDING_MODES,
+} from "src/sections/test/onboardingVoiceRouteEvents";
+import TestOnboardingFocusPanel from "src/sections/test/TestOnboardingFocusPanel";
 
 const CreateNewAgentDefinitionView = () => {
   const { role } = useAuthContext();
+  const { isOSS } = useDeploymentMode();
+  const location = useLocation();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
+  const recordedFocusRef = useRef(false);
   const { currentStep, reset, nextStep, prevStep, setStepValidated } =
     useCreateNewAgentStore();
   const theme = useTheme();
@@ -55,6 +71,7 @@ const CreateNewAgentDefinitionView = () => {
     formState: { errors, isSubmitting },
     trigger,
     watch,
+    setValue,
   } = methods;
 
   const navigate = useNavigate();
@@ -63,6 +80,41 @@ const CreateNewAgentDefinitionView = () => {
   const livekitValidated = watch("_livekitCredentialsValid");
 
   const watchedValues = watch();
+  const voiceParams = useMemo(
+    () => getVoiceOnboardingParams(location.search),
+    [location.search],
+  );
+  const voiceQuickStartAttribution = useMemo(
+    () => voiceSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const isVoiceCreateMode =
+    voiceParams.mode === VOICE_ONBOARDING_MODES.CREATE_AGENT;
+
+  useEffect(() => {
+    if (!isVoiceCreateMode) return;
+    if (!isOSS && !getValues("agentType")) {
+      setValue("agentType", AGENT_TYPES.VOICE, { shouldDirty: false });
+    }
+    if (recordedFocusRef.current) return;
+    recordedFocusRef.current = true;
+    recordActivationEvent?.(
+      buildVoiceRouteFocusPayload({
+        mode: voiceParams.mode,
+        quickStartAttribution: voiceQuickStartAttribution,
+        source: "voice_agent_definition_create",
+      }),
+    );
+  }, [
+    getValues,
+    isOSS,
+    isVoiceCreateMode,
+    recordActivationEvent,
+    setValue,
+    voiceQuickStartAttribution,
+    voiceParams.mode,
+  ]);
+
   const canProceed = useMemo(() => {
     const provider = watchedValues["provider"];
     const agentType = watchedValues["agentType"];
@@ -257,6 +309,23 @@ const CreateNewAgentDefinitionView = () => {
         variant: "success",
       });
 
+      if (isVoiceCreateMode) {
+        recordActivationEvent?.(
+          buildVoiceAgentCreatedPayload({
+            agentDefinitionId: newAgentDefId,
+            provider: payload.provider,
+            quickStartAttribution: voiceQuickStartAttribution,
+          }),
+        );
+        navigate(
+          buildVoiceCreateTestHref({
+            agentDefinitionId: newAgentDefId,
+            quickStartAttribution: voiceQuickStartAttribution,
+          }),
+        );
+        return;
+      }
+
       navigate(`${paths.dashboard.simulate.agentDefinition}/${newAgentDefId}`, {
         state: {
           newAgent: true,
@@ -294,6 +363,22 @@ const CreateNewAgentDefinitionView = () => {
   }, [reset]);
 
   const isLastStep = currentStep === stepFields.length - 1;
+  const voiceStepLabel =
+    ["Details", "Connection", "Behavior"][currentStep] || "Create";
+  const voicePrimaryAction = isLastStep
+    ? {
+        label: isSubmitting ? "Creating voice agent" : "Create voice agent",
+        onClick: handleSubmit(onSubmit),
+        disabled:
+          isSubmitting ||
+          !RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role],
+      }
+    : {
+        label: "Continue",
+        onClick: handleNext,
+        disabled: !canProceed,
+      };
+
   return (
     <>
       <Box sx={{ backgroundColor: "background.paper" }}>
@@ -309,15 +394,24 @@ const CreateNewAgentDefinitionView = () => {
               fontWeight="fontWeightMedium"
               color="text.disabled"
               onClick={() => {
-                navigate(paths.dashboard.simulate.agentDefinition);
+                navigate(
+                  isVoiceCreateMode
+                    ? appendVoiceOnboardingAttributionToHref(
+                        paths.dashboard.simulate.agentDefinition,
+                        voiceQuickStartAttribution,
+                      )
+                    : paths.dashboard.simulate.agentDefinition,
+                );
               }}
               sx={{ cursor: "pointer" }}
             >
-              All Agent Definitions
+              {isVoiceCreateMode ? "Voice agents" : "All Agent Definitions"}
             </Typography>
             <SvgColor src="/assets/icons/custom/lucide--chevron-right.svg" />
             <Typography typography="m3" fontWeight="fontWeightMedium">
-              Create new agent definition
+              {isVoiceCreateMode
+                ? "Create voice agent"
+                : "Create new agent definition"}
             </Typography>
           </Box>
         </Box>
@@ -346,6 +440,22 @@ const CreateNewAgentDefinitionView = () => {
           >
             {/* StepsTracker */}
             <Box p={2}>
+              <TestOnboardingFocusPanel
+                currentStep={voiceStepLabel}
+                description="Create one voice agent, then we will take you directly into a test call and transcript review."
+                eyebrow="Voice setup"
+                hidden={!isVoiceCreateMode}
+                primaryAction={voicePrimaryAction}
+                singleActionFocus
+                steps={[
+                  { label: "Voice agent", complete: false },
+                  { label: "Test call", complete: false },
+                  { label: "Review call", complete: false },
+                  { label: "Success criteria", complete: false },
+                  { label: "Monitor calls", complete: false },
+                ]}
+                title="Create the voice agent"
+              />
               <StepsTracker />
             </Box>
 
@@ -465,7 +575,9 @@ const CreateNewAgentDefinitionView = () => {
                     borderColor: "action.selected",
                   }}
                 >
-                  Create agent definition
+                  {isVoiceCreateMode
+                    ? "Create voice agent"
+                    : "Create agent definition"}
                 </LoadingButton>
               )}
             </Box>

@@ -377,7 +377,7 @@ class TestTypeFragilityRegression:
     aggregate. This pins the contract on the consumer side, complementing
     schema 013 (which pins it on the storage side).
 
-    Coverage rationale (per codex P2 finding 2026-05-25):
+    Coverage rationale (per review P2 finding 2026-05-25):
     Every numeric leaf that the consumer reaches via arithmetic, indexing,
     or `timedelta(seconds=...)` is a regression surface. We parametrize over
     every such leaf so adding a new numeric field to the fixture forces a
@@ -398,7 +398,7 @@ class TestTypeFragilityRegression:
         # Top-level `cost` → consumer does `cost * 100 if cost else None`.
         # Not a nested-array leaf (so the CH typed-JSON bug doesn't affect it
         # today), but the class doc claims "every numeric leaf the consumer
-        # touches" — so we cover it (codex P3 finding 2026-05-26).
+        # touches" — so we cover it (review P3 finding 2026-05-26).
         ("cost (top-level)", lambda lg: (lg.__setitem__("cost", "0.0234"), lg)[1]),
     ]
 

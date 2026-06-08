@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Your first trace is ready{% endblock %}
+{% block heading %}Your first trace just arrived in {{ workspace_name }}{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, FutureAGI received the first real trace from your app. This is the signal you set up observability to get.</p>
+  <p style="margin:0;">Open it to see what actually happened on that request: latency, the model calls and tool steps, cost, and any failure signals, all in one view.</p>
+{% endblock %}

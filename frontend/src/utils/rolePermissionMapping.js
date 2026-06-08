@@ -476,6 +476,7 @@ export const RoutesName = {
   mcpServer: "mcpServer",
   planAndPricing: "planAndPricing",
   billing: "billing",
+  notifications: "notifications",
   profile: "profile",
   workspace: "workspace",
 };
@@ -545,6 +546,15 @@ export const showRoleSpecific = {
     [ROLES.WORKSPACE_VIEWER]: false,
   },
   [RoutesName.profile]: {
+    [ROLES.OWNER]: true,
+    [ROLES.ADMIN]: true,
+    [ROLES.MEMBER]: true,
+    [ROLES.VIEWER]: true,
+    [ROLES.WORKSPACE_ADMIN]: true,
+    [ROLES.WORKSPACE_MEMBER]: true,
+    [ROLES.WORKSPACE_VIEWER]: true,
+  },
+  [RoutesName.notifications]: {
     [ROLES.OWNER]: true,
     [ROLES.ADMIN]: true,
     [ROLES.MEMBER]: true,

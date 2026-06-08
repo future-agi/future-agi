@@ -88,7 +88,14 @@ const AgentPlaygroundView = React.memo(function AgentPlaygroundView() {
       setCurrentAgent({
         ...agentData,
       });
-      setSearchParams({ version: agentData.version_id }, { replace: true });
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("version", agentData.version_id);
+          return next;
+        },
+        { replace: true },
+      );
     }
   }, [
     agentData,

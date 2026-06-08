@@ -9,13 +9,12 @@ import Stack from "@mui/material/Stack";
 import Typography from "@mui/material/Typography";
 import LoadingButton from "@mui/lab/LoadingButton";
 import Divider from "@mui/material/Divider";
-import { Box, Button } from "@mui/material";
+import { Box, Button, IconButton, InputAdornment } from "@mui/material";
 import { useNavigate, useLocation } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import { useAuthContext } from "src/auth/hooks";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
-import { Events, trackEvent, PropertyName } from "src/utils/Mixpanel";
 import { trackSignupConversion } from "src/utils/googleAds";
 import { trackRedditSignup } from "src/utils/redditAds";
 import { trackTwitterSignup } from "src/utils/twitterAds";
@@ -32,12 +31,22 @@ import RegionSelect from "src/components/RegionSelect";
 import { GOOGLE_SITE_KEY } from "src/config-global";
 import RightSectionAuth from "./RightSectionAuth";
 import { isValidUtm } from "src/utils/utmUtils";
+import { getAuthErrorMessage } from "./auth-error-message";
+import {
+  SignupEntryEvents,
+  trackSignupEntryEvent,
+} from "./signup-entry-analytics";
 
 export default function JwtRegisterView() {
   const { register, login, awsRegister } = useAuthContext();
   const { executeRecaptcha } = useGoogleReCaptcha();
   const [errorMsg, setErrorMsg] = useState("");
   const [registerSuccess, setRegisterSuccess] = useState(false);
+  // Tracks the reCAPTCHA v3 script lifecycle. The provider exposes
+  // `executeRecaptcha` only once the script loads; if it is blocked by an
+  // ad blocker / CSP / network policy it stays undefined forever. We bound the
+  // wait so a real user gets an actionable message instead of a dead button.
+  const [recaptchaLoadFailed, setRecaptchaLoadFailed] = useState(false);
   const password = useBoolean();
   const navigate = useNavigate();
   const { search } = useLocation();
@@ -51,9 +60,12 @@ export default function JwtRegisterView() {
       .transform((value) => (typeof value === "string" ? value.trim() : value))
       .required("Email is required")
       .email("Email must be a valid email address"),
-    password: Yup.string().when("$registerSuccess", {
+    password: Yup.string().when("$passwordRequired", {
       is: true,
-      then: (schema) => schema.required("Password is required"),
+      then: (schema) =>
+        schema
+          .required("Password is required")
+          .min(8, "Password must be at least 8 characters"),
       otherwise: (schema) => schema.notRequired(),
     }),
   });
@@ -90,6 +102,23 @@ export default function JwtRegisterView() {
     locallyExtractUtmParams();
   }, [locallyExtractUtmParams]);
 
+  // Bounded readiness check for the reCAPTCHA v3 script. When a site key is
+  // configured but the script never becomes available (blocked by an ad
+  // blocker, CSP, or restrictive network), `executeRecaptcha` stays undefined.
+  // Without a timeout the submit button would silently fail forever, so after
+  // a grace period we flag a permanent load failure and surface guidance.
+  useEffect(() => {
+    if (!GOOGLE_SITE_KEY) return undefined;
+    if (executeRecaptcha) {
+      setRecaptchaLoadFailed(false);
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      setRecaptchaLoadFailed(true);
+    }, 8000);
+    return () => clearTimeout(timer);
+  }, [executeRecaptcha]);
+
   // Persist returnTo on an auth action so it survives flows that drop the
   // URL param (OAuth / SSO round-trip, register → setup-org).
   const persistReturnTo = () => {
@@ -113,22 +142,34 @@ export default function JwtRegisterView() {
   const methods = useForm({
     resolver: yupResolver(RegisterSchema),
     defaultValues,
-    context: { registerSuccess },
+    context: { passwordRequired: registerSuccess || !onboarding_token },
   });
 
   const { handleSubmit, watch } = methods;
   const email = watch("email");
+  const authFlow = onboarding_token ? "marketplace" : "email_password";
+  const returnTo = new URLSearchParams(search).get("returnTo");
 
   const handleSignup = async (data) => {
     persistReturnTo();
-    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("signup") : "";
     setErrorMsg("");
+    const analyticsContext = {
+      authFlow,
+      hasPassword: data?.password,
+      onboardingToken: onboarding_token,
+      returnTo,
+    };
+    trackSignupEntryEvent(SignupEntryEvents.signupSubmitted, analyticsContext);
     try {
       setLoading(true);
+      // Run the reCAPTCHA challenge inside the try so a blocked/rejected
+      // challenge surfaces a real error instead of leaving the form stuck.
+      const token = GOOGLE_SITE_KEY ? await executeRecaptcha("signup") : "";
       const payload = {
         email: data?.email,
         full_name: data?.fullName,
         company_name: "",
+        password: data?.password || undefined,
         recaptcha_response: token,
         allow_email: true,
       };
@@ -145,15 +186,12 @@ export default function JwtRegisterView() {
         enqueueSnackbar({
           variant: "success",
           message:
-            response?.result?.message ||
-            "Thanks for registering! Please check your email.",
+            response?.result?.message || "Account created. Continuing setup.",
           autoHideDuration: 3000,
         });
-        setRegisterSuccess(true);
-        trackEvent(Events.newUserSignUp, {
-          [PropertyName.method]: "email",
-          [PropertyName.email]: data.email,
-          [PropertyName.name]: data.fullName,
+        trackSignupEntryEvent(SignupEntryEvents.signupSucceeded, {
+          ...analyticsContext,
+          status: "success",
         });
         if (typeof window.gtag === "function") {
           trackSignupConversion({
@@ -174,18 +212,50 @@ export default function JwtRegisterView() {
           userId: response?.result?.user_id,
         });
 
-        // Always navigate to login after registration
-        // navigate(paths.auth.jwt.login);
+        if (!onboarding_token && data?.password) {
+          // The account already exists at this point. Auto-login is a
+          // convenience step, so failures here must NOT be reported as a
+          // registration failure — route the user to sign in instead.
+          try {
+            const loginToken = GOOGLE_SITE_KEY
+              ? await executeRecaptcha("login")
+              : "";
+            const loginResponse = await axios.post(endpoints.auth.login, {
+              email: data.email,
+              password: data.password,
+              recaptcha_response: loginToken,
+            });
+            if (loginResponse.status === 200) {
+              await login(loginResponse);
+              localStorage.setItem("signupProvider", "email");
+              navigate(paths.auth.jwt.setup_org + search);
+              return;
+            }
+          } catch (loginError) {
+            logger.error("Auto-login after registration failed:", loginError);
+            localStorage.setItem("signupProvider", "email");
+            enqueueSnackbar({
+              variant: "info",
+              message: "Account created — please sign in to continue.",
+              autoHideDuration: 5000,
+            });
+            navigate(paths.auth.jwt.login + search);
+            return;
+          }
+        }
+
+        setRegisterSuccess(true);
       }
       setLoading(false);
     } catch (error) {
       setLoading(false);
       logger.error("Registration Error:", error);
-      setErrorMsg(
-        typeof error === "string"
-          ? error
-          : error.error || error.detail || error.result,
-      );
+      trackSignupEntryEvent(SignupEntryEvents.signupFailed, {
+        ...analyticsContext,
+        error,
+        status: "failed",
+      });
+      setErrorMsg(getAuthErrorMessage(error, "Registration failed"));
     } finally {
       setLoading(false);
     }
@@ -193,13 +263,19 @@ export default function JwtRegisterView() {
 
   const handleLogin = async (data) => {
     persistReturnTo();
-    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
-
-    trackEvent(Events.loginClicked, {
-      [PropertyName.status]: true,
-    });
+    setErrorMsg("");
+    const analyticsContext = {
+      authFlow: "signup_existing_account",
+      hasPassword: data?.password,
+      onboardingToken: onboarding_token,
+      returnTo,
+    };
+    trackSignupEntryEvent(SignupEntryEvents.loginSubmitted, analyticsContext);
     try {
       setLoading(true);
+      // Run the reCAPTCHA challenge inside the try so a blocked/rejected
+      // challenge surfaces a real error instead of leaving the form stuck.
+      const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
       const response = await axios.post(endpoints.auth.login, {
         email: data.email,
         password: data.password,
@@ -209,28 +285,22 @@ export default function JwtRegisterView() {
         await login(response);
         localStorage.setItem("signupProvider", "email");
         navigate(paths.auth.jwt.setup_org + search);
-        trackEvent(Events.loginClicked, {
-          [PropertyName.status]: true,
+        trackSignupEntryEvent(SignupEntryEvents.loginSucceeded, {
+          ...analyticsContext,
+          status: "success",
         });
       }
       setLoading(false);
     } catch (error) {
       setLoading(false);
-      if (error?.detail === "User not found") {
-        // setError("email", {message: "No account found with this email. Please sign up to create one.", type: "focus"}, { shouldFocus: true })
-        setErrorMsg(
-          "No account found with this email. Please sign up to create one",
-        );
-      } else if (error?.result?.error === "Invalid credentials") {
-        // setError("password", {message: "Check your password and try again", type: "focus"}, { shouldFocus: true })
-        setErrorMsg("Enter a valid Email and password combination");
-      } else {
-        setErrorMsg(
-          typeof error === "string"
-            ? error
-            : error?.detail || error?.result?.error,
-        );
-      }
+      trackSignupEntryEvent(SignupEntryEvents.loginFailed, {
+        ...analyticsContext,
+        error,
+        status: "failed",
+      });
+      // Route through the shared helper so backend error codes render the same
+      // way they do on the dedicated sign-in screen.
+      setErrorMsg(getAuthErrorMessage(error, "Login failed"));
       logger.error("Login failed", error);
     } finally {
       setLoading(false);
@@ -239,13 +309,23 @@ export default function JwtRegisterView() {
 
   const onSubmit = handleSubmit(async (data) => {
     if (GOOGLE_SITE_KEY && !executeRecaptcha) {
-      enqueueSnackbar({
-        message: "reCAPTCHA not ready. Please try again",
-        variant: "error",
-      });
+      if (recaptchaLoadFailed) {
+        // Permanent: the security check could not load on this device. Surface
+        // an actionable, inline message so the user can self-recover.
+        setErrorMsg(
+          "We couldn't load the security check. It may be blocked by a browser extension, ad blocker, or your network. Disable blockers for this site or try a different network, then reload the page.",
+        );
+      } else {
+        // Transient: the script is still initialising. Asking the user to retry
+        // is reasonable here.
+        enqueueSnackbar({
+          message: "Still preparing a quick security check. Please try again.",
+          variant: "error",
+        });
+      }
       return;
     }
-    (await registerSuccess) ? handleLogin(data) : handleSignup(data);
+    return registerSuccess ? handleLogin(data) : handleSignup(data);
   });
 
   const handleServiceProvider = async (provider) => {
@@ -302,7 +382,7 @@ export default function JwtRegisterView() {
           lineHeight: "36px",
         }}
       >
-        Start your journey with us
+        Get to your first useful trace review in minutes
       </Typography>
     </Stack>
   );
@@ -321,7 +401,34 @@ export default function JwtRegisterView() {
         size="small"
         name="email"
         label="Business Email ID"
+        helperText="Use your work email. Personal email access may require an invite."
       />
+      {!onboarding_token && (
+        <RHFTextField
+          name="password"
+          label="Password"
+          placeholder="Create password"
+          type={password.value ? "text" : "password"}
+          autoComplete="new-password"
+          size="small"
+          sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+          InputProps={{
+            endAdornment: (
+              <InputAdornment position="end">
+                <IconButton onClick={password.onToggle} edge="end">
+                  <Iconify
+                    icon={
+                      password.value
+                        ? "solar:eye-bold"
+                        : "solar:eye-closed-bold"
+                    }
+                  />
+                </IconButton>
+              </InputAdornment>
+            ),
+          }}
+        />
+      )}
       {!!errorMsg && (
         <Alert
           icon={<Iconify icon="fluent:warning-24-regular" color="red.500" />}
@@ -346,7 +453,7 @@ export default function JwtRegisterView() {
         loading={loading}
         sx={{ height: "42px", borderRadius: 0.5 }}
       >
-        Continue
+        Create account and continue
       </LoadingButton>
       <Typography
         fontWeight={"fontWeightRegular"}
@@ -508,14 +615,19 @@ export default function JwtRegisterView() {
   );
 
   return (
-    <Box sx={{ display: "flex", width: "100%", height: "100vh" }}>
+    <Box
+      sx={{
+        display: "flex",
+        width: "100%",
+        minHeight: "100dvh",
+      }}
+    >
       <Box
         sx={{
-          width: "50%",
-          height: "100%",
+          width: { xs: "100%", md: "50%" },
+          minHeight: "100dvh",
           display: "flex",
           justifyContent: "center",
-
           bgcolor: "background.paper",
           overflowY: "auto",
         }}
@@ -524,8 +636,8 @@ export default function JwtRegisterView() {
           sx={{
             maxWidth: "640px",
             width: "100%",
-            px: 10,
-            paddingY: "100px",
+            px: { xs: 3, sm: 6, md: 10 },
+            py: { xs: 4, md: "100px" },
             height: "fit-content",
           }}
         >
@@ -551,7 +663,8 @@ export default function JwtRegisterView() {
       <Box
         sx={{
           width: "50%",
-          height: "100%",
+          minHeight: "100dvh",
+          display: { xs: "none", md: "block" },
           backgroundColor: "background.neutral",
         }}
       >

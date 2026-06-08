@@ -18,7 +18,7 @@ package docstring of `apply_schema.py` and the README at the bottom of
 this package for the operator-facing wiring.
 
 Migration provenance: this code originated in
-planning/clickhouse-rearch/migration/ where it was test-driven and codex-
+planning/clickhouse-rearch/migration/ where it was test-driven and review-
 reviewed; the validated implementation files were copied here as a single
 atomic move once the migration tooling was production-ready. The original
 planning directory keeps the docs (DECISIONS, RUNBOOK, REVIEWS) as the

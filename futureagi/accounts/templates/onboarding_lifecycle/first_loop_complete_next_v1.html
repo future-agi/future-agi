@@ -1,0 +1,15 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Here is what changed in your workspace{% endblock %}
+{% block heading %}{% if first_loop_summary.targeted %}Your {{ first_loop_summary.area_label }} review is live{% else %}You closed your first quality loop, here is the next signal{% endif %}{% endblock %}
+{% block body %}
+  {% if first_loop_summary.targeted %}
+    <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has finished its first quality loop for <strong>{{ first_loop_summary.path_label }}</strong>.</p>
+    {% if first_loop_summary.has_value_signal %}
+      <p style="margin:0 0 16px;"><strong>{{ first_loop_summary.value_headline }}</strong>{% if first_loop_summary.value_summary %}: {{ first_loop_summary.value_summary }}{% endif %}</p>
+    {% endif %}
+    <p style="margin:0;">Open Daily Quality to keep reviewing {{ first_loop_summary.area_label }}, choose the next fix, or confirm that this workflow still looks healthy.</p>
+  {% else %}
+    <p style="margin:0 0 16px;">Hi {{ user_name }}, {{ workspace_name }} has finished its first full quality loop. From here, the value comes from a short daily review rather than another setup step.</p>
+    <p style="margin:0;">Open the quality home to see the highest-priority item waiting for you, decide what to fix, or confirm that nothing needs your attention today.</p>
+  {% endif %}
+{% endblock %}

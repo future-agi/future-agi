@@ -19,15 +19,25 @@ import {
   InputAdornment,
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import Iconify from "src/components/iconify";
 import SectionHeader from "../components/SectionHeader";
 import PageErrorState from "../components/PageErrorState";
+import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
 import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { useApiKeys, useSyncApiKeys } from "./hooks/useApiKeys";
 import { useGatewayContext } from "../context/useGatewayContext";
 import CreateKeyDialog from "./CreateKeyDialog";
 import KeyDetailDrawer from "./KeyDetailDrawer";
 import { formatDate } from "../utils/formatters";
+import {
+  appendGatewayOnboardingAttributionToHref,
+  buildGatewayKeyCreatedPayload,
+  GATEWAY_ONBOARDING_MODES,
+  gatewaySetupQuickStartAttributionFromSearch,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 
 const STATUS_COLORS = {
   active: "success",
@@ -43,14 +53,31 @@ const STATUS_FILTERS = [
 ];
 
 const KeyManagementSection = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [statusFilter, setStatusFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedKeyId, setSelectedKeyId] = useState(null);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const { gatewayId } = useGatewayContext();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
 
   const { data: keys, isLoading, error, refetch } = useApiKeys(gatewayId);
   const syncMutation = useSyncApiKeys();
+  const onboardingHref = useMemo(
+    () => (href) =>
+      appendGatewayOnboardingAttributionToHref(href, searchParams),
+    [searchParams],
+  );
+  const gatewayQuickStartAttribution = useMemo(
+    () => gatewaySetupQuickStartAttributionFromSearch(searchParams),
+    [searchParams],
+  );
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const showOnboardingFocus =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.CREATE_KEY);
 
   // Client-side filters
   const filteredKeys = useMemo(() => {
@@ -85,6 +112,28 @@ const KeyManagementSection = () => {
         });
       },
     });
+  };
+
+  const handleKeyCreated = (key, context) => {
+    if (!showOnboardingFocus) return;
+
+    recordActivationEvent(
+      buildGatewayKeyCreatedPayload({
+        ...context,
+        key,
+        quickStartAttribution: gatewayQuickStartAttribution,
+      }),
+    );
+  };
+
+  const handleKeyDone = (key) => {
+    if (!showOnboardingFocus || !key) return;
+
+    navigate(
+      onboardingHref(
+        "/dashboard/gateway?source=onboarding&onboarding=test-request&journey_step=run_gateway_request&tour_anchor=gateway_request_button",
+      ),
+    );
   };
 
   if (isLoading) {
@@ -155,6 +204,34 @@ const KeyManagementSection = () => {
             onClick: () => setCreateDialogOpen(true),
           },
         ]}
+      />
+
+      <GatewayOnboardingFocusPanel
+        currentStep="API key"
+        description="Create one key for the first routed request, then return to the gateway overview to send traffic."
+        hidden={!showOnboardingFocus}
+        primaryAction={{
+          label: "Create Key",
+          onClick: () => setCreateDialogOpen(true),
+        }}
+        secondaryAction={{
+          label: "Open request step",
+          onClick: () =>
+            navigate(
+              onboardingHref("/dashboard/gateway?onboarding=test-request"),
+            ),
+        }}
+        singleActionFocus={showOnboardingFocus}
+        steps={[
+          { label: "Provider", complete: true },
+          {
+            label: "API key",
+            complete: Array.isArray(keys) && keys.length > 0,
+          },
+          { label: "Request", complete: false },
+        ]}
+        title="Create the gateway API key"
+        tourAnchor={onboardingParams.tourAnchor}
       />
 
       {/* Filters */}
@@ -318,6 +395,8 @@ const KeyManagementSection = () => {
         open={createDialogOpen}
         onClose={() => setCreateDialogOpen(false)}
         gatewayId={gatewayId}
+        onDone={handleKeyDone}
+        onKeyCreated={handleKeyCreated}
       />
 
       {/* Detail drawer */}

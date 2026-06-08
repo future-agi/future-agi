@@ -75,6 +75,7 @@ const CreateFirstDataset = ({ setCurrentLabel }) => {
           heading="Create your first dataset"
           descriptions={descriptions}
           buttonTitle="Create Dataset"
+          targetRoute="/dashboard/develop"
           buttonAction={() => navigate("/dashboard/develop")}
         />
       </Box>

@@ -1267,7 +1267,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # is stored as non-nullable Int in CH (schema 001), so the
             # original PG ``filter=Q(parent_span_id__isnull=True)`` restricts
             # to root spans. The list comprehension below uses
-            # ``latency_ms is not None`` — codex wave-3 P3 noted this
+            # ``latency_ms is not None`` — review wave-3 P3 noted this
             # accepts zero values (matching Django's Avg semantic; nulls
             # are excluded by IS NOT NULL, zero is a valid sample).
             root_latencies = [

@@ -1,10 +1,13 @@
 /* eslint-disable react-refresh/only-export-components */
 import React from "react";
+import PropTypes from "prop-types";
 import { Suspense } from "react";
 import { Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 
 import { AuthGuard } from "src/auth/guard";
+import { useAuthContext } from "src/auth/hooks";
 import DashboardLayout from "src/layouts/dashboard";
+import { paths } from "src/routes/paths";
 
 import { LoadingScreen } from "src/components/loading-screen";
 import { Events, getPageViewEvent, trackEvent } from "src/utils/Mixpanel";
@@ -13,6 +16,12 @@ import WorkspaceRoleProtection from "../components/workspace-role-protection";
 import { GatewayProvider } from "src/sections/gateway/context/GatewayContext";
 import GatewayGuard from "src/sections/gateway/components/GatewayGuard";
 import lazyWithRetry from "src/utils/lazyWithRetry";
+import {
+  buildCurrentFlowContext,
+  CurrentFlowEvents,
+  isProductRoute,
+  trackCurrentFlow,
+} from "src/utils/analytics/currentFlow";
 // Lazy load all route components (with retry for chunk errors after deploys)
 const DevKeysPage = lazyWithRetry(
   () => import("src/pages/dashboard/keys/dev-keys"),
@@ -90,6 +99,12 @@ const UserManagementV2 = lazyWithRetry(
 );
 const BillingPageV2 = lazyWithRetry(
   () => import("src/sections/settings/BillingV2/BillingPage"),
+);
+const NotificationSettingsPage = lazyWithRetry(
+  () =>
+    import(
+      "src/sections/settings/NotificationSettings/NotificationSettingsPage"
+    ),
 );
 const EELicensesPage = lazyWithRetry(
   () => import("src/sections/settings/EELicenses/EELicensesPage"),
@@ -225,6 +240,9 @@ const CrossProjectUserDetailPage = lazyWithRetry(
 
 const GetStarted = lazyWithRetry(
   () => import("src/pages/dashboard/get-started/GetStarted"),
+);
+const OnboardingHome = lazyWithRetry(
+  () => import("src/pages/dashboard/onboarding-home/Home"),
 );
 const ErrorFallbackView = lazyWithRetry(
   () => import("src/sections/error/ErrorFallbackView"),
@@ -432,16 +450,61 @@ const ErrorBoundaryTest = () => {
   throw new Error("This is a test error to preview the error boundary UI");
 };
 
+const normalizeDashboardPathname = (pathname = "") =>
+  pathname.replace(/\/+$/, "") || "/";
+
+export const shouldTrackMixpanelPageView = (pathname) =>
+  normalizeDashboardPathname(pathname) !== paths.dashboard.home;
+
 const DashboardRoutes = () => {
   const location = useLocation();
+  const { user } = useAuthContext();
 
   React.useEffect(() => {
-    const { eventName, extras = {} } = getPageViewEvent(
-      location.pathname,
-      location.search,
-    ) || { eventName: Events.pageView, extras: {} };
-    trackEvent(eventName, { path: location.pathname, ...extras });
-  }, [location]);
+    if (shouldTrackMixpanelPageView(location.pathname)) {
+      const { eventName, extras = {} } = getPageViewEvent(
+        location.pathname,
+        location.search,
+      ) || { eventName: Events.pageView, extras: {} };
+      trackEvent(eventName, { path: location.pathname, ...extras });
+    }
+    if (!user) return;
+
+    const context = buildCurrentFlowContext({
+      user,
+      route: location.pathname,
+    });
+
+    trackCurrentFlow(
+      CurrentFlowEvents.currentFlowFirstLandingViewed,
+      {
+        ...context,
+        event_source: "dashboard_routes",
+        query_present: Boolean(location.search),
+      },
+      {
+        onceKeyParts: ["firstLanding", user?.default_workspace_id, user?.id],
+      },
+    );
+
+    if (isProductRoute(location.pathname)) {
+      trackCurrentFlow(
+        CurrentFlowEvents.currentFlowFirstProductRouteOpened,
+        {
+          ...context,
+          event_source: "dashboard_routes",
+          query_present: Boolean(location.search),
+        },
+        {
+          onceKeyParts: [
+            "firstProductRoute",
+            user?.default_workspace_id,
+            user?.id,
+          ],
+        },
+      );
+    }
+  }, [location, user]);
 
   return (
     <AuthGuard>
@@ -452,6 +515,34 @@ const DashboardRoutes = () => {
       </DashboardLayout>
     </AuthGuard>
   );
+};
+
+const NavigatePreserveSearch = ({ to }) => {
+  const { search } = useLocation();
+  return <Navigate to={`${to}${search || ""}`} replace />;
+};
+
+NavigatePreserveSearch.propTypes = {
+  to: PropTypes.string.isRequired,
+};
+
+export const observeProjectIndexRedirectTarget = (search = "") => {
+  const params = new URLSearchParams(search);
+
+  if (
+    params.get("journey_step") === "send_first_trace" &&
+    !params.has("selectedTab")
+  ) {
+    params.set("selectedTab", "trace");
+  }
+
+  const nextSearch = params.toString();
+  return `llm-tracing${nextSearch ? `?${nextSearch}` : ""}`;
+};
+
+export const ObserveProjectIndexRedirect = () => {
+  const { search } = useLocation();
+  return <Navigate to={observeProjectIndexRedirectTarget(search)} replace />;
 };
 
 export const dashboardRoutes = (
@@ -530,6 +621,24 @@ export const dashboardRoutes = (
           ]}
         >
           <UsageSummary />
+        </RoleProtection>
+      ),
+    },
+    {
+      path: "notifications",
+      element: (
+        <RoleProtection
+          allowedRoles={[
+            "Owner",
+            "Admin",
+            "Member",
+            "Viewer",
+            "workspace_admin",
+            "workspace_member",
+            "workspace_viewer",
+          ]}
+        >
+          <NotificationSettingsPage />
         </RoleProtection>
       ),
     },
@@ -782,7 +891,11 @@ export const dashboardRoutes = (
   const dashboardChildren = [
     {
       index: true,
-      element: <Navigate to="/dashboard/prototype" replace />,
+      element: <Navigate to={paths.dashboard.home} replace />,
+    },
+    {
+      path: "home",
+      element: <OnboardingHome />,
     },
     {
       path: "/dashboard/get-started",
@@ -1048,7 +1161,7 @@ export const dashboardRoutes = (
       children: [
         {
           index: true,
-          element: <Navigate to="llm-tracing" replace />,
+          element: <ObserveProjectIndexRedirect />,
         },
         // {
         //   path: "logs",
@@ -1324,7 +1437,7 @@ export const dashboardRoutes = (
           children: [
             {
               index: true,
-              element: <Navigate to="runs" replace />,
+              element: <NavigatePreserveSearch to="runs" />,
             },
             {
               path: "runs",
@@ -1346,7 +1459,7 @@ export const dashboardRoutes = (
           children: [
             {
               index: true,
-              element: <Navigate to="call-details" replace />,
+              element: <NavigatePreserveSearch to="call-details" />,
             },
             {
               path: "call-details",

@@ -20,6 +20,8 @@ export default function NavGatewayPanel() {
   const navigate = useNavigate();
   const navGatewayData = useNavGatewayData();
   const { gatewayOpen, setGatewayOpen } = useGatewayOpen();
+  const isGatewayRoute = pathname.startsWith("/dashboard/gateway");
+  const effectiveOpen = gatewayOpen && isGatewayRoute;
 
   // Collect all items across groups for active path detection
   const allItems = navGatewayData.flatMap((group) => group.items || []);
@@ -36,9 +38,11 @@ export default function NavGatewayPanel() {
 
   return (
     <Box
+      aria-hidden={!effectiveOpen}
+      data-testid="nav-gateway-panel"
       sx={{
-        width: gatewayOpen ? PANEL_WIDTH : 0,
-        minWidth: gatewayOpen ? PANEL_WIDTH : 0,
+        width: effectiveOpen ? PANEL_WIDTH : 0,
+        minWidth: effectiveOpen ? PANEL_WIDTH : 0,
         overflow: "hidden",
         transition: (theme) =>
           theme.transitions.create(["width", "min-width"], {
@@ -47,7 +51,7 @@ export default function NavGatewayPanel() {
           }),
         height: "100vh",
         borderRight: (theme) =>
-          gatewayOpen ? `solid 1px ${theme.palette.divider}` : "none",
+          effectiveOpen ? `solid 1px ${theme.palette.divider}` : "none",
         bgcolor: (theme) =>
           theme.palette.mode === "dark"
             ? alpha(theme.palette.primary.main, 0.04)
@@ -59,9 +63,10 @@ export default function NavGatewayPanel() {
         sx={{
           width: PANEL_WIDTH,
           height: "100%",
-          display: "flex",
+          display: effectiveOpen ? "flex" : "none",
           flexDirection: "column",
-          opacity: gatewayOpen ? 1 : 0,
+          opacity: effectiveOpen ? 1 : 0,
+          pointerEvents: effectiveOpen ? "auto" : "none",
           transition: (theme) =>
             theme.transitions.create("opacity", {
               duration: 150,

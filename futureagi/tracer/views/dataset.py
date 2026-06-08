@@ -152,7 +152,7 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 # foreign-org spans into process memory and we'd drop
                 # them only at the Python ``project_id`` filter (defense
                 # in depth still works, but loading foreign rows even
-                # transiently is the codex P1 concern). The PG lookup
+                # transiently is the review P1 concern). The PG lookup
                 # is one indexed SELECT.
                 #
                 # CH: legacy ORM additionally constrained
@@ -174,7 +174,7 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                         ch_spans = reader.list_by_trace_ids(
                             [str(t) for t in validated_trace_ids]
                         )
-                    # Codex final-review P2 (2026-05-26): every PG-validated
+                    # Review final-review P2 (2026-05-26): every PG-validated
                     # trace must produce at least one root span in CH. A
                     # silently empty subset would have the dataset task
                     # report "creation started" while quietly dropping
@@ -204,7 +204,7 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             elif span_ids and len(span_ids) > 0:
                 # Pre-validate span_ids via PG (project + org JOIN) so
                 # only same-project / same-org ids reach the CH reader.
-                # Codex P1 (mid-views-chunk review).
+                # Review P1 (mid-views-chunk review).
                 validated_span_ids = list(
                     ObservationSpan.objects.filter(
                         id__in=span_ids,

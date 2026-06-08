@@ -95,6 +95,15 @@ if (CURRENT_ENVIRONMENT === "dev") new BrowserAgent(devTracing);
 export default function App() {
   useScrollToTop();
   const location = useLocation();
+  const onboardingHomeSource = new URLSearchParams(location.search).get(
+    "source",
+  );
+  const showReactQueryDevtools =
+    location.pathname !== "/auth/jwt/setup-org" &&
+    !(
+      location.pathname === "/dashboard/home" &&
+      onboardingHomeSource === "setup_org"
+    );
 
   // Register global memory cleanup
   useEffect(() => {
@@ -200,7 +209,9 @@ export default function App() {
           </WorkspaceProvider>
         </OrganizationProvider>
       </AuthProvider>
-      <ReactQueryDevtools initialIsOpen={false} />
+      {showReactQueryDevtools ? (
+        <ReactQueryDevtools initialIsOpen={false} />
+      ) : null}
     </QueryClientProvider>
   );
 }

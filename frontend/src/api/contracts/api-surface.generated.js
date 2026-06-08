@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 980,
+  "endpointCount": 991,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -41,6 +41,12 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/accounts/accept-invitation/{uidb64}/{token}/": [
         "get",
         "post"
+      ],
+      "/accounts/activation-events/": [
+        "post"
+      ],
+      "/accounts/activation-state/": [
+        "get"
       ],
       "/accounts/appsmith/users/": [
         "get",
@@ -100,6 +106,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/accounts/me/timezone/": [
         "post"
       ],
+      "/accounts/notification-channels/{channel_id}/test/": [
+        "post"
+      ],
+      "/accounts/notification-preferences/": [
+        "get",
+        "patch"
+      ],
       "/accounts/notifications/snooze/": [
         "get"
       ],
@@ -108,6 +121,18 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ],
       "/accounts/onboarding/": [
         "get",
+        "post"
+      ],
+      "/accounts/onboarding/activation-facts/": [
+        "post"
+      ],
+      "/accounts/onboarding/goal/": [
+        "post"
+      ],
+      "/accounts/onboarding/lifecycle/digest-previews/": [
+        "get"
+      ],
+      "/accounts/onboarding/lifecycle/digest-previews/promote/": [
         "post"
       ],
       "/accounts/organization/2fa-policy/": [
@@ -186,6 +211,12 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/accounts/resend-invitation-emails/": [
         "post"
       ],
+      "/accounts/sample-project/": [
+        "post"
+      ],
+      "/accounts/sample-project/hide/": [
+        "post"
+      ],
       "/accounts/signup/": [
         "post"
       ],
@@ -197,6 +228,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/accounts/team/users/{member_id}/": [
         "delete",
         "get",
+        "post"
+      ],
+      "/accounts/test-trace/": [
         "post"
       ],
       "/accounts/token/": [
@@ -3378,6 +3412,12 @@ export const API_SURFACE_PATHS = Object.freeze({
     "get",
     "post"
   ],
+  "/accounts/activation-events/": [
+    "post"
+  ],
+  "/accounts/activation-state/": [
+    "get"
+  ],
   "/accounts/appsmith/users/": [
     "get",
     "patch",
@@ -3436,6 +3476,13 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/accounts/me/timezone/": [
     "post"
   ],
+  "/accounts/notification-channels/{channel_id}/test/": [
+    "post"
+  ],
+  "/accounts/notification-preferences/": [
+    "get",
+    "patch"
+  ],
   "/accounts/notifications/snooze/": [
     "get"
   ],
@@ -3444,6 +3491,18 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/accounts/onboarding/": [
     "get",
+    "post"
+  ],
+  "/accounts/onboarding/activation-facts/": [
+    "post"
+  ],
+  "/accounts/onboarding/goal/": [
+    "post"
+  ],
+  "/accounts/onboarding/lifecycle/digest-previews/": [
+    "get"
+  ],
+  "/accounts/onboarding/lifecycle/digest-previews/promote/": [
     "post"
   ],
   "/accounts/organization/2fa-policy/": [
@@ -3522,6 +3581,12 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/accounts/resend-invitation-emails/": [
     "post"
   ],
+  "/accounts/sample-project/": [
+    "post"
+  ],
+  "/accounts/sample-project/hide/": [
+    "post"
+  ],
   "/accounts/signup/": [
     "post"
   ],
@@ -3533,6 +3598,9 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/accounts/team/users/{member_id}/": [
     "delete",
     "get",
+    "post"
+  ],
+  "/accounts/test-trace/": [
     "post"
   ],
   "/accounts/token/": [

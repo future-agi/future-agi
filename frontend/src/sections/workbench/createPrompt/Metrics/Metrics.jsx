@@ -1,5 +1,6 @@
 import { Box, Tab, Tabs, useTheme } from "@mui/material";
 import React, { useMemo } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import WorkbenchMetricsProvider from "./context/WorkbenchMetricsProvider";
 import { useWorkbenchMetrics } from "./context/WorkbenchMetricsContext";
 import MetricsContent from "./MetricsContent/MetricsContent";
@@ -8,6 +9,19 @@ import MetricFilterDrawer from "./MetricFilterDrawer/MetricFilterDrawer";
 import { getMetricsTabSx } from "./common";
 import { METRIC_TAB_IDS } from "./constants";
 import SvgColor from "src/components/svg-color";
+import { paths } from "src/routes/paths";
+import { enqueueSnackbar } from "src/components/snackbar";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import {
+  appendSetupQuickStartAttributionToHref,
+  readPersistedSetupQuickStartAttribution,
+} from "src/sections/auth/jwt/setup-org-quick-starts";
+import {
+  buildPromptFirstQualityLoopCompletedPayload,
+  getPromptOnboardingRouteParams,
+  PROMPT_ONBOARDING_MODES,
+} from "../promptActions/promptOnboardingRoute";
+import PromptMetricsOnboardingFocusPanel from "./PromptMetricsOnboardingFocusPanel";
 
 const icon = (name) => (
   <SvgColor
@@ -18,7 +32,16 @@ const icon = (name) => (
 
 const MetricsTabs = () => {
   const theme = useTheme();
-  const { activeTab, setActiveTab } = useWorkbenchMetrics();
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const completePromptLoop = useRecordActivationEvent();
+  const { activeTab, setActiveTab, setIsFilterDrawerOpen } =
+    useWorkbenchMetrics();
+  const promptOnboardingParams = getPromptOnboardingRouteParams(searchParams);
+  const isMetricsOnboarding =
+    promptOnboardingParams.isOnboarding &&
+    promptOnboardingParams.mode === PROMPT_ONBOARDING_MODES.METRICS;
 
   const metricsTabData = [
     { id: "Metrics", title: "Metrics", icon: () => icon("metric") },
@@ -33,6 +56,31 @@ const MetricsTabs = () => {
 
   const handleTabChange = (_, newValue) => {
     setActiveTab(newValue);
+  };
+
+  const handleCompletePromptLoop = async () => {
+    try {
+      await completePromptLoop.mutateAsync(
+        buildPromptFirstQualityLoopCompletedPayload({
+          promptId: id,
+          search: searchParams,
+        }),
+      );
+      const routeAttribution = Object.fromEntries(searchParams);
+      navigate(
+        appendSetupQuickStartAttributionToHref(
+          `${paths.dashboard.home}?mode=daily-quality&source=onboarding&target_event=first_quality_loop_completed`,
+          routeAttribution.quick_start_id
+            ? routeAttribution
+            : readPersistedSetupQuickStartAttribution(),
+        ),
+        { replace: true },
+      );
+    } catch {
+      enqueueSnackbar("Unable to finish prompt loop. Please try again.", {
+        variant: "error",
+      });
+    }
   };
 
   return (
@@ -60,9 +108,22 @@ const MetricsTabs = () => {
       </Tabs>
 
       <Box sx={{ flex: 1, minHeight: 0, mt: 2 }}>
-        {activeTab === METRIC_TAB_IDS.METRICS && <MetricsContent />}
-        {activeTab === METRIC_TAB_IDS.LINKED_TRACES && <LinkedTracesContent />}
+        {activeTab === METRIC_TAB_IDS.METRICS && (
+          <MetricsContent isOnboarding={isMetricsOnboarding} />
+        )}
+        {activeTab === METRIC_TAB_IDS.LINKED_TRACES && (
+          <LinkedTracesContent isOnboarding={isMetricsOnboarding} />
+        )}
       </Box>
+
+      <PromptMetricsOnboardingFocusPanel
+        activeTab={activeTab}
+        isCompletingLoop={completePromptLoop.isPending}
+        isOnboarding={isMetricsOnboarding}
+        onCompleteLoop={handleCompletePromptLoop}
+        onOpenFilters={() => setIsFilterDrawerOpen(true)}
+        onOpenLinkedTraces={() => setActiveTab(METRIC_TAB_IDS.LINKED_TRACES)}
+      />
     </Box>
   );
 };

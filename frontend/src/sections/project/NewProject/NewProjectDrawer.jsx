@@ -7,11 +7,22 @@ import { useLocation } from "react-router-dom";
 
 import NewExperiment from "./NewExperiment";
 import NewObserve from "./NewObserve";
+import {
+  getObserveSetupOnboardingParams,
+  OBSERVE_ONBOARDING_MODES,
+} from "src/sections/projects/observeOnboardingRoute";
 
-const NewProjectDrawer = ({ open, onClose }) => {
+const NewProjectDrawer = ({ observeSetupVerification, open, onClose }) => {
   const location = useLocation();
   const currentPath = location.pathname;
+  const observeSetupOnboardingParams = getObserveSetupOnboardingParams(
+    location.search,
+  );
   const [isObserve, setIsObserve] = useState(currentPath.includes("observe"));
+  const showObserveFirstTraceGuide =
+    isObserve &&
+    observeSetupOnboardingParams.mode ===
+      OBSERVE_ONBOARDING_MODES.SETUP_OBSERVE;
   useEffect(() => {
     const isObserve = currentPath.includes("observe");
     setIsObserve(isObserve);
@@ -80,7 +91,10 @@ const NewProjectDrawer = ({ open, onClose }) => {
           <NewExperiment />
         </ShowComponent>
         <ShowComponent condition={isObserve}>
-          <NewObserve />
+          <NewObserve
+            setupVerification={observeSetupVerification}
+            showFirstTraceGuide={showObserveFirstTraceGuide}
+          />
         </ShowComponent>
       </Box>
     </Drawer>
@@ -88,6 +102,16 @@ const NewProjectDrawer = ({ open, onClose }) => {
 };
 
 NewProjectDrawer.propTypes = {
+  observeSetupVerification: PropTypes.shape({
+    description: PropTypes.string.isRequired,
+    primaryAction: PropTypes.shape({
+      disabled: PropTypes.bool,
+      label: PropTypes.string.isRequired,
+      onClick: PropTypes.func.isRequired,
+    }),
+    status: PropTypes.oneOf(["ready", "waiting"]).isRequired,
+    title: PropTypes.string.isRequired,
+  }),
   open: PropTypes.bool,
   onClose: PropTypes.func,
   isObserve: PropTypes.bool,

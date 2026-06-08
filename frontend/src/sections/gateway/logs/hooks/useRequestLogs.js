@@ -16,6 +16,11 @@ const FILTER_KEY_MAP = {
   userId: "user_id",
   sessionId: "session_id",
   apiKeyId: "api_key_id",
+  requestId: "request_id",
+  journeyStep: "journey_step",
+  tourAnchor: "tour_anchor",
+  campaignKey: "campaign_key",
+  targetEvent: "target_event",
   minLatency: "min_latency",
   maxLatency: "max_latency",
   minCost: "min_cost",
@@ -23,6 +28,18 @@ const FILTER_KEY_MAP = {
   startedAfter: "started_after",
   startedBefore: "started_before",
 };
+
+const URL_ONLY_FILTER_KEYS = new Set([
+  "onboarding",
+  "source",
+  "journeyStep",
+  "tourAnchor",
+  "campaignKey",
+  "quick_start_goal",
+  "quick_start_id",
+  "quick_start_primary_path",
+  "targetEvent",
+]);
 
 /**
  * Convert a camelCase filters object into query-param-ready snake_case params.
@@ -33,6 +50,7 @@ export function buildFilterParams(filters = {}) {
 
   Object.entries(filters).forEach(([key, value]) => {
     if (value === null || value === undefined || value === "") return;
+    if (URL_ONLY_FILTER_KEYS.has(key)) return;
     const paramKey = FILTER_KEY_MAP[key] || key;
     params[paramKey] = value;
   });
@@ -72,6 +90,14 @@ export default function useRequestLogs({
       delete params.view;
       delete params.pageSize;
       delete params.search;
+      delete params.onboarding;
+      delete params.source;
+      delete params.journey_step;
+      delete params.campaign_key;
+      delete params.quick_start_goal;
+      delete params.quick_start_id;
+      delete params.quick_start_primary_path;
+      delete params.target_event;
 
       // Use the dedicated search endpoint when a search term is present
       if (searchTerm.length >= 2) {

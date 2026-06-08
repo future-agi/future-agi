@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}See exactly where your agent went wrong{% endblock %}
+{% block heading %}Open the run and find what to fix first{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, your agent scenario in {{ workspace_name }} did not go to plan, and the full trace is waiting for you.</p>
+  <p style="margin:0;">Step through the run to see which tool call, prompt, or response broke down. The trace points you straight to the single change most likely to fix it.</p>
+{% endblock %}

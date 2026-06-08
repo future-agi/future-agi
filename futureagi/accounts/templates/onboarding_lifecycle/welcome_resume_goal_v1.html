@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Your first useful result is one step away{% endblock %}
+{% block heading %}Connect the first observe project to start seeing traces{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, you told us you want to monitor a production AI app, and {{ workspace_name }} is ready for it. One step stands between you and your first real signal: creating the observe project that will receive your traces.</p>
+  <p style="margin:0;">As soon as a trace arrives, FutureAGI opens it for review so you can inspect latency, model calls, cost, and failures, then points you to the right quality check.</p>
+{% endblock %}

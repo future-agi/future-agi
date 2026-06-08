@@ -1,17 +1,34 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Box, CircularProgress, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLocation, useNavigate } from "react-router-dom";
 import { AgentGraph } from "src/components/AgentGraph";
 import { START_ID, END_ID } from "src/components/AgentGraph/layoutUtils";
 import NodeOutputDetail from "../AgentBuilder/RunAgentPanel/NodeOutputDetail";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import { useGetExecutionDetail } from "src/api/agent-playground/agent-playground";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
 import useResolvedExecution from "../hooks/useResolvedExecution";
 import { EXECUTION_STATUS } from "../utils/workflowExecution";
+import AgentOnboardingFocusPanel from "../components/AgentOnboardingFocusPanel";
+import {
+  agentSetupQuickStartAttributionFromSearch,
+  buildAgentEvalBuilderHref,
+  buildAgentTraceReviewedPayload,
+} from "../agentOnboardingEvents";
 
 export default function ExecutionDetailView({ graphId, executionId }) {
   const queryClient = useQueryClient();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
   const {
     data: executionData,
     isLoading,
@@ -105,11 +122,56 @@ export default function ExecutionDetailView({ graphId, executionId }) {
 
   const { nodeExecutionId: selectedNodeExecutionId, resolvedExecutionId } =
     useResolvedExecution({ selectedNodeId, executionData, executionId });
+  const onboardingMode = new URLSearchParams(location.search).get("onboarding");
+  const versionId = new URLSearchParams(location.search).get("version");
+  const quickStartAttribution = useMemo(
+    () => agentSetupQuickStartAttributionFromSearch(location.search),
+    [location.search],
+  );
+  const showCoverageHandoff =
+    onboardingMode === "review-run" &&
+    Boolean(executionId) &&
+    Boolean(selectedNodeExecutionId);
+
+  useEffect(() => {
+    if (
+      onboardingMode !== "review-run" ||
+      !executionId ||
+      !selectedNodeExecutionId
+    ) {
+      return;
+    }
+    recordActivationEvent?.({
+      ...buildAgentTraceReviewedPayload({
+        agentId: graphId,
+        executionId,
+        nodeExecutionId: selectedNodeExecutionId,
+        quickStartAttribution,
+      }),
+    });
+  }, [
+    executionId,
+    graphId,
+    onboardingMode,
+    quickStartAttribution,
+    recordActivationEvent,
+    selectedNodeExecutionId,
+  ]);
 
   const handleGraphNodeClick = useCallback((_event, node) => {
     if (node.id === START_ID || node.id === END_ID) return;
     setSelectedNodeId(node.id);
   }, []);
+
+  const handleAddEvalCoverage = useCallback(() => {
+    navigate(
+      buildAgentEvalBuilderHref({
+        agentId: graphId,
+        quickStartAttribution,
+        versionId,
+      }),
+    );
+  }, [graphId, navigate, quickStartAttribution, versionId]);
 
   if (!executionId) {
     return (
@@ -170,43 +232,78 @@ export default function ExecutionDetailView({ graphId, executionId }) {
   }
 
   return (
-    <ResizablePanels
-      initialLeftWidth={50}
-      minLeftWidth={15}
-      maxLeftWidth={80}
-      leftPanel={
-        <AgentGraph
-          executionData={executionData}
-          onNodeClick={handleGraphNodeClick}
-          selectedNodeId={selectedNodeId}
+    <Box
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <Box sx={{ px: 2, pt: showCoverageHandoff ? 2 : 0 }}>
+        <AgentOnboardingFocusPanel
+          currentStep="Coverage"
+          description="Use the reviewed run to add an eval node, so this behavior is checked every time the agent changes."
+          hidden={!showCoverageHandoff}
+          primaryAction={{
+            label: "Add eval node",
+            onClick: handleAddEvalCoverage,
+          }}
+          secondaryAction={{
+            label: "Review another node",
+            onClick: () => setSelectedNodeId(null),
+          }}
+          singleActionFocus={showCoverageHandoff}
+          steps={[
+            { label: "Agent", complete: true },
+            { label: "Scenario", complete: true },
+            { label: "Review", complete: true },
+            { label: "Coverage", complete: false },
+          ]}
+          title="Turn this run into agent coverage"
+          tourAnchor="agent_eval_handoff_button"
         />
-      }
-      rightPanel={
-        isPending ? (
-          <Box
-            sx={{
-              flex: 1,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexDirection: "column",
-              gap: 1,
-              height: "100%",
-            }}
-          >
-            <CircularProgress size={24} />
-            <Typography typography="s2" color="text.secondary">
-              Execution is waiting to start
-            </Typography>
-          </Box>
-        ) : (
-          <NodeOutputDetail
-            executionId={resolvedExecutionId}
-            nodeExecutionId={selectedNodeExecutionId}
-          />
-        )
-      }
-    />
+      </Box>
+      <Box sx={{ flex: 1, minHeight: 0 }}>
+        <ResizablePanels
+          initialLeftWidth={50}
+          minLeftWidth={15}
+          maxLeftWidth={80}
+          leftPanel={
+            <AgentGraph
+              executionData={executionData}
+              onNodeClick={handleGraphNodeClick}
+              selectedNodeId={selectedNodeId}
+            />
+          }
+          rightPanel={
+            isPending ? (
+              <Box
+                sx={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexDirection: "column",
+                  gap: 1,
+                  height: "100%",
+                }}
+              >
+                <CircularProgress size={24} />
+                <Typography typography="s2" color="text.secondary">
+                  Execution is waiting to start
+                </Typography>
+              </Box>
+            ) : (
+              <NodeOutputDetail
+                executionId={resolvedExecutionId}
+                nodeExecutionId={selectedNodeExecutionId}
+              />
+            )
+          }
+        />
+      </Box>
+    </Box>
   );
 }
 

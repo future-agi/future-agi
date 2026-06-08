@@ -8,6 +8,7 @@ import { useResponsive } from "src/hooks/use-responsive";
 
 import { useSettingsContext } from "src/components/settings";
 import { useRouter } from "src/routes/hooks";
+import { useLocation } from "react-router-dom";
 
 import Main from "./main";
 import NavMini from "./nav-mini";
@@ -22,6 +23,7 @@ import TwoFactorBanner from "src/components/two-factor-enforcement/TwoFactorBann
 import { Typography } from "@mui/material";
 import { ShowComponent } from "../../components/show";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
+import DestinationTourAnchor from "src/sections/onboarding-tour/DestinationTourAnchor";
 
 // ----------------------------------------------------------------------
 
@@ -30,6 +32,7 @@ export default function DashboardLayout({ children }) {
   const isSOSMode = localStorage.getItem("sosMode");
   const { isOSS } = useDeploymentMode();
   const router = useRouter();
+  const location = useLocation();
   const pendingNavigation = useFalconStore((s) => s.pendingNavigation);
   const clearPendingNavigation = useFalconStore(
     (s) => s.clearPendingNavigation,
@@ -44,15 +47,22 @@ export default function DashboardLayout({ children }) {
   }, [pendingNavigation, router, clearPendingNavigation]);
 
   const lgUp = useResponsive("up", "xs");
+  const mdUp = useResponsive("up", "md");
 
   const nav = useBoolean();
 
   const isHorizontal = settings.themeLayout === "horizontal";
 
   const isMini = settings.themeLayout === "mini";
+  const isSetupOrgHomeFocus =
+    location.pathname === "/dashboard/home" &&
+    new URLSearchParams(location.search).get("source") === "setup_org";
+  const hideNavForSetupFocus = isSetupOrgHomeFocus && !mdUp;
 
   let navComponent;
-  if (isHorizontal) {
+  if (hideNavForSetupFocus) {
+    navComponent = null;
+  } else if (isHorizontal) {
     navComponent = lgUp ? (
       <NavHorizontal />
     ) : (
@@ -74,11 +84,16 @@ export default function DashboardLayout({ children }) {
       }
     : {
         minHeight: 1,
-        minWidth: 1200,
+        minWidth: hideNavForSetupFocus ? 0 : 1200,
+        width: hideNavForSetupFocus ? "100%" : undefined,
         display: "flex",
         flexDirection: { xs: "row", lg: "row" },
         backgroundColor: "background.paper",
-        ...(isMini ? {} : { overflowX: "auto" }),
+        ...(hideNavForSetupFocus
+          ? { overflowX: "hidden" }
+          : isMini
+            ? {}
+            : { overflowX: "auto" }),
       };
 
   return (
@@ -111,6 +126,7 @@ export default function DashboardLayout({ children }) {
         <Main>{children}</Main>
         {!isOSS && <FalconAISidebar />}
       </Box>
+      <DestinationTourAnchor />
       <FalconAIFab />
     </>
   );

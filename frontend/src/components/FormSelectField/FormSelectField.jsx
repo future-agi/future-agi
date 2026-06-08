@@ -305,6 +305,8 @@ const formSelectFieldPropTypes = {
   required: PropTypes.bool,
 };
 
+FormSelectField.propTypes = formSelectFieldPropTypes;
+
 // @ts-ignore
 export const EnhancedFormSelectField = React.forwardRef(FormSelectField);
 EnhancedFormSelectField.propTypes = formSelectFieldPropTypes;

@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
+import {
+  buildAgentBuilderHref,
+  buildAgentCreatedPayload,
+} from "src/sections/agent-playground/agentOnboardingEvents";
 
 // Shared mapping from API response → currentAgent store shape.
 // Uses snake_case to match the store fields written by updateVersion(),
@@ -30,7 +34,14 @@ export const mapGraphToAgent = (result) => ({
  * @param {Function} options.setCurrentAgent - store setter for the active agent
  * @param {Function} [options.onSuccess]     - optional callback after navigation
  */
-export const useCreateGraph = ({ navigate, setCurrentAgent, onSuccess } = {}) =>
+export const useCreateGraph = ({
+  navigate,
+  onboardingMode,
+  quickStartAttribution,
+  recordActivationEvent,
+  setCurrentAgent,
+  onSuccess,
+} = {}) =>
   useMutation({
     mutationFn: () => {
       const now = new Date();
@@ -43,9 +54,40 @@ export const useCreateGraph = ({ navigate, setCurrentAgent, onSuccess } = {}) =>
       const result = res.data?.result;
       if (!result) return;
       const agent = mapGraphToAgent(result);
+      const searchParams = new URLSearchParams();
+      if (result.active_version?.id) {
+        searchParams.set("version", result.active_version.id);
+      }
+      if (onboardingMode) {
+        searchParams.set("onboarding", onboardingMode);
+      }
+      const search = searchParams.toString();
       setCurrentAgent?.(agent);
+      if (onboardingMode) {
+        recordActivationEvent?.(
+          buildAgentCreatedPayload({
+            agentId: result.id,
+            quickStartAttribution,
+          }),
+        );
+      }
       navigate?.(
-        `/dashboard/agents/playground/${result.id}/build?version=${result.active_version?.id}`,
+        onboardingMode
+          ? buildAgentBuilderHref({
+              agentId: result.id,
+              journeyStep:
+                onboardingMode === "run-scenario"
+                  ? "add_agent_node"
+                  : undefined,
+              onboarding: onboardingMode,
+              quickStartAttribution,
+              tourAnchor:
+                onboardingMode === "run-scenario"
+                  ? "agent_add_node_button"
+                  : undefined,
+              versionId: result.active_version?.id,
+            })
+          : `/dashboard/agents/playground/${result.id}/build${search ? `?${search}` : ""}`,
       );
       onSuccess?.(agent);
     },

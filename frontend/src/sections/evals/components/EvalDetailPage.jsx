@@ -58,6 +58,26 @@ import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
+import { useRecordActivationEvent } from "src/sections/onboarding-home/hooks/useRecordActivationEvent";
+import EvalOnboardingFocusPanel from "./EvalOnboardingFocusPanel";
+import {
+  buildEvalFirstQualityLoopCompletedPayload,
+  buildEvalPostRepairHomeHref,
+  buildEvalScorerEditCtaClickedPayload,
+  buildEvalScorerEditHref,
+  buildEvalReviewRouteFocusPayload,
+  buildEvalSourceFixCtaClickedPayload,
+  buildEvalSourceFixHref,
+  EVAL_FIX_RERUN_ORIGINS,
+  EVAL_REVIEW_ACTIONS,
+  evalUsageLogMatchesRun,
+  evalSetupQuickStartAttributionFromSearch,
+  getEvalDetailTabFromSearch,
+  getEvalReviewOnboardingCopy,
+  getEvalReviewOnboardingParams,
+  getEvalUsageLogId,
+  getEvalUsageReviewOutcome,
+} from "./evalCreateOnboarding";
 
 const extract_selected_tools = (tools) => {
   if (Array.isArray(tools)) return tools;
@@ -117,6 +137,7 @@ const EvalDetailPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
+  const { mutate: recordActivationEvent } = useRecordActivationEvent();
 
   const {
     data: evalData,
@@ -127,6 +148,7 @@ const EvalDetailPage = () => {
   const createVersion = useCreateEvalVersion(evalId);
   const { data: versionsData } = useEvalVersions(evalId);
   const testPlaygroundRef = useRef(null);
+  const recordedOnboardingFocusRef = useRef(false);
 
   // Editable fields
   const [instructions, setInstructions] = useState("");
@@ -199,9 +221,169 @@ const EvalDetailPage = () => {
   }, []);
 
   // Top-level tab — sync with URL ?tab= param
-  const [activeTab, setActiveTab] = useState(
-    () => searchParams.get("tab") || "details",
+  const [activeTab, setActiveTab] = useState(() =>
+    getEvalDetailTabFromSearch(searchParams),
   );
+  const activeTabFromSearch = useMemo(
+    () => getEvalDetailTabFromSearch(searchParams),
+    [searchParams],
+  );
+  const reviewOnboardingParams = useMemo(
+    () => getEvalReviewOnboardingParams(searchParams),
+    [searchParams],
+  );
+  const onboardingQuickStartAttribution = useMemo(
+    () => evalSetupQuickStartAttributionFromSearch(searchParams),
+    [searchParams],
+  );
+  const reviewOnboardingCopy = useMemo(
+    () => getEvalReviewOnboardingCopy(reviewOnboardingParams),
+    [reviewOnboardingParams],
+  );
+  const [reviewActionPreference, setReviewActionPreference] = useState(null);
+
+  useEffect(() => {
+    setActiveTab((currentTab) =>
+      currentTab === activeTabFromSearch ? currentTab : activeTabFromSearch,
+    );
+  }, [activeTabFromSearch]);
+
+  const reviewSourceFixHref = useMemo(() => {
+    if (!reviewOnboardingParams.isOnboarding) return null;
+
+    return buildEvalSourceFixHref({
+      evalId,
+      quickStartAttribution: onboardingQuickStartAttribution,
+      runId: reviewOnboardingParams.runId,
+      setupLanguage: reviewOnboardingParams.setupLanguage,
+      setupProvider: reviewOnboardingParams.setupProvider,
+      sourceId: reviewOnboardingParams.sourceId,
+      sourceType: reviewOnboardingParams.sourceType,
+      traceId: reviewOnboardingParams.traceId,
+    });
+  }, [
+    evalId,
+    reviewOnboardingParams.isOnboarding,
+    reviewOnboardingParams.runId,
+    reviewOnboardingParams.setupLanguage,
+    reviewOnboardingParams.setupProvider,
+    reviewOnboardingParams.sourceId,
+    reviewOnboardingParams.sourceType,
+    reviewOnboardingParams.traceId,
+    onboardingQuickStartAttribution,
+  ]);
+  const reviewScorerEditHref = useMemo(() => {
+    if (!reviewOnboardingParams.isOnboarding) return null;
+
+    return buildEvalScorerEditHref({
+      evalId,
+      previousRunId: reviewOnboardingParams.runId,
+      quickStartAttribution: onboardingQuickStartAttribution,
+      rerunFrom: EVAL_FIX_RERUN_ORIGINS.SCORER_EDIT,
+      setupLanguage: reviewOnboardingParams.setupLanguage,
+      setupProvider: reviewOnboardingParams.setupProvider,
+      sourceId: reviewOnboardingParams.sourceId,
+      sourceType: reviewOnboardingParams.sourceType,
+      traceId: reviewOnboardingParams.traceId,
+    });
+  }, [
+    evalId,
+    reviewOnboardingParams.isOnboarding,
+    reviewOnboardingParams.runId,
+    reviewOnboardingParams.setupLanguage,
+    reviewOnboardingParams.setupProvider,
+    reviewOnboardingParams.sourceId,
+    reviewOnboardingParams.sourceType,
+    reviewOnboardingParams.traceId,
+    onboardingQuickStartAttribution,
+  ]);
+  const handleReviewActionPreferenceChange = useCallback((nextPreference) => {
+    setReviewActionPreference((currentPreference) => {
+      if (
+        currentPreference?.actionKind === nextPreference?.actionKind &&
+        currentPreference?.evalLogId === nextPreference?.evalLogId &&
+        currentPreference?.reviewOutcome === nextPreference?.reviewOutcome &&
+        currentPreference?.runId === nextPreference?.runId
+      ) {
+        return currentPreference;
+      }
+      return nextPreference || null;
+    });
+  }, []);
+  const resolvedReviewActionKind =
+    reviewActionPreference?.runId === reviewOnboardingParams.runId
+      ? reviewActionPreference.actionKind
+      : null;
+  const hasResolvedReviewAction = Boolean(resolvedReviewActionKind);
+  const useReviewSourceFix =
+    resolvedReviewActionKind === EVAL_REVIEW_ACTIONS.SOURCE_FIX;
+  const reviewScorerActionLabel =
+    reviewActionPreference?.reviewOutcome === "result_summary_reviewed"
+      ? "Tune scorer"
+      : "Edit scorer";
+  const reviewOutcomeForRun =
+    reviewActionPreference?.runId === reviewOnboardingParams.runId
+      ? reviewActionPreference.reviewOutcome
+      : null;
+  const isCompletedReview =
+    reviewOnboardingParams.isOnboarding &&
+    reviewOutcomeForRun === "result_summary_reviewed";
+  const reviewCompletionHomeHref = useMemo(() => {
+    if (!reviewOnboardingParams.isOnboarding) {
+      return null;
+    }
+
+    return buildEvalPostRepairHomeHref({
+      previousRunId: reviewOnboardingParams.previousRunId,
+      quickStartAttribution: onboardingQuickStartAttribution,
+      rerunFrom: reviewOnboardingParams.rerunFrom,
+      runId: reviewOnboardingParams.runId,
+      setupLanguage: reviewOnboardingParams.setupLanguage,
+      setupProvider: reviewOnboardingParams.setupProvider,
+      sourceId: reviewOnboardingParams.sourceId,
+      sourceType: reviewOnboardingParams.sourceType,
+      traceId: reviewOnboardingParams.traceId,
+    });
+  }, [
+    reviewOnboardingParams.isOnboarding,
+    reviewOnboardingParams.previousRunId,
+    reviewOnboardingParams.rerunFrom,
+    reviewOnboardingParams.runId,
+    reviewOnboardingParams.setupLanguage,
+    reviewOnboardingParams.setupProvider,
+    reviewOnboardingParams.sourceId,
+    reviewOnboardingParams.sourceType,
+    reviewOnboardingParams.traceId,
+    onboardingQuickStartAttribution,
+  ]);
+
+  useEffect(() => {
+    if (!reviewOnboardingParams.isOnboarding) return;
+
+    if (!recordedOnboardingFocusRef.current) {
+      recordedOnboardingFocusRef.current = true;
+      recordActivationEvent?.(
+        buildEvalReviewRouteFocusPayload({
+          evalId,
+          previousRunId: reviewOnboardingParams.previousRunId,
+          quickStartAttribution: onboardingQuickStartAttribution,
+          rerunFrom: reviewOnboardingParams.rerunFrom,
+          route: "eval_detail",
+          runId: reviewOnboardingParams.runId,
+          setupLanguage: reviewOnboardingParams.setupLanguage,
+          setupProvider: reviewOnboardingParams.setupProvider,
+          sourceId: reviewOnboardingParams.sourceId,
+          sourceType: reviewOnboardingParams.sourceType,
+          traceId: reviewOnboardingParams.traceId,
+        }),
+      );
+    }
+  }, [
+    evalId,
+    onboardingQuickStartAttribution,
+    recordActivationEvent,
+    reviewOnboardingParams,
+  ]);
 
   const handleTabChange = useCallback(
     (_, val) => {
@@ -220,6 +402,173 @@ const EvalDetailPage = () => {
     },
     [setSearchParams],
   );
+  const handleReviewComplete = useCallback(
+    ({ row } = {}) => {
+      if (!reviewCompletionHomeHref) return;
+      if (
+        row &&
+        reviewOnboardingParams.runId &&
+        !evalUsageLogMatchesRun(row, reviewOnboardingParams.runId)
+      ) {
+        return;
+      }
+
+      const evalLogId =
+        getEvalUsageLogId(row) || reviewActionPreference?.evalLogId;
+      const reviewOutcome = row
+        ? getEvalUsageReviewOutcome(row)
+        : reviewOutcomeForRun;
+      if (reviewOutcome !== "result_summary_reviewed") {
+        return;
+      }
+
+      const navigateToQualityHome = () => navigate(reviewCompletionHomeHref);
+      if (recordActivationEvent) {
+        recordActivationEvent(
+          buildEvalFirstQualityLoopCompletedPayload({
+            evalId,
+            evalLogId,
+            previousRunId: reviewOnboardingParams.previousRunId,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            rerunFrom: reviewOnboardingParams.rerunFrom,
+            reviewOutcome,
+            runId: reviewOnboardingParams.runId,
+            setupLanguage: reviewOnboardingParams.setupLanguage,
+            setupProvider: reviewOnboardingParams.setupProvider,
+            sourceId: reviewOnboardingParams.sourceId,
+            sourceType: reviewOnboardingParams.sourceType,
+            traceId: reviewOnboardingParams.traceId,
+          }),
+          { onSettled: navigateToQualityHome },
+        );
+      } else {
+        navigateToQualityHome();
+      }
+    },
+    [
+      evalId,
+      navigate,
+      onboardingQuickStartAttribution,
+      recordActivationEvent,
+      reviewActionPreference?.evalLogId,
+      reviewCompletionHomeHref,
+      reviewOnboardingParams.previousRunId,
+      reviewOnboardingParams.rerunFrom,
+      reviewOnboardingParams.runId,
+      reviewOnboardingParams.setupLanguage,
+      reviewOnboardingParams.setupProvider,
+      reviewOnboardingParams.sourceId,
+      reviewOnboardingParams.sourceType,
+      reviewOnboardingParams.traceId,
+      reviewOutcomeForRun,
+    ],
+  );
+
+  const handleReviewPrimaryAction = useCallback(() => {
+    if (isCompletedReview && reviewCompletionHomeHref) {
+      handleReviewComplete();
+      return;
+    }
+
+    if (useReviewSourceFix && reviewSourceFixHref) {
+      const navigateToFix = () => navigate(reviewSourceFixHref);
+      if (recordActivationEvent) {
+        recordActivationEvent(
+          buildEvalSourceFixCtaClickedPayload({
+            evalId,
+            fixRoute: reviewSourceFixHref,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            runId: reviewOnboardingParams.runId,
+            setupLanguage: reviewOnboardingParams.setupLanguage,
+            setupProvider: reviewOnboardingParams.setupProvider,
+            sourceId: reviewOnboardingParams.sourceId,
+            sourceType: reviewOnboardingParams.sourceType,
+            traceId: reviewOnboardingParams.traceId,
+          }),
+          { onSettled: navigateToFix },
+        );
+      } else {
+        navigateToFix();
+      }
+      return;
+    }
+
+    if (reviewScorerEditHref) {
+      const navigateToScorer = () => navigate(reviewScorerEditHref);
+      if (recordActivationEvent) {
+        recordActivationEvent(
+          buildEvalScorerEditCtaClickedPayload({
+            editRoute: reviewScorerEditHref,
+            evalId,
+            quickStartAttribution: onboardingQuickStartAttribution,
+            runId: reviewOnboardingParams.runId,
+            setupLanguage: reviewOnboardingParams.setupLanguage,
+            setupProvider: reviewOnboardingParams.setupProvider,
+            sourceId: reviewOnboardingParams.sourceId,
+            sourceType: reviewOnboardingParams.sourceType,
+            traceId: reviewOnboardingParams.traceId,
+          }),
+          { onSettled: navigateToScorer },
+        );
+      } else {
+        navigateToScorer();
+      }
+    }
+  }, [
+    evalId,
+    handleReviewComplete,
+    isCompletedReview,
+    navigate,
+    onboardingQuickStartAttribution,
+    recordActivationEvent,
+    reviewCompletionHomeHref,
+    reviewOnboardingParams.runId,
+    reviewOnboardingParams.setupLanguage,
+    reviewOnboardingParams.setupProvider,
+    reviewOnboardingParams.sourceId,
+    reviewOnboardingParams.sourceType,
+    reviewOnboardingParams.traceId,
+    reviewScorerEditHref,
+    reviewSourceFixHref,
+    useReviewSourceFix,
+  ]);
+  const reviewPrimaryAction = useMemo(() => {
+    if (!reviewOnboardingParams.isOnboarding) return null;
+    if (!hasResolvedReviewAction) return null;
+    if (isCompletedReview && reviewCompletionHomeHref) {
+      return {
+        label: "Continue to Home",
+        onClick: handleReviewPrimaryAction,
+      };
+    }
+    if (useReviewSourceFix && reviewSourceFixHref) {
+      return {
+        label:
+          reviewOnboardingParams.sourceType === "trace_project"
+            ? "Fix trace source"
+            : "Fix source and rerun",
+        onClick: handleReviewPrimaryAction,
+      };
+    }
+    if (reviewScorerEditHref) {
+      return {
+        label: reviewScorerActionLabel,
+        onClick: handleReviewPrimaryAction,
+      };
+    }
+    return null;
+  }, [
+    handleReviewPrimaryAction,
+    hasResolvedReviewAction,
+    isCompletedReview,
+    reviewCompletionHomeHref,
+    reviewOnboardingParams.isOnboarding,
+    reviewOnboardingParams.sourceType,
+    reviewScorerActionLabel,
+    reviewScorerEditHref,
+    reviewSourceFixHref,
+    useReviewSourceFix,
+  ]);
 
   // Track dirty state
   const [isDirty, setIsDirty] = useState(false);
@@ -491,7 +840,7 @@ const EvalDetailPage = () => {
         isPopulatingRef.current = false;
       }, 0);
     },
-    [defaultVersion, evalData, isDirty, isComposite, setSearchParams, isOSS],
+    [defaultVersion, evalData, isDirty, isComposite, setSearchParams],
   );
 
   // Three-dot menu
@@ -726,7 +1075,14 @@ const EvalDetailPage = () => {
       templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
     }
     return [...new Set([...requiredKeys, ...templateVars])];
-  }, [instructions, evalData, evalType, isComposite, compositeDetail]);
+  }, [
+    instructions,
+    evalData,
+    evalType,
+    isComposite,
+    compositeDetail,
+    templateFormat,
+  ]);
 
   // Save version
   const handleSaveVersion = useCallback(async () => {
@@ -869,6 +1225,7 @@ const EvalDetailPage = () => {
     errorLocalizerEnabled,
     messages,
     fewShotExamples,
+    templateFormat,
     updateEval,
     createVersion,
     enqueueSnackbar,
@@ -884,7 +1241,8 @@ const EvalDetailPage = () => {
       compositeChildren.forEach((c) => {
         const w = compositeChildWeights[c.child_id];
         if (w != null) weights[c.child_id] = w;
-        if (c.pinned_version_id) pinnedVersions[c.child_id] = c.pinned_version_id;
+        if (c.pinned_version_id)
+          pinnedVersions[c.child_id] = c.pinned_version_id;
       });
       const payload = {
         name: compositeName?.trim() || undefined,
@@ -1020,6 +1378,7 @@ const EvalDetailPage = () => {
     errorLocalizerEnabled,
     messages,
     fewShotExamples,
+    templateFormat,
     updateEval,
     updateComposite,
     handleTestResult,
@@ -1247,6 +1606,13 @@ const EvalDetailPage = () => {
           </Menu>
         </Box>
       </Box>
+
+      <EvalOnboardingFocusPanel
+        hidden={!reviewOnboardingParams.isOnboarding}
+        primaryAction={reviewPrimaryAction}
+        tourAnchor={reviewOnboardingParams.tourAnchor}
+        {...reviewOnboardingCopy}
+      />
 
       <BulkDeleteDialog
         open={deleteDialogOpen}
@@ -1646,7 +2012,7 @@ const EvalDetailPage = () => {
                   ))}
 
                 {/* Error Localization */}
-                {!isComposite && evalType !== "code"  && (
+                {!isComposite && evalType !== "code" && (
                   <Box>
                     <FormControlLabel
                       control={
@@ -2018,6 +2384,8 @@ const EvalDetailPage = () => {
             templateId={evalId}
             outputType={outputType}
             evalType={evalType}
+            onReviewActionPreferenceChange={handleReviewActionPreferenceChange}
+            onReviewComplete={handleReviewComplete}
           />
         </Box>
       )}

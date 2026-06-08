@@ -1,0 +1,7 @@
+{% extends "onboarding_lifecycle/_base_action.html" %}
+{% block title %}Make this comparison a repeatable check{% endblock %}
+{% block heading %}Turn the case that failed into a permanent check{% endblock %}
+{% block body %}
+  <p style="margin:0 0 16px;">Hi {{ user_name }}, you have compared prompt versions in {{ workspace_name }} and seen where one fell short.</p>
+  <p style="margin:0;">Save that weak case as an example or evaluator. From now on, every prompt change is automatically checked against it, so the same regression cannot slip back in unnoticed.</p>
+{% endblock %}

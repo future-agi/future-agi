@@ -4,7 +4,7 @@ from django.db import models
 
 
 class MCPOAuthClient(models.Model):
-    """Registered OAuth client applications (Cursor, Claude Code, etc.)."""
+    """Registered OAuth client applications (Cursor, MCP-compatible clients, etc.)."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client_id = models.CharField(max_length=100, unique=True)

@@ -1,5 +1,6 @@
 // LinkedTracesContent.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import PropTypes from "prop-types";
 import "src/styles/clean-data-table.css";
 import { Box, Skeleton } from "@mui/material";
 import MetricsHeaderSection from "../MetricsHeaderSection";
@@ -25,7 +26,7 @@ const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
 };
 
-const LinkedTracesContent = () => {
+const LinkedTracesContent = ({ isOnboarding = false }) => {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.borderless);
   const gridApiRef = useRef(null);
   const {
@@ -242,7 +243,7 @@ const LinkedTracesContent = () => {
   }, [isLoading, hasData, hasActiveFiltersOrSearch, hasInitialLoad]);
 
   if (showEmptyState) {
-    return <MetricEmptyState />;
+    return <MetricEmptyState isOnboarding={isOnboarding} />;
   }
 
   return (
@@ -288,6 +289,10 @@ const LinkedTracesContent = () => {
       />
     </Box>
   );
+};
+
+LinkedTracesContent.propTypes = {
+  isOnboarding: PropTypes.bool,
 };
 
 export default LinkedTracesContent;

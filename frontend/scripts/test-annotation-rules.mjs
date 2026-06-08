@@ -180,7 +180,7 @@ const SOURCE_SCENARIOS = [
   },
 ];
 
-const TEST_RULE_PREFIXES = ["codex e2e ", "qa-", "qa-rule-"];
+const TEST_RULE_PREFIXES = ["qa e2e ", "qa-", "qa-rule-"];
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -1654,7 +1654,7 @@ async function createRuleScenario({
   datasetInfo,
   runId,
 }) {
-  const ruleName = `codex e2e ${scenario.key} ${scenario.scheduleValue} ${runId}`;
+  const ruleName = `qa e2e ${scenario.key} ${scenario.scheduleValue} ${runId}`;
   const sourceTypeByLabel = {
     "Dataset Row": "dataset_row",
     Trace: "trace",
@@ -2111,7 +2111,7 @@ async function ensureQueueItemsViaApiRule({
       method: "POST",
       headers: authHeaders(accessToken),
       body: JSON.stringify({
-        name: `codex e2e annotator-walk ${sourceType} ${Date.now().toString(36)}`,
+        name: `qa e2e annotator-walk ${sourceType} ${Date.now().toString(36)}`,
         source_type: sourceType,
         conditions,
         enabled: true,
@@ -2535,7 +2535,7 @@ async function runAnnotatorWalk({
 }
 
 async function testCreateRuleNameValidation({ page, datasetInfo, runId }) {
-  const ruleName = `codex e2e name validation ${runId}`;
+  const ruleName = `qa e2e name validation ${runId}`;
   const nameSelector = '[data-testid="automation-rule-name-input"]';
   const submitSelector = '[data-testid="automation-rule-create-submit"]';
   const submitWrapperSelector =

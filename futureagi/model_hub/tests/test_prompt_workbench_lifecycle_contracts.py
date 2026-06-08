@@ -1,5 +1,6 @@
 import pytest
 
+from accounts.models import OnboardingActivationEvent
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.prompt_folders import PromptFolder
@@ -56,6 +57,7 @@ def _create_prompt_version(
     text=None,
     is_default=False,
     is_draft=True,
+    output=None,
 ):
     return PromptVersion.no_workspace_objects.create(
         original_template=template,
@@ -64,6 +66,7 @@ def _create_prompt_version(
         variable_names={"name": ["Ada"]},
         is_default=is_default,
         is_draft=is_draft,
+        output=output,
     )
 
 
@@ -304,3 +307,126 @@ def test_prompt_default_version_is_exclusive_for_set_default_and_commit(
     version_v2.refresh_from_db()
     assert version_v1.is_default is True
     assert version_v2.is_default is False
+
+
+@pytest.mark.django_db
+def test_prompt_commit_records_comparable_version_onboarding_event(
+    auth_client,
+    organization,
+    workspace,
+    user,
+):
+    template, version_v1 = _create_prompt_template(
+        organization, workspace, user, "Prompt comparable onboarding contract"
+    )
+    version_v1.commit_message = "baseline"
+    version_v1.is_draft = False
+    version_v1.output = ["Baseline answer"]
+    version_v1.save(update_fields=["commit_message", "is_draft", "output"])
+    version_v2 = _create_prompt_version(
+        template,
+        "v2",
+        text="Candidate {{name}}",
+        output=["Candidate answer"],
+    )
+
+    response = auth_client.post(
+        f"/model-hub/prompt-templates/{template.id}/commit/",
+        {
+            "version_name": "v2",
+            "message": "candidate",
+            "is_draft": False,
+            "set_default": False,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 200
+    version_v2.refresh_from_db()
+    assert version_v2.is_draft is False
+    assert OnboardingActivationEvent.no_workspace_objects.filter(
+        organization=organization,
+        workspace=workspace,
+        event_name="prompt_version_created",
+        activation_stage="save_prompt_version",
+        metadata__version_id=str(version_v2.id),
+    ).exists()
+    comparable_event = OnboardingActivationEvent.no_workspace_objects.get(
+        organization=organization,
+        workspace=workspace,
+        event_name="prompt_comparable_version_created",
+        activation_stage="create_second_prompt_version",
+    )
+    assert comparable_event.metadata["version_id"] == str(version_v2.id)
+
+
+@pytest.mark.django_db
+def test_prompt_commit_skips_comparable_event_without_two_outputs(
+    auth_client,
+    organization,
+    workspace,
+    user,
+):
+    first_template, version_v1 = _create_prompt_template(
+        organization,
+        workspace,
+        user,
+        "Prompt comparable negative first commit",
+    )
+    version_v1.output = ["First answer"]
+    version_v1.save(update_fields=["output"])
+
+    first_response = auth_client.post(
+        f"/model-hub/prompt-templates/{first_template.id}/commit/",
+        {
+            "version_name": "v1",
+            "message": "baseline",
+            "is_draft": False,
+            "set_default": False,
+        },
+        format="json",
+    )
+
+    assert first_response.status_code == 200
+    assert not OnboardingActivationEvent.no_workspace_objects.filter(
+        organization=organization,
+        workspace=workspace,
+        event_name="prompt_comparable_version_created",
+        activation_stage="create_second_prompt_version",
+    ).exists()
+
+    second_template, baseline = _create_prompt_template(
+        organization,
+        workspace,
+        user,
+        "Prompt comparable negative missing output",
+    )
+    baseline.commit_message = "baseline"
+    baseline.is_draft = False
+    baseline.output = ["Baseline answer"]
+    baseline.save(update_fields=["commit_message", "is_draft", "output"])
+    _create_prompt_version(
+        second_template,
+        "v2",
+        text="Candidate without output {{name}}",
+        output=None,
+    )
+
+    second_response = auth_client.post(
+        f"/model-hub/prompt-templates/{second_template.id}/commit/",
+        {
+            "version_name": "v2",
+            "message": "candidate",
+            "is_draft": False,
+            "set_default": False,
+        },
+        format="json",
+    )
+
+    assert second_response.status_code == 200
+    assert not OnboardingActivationEvent.no_workspace_objects.filter(
+        organization=organization,
+        workspace=workspace,
+        event_name="prompt_comparable_version_created",
+        activation_stage="create_second_prompt_version",
+    ).exists()

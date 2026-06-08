@@ -14,7 +14,7 @@ import {
 import { format, isValid } from "date-fns";
 import PropTypes from "prop-types";
 import React, { useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import SvgColor from "src/components/svg-color";
 import {
   handleMenuItemEvent,
@@ -30,8 +30,24 @@ import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import { appendSetupQuickStartAttributionToHref } from "src/sections/auth/jwt/setup-org-quick-starts";
 
-const Wrapper = ({ type, id, onClick, children, theme }) => {
+const quickStartInputFromSearch = (search = "") =>
+  Object.fromEntries(new URLSearchParams(search));
+
+const promptItemHref = ({ type, id, search }) => {
+  const href =
+    type === PROMPT_ITEM_TYPES.FOLDER
+      ? `/dashboard/workbench/${id}`
+      : `/dashboard/workbench/create/${id}`;
+
+  return appendSetupQuickStartAttributionToHref(
+    href,
+    quickStartInputFromSearch(search),
+  );
+};
+
+const Wrapper = ({ type, id, onClick, children, theme, search }) => {
   if (type === PROMPT_ITEM_TYPES.TEMPLATE) {
     return (
       <Box
@@ -52,11 +68,7 @@ const Wrapper = ({ type, id, onClick, children, theme }) => {
 
   return (
     <Link
-      to={
-        type === PROMPT_ITEM_TYPES.FOLDER
-          ? `/dashboard/workbench/${id}`
-          : `/dashboard/workbench/create/${id}`
-      }
+      to={promptItemHref({ type, id, search })}
       style={{
         textDecoration: "none",
         display: "flex",
@@ -80,6 +92,7 @@ Wrapper.propTypes = {
   onClick: PropTypes.func,
   children: PropTypes.node.isRequired,
   theme: PropTypes.object.isRequired,
+  search: PropTypes.string,
 };
 
 export default function PromptItem({
@@ -98,6 +111,7 @@ export default function PromptItem({
   const { role } = useAuthContext();
   const canWrite = RolePermission.PROMPTS[PERMISSIONS.UPDATE][role];
   const theme = useTheme();
+  const location = useLocation();
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   const [selectedActineName, setSelectedActionName] = useState(null);
@@ -184,6 +198,7 @@ export default function PromptItem({
           id={id}
           onClick={() => handleTemplateClick(id)}
           theme={theme}
+          search={location.search}
         >
           <Box
             sx={{

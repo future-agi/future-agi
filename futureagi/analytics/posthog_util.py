@@ -111,6 +111,26 @@ class PostHogTracker:
             logger.exception("PostHog feature flag error", error=str(e))
             return False
 
+    def get_feature_flags(self, flag_names, user_id, groups=None):
+        """Fetch multiple feature flags for a user in one request."""
+        if not self.is_enabled or not user_id:
+            return {}
+        names = [name for name in flag_names if name]
+        if not names:
+            return {}
+        try:
+            flags = self.client.get_all_flags(
+                str(user_id),
+                groups=groups or {},
+                flag_keys_to_evaluate=names,
+            )
+            if not isinstance(flags, dict):
+                return {}
+            return {name: flags.get(name) for name in names if name in flags}
+        except Exception as e:
+            logger.exception("PostHog feature flags error", error=str(e))
+            return {}
+
     def get_feature_flag_payload(self, flag_name, user_id, groups=None):
         """Get feature flag payload for multivariate flags."""
         if not self.is_enabled:

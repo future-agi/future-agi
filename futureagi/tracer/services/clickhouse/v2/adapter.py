@@ -326,7 +326,7 @@ def adapt(pg_row: dict[str, Any]) -> CHSpanRow:
     #   • eval_attributes  — per-eval custom attrs
     # Merge them into the overflow JSON under their column name so they
     # round-trip through to attributes_extra and are queryable via path access
-    # (DECISIONS #018). Caught by codex review on 2026-05-24 as silent drop.
+    # (DECISIONS #018). Caught by review on 2026-05-24 as silent drop.
     for col in ("model_parameters", "input_images", "eval_input", "eval_attributes"):
         v = pg_row.get(col)
         if v is None:

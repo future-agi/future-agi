@@ -1,6 +1,6 @@
 /* eslint-disable react/prop-types */
 import React, { useState, useMemo, useCallback, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Box,
   Typography,
@@ -29,6 +29,18 @@ import { GATEWAY_ICONS } from "../constants/gatewayIcons";
 import { useFallbackConfig } from "./hooks/useFallbackConfig";
 import { useProviderHealth } from "../providers/hooks/useGatewayConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
+import GatewayOnboardingFocusPanel from "../components/GatewayOnboardingFocusPanel";
+import { recordActivationEvent } from "src/sections/onboarding-home/api/onboarding-home-api";
+import {
+  appendGatewayOnboardingAttributionToHref,
+  buildGatewayFallbackPolicyCreatedPayload,
+  buildGatewayFailureResolvedPayload,
+  buildGatewayOnboardingCompletionHref,
+  buildGatewayRequestReviewHref,
+  GATEWAY_ONBOARDING_MODES,
+  gatewaySetupQuickStartAttributionFromSearch,
+  getGatewayOnboardingRouteParams,
+} from "../gatewayOnboardingEvents";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -396,6 +408,7 @@ const ModelTimeoutsEditor = ({ timeouts, onChange, models }) => {
 
 const FallbacksSection = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { routing, isLoading, error, refetch, saveRouting, isSaving } =
     useFallbackConfig();
   const { gatewayId } = useGatewayContext();
@@ -414,6 +427,23 @@ const FallbacksSection = () => {
   }, [providerHealth]);
 
   const noModelsConfigured = availableModels.length === 0;
+  const onboardingParams = getGatewayOnboardingRouteParams(searchParams);
+  const gatewayQuickStartAttribution =
+    gatewaySetupQuickStartAttributionFromSearch(searchParams);
+  const onboardingHref = useCallback(
+    (href) =>
+      appendGatewayOnboardingAttributionToHref(
+        href,
+        gatewayQuickStartAttribution,
+      ),
+    [gatewayQuickStartAttribution],
+  );
+  const onboardingRequestId = onboardingParams.requestId;
+  const isFailureRepair = onboardingParams.isFailureRepair;
+  const showOnboardingFocus =
+    onboardingParams.isOnboarding &&
+    (!onboardingParams.mode ||
+      onboardingParams.mode === GATEWAY_ONBOARDING_MODES.ADD_POLICY);
 
   // Local draft state — initialized from server data
   const [draft, setDraft] = useState(null);
@@ -483,6 +513,43 @@ const FallbacksSection = () => {
     try {
       await saveRouting(draft);
       setHasChanges(false);
+      if (showOnboardingFocus) {
+        try {
+          const eventPayload = buildGatewayFallbackPolicyCreatedPayload({
+            gatewayId,
+            quickStartAttribution: gatewayQuickStartAttribution,
+            requestId: onboardingRequestId,
+            routing: draft,
+          });
+          if (isFailureRepair) {
+            await recordActivationEvent(
+              buildGatewayFailureResolvedPayload({
+                gatewayId,
+                quickStartAttribution: gatewayQuickStartAttribution,
+                repairType: "fallback",
+                requestId: onboardingRequestId,
+                source: "gateway_fallbacks_onboarding",
+                metadata: {
+                  fallback_chain_count:
+                    eventPayload.metadata?.fallback_chain_count,
+                },
+              }),
+            );
+          }
+          await recordActivationEvent(eventPayload);
+          navigate(
+            buildGatewayOnboardingCompletionHref({
+              ...eventPayload,
+              quickStartAttribution: gatewayQuickStartAttribution,
+            }),
+            {
+              replace: true,
+            },
+          );
+        } catch {
+          // Keep the policy save intact if activation recording is unavailable.
+        }
+      }
     } catch {
       // error handled by mutation
     }
@@ -492,6 +559,15 @@ const FallbacksSection = () => {
   const handleReset = () => {
     setDraft({ ...routing });
     setHasChanges(false);
+  };
+
+  const openOnboardingRequestLog = () => {
+    navigate(
+      buildGatewayRequestReviewHref({
+        quickStartAttribution: gatewayQuickStartAttribution,
+        requestId: onboardingRequestId,
+      }),
+    );
   };
 
   // Convenience getters
@@ -546,6 +622,37 @@ const FallbacksSection = () => {
           title="Fallbacks & Reliability"
           subtitle="Configure model fallback chains and provider reliability settings"
           actions={[]}
+        />
+        <GatewayOnboardingFocusPanel
+          currentStep="Fix"
+          description="Add providers before configuring fallback recovery for this failed request."
+          hidden={!showOnboardingFocus}
+          blocker="Needs provider models"
+          primaryAction={{
+            label: "Configure providers",
+            onClick: () =>
+              navigate(
+                onboardingHref(
+                  "/dashboard/gateway/providers?source=onboarding",
+                ),
+              ),
+          }}
+          secondaryAction={
+            onboardingRequestId
+              ? {
+                  label: "Open request log",
+                  onClick: openOnboardingRequestLog,
+                }
+              : null
+          }
+          singleActionFocus={showOnboardingFocus}
+          steps={[
+            { label: "Request", complete: Boolean(onboardingRequestId) },
+            { label: "Provider", complete: false },
+            { label: "Fallback", complete: false },
+          ]}
+          title="Configure gateway recovery"
+          tourAnchor={onboardingParams.tourAnchor}
         />
         <Card sx={{ mt: 3 }}>
           <CardContent>
@@ -605,6 +712,33 @@ const FallbacksSection = () => {
               ]
             : []),
         ]}
+      />
+
+      <GatewayOnboardingFocusPanel
+        currentStep="Fix"
+        description="Add or update a fallback chain so similar gateway failures can recover automatically."
+        hidden={!showOnboardingFocus}
+        primaryAction={{
+          label: "Add Fallback Chain",
+          onClick: handleAddChain,
+          disabled: availableModels.length === fallbackChains.length,
+        }}
+        secondaryAction={
+          onboardingRequestId
+            ? {
+                label: "Open request log",
+                onClick: openOnboardingRequestLog,
+              }
+            : null
+        }
+        singleActionFocus={showOnboardingFocus}
+        steps={[
+          { label: "Request", complete: Boolean(onboardingRequestId) },
+          { label: "Provider", complete: availableModels.length > 0 },
+          { label: "Fallback", complete: fallbackChains.length > 0 },
+        ]}
+        title="Configure gateway recovery"
+        tourAnchor={onboardingParams.tourAnchor}
       />
 
       {hasChanges && (
