@@ -7263,6 +7263,18 @@ OSS_AVAILABLE_MODELS = [
         "rate_limits": {"requests_per_minute": 100},
         "latency": 300,
     },
+    {
+        "model_name": "pulse-pro",
+        "providers": "smallest_ai",
+        "api_key_name": "SMALLEST_AI_API_KEY",
+        "mode": "stt",
+        "best_for": ["high-accuracy transcription", "multilingual STT", "Indian language recognition"],
+        "use_case": ["transcribing meetings", "voice commands", "multilingual transcription", "Indian language STT"],
+        "supported_languages": ["en", "hi", "ta", "te", "mr", "kn", "ml", "gu", "bn", "es", "fr", "de", "ja", "ko", "zh", "ar", "pt", "ru"],
+        "supported_formats": ["wav", "mp3"],
+        "rate_limits": {"requests_per_minute": 100},
+        "latency": 300,
+    },
     # ---- Smallest AI end ----
 
 ]
