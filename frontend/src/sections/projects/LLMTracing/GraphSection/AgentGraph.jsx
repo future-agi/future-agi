@@ -474,7 +474,15 @@ const buildFlowData = (graphData, direction = "LR", theme = null) => {
   const flowNodes = graphData.nodes.map((node) => ({
     id: node.id,
     type: "agentNode",
-    data: { ...node, _direction: direction },
+    data: {
+      ...node,
+      span_count: node.spanCount ?? 0,
+      avg_latency_ms: node.avgLatencyMs ?? 0,
+      total_tokens: node.totalTokens ?? 0,
+      total_cost: node.totalCost ?? 0,
+      error_count: node.errorCount ?? 0,
+      _direction: direction,
+    },
     position: { x: 0, y: 0 },
     connectable: false,
   }));
