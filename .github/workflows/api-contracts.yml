@@ -180,6 +180,8 @@ jobs:
       PG_TEST_DB: test_tfc_test
       PG_USER: postgres
       PG_PASSWORD: postgres
+      CH_USE_REPLICATED_ENGINES: "false"
+      CH25_DROP_LEGACY_CDC_CHAIN: "true"
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
