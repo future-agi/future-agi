@@ -165,12 +165,19 @@ def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key)
     raw_input = run_prompt_instance._get_input_audio_from_messages()
     audio_bytes = audio_bytes_from_url_or_base64(raw_input)
 
+    model_name_with_provider = run_prompt_instance.model
+    model_id = (
+        model_name_with_provider.split("/")[-1]
+        if "/" in model_name_with_provider
+        else model_name_with_provider
+    )
+
     cfg = run_prompt_instance.run_prompt_config or {}
     language = cfg.get("language") or cfg.get("language_code") or "en"
     word_timestamps = cfg.get("word_timestamps", False)
     diarize = cfg.get("diarize", False)
 
-    params = {"model": "pulse", "language": language}
+    params = {"model": model_id, "language": language}
     if word_timestamps:
         params["word_timestamps"] = "true"
     if diarize:
