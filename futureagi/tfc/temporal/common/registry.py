@@ -75,6 +75,8 @@ TEMPORAL_ACTIVITY_MODULES = [
     "integrations.transformers.langfuse_transformer",
     # billing tasks (Phase 4.6 — budget catch-up)
     "tfc.temporal.schedules.billing",
+    # OSS instance registration and usage heartbeat
+    "tfc.temporal.schedules.oss_telemetry",
 ]
 
 

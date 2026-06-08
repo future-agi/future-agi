@@ -7,6 +7,7 @@ import requests
 import structlog
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
+from django.db import close_old_connections, transaction
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from slack_sdk import WebhookClient
@@ -29,6 +30,29 @@ from tfc.utils.email import email_helper
 from tfc.utils.parse_errors import parse_serialized_errors
 
 logger = structlog.get_logger(__name__)
+
+
+def _fire_oss_telemetry_registration():
+    import threading
+
+    try:
+        from tfc.ee_gating import is_oss
+
+        if not is_oss():
+            return
+
+        def _register():
+            close_old_connections()
+            try:
+                from tfc.oss_telemetry.sender import attempt_registration
+
+                attempt_registration()
+            finally:
+                close_old_connections()
+
+        threading.Thread(target=_register, daemon=True).start()
+    except Exception:
+        pass
 
 
 def resolve_org(request):
@@ -189,12 +213,6 @@ def first_signup(data, mode=None):
     domain = email_parts[1]
 
     if domain in FREE_EMAIL_DOMAINS:
-        # For free email providers, use the username part and create org name
-        username = email_parts[0]
-        # Remove numbers and special characters, capitalize first letter of each word
-        # org_name = re.sub(r'[0-9._-]+', ' ', username)
-        # org_name = ' '.join(word.capitalize() for word in org_name.split())
-        # data["company_name"] = org_name + " Org"
         data["company_name"] = ""
     else:
         # For work emails, use domain as before
@@ -265,6 +283,7 @@ def first_signup(data, mode=None):
         if generated_password:
             process_post_registration(user.id, generated_password)
 
+        transaction.on_commit(_fire_oss_telemetry_registration)
         return user
 
     else:

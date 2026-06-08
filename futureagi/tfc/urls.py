@@ -139,6 +139,15 @@ urlpatterns = [
 
 if has_ee("ee.usage"):
     urlpatterns += [path("usage/", include("ee.usage.urls"))]
+    try:
+        from ee.usage.deployment import DeploymentMode
+
+        if DeploymentMode.is_cloud():
+            urlpatterns += [
+                path("oss/", include("ee.usage.oss_telemetry_urls"))
+            ]
+    except ImportError:
+        pass
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 
