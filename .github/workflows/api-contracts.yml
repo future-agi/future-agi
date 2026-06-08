@@ -255,6 +255,8 @@ jobs:
           git diff --exit-code api_contracts/openapi/swagger.json
 
       - name: Run annotation/filter contract tests
+        env:
+          TESTING: "true"
         run: >
           uv run pytest -q --tb=line
           tracer/tests/test_filter_contract.py
