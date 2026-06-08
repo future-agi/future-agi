@@ -197,6 +197,18 @@ jobs:
       PG_TEST_DB: test_tfc_test
       PG_USER: postgres
       PG_PASSWORD: postgres
+      CH_HOST: localhost
+      CH_PORT: 19000
+      CH_DATABASE: test_tfc
+      CH_USERNAME: default
+      CH_PASSWORD: ""
+      CH25_HOST: localhost
+      CH25_HTTP_PORT: 18123
+      CH25_TCP_PORT: 19000
+      CH25_DATABASE: test_tfc
+      CH25_USER: default
+      CH25_PASSWORD: ""
+      CH25_DROP_LEGACY_CDC_CHAIN: "true"
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
@@ -240,6 +252,28 @@ jobs:
         if: steps.ee-token.outputs.available == 'true'
         working-directory: futureagi/ee
         run: git config --unset-all http.https://github.com/.extraheader || true
+
+      - name: Start ClickHouse test service
+        run: |
+          docker run -d --name api-contracts-clickhouse \
+            -p 18123:8123 \
+            -p 19000:9000 \
+            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -e CLICKHOUSE_DB=test_tfc \
+            -v "${PWD}/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro" \
+            -v "${PWD}/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro" \
+            clickhouse/clickhouse-server:25.3-alpine
+
+          for attempt in {1..60}; do
+            if curl -fsS http://localhost:18123/ping >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs api-contracts-clickhouse
+          exit 1
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -309,3 +343,7 @@ jobs:
               tracer/tests/test_filter_engine_parity.py \
               model_hub/tests/test_annotation_api_contract.py
           fi
+
+      - name: Stop ClickHouse test service
+        if: always()
+        run: docker rm -f api-contracts-clickhouse || true
