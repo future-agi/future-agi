@@ -19,6 +19,7 @@ Returns:
 }
 """
 
+import hmac
 import json
 import os
 import shutil
@@ -386,7 +387,7 @@ class AuthMiddleware:
     def process_request(self, req, resp):
         if req.path == "/health":
             return
-        if not self._key or req.get_header("X-Internal-Api-Key") != self._key:
+        if not self._key or not hmac.compare_digest(req.get_header("X-Internal-Api-Key") or "", self._key):
             raise falcon.HTTPUnauthorized(title="Unauthorized")
 
 
