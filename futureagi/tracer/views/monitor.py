@@ -47,9 +47,16 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     serializer_class = UserAlertMonitorSerializer
 
     def _current_organization(self):
-        return (
-            getattr(self.request, "organization", None) or self.request.user.organization
-        )
+        # Returns None for unauthenticated requests (e.g. drf-yasg's fake view
+        # during OpenAPI generation) instead of raising on AnonymousUser, which
+        # would otherwise silently drop request bodies from the generated schema.
+        org = getattr(self.request, "organization", None)
+        if org is not None:
+            return org
+        user = getattr(self.request, "user", None)
+        if user is None or not user.is_authenticated:
+            return None
+        return getattr(user, "organization", None)
 
     def _workspace_scope_q(self, field_name="workspace"):
         workspace = getattr(self.request, "workspace", None)
@@ -69,9 +76,12 @@ class UserAlertMonitorView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return Q(**{field_name: workspace})
 
     def _visible_observe_projects(self):
+        organization = self._current_organization()
+        if organization is None:
+            return Project.no_workspace_objects.none()
         return Project.no_workspace_objects.filter(
             self._workspace_scope_q("workspace"),
-            organization=self._current_organization(),
+            organization=organization,
             trace_type="observe",
             deleted=False,
         )

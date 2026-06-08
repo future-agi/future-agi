@@ -544,7 +544,6 @@ import type {
   IntegrationConnectionCreateApi,
   IntegrationConnectionDetailApi,
   IntegrationConnectionDetailResponseApi,
-  IntegrationConnectionListApi,
   IntegrationConnectionListResponseApi,
   IntegrationConnectionUpdateApi,
   IntegrationEmptyRequestApi,
@@ -19427,7 +19426,7 @@ export const integrationsConnectionsRead = async (id: string, options?: RequestI
 
 
 export type integrationsConnectionsUpdateResponse200 = {
-  data: IntegrationConnectionListApi
+  data: IntegrationConnectionDetailResponseApi
   status: 200
 }
 
@@ -19472,7 +19471,7 @@ export const getIntegrationsConnectionsUpdateUrl = (id: string,) => {
  * API endpoints for managing integration connections.
  */
 export const integrationsConnectionsUpdate = async (id: string,
-    integrationConnectionListApi: NonReadonly<IntegrationConnectionListApi>, options?: RequestInit): Promise<integrationsConnectionsUpdateResponse> => {
+    integrationConnectionUpdateApi: IntegrationConnectionUpdateApi, options?: RequestInit): Promise<integrationsConnectionsUpdateResponse> => {
 
   return apiMutator<integrationsConnectionsUpdateResponse>(getIntegrationsConnectionsUpdateUrl(id),
   {
@@ -19480,7 +19479,7 @@ export const integrationsConnectionsUpdate = async (id: string,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      integrationConnectionListApi,)
+      integrationConnectionUpdateApi,)
   }
 );}
 
@@ -33780,7 +33779,11 @@ export const getModelHubEvalGroupsListUrl = (params?: ModelHubEvalGroupsListPara
 }
 
 /**
- * List all eval groups for the user's organization
+ * Pure routing: three independent bulk reads in this method (main
+EvalGroup queryset, EvalGroup.eval_templates through-table, and
+EvalTemplate) all route to DATABASE_FOR_EVAL_GROUP_LIST when
+"feature:eval_group_list" is opted in. No query semantics change.
+ * @summary List all eval groups for the user's organization.
  */
 export const modelHubEvalGroupsList = async (params?: ModelHubEvalGroupsListParams, options?: RequestInit): Promise<modelHubEvalGroupsListResponse> => {
 
@@ -40786,19 +40789,44 @@ export const modelHubKbUpdate = async (id: string,
 
 
 export type modelHubKbPartialUpdateResponse200 = {
-  data: KnowledgeBaseApi
+  data: KnowledgeBaseResponseApi
   status: 200
+}
+
+export type modelHubKbPartialUpdateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubKbPartialUpdateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubKbPartialUpdateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubKbPartialUpdateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubKbPartialUpdateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubKbPartialUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
 export type modelHubKbPartialUpdateResponseSuccess = (modelHubKbPartialUpdateResponse200) & {
   headers: Headers;
 };
-export type modelHubKbPartialUpdateResponseError = (modelHubKbPartialUpdateResponseDefault) & {
+export type modelHubKbPartialUpdateResponseError = (modelHubKbPartialUpdateResponse400 | modelHubKbPartialUpdateResponse403 | modelHubKbPartialUpdateResponse404 | modelHubKbPartialUpdateResponse409 | modelHubKbPartialUpdateResponse500 | modelHubKbPartialUpdateResponseDefault) & {
   headers: Headers;
 };
 
@@ -40813,7 +40841,8 @@ export const getModelHubKbPartialUpdateUrl = (id: string,) => {
 }
 
 /**
- * ViewSet for handling KnowledgeBase operations.
+ * Partially update a knowledge base.
+ * @summary Partially update a knowledge base.
  */
 export const modelHubKbPartialUpdate = async (id: string,
     knowledgeBaseApi: NonReadonly<KnowledgeBaseApi>, options?: RequestInit): Promise<modelHubKbPartialUpdateResponse> => {
