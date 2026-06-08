@@ -23,6 +23,7 @@
     "test:fast": "vitest run --reporter=default --passWithNoTests --maxConcurrency=4 --testTimeout=10000",
     "test:ci": "node --max-old-space-size=4096 ./node_modules/.bin/vitest run --reporter=verbose --coverage",
     "test:changed": "vitest related --run",
+    "check-all": "yarn lint && yarn type-check && yarn test:run",
     "rm:all": "rm -rf node_modules .next out dist build",
     "re:start": "yarn rm:all && yarn install && yarn dev",
     "re:build": "yarn rm:all && yarn install && node --max-old-space-size=8192 ./node_modules/.bin/vite build",

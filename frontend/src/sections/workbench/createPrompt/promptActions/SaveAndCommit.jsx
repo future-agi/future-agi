@@ -9,7 +9,7 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import PropTypes from "prop-types";
 import React, { useState } from "react";
@@ -24,6 +24,7 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 
 const SaveAndCommit = ({ open, onClose, data, promptName }) => {
   const { id } = useParams();
+  const queryClient = useQueryClient();
   const [messageType, setMessageType] = useState(null);
 
   const {
@@ -83,6 +84,12 @@ const SaveAndCommit = ({ open, onClose, data, promptName }) => {
       );
       trackEvent(Events.promptCommitClicked, {
         [PropertyName.promptId]: id,
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["prompt-versions", id],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["prompt-latest-version", id],
       });
       handleOnClose();
     },

@@ -516,13 +516,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         }
 
         query = f"""
-        SELECT
-            trace_id,
-            dictGetOrDefault('enduser_dict', 'user_id', end_user_id, '') AS user_id
+        SELECT trace_id, user_id
         FROM (
             SELECT
                 trace_id,
-                any(end_user_id) AS end_user_id
+                dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '') AS user_id
             FROM {self.TABLE}
             PREWHERE trace_id IN %(user_trace_ids)s
             WHERE {self.project_filter_sql()}
@@ -562,7 +560,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             user_query, user_params, timeout_ms=10000
         )
 
-        # Build trace_id → user_id mapping
+        # Build trace_id → user_id mapping (filter already applied in query)
         user_id_map = {
             str(row.get("trace_id", "")): row.get("user_id")
             for row in result.data

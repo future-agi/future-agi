@@ -309,6 +309,7 @@ const PromptActions = () => {
     () => !!selectedVersions?.some((version) => version?.isDraft),
     [selectedVersions],
   );
+  const disableCommit = isAnyPromptDraft || selectedVersions.length > 1;
 
   // const selectedVersion = useMemo(() => {
   //   return versions?.find(
@@ -532,6 +533,61 @@ const PromptActions = () => {
         <Box display="flex" gap={theme.spacing(1.5)} alignItems={"flex-start"}>
           {/* Hide More Actions, Variables, and Run Prompt on Simulation tab */}
           <ShowComponent condition={currentTab !== "Simulation"}>
+            <ShowComponent
+              condition={RolePermission.PROMPTS[PERMISSIONS.UPDATE][userRole]}
+            >
+              <CustomTooltip
+                show
+                title={
+                  disableCommit
+                    ? "Please run the prompt before saving and committing"
+                    : "Save your prompt changes with a clear message, so every update becomes a trackable version."
+                }
+                arrow
+                size="small"
+                type="black"
+                slotProps={{
+                  tooltip: {
+                    sx: {
+                      maxWidth: "200px !important",
+                    },
+                  },
+                }}
+              >
+                <span style={{ display: "inline-block" }}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    sx={{
+                      borderRadius: "4px",
+                      height: "30px",
+                      whiteSpace: "nowrap",
+                    }}
+                    disabled={
+                      disableCommit ||
+                      currentTab === "Evaluation" ||
+                      currentTab === "Metrics"
+                    }
+                    onClick={() => {
+                      setSaveCommitOpen(true);
+                      trackEvent(Events.promptCommitClicked, {
+                        [PropertyName.promptId]: id,
+                      });
+                    }}
+                    startIcon={
+                      <SvgColor
+                        sx={{ width: "20px", height: "20px" }}
+                        src="/assets/icons/ic_commit.svg"
+                      />
+                    }
+                  >
+                    <Typography variant="s1" fontWeight={"fontWeightMedium"}>
+                      Commit
+                    </Typography>
+                  </Button>
+                </span>
+              </CustomTooltip>
+            </ShowComponent>
             <MoreActions
               isMoreOpen={isMoreOpen}
               setMoreOpen={setMoreOpen}
@@ -542,9 +598,7 @@ const PromptActions = () => {
               Events={Events}
               PropertyName={PropertyName}
               id={id}
-              isAnyPromptDraft={isAnyPromptDraft}
               selectedVersions={selectedVersions}
-              setSaveCommitOpen={setSaveCommitOpen}
               theme={theme}
               isAddingDraft={isAddingDraft}
               addToCompare={addToCompare}
