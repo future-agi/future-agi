@@ -50,7 +50,7 @@ def _fire_oss_telemetry_registration():
             finally:
                 close_old_connections()
 
-        threading.Thread(target=_register, daemon=True).start()
+        threading.Thread(target=_register).start()
     except Exception:
         pass
 

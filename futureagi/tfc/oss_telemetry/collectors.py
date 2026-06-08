@@ -58,6 +58,20 @@ def collect_counts(window_start: datetime, window_end: datetime) -> dict[str, in
             created_at__lt=window_end,
         ).count()
 
+    def dataset_eval_runs() -> int:
+        from model_hub.models.develop_dataset import Cell, Column
+
+        return (
+            Cell.no_workspace_objects.filter(
+                column__source="evaluation",
+                updated_at__gte=window_start,
+                updated_at__lt=window_end,
+            )
+            .values("column_id")
+            .distinct()
+            .count()
+        )
+
     def experiments() -> int:
         from model_hub.models.experiments import ExperimentsTable
 
@@ -125,6 +139,10 @@ def collect_counts(window_start: datetime, window_end: datetime) -> dict[str, in
             "model_hub_evaluations",
             model_hub_evaluations,
         ),
+        "dataset_eval_runs_count": _safe_count(
+            "dataset_eval_runs",
+            dataset_eval_runs,
+        ),
         "simulation_runs_count": _safe_count("simulation_runs", simulation_runs),
         "simulation_calls_count": _safe_count("simulation_calls", simulation_calls),
         "experiments_count": _safe_count("experiments", experiments),
@@ -133,6 +151,8 @@ def collect_counts(window_start: datetime, window_end: datetime) -> dict[str, in
         "active_users_count": _safe_count("active_users", active_users),
     }
     counts["total_evaluations_count"] = (
-        counts["eval_logger_count"] + counts["model_hub_evaluations_count"]
+        counts["eval_logger_count"]
+        + counts["model_hub_evaluations_count"]
+        + counts["dataset_eval_runs_count"]
     )
     return counts
