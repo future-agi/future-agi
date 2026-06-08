@@ -295,9 +295,11 @@ describe("EvalCreatePage onboarding source handoff", () => {
       "trace-1",
     );
     expect(mocks.testPlaygroundProps).toMatchObject({
+      evalType: "code",
       initialTraceId: "trace-1",
       initialTraceProjectId: "project-1",
       initialTraceRowType: "Trace",
+      model: "",
     });
 
     const runButton = await screen.findByRole("button", {
@@ -315,7 +317,7 @@ describe("EvalCreatePage onboarding source handoff", () => {
           artifactType: "eval",
           metadata: expect.objectContaining({
             eval_id: "eval-draft-1",
-            eval_type: "agent",
+            eval_type: "code",
             mode: "single",
             source_id: "project-1",
             source_type: "trace_project",
@@ -328,11 +330,16 @@ describe("EvalCreatePage onboarding source handoff", () => {
       ),
     );
     await waitFor(() =>
-      expect(mocks.updateDraftMutateAsync).toHaveBeenCalled(),
+      expect(mocks.updateDraftMutateAsync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eval_type: "code",
+        }),
+      ),
     );
     expect(mocks.axiosPost).toHaveBeenCalledWith(
       "/api/evals/playground/",
       expect.objectContaining({
+        model: "",
         template_id: "eval-draft-1",
         trace_id: "trace-1",
         config: {
@@ -420,5 +427,48 @@ describe("EvalCreatePage onboarding source handoff", () => {
       }),
     );
     expect(mocks.runTest).toHaveBeenCalledWith("eval-draft-1");
+  });
+
+  it("waits for an existing trace-project draft before allowing repair reruns", async () => {
+    let resolveDraft;
+    mocks.axiosGet.mockReturnValue(
+      new Promise((resolve) => {
+        resolveDraft = resolve;
+      }),
+    );
+
+    renderWithRouter(<EvalCreatePage />, {
+      route:
+        "/dashboard/evaluations/create/eval-draft-1?source=onboarding&step=run&source_type=trace_project&source_id=project-1&trace_id=trace-1&rerun_from=source_fix&previous_run_id=run-1",
+    });
+
+    const rerunButton = await screen.findByRole("button", {
+      name: "Rerun quality check",
+    });
+    expect(rerunButton).toBeDisabled();
+
+    fireEvent.click(rerunButton);
+
+    expect(mocks.updateDraftMutateAsync).not.toHaveBeenCalled();
+    expect(mocks.axiosPost).not.toHaveBeenCalledWith(
+      "/api/evals/playground/",
+      expect.anything(),
+    );
+
+    resolveDraft({
+      data: {
+        result: {
+          eval_type: "code",
+          output_type_normalized: "percentage",
+          pass_threshold: 0.7,
+          config: {
+            code: "def evaluate(output=None, context=None, **kwargs):\n    return {\"score\": 1.0}",
+            language: "python",
+          },
+        },
+      },
+    });
+
+    await waitFor(() => expect(rerunButton).toBeEnabled());
   });
 });

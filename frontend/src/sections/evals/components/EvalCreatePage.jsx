@@ -187,6 +187,12 @@ const EvalCreatePage = () => {
   const isTraceProjectOnboarding =
     onboardingParams.isOnboarding &&
     onboardingParams.sourceType === "trace_project";
+  const isTraceProjectQualityCheckOnboarding =
+    isTraceProjectOnboarding &&
+    [
+      EVAL_CREATE_ONBOARDING_STEPS.SCORER,
+      EVAL_CREATE_ONBOARDING_STEPS.RUN,
+    ].includes(onboardingParams.step);
   const onboardingQuickStartAttribution = useMemo(
     () => evalSetupQuickStartAttributionFromSearch(location.search),
     [location.search],
@@ -244,6 +250,9 @@ const EvalCreatePage = () => {
   // --- Single eval state ---
   const [name, setName] = useState("");
   const [evalType, setEvalType] = useState("agent");
+  const persistedEvalType = isTraceProjectQualityCheckOnboarding
+    ? "code"
+    : evalType;
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
@@ -305,6 +314,7 @@ const EvalCreatePage = () => {
   const [isPlaygroundReady, setIsPlaygroundReady] = useState(false);
   const [autoSavingOnboardingStarter, setAutoSavingOnboardingStarter] =
     useState(false);
+  const isDraftDetailsLoading = Boolean(urlDraftId && !draftLoadComplete);
   const draftCreating = useRef(false);
   const autoSaveTimer = useRef(null);
   const autoSaveSkipFirst = useRef(!!urlDraftId);
@@ -323,6 +333,12 @@ const EvalCreatePage = () => {
 
   // Hook for updating the draft template
   const updateDraft = useUpdateEval(draftId);
+
+  useEffect(() => {
+    if (isTraceProjectQualityCheckOnboarding && evalType !== "code") {
+      setEvalType("code");
+    }
+  }, [evalType, isTraceProjectQualityCheckOnboarding]);
 
   const handleTestResult = useCallback(
     (success, result) => {
@@ -354,7 +370,7 @@ const EvalCreatePage = () => {
         recordActivationEvent?.(
           buildEvalRunCompletedPayload({
             evalId: draftId,
-            evalType: mode === "composite" ? "composite" : evalType,
+            evalType: mode === "composite" ? "composite" : persistedEvalType,
             isComposite: mode === "composite",
             mode,
             quickStartAttribution: onboardingQuickStartAttribution,
@@ -371,7 +387,7 @@ const EvalCreatePage = () => {
           recordActivationEvent?.(
             buildEvalFixRerunCompletedPayload({
               evalId: draftId,
-              evalType: mode === "composite" ? "composite" : evalType,
+              evalType: mode === "composite" ? "composite" : persistedEvalType,
               isComposite: mode === "composite",
               mode,
               previousRunId: onboardingParams.previousRunId,
@@ -405,7 +421,7 @@ const EvalCreatePage = () => {
     },
     [
       draftId,
-      evalType,
+      persistedEvalType,
       mode,
       navigate,
       onboardingParams,
@@ -647,6 +663,10 @@ const EvalCreatePage = () => {
       sourceId: onboardingParams.sourceId,
       sourceType: onboardingParams.sourceType,
     });
+    if (autoSaveTimer.current) {
+      clearTimeout(autoSaveTimer.current);
+      autoSaveTimer.current = null;
+    }
     skipNextAutoSaveRef.current = true;
     setMode("single");
     setEvalType(starter.evalType);
@@ -668,7 +688,7 @@ const EvalCreatePage = () => {
       onboardingParams.sourceId &&
       onboardingParams.sourceType &&
       !name.trim() &&
-      evalType === "agent" &&
+      (isTraceProjectQualityCheckOnboarding || evalType === "agent") &&
       code === PYTHON_CODE_TEMPLATE &&
       !description.trim();
 
@@ -685,6 +705,7 @@ const EvalCreatePage = () => {
     draftLoadComplete,
     evalType,
     handleUseStarterScorer,
+    isTraceProjectQualityCheckOnboarding,
     name,
     onboardingParams,
   ]);
@@ -713,17 +734,17 @@ const EvalCreatePage = () => {
     const tools = buildToolsPayload(connectorIds);
 
     return {
-      eval_type: evalType,
+      eval_type: persistedEvalType,
       instructions:
-        evalType === "code"
+        persistedEvalType === "code"
           ? undefined
-          : evalType === "llm"
+          : persistedEvalType === "llm"
             ? instructions ||
               messages.find((m) => m.role === "system")?.content ||
               undefined
             : instructions || undefined,
-      code: evalType === "code" ? code : undefined,
-      code_language: evalType === "code" ? codeLanguage : undefined,
+      code: persistedEvalType === "code" ? code : undefined,
+      code_language: persistedEvalType === "code" ? codeLanguage : undefined,
       model,
       output_type: outputType,
       pass_threshold: passThreshold,
@@ -731,22 +752,24 @@ const EvalCreatePage = () => {
         Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
       multi_choice: multiChoice,
       check_internet: checkInternet,
-      mode: evalType === "agent" ? agentMode : undefined,
-      tools: evalType === "agent" ? tools : undefined,
-      knowledge_bases: evalType === "agent" ? knowledgeBaseIds : undefined,
-      data_injection: evalType === "agent" ? dataInjection : undefined,
-      summary: evalType === "agent" ? summary : undefined,
+      mode: persistedEvalType === "agent" ? agentMode : undefined,
+      tools: persistedEvalType === "agent" ? tools : undefined,
+      knowledge_bases:
+        persistedEvalType === "agent" ? knowledgeBaseIds : undefined,
+      data_injection:
+        persistedEvalType === "agent" ? dataInjection : undefined,
+      summary: persistedEvalType === "agent" ? summary : undefined,
       error_localizer_enabled: errorLocalizerEnabled,
-      messages: evalType === "llm" ? messages : undefined,
+      messages: persistedEvalType === "llm" ? messages : undefined,
       // Send [] for LLM evals so the BE can persist a user-cleared list.
       few_shot_examples:
-        evalType === "llm"
+        persistedEvalType === "llm"
           ? fewShotExamples.map((ds) => ({ id: ds.id, name: ds.name }))
           : undefined,
       template_format: templateFormat,
     };
   }, [
-    evalType,
+    persistedEvalType,
     instructions,
     code,
     codeLanguage,
@@ -770,12 +793,17 @@ const EvalCreatePage = () => {
 
   useEffect(() => {
     if (!draftId) return;
+    if (urlDraftId && !draftLoadComplete) return;
     if (autoSaveSkipFirst.current) {
       autoSaveSkipFirst.current = false;
       return;
     }
     if (skipNextAutoSaveRef.current) {
       skipNextAutoSaveRef.current = false;
+      if (autoSaveTimer.current) {
+        clearTimeout(autoSaveTimer.current);
+        autoSaveTimer.current = null;
+      }
       return;
     }
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
@@ -785,7 +813,7 @@ const EvalCreatePage = () => {
     return () => {
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
     };
-  }, [draftId, buildUpdatePayload]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [draftId, draftLoadComplete, buildUpdatePayload, urlDraftId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Draft cleanup: drafts with visible_ui=False are hidden from the list.
   // No auto-delete — stale drafts can be cleaned up by a backend cron.
@@ -793,14 +821,14 @@ const EvalCreatePage = () => {
 
   // --- Save handlers ---
   const handleSaveSingle = useCallback(async () => {
-    if (isOSS && evalType === "agent") {
+    if (isOSS && persistedEvalType === "agent") {
       enqueueSnackbar(
         "Agent evaluations are not available on OSS. Use LLM-as-a-Judge or Code evaluations instead.",
         { variant: "error" },
       );
       return;
     }
-    if (isOSS && evalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
+    if (isOSS && persistedEvalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
@@ -809,6 +837,12 @@ const EvalCreatePage = () => {
     }
     if (!draftId) {
       enqueueSnackbar("Draft not ready yet, please try again", {
+        variant: "warning",
+      });
+      return;
+    }
+    if (isDraftDetailsLoading) {
+      enqueueSnackbar("Quality check is still loading, please wait", {
         variant: "warning",
       });
       return;
@@ -832,7 +866,7 @@ const EvalCreatePage = () => {
         recordActivationEvent?.(
           buildEvalScorerCreatedPayload({
             evalId: draftId,
-            evalType,
+            evalType: persistedEvalType,
             quickStartAttribution: onboardingQuickStartAttribution,
             setupLanguage: onboardingParams.setupLanguage,
             setupProvider: onboardingParams.setupProvider,
@@ -880,7 +914,8 @@ const EvalCreatePage = () => {
     enqueueSnackbar,
     navigate,
     isOSS,
-    evalType,
+    isDraftDetailsLoading,
+    persistedEvalType,
     model,
     onboardingParams,
     recordActivationEvent,
@@ -894,7 +929,7 @@ const EvalCreatePage = () => {
       !shouldAutoSaveOnboardingStarterScorer ||
       autoSavingOnboardingStarter ||
       mode !== "single" ||
-      evalType !== "code"
+      persistedEvalType !== "code"
     ) {
       return;
     }
@@ -937,7 +972,6 @@ const EvalCreatePage = () => {
     description,
     draftId,
     draftLoadComplete,
-    evalType,
     handleSaveSingle,
     mode,
     name,
@@ -945,6 +979,7 @@ const EvalCreatePage = () => {
     onboardingParams.sourceType,
     outputType,
     passThreshold,
+    persistedEvalType,
     shouldAutoSaveOnboardingStarterScorer,
   ]);
 
@@ -1040,6 +1075,12 @@ const EvalCreatePage = () => {
       });
       return;
     }
+    if (mode === "single" && isDraftDetailsLoading) {
+      enqueueSnackbar("Quality check is still loading, please wait", {
+        variant: "warning",
+      });
+      return;
+    }
     // Arm a fresh epoch for this test. If an older test is still in flight,
     // its late result will compare against this new epoch and be ignored.
     testEpochRef.current += 1;
@@ -1057,7 +1098,7 @@ const EvalCreatePage = () => {
         recordActivationEvent?.(
           buildEvalRunClickedPayload({
             evalId: draftId,
-            evalType: mode === "composite" ? "composite" : evalType,
+            evalType: mode === "composite" ? "composite" : persistedEvalType,
             isComposite: mode === "composite",
             mode,
             previousRunId: onboardingParams.previousRunId,
@@ -1088,7 +1129,7 @@ const EvalCreatePage = () => {
             endpoints.develop.eval.evalPlayground,
             {
               template_id: draftId,
-              model,
+              model: persistedEvalType === "code" ? "" : model,
               error_localizer: errorLocalizerEnabled,
               config: {
                 mapping: {
@@ -1124,8 +1165,9 @@ const EvalCreatePage = () => {
     updateDraft,
     handleTestResult,
     enqueueSnackbar,
+    isDraftDetailsLoading,
     errorLocalizerEnabled,
-    evalType,
+    persistedEvalType,
     model,
     onboardingParams,
     onboardingQuickStartAttribution,
@@ -1179,7 +1221,9 @@ const EvalCreatePage = () => {
     extractVariables(instructions, templateFormat).length > 0;
   const canSaveSingle =
     !!name.trim() &&
-    (evalType === "code" ? !!code.trim() : singleHasInstructionVariables);
+    (persistedEvalType === "code"
+      ? !!code.trim()
+      : singleHasInstructionVariables);
   const canSaveComposite = compositeName.trim() && selectedChildren.length > 0;
   // Single evals require a successful test run before save. Composites
   // don't have a test flow in the create page — their children already exist
@@ -1203,7 +1247,11 @@ const EvalCreatePage = () => {
     if (onboardingParams.step === EVAL_CREATE_ONBOARDING_STEPS.SCORER) {
       return {
         disabled:
-          autoSavingOnboardingStarter || !draftId || isLoading || !canSave,
+          autoSavingOnboardingStarter ||
+          isDraftDetailsLoading ||
+          !draftId ||
+          isLoading ||
+          !canSave,
         label: autoSavingOnboardingStarter
           ? "Preparing first run"
           : onboardingParams.sourceType === "trace_project"
@@ -1233,6 +1281,7 @@ const EvalCreatePage = () => {
       return {
         disabled:
           !draftId ||
+          isDraftDetailsLoading ||
           isTesting ||
           (!isPlaygroundReady && !canRunTraceProjectDirectly),
         label: runLabel,
@@ -1261,6 +1310,7 @@ const EvalCreatePage = () => {
     canRunTraceProjectDirectly,
     autoSavingOnboardingStarter,
     draftId,
+    isDraftDetailsLoading,
     handleConfirmOnboardingSource,
     handleSaveComposite,
     handleSaveSingle,
@@ -1493,8 +1543,12 @@ const EvalCreatePage = () => {
 
                   {/* Eval Type Toggle — pill tabs (same as EvalAccordion Text/Image/Audio) */}
                   <Tabs
-                    value={evalType}
-                    onChange={(_, val) => setEvalType(val)}
+                    value={persistedEvalType}
+                    onChange={(_, val) => {
+                      if (!isTraceProjectQualityCheckOnboarding) {
+                        setEvalType(val);
+                      }
+                    }}
                     variant="standard"
                     scrollButtons={false}
                     TabIndicatorProps={{ style: { display: "none" } }}
@@ -1528,25 +1582,31 @@ const EvalCreatePage = () => {
                         label={tab.label}
                         sx={{
                           bgcolor:
-                            evalType === tab.value
+                            persistedEvalType === tab.value
                               ? (theme) =>
                                   theme.palette.mode === "dark"
                                     ? "rgba(255,255,255,0.12)"
                                     : "background.paper"
                               : "transparent",
                           boxShadow:
-                            evalType === tab.value
+                            persistedEvalType === tab.value
                               ? (theme) =>
                                   theme.palette.mode === "dark"
                                     ? "none"
                                     : "0 1px 3px rgba(0,0,0,0.08)"
                               : "none",
                           borderRadius: "6px",
-                          fontWeight: evalType === tab.value ? 600 : 400,
+                          fontWeight:
+                            persistedEvalType === tab.value ? 600 : 400,
                           color:
-                            evalType === tab.value
+                            persistedEvalType === tab.value
                               ? "text.primary"
                               : "text.disabled",
+                          opacity:
+                            isTraceProjectQualityCheckOnboarding &&
+                            tab.value !== "code"
+                              ? 0.45
+                              : 1,
                         }}
                       />
                     ))}
@@ -1555,7 +1615,7 @@ const EvalCreatePage = () => {
                   {/* ═══ Tab-specific content ═══ */}
 
                   {/* Agents tab — instruction editor with model bar inside */}
-                  {evalType === "agent" && (
+                  {persistedEvalType === "agent" && (
                     <InstructionEditor
                       value={instructions}
                       onChange={setInstructions}
@@ -1585,7 +1645,7 @@ const EvalCreatePage = () => {
 
                   {/* LLM-As-A-Judge tab — message editor (with model +
                       template format in its top bar) and few-shot. */}
-                  {evalType === "llm" && (
+                  {persistedEvalType === "llm" && (
                     <>
                       {/* Message editor with Falcon AI. Model + template
                           format render inline in LLMPromptEditor's top
@@ -1614,7 +1674,7 @@ const EvalCreatePage = () => {
                   )}
 
                   {/* Code tab — Monaco editor with Falcon AI */}
-                  {evalType === "code" && (
+                  {persistedEvalType === "code" && (
                     <CodeEvalEditor
                       code={code}
                       setCode={setCode}
@@ -1625,7 +1685,7 @@ const EvalCreatePage = () => {
                   )}
 
                   {/* Output Type — Code evals only have scoring (0-1) with pass threshold */}
-                  {evalType === "code" ? (
+                  {persistedEvalType === "code" ? (
                     <Box>
                       <Typography
                         variant="body2"
@@ -1692,7 +1752,7 @@ const EvalCreatePage = () => {
 
                   {/* Error Localization — LLM/Agent only. Code evals don't
                       produce model traces for the localizer to introspect. */}
-                  {evalType !== "code" && (
+                  {persistedEvalType !== "code" && (
                     <Box>
                       <FormControlLabel
                         control={
@@ -1883,15 +1943,15 @@ const EvalCreatePage = () => {
                   key={mode}
                   ref={testPlaygroundRef}
                   templateId={draftId}
-                  model={model}
+                  model={persistedEvalType === "code" ? "" : model}
                   instructions={
-                    mode === "composite" || evalType === "code"
+                    mode === "composite" || persistedEvalType === "code"
                       ? ""
-                      : evalType === "llm"
+                      : persistedEvalType === "llm"
                         ? messages.map((m) => m.content || "").join("\n")
                         : instructions
                   }
-                  evalType={mode === "composite" ? "llm" : evalType}
+                  evalType={mode === "composite" ? "llm" : persistedEvalType}
                   code={code}
                   codeLanguage={codeLanguage}
                   requiredKeys={
@@ -2002,34 +2062,38 @@ const EvalCreatePage = () => {
                   const hasTestInput =
                     mode === "composite"
                       ? hasCompositeChildren
-                      : evalType === "code"
-                        ? hasCode
-                        : instructionsReady;
-                  const testDisabled = isTesting || !hasTestInput;
+                    : persistedEvalType === "code"
+                      ? hasCode
+                      : instructionsReady;
+                  const testDisabled =
+                    isDraftDetailsLoading || isTesting || !hasTestInput;
 
                   let testDisabledReason = "";
-                  if (isTesting) {
+                  if (isDraftDetailsLoading) {
+                    testDisabledReason =
+                      "Quality check is still loading, please wait.";
+                  } else if (isTesting) {
                     testDisabledReason = "Test is already running.";
                   } else if (mode === "composite" && !hasCompositeChildren) {
                     testDisabledReason =
                       "Add at least one child evaluation to run a test.";
                   } else if (
                     mode !== "composite" &&
-                    evalType === "code" &&
+                    persistedEvalType === "code" &&
                     !hasCode
                   ) {
                     testDisabledReason =
                       "Write some code before running a test.";
                   } else if (
                     mode !== "composite" &&
-                    evalType !== "code" &&
+                    persistedEvalType !== "code" &&
                     !hasInstructions
                   ) {
                     testDisabledReason =
                       "Add instructions before running a test.";
                   } else if (
                     mode !== "composite" &&
-                    evalType !== "code" &&
+                    persistedEvalType !== "code" &&
                     !hasInstructionVariables
                   ) {
                     testDisabledReason =
@@ -2071,11 +2135,17 @@ const EvalCreatePage = () => {
                 })()}
                 {(() => {
                   const saveDisabled =
-                    autoSavingOnboardingStarter || isLoading || !canSave;
+                    autoSavingOnboardingStarter ||
+                    isDraftDetailsLoading ||
+                    isLoading ||
+                    !canSave;
                   let saveDisabledReason = "";
                   if (autoSavingOnboardingStarter) {
                     saveDisabledReason =
                       "Starter scorer is being prepared for the first run.";
+                  } else if (isDraftDetailsLoading) {
+                    saveDisabledReason =
+                      "Quality check is still loading, please wait.";
                   } else if (isLoading) {
                     saveDisabledReason = "Save is already in progress.";
                   } else if (mode === "composite") {
@@ -2089,12 +2159,15 @@ const EvalCreatePage = () => {
                   } else if (!name.trim()) {
                     saveDisabledReason =
                       "Give this evaluation a name before saving.";
-                  } else if (evalType === "code" && !code.trim()) {
+                  } else if (persistedEvalType === "code" && !code.trim()) {
                     saveDisabledReason = "Write some code before saving.";
-                  } else if (evalType !== "code" && !instructions.trim()) {
+                  } else if (
+                    persistedEvalType !== "code" &&
+                    !instructions.trim()
+                  ) {
                     saveDisabledReason = "Add instructions before saving.";
                   } else if (
-                    evalType !== "code" &&
+                    persistedEvalType !== "code" &&
                     !singleHasInstructionVariables
                   ) {
                     saveDisabledReason =

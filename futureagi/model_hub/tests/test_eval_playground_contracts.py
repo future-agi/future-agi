@@ -79,6 +79,48 @@ def test_eval_playground_rejects_template_from_another_organization(
 
 
 @pytest.mark.django_db
+def test_eval_playground_allows_turing_model_for_code_template_on_oss(
+    auth_client, monkeypatch, user, workspace
+):
+    template = _create_code_eval_template(
+        user.organization, workspace, name="same-org-code-turing-gate"
+    )
+    captured = {}
+
+    monkeypatch.setattr(
+        "ee.usage.deployment.DeploymentMode.is_oss",
+        staticmethod(lambda: True),
+    )
+
+    def fake_run_eval_func(*args, **kwargs):
+        captured["model"] = kwargs.get("model")
+        captured["template_id"] = str(args[2].id)
+        return {"log_id": "log-1", "output": "Passed", "output_type": "Pass/Fail"}
+
+    monkeypatch.setattr(
+        "model_hub.views.separate_evals.run_eval_func",
+        fake_run_eval_func,
+    )
+
+    response = auth_client.post(
+        "/model-hub/eval-playground/",
+        {
+            "template_id": str(template.id),
+            "model": "turing_large",
+            "mapping": {"output": "same", "expected": "same"},
+            "config": {"params": {}},
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert captured == {
+        "model": "turing_large",
+        "template_id": str(template.id),
+    }
+
+
+@pytest.mark.django_db
 def test_eval_playground_feedback_rejects_other_org_log(auth_client, user):
     template = _create_other_org_template(user, name="other-playground-feedback")
     log = APICallLog.objects.create(

@@ -5873,14 +5873,7 @@ class EvalPlayGroundAPIView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, *args, **kwargs):
-        from tfc.ee_gates import turing_oss_gate_for_template
-
         validated_data = request.validated_data
-        gate = turing_oss_gate_for_template(
-            validated_data.get("model"), validated_data.get("template_id")
-        )
-        if gate is not None:
-            return gate
 
         try:
             org = getattr(request, "organization", None) or request.user.organization
@@ -6336,6 +6329,16 @@ class EvalPlayGroundAPIView(APIView):
                 eval_template = _get_accessible_eval_template(template_id, org)
             except EvalTemplate.DoesNotExist:
                 return self._gm.bad_request(get_error_message("MISSING_EVAL_TEMPLATE"))
+
+            from tfc.ee_gates import turing_oss_gate_for_template
+
+            gate = turing_oss_gate_for_template(
+                model,
+                template_id=template_id,
+                eval_type=getattr(eval_template, "eval_type", None),
+            )
+            if gate is not None:
+                return gate
 
             # Validate + coerce function params (matches Dataset / Experiments
             # paths). Without this, FE-sent blank strings flow straight into
