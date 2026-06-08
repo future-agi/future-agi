@@ -50,7 +50,9 @@ def cluster_eval_results(project_id: str) -> EvalClusteringSummary:
 
     for result, embedding in zip(results, embeddings):
         try:
-            match = find_nearest_centroid(embedding, project_id, result.eval_name)
+            match = find_nearest_centroid(
+                embedding, project_id, result.eval_name, result.target_type
+            )
 
             if match:
                 cluster_id, distance = match

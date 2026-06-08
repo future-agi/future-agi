@@ -13,11 +13,17 @@ class ClusterableEvalResult:
     """Failing eval result with context needed for clustering."""
 
     eval_logger_id: str
-    trace_id: str
     project_id: str
-    eval_name: str  # CustomEvalConfig.name — partition key
+    eval_name: str  # CustomEvalConfig.name — partition key (with target_type)
     eval_config_id: str  # FK for TraceErrorGroup.eval_config
     explanation: str  # eval_explanation text — embedding input
+    # The eval target. span/trace results carry trace_id (session_id None);
+    # session results carry session_id (trace_id None). The junction row and
+    # the centroid family both branch on this — the three targets never share
+    # a cluster.
+    target_type: str = "span"
+    trace_id: Optional[str] = None
+    session_id: Optional[str] = None
     score: Optional[float] = None  # output_float if available
 
     @property

@@ -5,10 +5,15 @@ from django.db import models
 from accounts.models.user import User
 from tfc.utils.base_model import BaseModel
 from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import (
+    EvalLogger,
+    EvalTargetType,
+    ObservationSpan,
+)
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.models.trace_scan import TraceScanIssue
+from tracer.models.trace_session import TraceSession
 
 
 class Priority(models.TextChoices):
@@ -181,6 +186,18 @@ class TraceErrorGroup(BaseModel):
         max_length=20,
         choices=ClusterSource.choices,
         default=ClusterSource.SCANNER,
+    )
+    # The eval target this cluster groups (span / trace / session). Only
+    # meaningful for source=eval clusters — null for scanner clusters. Lets
+    # the RCA agent, manifest, and feed UI name the unit of failure without
+    # joining back through the junction's eval_logger rows. The three targets
+    # are clustered into separate centroid spaces, so a cluster is homogeneous.
+    eval_target_type = models.CharField(
+        max_length=20,
+        choices=EvalTargetType.choices,
+        null=True,
+        blank=True,
+        help_text="span/trace/session for eval clusters; null for scanner",
     )
     issue_group = models.CharField(
         max_length=100,
@@ -507,6 +524,18 @@ class ErrorClusterTraces(BaseModel):
         blank=True,
         db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
+    # Session-level eval clusters have no trace/span — the unit of failure is
+    # the session, which fans out to N traces. Such rows set trace_session and
+    # leave trace/span null; the RCA agent expands session -> member traces at
+    # read time for its blast radius. Null for every other membership kind
+    # (scanner, span-eval, trace-eval), which key off trace/span instead.
+    trace_session = models.ForeignKey(
+        TraceSession,
+        on_delete=models.CASCADE,
+        related_name="error_cluster_sessions",
+        null=True,
+        blank=True,
+    )
     cluster = models.ForeignKey(
         TraceErrorGroup,
         on_delete=models.CASCADE,
@@ -535,12 +564,19 @@ class ErrorClusterTraces(BaseModel):
 
     class Meta:
         db_table = "tracer_error_cluster_traces"
-        unique_together = [["cluster", "trace", "span"]]
+        # Two independent uniqueness rules: trace/span membership (existing) and
+        # session membership (new). Postgres treats NULLs as distinct, so each
+        # constraint only bites the rows that actually populate its columns.
+        unique_together = [
+            ["cluster", "trace", "span"],
+            ["cluster", "trace_session"],
+        ]
         indexes = [
             models.Index(fields=["cluster", "trace"]),
             models.Index(fields=["cluster"]),
             models.Index(fields=["trace"]),
             models.Index(fields=["span"]),
+            models.Index(fields=["trace_session"]),
             models.Index(fields=["scan_issue"]),
             models.Index(fields=["eval_logger"]),
             models.Index(
