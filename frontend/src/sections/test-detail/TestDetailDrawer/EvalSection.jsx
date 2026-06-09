@@ -40,6 +40,7 @@ const ERROR_LOCALIZER_TASK_STATUS = {
   RUNNING: "running",
   COMPLETED: "completed",
   FAILED: "failed",
+  SKIPPED: "skipped",
 };
 
 const ERROR_LOCALIZER_REFETCH_STATUS = [ERROR_LOCALIZER_TASK_STATUS.RUNNING];
@@ -98,6 +99,8 @@ const EvalDrawerSection = () => {
   );
   const isErrorLocalizerTaskFailed =
     errorLocalizerTaskStatus === ERROR_LOCALIZER_TASK_STATUS.FAILED;
+  const isErrorLocalizerTaskSkipped =
+    errorLocalizerTaskStatus === ERROR_LOCALIZER_TASK_STATUS.SKIPPED;
 
   return (
     <Box
@@ -254,12 +257,27 @@ const EvalDrawerSection = () => {
               </Typography>
             </WrapperBox>
           </ShowComponent>
+          <ShowComponent condition={isErrorLocalizerTaskSkipped}>
+            <WrapperBox>
+              <Iconify
+                icon="solar:forbidden-circle-bold"
+                width={20}
+                height={20}
+                sx={{ color: "warning.main", flexShrink: 0 }}
+              />
+              <Typography typography="s2" sx={{ textAlign: "center" }}>
+                Error localization was skipped — input data isn&apos;t available
+                to localize on.
+              </Typography>
+            </WrapperBox>
+          </ShowComponent>
           <ShowComponent
             condition={
               errorAnalysis &&
               errorAnalysis?.input1?.length &&
               !isErrorLocalizerTaskRunning &&
-              !isErrorLocalizerTaskFailed
+              !isErrorLocalizerTaskFailed &&
+              !isErrorLocalizerTaskSkipped
             }
           >
             <Box

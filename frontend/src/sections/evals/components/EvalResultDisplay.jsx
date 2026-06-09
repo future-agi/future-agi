@@ -9,6 +9,7 @@ import {
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
+import Iconify from "src/components/iconify";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
 import CompositeResultView from "./CompositeResultView";
 import { canonicalEntries } from "src/utils/utils";
@@ -510,6 +511,46 @@ const ErrorLocalizationSection = ({ result }) => {
             {errorLocalizerMessage}
           </Typography>
         )}
+      </Box>
+    );
+  }
+
+  // Skipped — the localizer ran but had no input data to localize on.
+  if (errorLocalizerStatus === "skipped") {
+    return (
+      <Box
+        sx={{
+          mx: 1.5,
+          my: 1,
+          px: 1.5,
+          py: 1.25,
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          borderRadius: "6px",
+          border: "1px solid",
+          borderColor: "warning.light",
+          backgroundColor: (theme) =>
+            theme.palette.mode === "dark"
+              ? "rgba(255, 171, 0, 0.08)"
+              : "rgba(255, 171, 0, 0.06)",
+        }}
+      >
+        <Iconify
+          icon="solar:forbidden-circle-bold"
+          width={18}
+          sx={{ color: "warning.main", flexShrink: 0 }}
+        />
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{ display: "block", fontSize: "11px" }}
+          >
+            {errorLocalizerMessage ||
+              "Error localization was skipped — input data isn't available to localize on."}
+          </Typography>
+        </Box>
       </Box>
     );
   }

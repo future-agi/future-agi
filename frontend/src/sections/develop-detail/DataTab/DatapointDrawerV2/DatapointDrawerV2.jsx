@@ -1546,10 +1546,39 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
           </Box>
         </Box>
       ) : isSkipped ? (
-        <Typography variant="caption" color="text.secondary">
-          Error localization was skipped — input data isn&apos;t available to
-          localize on.
-        </Typography>
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1.5,
+            px: 1.5,
+            py: 1.25,
+            borderRadius: "6px",
+            border: "1px solid",
+            borderColor: "warning.light",
+            backgroundColor: (theme) =>
+              theme.palette.mode === "dark"
+                ? "rgba(255, 171, 0, 0.08)"
+                : "rgba(255, 171, 0, 0.06)",
+          }}
+        >
+          <Iconify
+            icon="solar:forbidden-circle-bold"
+            width={18}
+            sx={{ color: "warning.main", flexShrink: 0 }}
+          />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{ display: "block", fontSize: "11px" }}
+            >
+              {pollData?.error_message
+                ? pollData.error_message
+                : "Error localization was skipped — input data isn't available to localize on."}
+            </Typography>
+          </Box>
+        </Box>
       ) : (
         <Box
           sx={{
