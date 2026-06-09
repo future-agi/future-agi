@@ -332,6 +332,75 @@ ERROR_RESPONSES = {
 }
 
 
+def _embed_observe_feedback(request, target_type, anchor_id, custom_eval_config, feedback):
+   
+    try:
+        from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
+
+        eval_template = getattr(custom_eval_config, "eval_template", None)
+        if eval_template is None or not anchor_id:
+            return
+
+        if target_type == EvalTargetType.SPAN:
+            span = ObservationSpan.objects.select_related(
+                "trace", "project", "project__organization", "project__workspace"
+            ).get(id=anchor_id)
+            project = span.project
+            embedding_row_dict = TraceSerializer(span.trace).data
+        elif target_type == EvalTargetType.TRACE:
+            trace = Trace.objects.select_related(
+                "project", "project__organization", "project__workspace"
+            ).get(id=anchor_id)
+            project = trace.project
+            embedding_row_dict = TraceSerializer(trace).data
+        elif target_type == EvalTargetType.SESSION:
+            trace_session = TraceSession.objects.select_related(
+                "project", "project__organization", "project__workspace"
+            ).get(id=anchor_id)
+            project = trace_session.project
+            embedding_row_dict = TraceSessionFeedbackSerializer(
+                trace_session, context={"request": request}
+            ).data
+        else:
+            return
+
+        embedding_row_dict = dict(embedding_row_dict)
+        embedding_row_dict["feedback_comment"] = feedback.explanation
+        embedding_row_dict["feedback_value"] = feedback.value
+
+        mapping_cfg = (custom_eval_config.config or {}).get("mapping") or {}
+        # Only index TEXT fields: data_formatter embeds row_dict[key] and does
+        # `"http" in row_dict[key]`, which raises on non-str values (e.g. the
+        # "project" field is a UUID), and the error is swallowed so nothing is
+        # stored. Restrict to keys whose serialized value is a string.
+        field_keys = [
+            v
+            for v in mapping_cfg.values()
+            if isinstance(v, str) and isinstance(embedding_row_dict.get(v), str)
+        ]
+        if not field_keys:
+            return
+
+        # Feedback embedding via the shared route method (feedback branch =
+        # single data_formatter(insert=True)) — same write the dataset path uses.
+        em = EmbeddingManager()
+        try:
+            em.parallel_process_metadata(
+                eval_id=eval_template.id,
+                metadatas=embedding_row_dict,
+                inputs_formater=field_keys,
+                organization_id=project.organization.id,
+                workspace_id=project.workspace.id if project.workspace else None,
+            )
+        finally:
+            try:
+                em.close()
+            except Exception:
+                pass
+    except Exception as e:  # never break the request on a feedback embed
+        logger.warning("observe_feedback_embed_failed", error=str(e))
+
+
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -1558,15 +1627,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 workspace=project.workspace,
             )
 
-            embedding_manager = EmbeddingManager()
-            embedding_manager.data_formatter(
-                eval_id=eval_template.id,
-                row_dict=embedding_row_dict,
-                inputs_formater=embedding_inputs,
-                organization_id=project.organization.id,
-                workspace_id=project.workspace.id if project.workspace else None,
+            # TH-5462: index observe feedback into the vector store so eval-time
+            # RAG retrieval can find it (see _embed_observe_feedback).
+            _embed_observe_feedback(
+                request, target_type, source_id, custom_eval_config, feedback
             )
-            embedding_manager.close()
 
             return self._gm.success_response({"feedback_id": str(feedback.id)})
         except Exception as e:
@@ -1790,6 +1855,14 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     "Cannot submit feedback on an errored eval",
                     code="errored_eval",
                 )
+
+            # TH-5462: the FE often edits value/explanation here (skipping
+            # submit_feedback), so (re)index the updated feedback into the
+            # vector store before the eval re-runs — otherwise retrieval finds
+            # stale or no embedding.
+            _embed_observe_feedback(
+                request, target_type, anchor_id, custom_eval_config, feedback
+            )
 
             recalculated_count = 0
             if action_type == FeedbackActionType.RETUNE:

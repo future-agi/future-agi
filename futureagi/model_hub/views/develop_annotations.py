@@ -1139,12 +1139,12 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                                     input_columns = label.settings.get("inputs", [])
                                     inputs.extend(input_columns)
 
-                        # Call RAG data formatter with the collected data
+                        # Feedback embedding via the shared batch/route method
+                        # (feedback branch persists with insert=True).
                         embedding_manager = EmbeddingManager()
-                        # get_fewshots = RAG()
-                        embedding_manager.data_formatter(
+                        embedding_manager.parallel_process_metadata(
                             eval_id=annotation.id,
-                            row_dict=row_dict,
+                            metadatas=row_dict,
                             inputs_formater=inputs,
                             organization_id=annotation.dataset.organization.id,
                             workspace_id=(

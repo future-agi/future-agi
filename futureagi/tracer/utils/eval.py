@@ -48,6 +48,49 @@ from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
 # here each provider would require a hand-written mapping per span.
 # When the exact attribute isn't present we probe these fallbacks in
 # order — first match wins.
+
+def _retrieve_feedback_fewshots(custom_eval_config, run_params, org_id):
+    
+    try:
+        if not run_params or not org_id or custom_eval_config is None:
+            return None
+        eval_template = custom_eval_config.eval_template
+        if eval_template is None:
+            return None
+        mapping_cfg = (custom_eval_config.config or {}).get("mapping") or {}
+        # Only retrieve on TEXT fields — mirrors the write side, which can only
+        # embed string values (non-str fields like "project" (a UUID) break the
+        # embedding and aren't indexed).
+        field_names = [
+            name for name in run_params.keys() if isinstance(run_params.get(name), str)
+        ]
+        if not field_names:
+            return None
+        input_values = [run_params[name] for name in field_names]
+        # Translate field names -> the metadata keys feedback is indexed under
+        # (fall back to the name). Observe configs map name->name; dataset
+        # configs map name->column UUID — the shared retrieval is agnostic.
+        input_cols = [mapping_cfg.get(name, name) for name in field_names]
+
+        # Shared retrieval — identical to the dataset path's get_few_shot_examples.
+        from agentic_eval.core.embeddings.feedback_fewshots import (
+            retrieve_feedback_fewshots,
+        )
+
+        few_shots = retrieve_feedback_fewshots(
+            eval_id=eval_template.id,
+            inputs=input_values,
+            input_cols=input_cols,
+            organization_id=org_id,
+            workspace_id=None,
+        )
+
+        return few_shots or None
+    except Exception as e:  # never let feedback retrieval break an eval
+        logger.warning("observe_feedback_fewshot_failed", error=str(e))
+        return None
+
+
 def _walk_dotted_path(root, path):
     """Walk a dotted path through nested dicts/lists; return None on miss."""
     if not isinstance(path, str) or not path:
@@ -1330,6 +1373,9 @@ def _execute_evaluation(
             _eval_inputs["session_context"] = _session_ctx
 
     # --- Run eval via unified engine ---
+    _fb_fewshots = _retrieve_feedback_fewshots(custom_eval_config, run_params, org_id)
+    if _fb_fewshots:
+        _eval_inputs["few_shots"] = _fb_fewshots
     try:
         result = run_eval(
             EvalRequest(
@@ -2578,6 +2624,9 @@ def _execute_evaluation_for_trace(
     if _di["span_context"]:
         _eval_inputs["span_context"] = build_span_context(anchor_span)
 
+    _fb_fewshots = _retrieve_feedback_fewshots(custom_eval_config, run_params, org_id)
+    if _fb_fewshots:
+        _eval_inputs["few_shots"] = _fb_fewshots
     try:
         result = run_eval(
             EvalRequest(
@@ -2801,6 +2850,9 @@ def _execute_evaluation_for_session(
         if _session_ctx is not None:
             _eval_inputs["session_context"] = _session_ctx
 
+    _fb_fewshots = _retrieve_feedback_fewshots(custom_eval_config, run_params, org_id)
+    if _fb_fewshots:
+        _eval_inputs["few_shots"] = _fb_fewshots
     try:
         result = run_eval(
             EvalRequest(

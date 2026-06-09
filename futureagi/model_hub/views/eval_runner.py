@@ -847,63 +847,26 @@ class EvaluationRunner:
 
     def get_few_shot_examples(self, mapping, required_field=None):
         """
-        Get few-shot examples from existing feedback for an eval template using RAG
+        Get few-shot examples from existing feedback for an eval template using RAG.
 
-        Args:
-            eval_template_id: ID of the EvalTemplate
-
-        Returns:
-            List of processed few-shot examples
+        Thin wrapper over the shared ``retrieve_feedback_fewshots`` so the
+        dataset and observe eval paths use identical retrieval logic (TH-5462).
+        ``required_field`` here are the metadata keys feedback is indexed under
+        (dataset column UUIDs); the caller is responsible for that mapping.
         """
-        # get_fewshots = RAG()
-        embedding_manager = EmbeddingManager()
+        from agentic_eval.core.embeddings.feedback_fewshots import (
+            retrieve_feedback_fewshots,
+        )
 
-        all_examples = []
-        try:
-            if not self.organization_id:
-                logger.warning(
-                    "No organization_id available for filtering in get_few_shot_examples - returning empty examples"
-                )
-                # print(f"[FEEDBACK RAG] Skipped — no organization_id", flush=True)
-                return all_examples
-
-            # print(f"[FEEDBACK RAG] Querying eval_id={self.eval_template.id} org={self.organization_id} input_cols={required_field} inputs_preview={[str(v)[:60] for v in mapping]}", flush=True)
-            start_time = datetime.now()
-            examples = embedding_manager.retrieve_avg_rag_based_examples(
-                eval_id=self.eval_template.id,
-                inputs=mapping,
-                input_cols=required_field,
-                organization_id=self.organization_id,
-                workspace_id=None,  # feedback is stored without workspace_id in all write paths
-            )
-            # print(f"[FEEDBACK RAG] Retrieved {len(examples)} examples", flush=True)
-            end_time = datetime.now()
-            elapsed_time = (end_time - start_time).total_seconds()
-            logger.info(
-                f"retrieve_avg_rag_based_examples query took {elapsed_time:.2f} seconds to execute"
-            )
-            start_time = datetime.now()
-
-            # Process examples into few-shot format
-            dataset_few_shots = embedding_manager.process_examples(
-                examples,
-                inputs=required_field,
-                feedback_col_name="feedback_comment",
-                corrected_label_col_name="feedback_value",
-            )
-            end_time = datetime.now()
-            elapsed_time = (end_time - start_time).total_seconds()
-            logger.info(
-                f"process_examples query took {elapsed_time:.2f} seconds to execute"
-            )
-            all_examples.extend(dataset_few_shots)
-
-        except Exception as e:
-            logger.info(f"Error processing dataset {str(e)}")
-
-        # get_fewshots.close()
-        embedding_manager.close()
-        return all_examples
+        if not self.eval_template:
+            return []
+        return retrieve_feedback_fewshots(
+            eval_id=self.eval_template.id,
+            inputs=mapping,
+            input_cols=required_field,
+            organization_id=self.organization_id,
+            workspace_id=None,
+        )
 
     def _initialize_eval_metric(self):
         """Initialize and set status of user eval metric"""
@@ -1582,18 +1545,27 @@ class EvaluationRunner:
             # Fetch few-shot feedback examples for these eval types
             # (not covered by the futureagi_eval block above)
             if not self.futureagi_eval and "few_shots" not in required_field:
-                print(
-                    f"[FEEDBACK DEBUG] get_few_shot_examples called with mapping={[str(v)[:80] for v in mapping]} required_field={required_field} org_id={self.organization_id} eval_template={self.eval_template.id if self.eval_template else None}",
-                    flush=True,
+                # Feedback is indexed in the vector store keyed by dataset
+                # COLUMN UUID (see _get_required_fields_and_mappings, which the
+                # futureagi_eval path uses). Here `required_field` holds eval
+                # field NAMES (e.g. "output"), so the RAG metadata filter
+                # `has(metadata.key, 'output')` never matches the stored rows.
+                # Translate names -> column UUIDs via the eval's mapping config
+                # (name -> column_id) for the feedback lookup ONLY; the eval
+                # input below still uses the original field names.
+                _mapping_cfg = {}
+                try:
+                    _mapping_cfg = (
+                        getattr(self.user_eval_metric, "config", None) or {}
+                    ).get("mapping") or {}
+                except Exception:
+                    _mapping_cfg = {}
+                feedback_required_field = [
+                    _mapping_cfg.get(rf, rf) for rf in required_field
+                ]
+                few_shot_examples = self.get_few_shot_examples(
+                    mapping, feedback_required_field
                 )
-                few_shot_examples = self.get_few_shot_examples(mapping, required_field)
-                shot_count = (
-                    len(few_shot_examples)
-                    if isinstance(few_shot_examples, list)
-                    else (1 if few_shot_examples else 0)
-                )
-                # print(f"[FEEDBACK INJECT] map_fields injecting fewshots : {few_shot_examples} for AgentEvaluator/CustomPromptEvaluator eval",flush=True)
-                # print(f"[FEEDBACK INJECT] map_fields injecting {shot_count} few-shot examples for AgentEvaluator/CustomPromptEvaluator eval_template={self.eval_template.id if self.eval_template else None}", flush=True)
                 required_field.append("few_shots")
                 mapping.append(few_shot_examples)
 
