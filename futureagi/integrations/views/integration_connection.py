@@ -282,7 +282,7 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                         workspace=workspace,
                         platform=data["platform"],
                     )
-                    return self._gm.bad_request(
+                    return _error_response(
                         f"{data['platform'].title()} is already connected for this workspace. "
                         "Edit the existing connection in Settings > Integrations to rotate keys."
                     )
@@ -328,11 +328,11 @@ class IntegrationConnectionViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
         except IntegrityError:
             platform = (request.data or {}).get("platform")
             if platform in ACTION_ONLY_PLATFORMS:
-                return self._gm.bad_request(
+                return _error_response(
                     f"{platform.title()} is already connected for this workspace. "
                     "Edit the existing connection in Settings > Integrations to rotate keys."
                 )
-            return self._gm.bad_request(
+            return _error_response(
                 "A connection with these settings already exists in this workspace."
             )
         except Exception as e:

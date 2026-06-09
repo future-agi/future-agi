@@ -13,6 +13,7 @@ Tests cover:
 Run with: pytest model_hub/tests/test_run_prompt_api.py -v
 """
 
+import json
 import uuid
 from unittest.mock import MagicMock, patch
 
@@ -22,6 +23,7 @@ from rest_framework.test import APIClient
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
+from model_hub.models.api_key import ApiKey
 from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
@@ -33,6 +35,22 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.run_prompt import RunPrompter
 from tfc.middleware.workspace_context import set_workspace_context
+
+
+API_KEYS_URL = "/model-hub/api-keys/"
+
+
+def api_key_detail_url(api_key_id):
+    return f"{API_KEYS_URL}{api_key_id}/"
+
+
+def assert_provider_key_response_is_masked(payload, *raw_secrets):
+    text = json.dumps(payload, default=str)
+    for secret in raw_secrets:
+        assert secret not in text
+    if isinstance(payload, dict):
+        assert "key" not in payload
+        assert "config_json" not in payload
 
 
 @pytest.fixture
@@ -802,6 +820,242 @@ class TestRunPromptForRowsView:
         ]
 
 
+@pytest.mark.django_db
+class TestProviderApiKeys:
+    def test_text_provider_key_responses_are_masked_only(self, auth_client):
+        raw_key = "secret-provider-key-value"
+        updated_raw_key = "secret-provider-key-value-updated"
+
+        response = auth_client.post(
+            API_KEYS_URL,
+            {"provider": "openai", "key": raw_key},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        created = response.data["result"]
+        assert created["provider"] == "openai"
+        assert "*" in created["masked_actual_key"]
+        assert_provider_key_response_is_masked(created, raw_key)
+
+        detail_response = auth_client.get(api_key_detail_url(created["id"]))
+        assert detail_response.status_code == status.HTTP_200_OK
+        detail = detail_response.data["result"]
+        assert detail["provider"] == "openai"
+        assert_provider_key_response_is_masked(detail, raw_key)
+
+        update_response = auth_client.put(
+            api_key_detail_url(created["id"]),
+            {"provider": "openai", "key": updated_raw_key},
+            format="json",
+        )
+        assert update_response.status_code == status.HTTP_200_OK
+        assert update_response.data["provider"] == "openai"
+        assert_provider_key_response_is_masked(
+            update_response.data,
+            raw_key,
+            updated_raw_key,
+        )
+
+        list_response = auth_client.get(API_KEYS_URL)
+        assert list_response.status_code == status.HTTP_200_OK
+        listed = next(
+            row
+            for row in list_response.data["results"]
+            if str(row["id"]) == created["id"]
+        )
+        assert_provider_key_response_is_masked(
+            listed,
+            raw_key,
+            updated_raw_key,
+        )
+
+    def test_json_provider_key_responses_are_masked_only(self, auth_client):
+        raw_config = {
+            "api_key": "secret-json-provider-key",
+            "api_base": "https://azure.example.test",
+            "api_version": "2024-05-01",
+        }
+
+        response = auth_client.post(
+            API_KEYS_URL,
+            {"provider": "azure", "key": json.dumps(raw_config)},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        created = response.data["result"]
+        assert created["provider"] == "azure"
+        assert isinstance(created["masked_actual_key"], dict)
+        assert created["masked_actual_key"]["api_key"] != raw_config["api_key"]
+        assert "*" in created["masked_actual_key"]["api_key"]
+        assert_provider_key_response_is_masked(created, *raw_config.values())
+
+        detail_response = auth_client.get(api_key_detail_url(created["id"]))
+        assert detail_response.status_code == status.HTTP_200_OK
+        assert_provider_key_response_is_masked(
+            detail_response.data["result"],
+            *raw_config.values(),
+        )
+
+        list_response = auth_client.get(API_KEYS_URL)
+        assert list_response.status_code == status.HTTP_200_OK
+        listed = next(
+            row
+            for row in list_response.data["results"]
+            if str(row["id"]) == created["id"]
+        )
+        assert_provider_key_response_is_masked(listed, *raw_config.values())
+
+    def test_text_provider_put_patch_scopes_workspace_and_preserves_encryption(
+        self, auth_client, organization, workspace, user
+    ):
+        raw_hidden_key = "hidden-default-workspace-provider-key"
+        hidden_key = ApiKey.no_workspace_objects.create(
+            provider="openai",
+            organization=organization,
+            workspace=workspace,
+            key=raw_hidden_key,
+            user=user,
+        )
+        other_workspace = Workspace.objects.create(
+            name="Provider Key Other Workspace",
+            organization=organization,
+            created_by=user,
+        )
+        set_workspace_context(workspace=other_workspace, organization=organization)
+
+        raw_key = "active-workspace-provider-key"
+        create_response = auth_client.post(
+            API_KEYS_URL,
+            {"provider": "openai", "key": raw_key},
+            format="json",
+        )
+
+        assert create_response.status_code == status.HTTP_200_OK
+        created = create_response.data["result"]
+        assert_provider_key_response_is_masked(created, raw_key, raw_hidden_key)
+        provider_key_id = created["id"]
+        provider_key = ApiKey.no_workspace_objects.get(id=provider_key_id)
+        assert provider_key.workspace == other_workspace
+        assert provider_key.actual_key == raw_key
+        original_encrypted_key = provider_key.key
+
+        hidden_detail_response = auth_client.get(api_key_detail_url(hidden_key.id))
+        assert hidden_detail_response.status_code == status.HTTP_404_NOT_FOUND
+
+        updated_raw_key = "active-workspace-provider-key-updated"
+        put_response = auth_client.put(
+            api_key_detail_url(provider_key_id),
+            {"provider": "openai", "key": updated_raw_key},
+            format="json",
+        )
+        assert put_response.status_code == status.HTTP_200_OK
+        assert_provider_key_response_is_masked(
+            put_response.data,
+            raw_key,
+            updated_raw_key,
+            raw_hidden_key,
+        )
+        provider_key.refresh_from_db()
+        assert provider_key.workspace == other_workspace
+        assert provider_key.key != original_encrypted_key
+        assert provider_key.key != updated_raw_key
+        assert provider_key.actual_key == updated_raw_key
+        updated_encrypted_key = provider_key.key
+
+        patch_response = auth_client.patch(
+            api_key_detail_url(provider_key_id),
+            {"provider": "openai"},
+            format="json",
+        )
+        assert patch_response.status_code == status.HTTP_200_OK
+        assert_provider_key_response_is_masked(
+            patch_response.data,
+            raw_key,
+            updated_raw_key,
+            raw_hidden_key,
+        )
+        provider_key.refresh_from_db()
+        assert provider_key.key == updated_encrypted_key
+        assert provider_key.actual_key == updated_raw_key
+
+        list_response = auth_client.get(API_KEYS_URL)
+        assert list_response.status_code == status.HTTP_200_OK
+        list_ids = {str(row["id"]) for row in list_response.data["results"]}
+        assert provider_key_id in list_ids
+        assert str(hidden_key.id) not in list_ids
+
+        delete_response = auth_client.delete(api_key_detail_url(provider_key_id))
+        assert delete_response.status_code == status.HTTP_200_OK
+        provider_key.refresh_from_db()
+        assert provider_key.deleted is True
+        assert provider_key.deleted_at is not None
+        hidden_key.refresh_from_db()
+        assert hidden_key.deleted is False
+        assert hidden_key.actual_key == raw_hidden_key
+
+    def test_json_provider_put_uses_config_json_and_patch_preserves_encryption(
+        self, auth_client
+    ):
+        raw_config = {
+            "api_key": "secret-json-provider-key",
+            "api_base": "https://azure.example.test",
+            "api_version": "2024-05-01",
+        }
+        create_response = auth_client.post(
+            API_KEYS_URL,
+            {"provider": "azure", "key": json.dumps(raw_config)},
+            format="json",
+        )
+        assert create_response.status_code == status.HTTP_200_OK
+        created = create_response.data["result"]
+        assert_provider_key_response_is_masked(created, *raw_config.values())
+        provider_key_id = created["id"]
+
+        provider_key = ApiKey.no_workspace_objects.get(id=provider_key_id)
+        assert provider_key.key is None
+        assert provider_key.actual_json == raw_config
+        assert provider_key.config_json["api_key"] != raw_config["api_key"]
+
+        updated_config = {
+            "api_key": "secret-json-provider-key-updated",
+            "api_base": "https://azure-updated.example.test",
+            "api_version": "2024-10-01",
+        }
+        put_response = auth_client.put(
+            api_key_detail_url(provider_key_id),
+            {"provider": "azure", "key": json.dumps(updated_config)},
+            format="json",
+        )
+        assert put_response.status_code == status.HTTP_200_OK
+        assert_provider_key_response_is_masked(
+            put_response.data,
+            *raw_config.values(),
+            *updated_config.values(),
+        )
+        provider_key.refresh_from_db()
+        assert provider_key.key is None
+        assert provider_key.actual_json == updated_config
+        assert provider_key.config_json["api_key"] != updated_config["api_key"]
+        encrypted_config = json.loads(json.dumps(provider_key.config_json))
+
+        patch_response = auth_client.patch(
+            api_key_detail_url(provider_key_id),
+            {"provider": "azure"},
+            format="json",
+        )
+        assert patch_response.status_code == status.HTTP_200_OK
+        assert_provider_key_response_is_masked(
+            patch_response.data,
+            *raw_config.values(),
+            *updated_config.values(),
+        )
+        provider_key.refresh_from_db()
+        assert provider_key.config_json == encrypted_config
+        assert provider_key.actual_json == updated_config
+
+
 # ==================== LitellmAPIView Tests ====================
 
 
@@ -837,6 +1091,98 @@ class TestLitellmAPIView:
 
         # Response could be 200 or 400 depending on API key validation
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
+
+    def test_litellm_api_direct_run_persists_workspace(
+        self, user, workspace, dataset, organization
+    ):
+        """Direct run-prompt creates a workspace-scoped RunPrompter before queuing."""
+        from conftest import WorkspaceAwareAPIClient
+
+        client = WorkspaceAwareAPIClient()
+        client.force_authenticate(user=user)
+        client.set_workspace(workspace)
+        payload = {
+            "dataset_id": str(dataset.id),
+            "name": "Direct Run Prompt",
+            "model": "gpt-4",
+            "concurrency": 1,
+            "messages": [{"role": "user", "content": "Return OK"}],
+            "output_format": "string",
+            "max_tokens": 20,
+        }
+
+        try:
+            with patch(
+                "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+            ) as mock_apply_async:
+                mock_apply_async.return_value = MagicMock(id="direct-workflow")
+                response = client.post(
+                    "/model-hub/run-prompt/",
+                    payload,
+                    format="json",
+                )
+        finally:
+            client.stop_workspace_injection()
+
+        assert response.status_code == status.HTTP_200_OK
+        run_prompter = RunPrompter.no_workspace_objects.get(
+            dataset=dataset,
+            name=payload["name"],
+            organization=organization,
+            deleted=False,
+        )
+        assert run_prompter.workspace_id == workspace.id
+        assert run_prompter.status == StatusType.RUNNING.value
+        mock_apply_async.assert_called_once_with(
+            args=({"type": "not_started", "prompt_id": str(run_prompter.id)},)
+        )
+
+    def test_litellm_api_rejects_other_workspace_dataset(
+        self, user, workspace, organization
+    ):
+        """Direct run-prompt must not mutate a dataset outside request.workspace."""
+        from conftest import WorkspaceAwareAPIClient
+
+        other_workspace = Workspace.objects.create(
+            name="Other Workspace",
+            organization=organization,
+            created_by=user,
+        )
+        other_dataset = Dataset.no_workspace_objects.create(
+            name="Other Workspace Dataset",
+            organization=organization,
+            workspace=other_workspace,
+            source=DatasetSourceChoices.BUILD.value,
+        )
+        client = WorkspaceAwareAPIClient()
+        client.force_authenticate(user=user)
+        client.set_workspace(workspace)
+        payload = {
+            "dataset_id": str(other_dataset.id),
+            "name": "Blocked Direct Run Prompt",
+            "model": "gpt-4",
+            "concurrency": 1,
+            "messages": [{"role": "user", "content": "Return OK"}],
+        }
+
+        try:
+            with patch(
+                "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+            ) as mock_apply_async:
+                response = client.post(
+                    "/model-hub/run-prompt/",
+                    payload,
+                    format="json",
+                )
+        finally:
+            client.stop_workspace_injection()
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert not RunPrompter.no_workspace_objects.filter(
+            dataset=other_dataset,
+            name=payload["name"],
+        ).exists()
+        mock_apply_async.assert_not_called()
 
     def test_litellm_api_missing_model(self, auth_client):
         """Test that missing model returns error."""

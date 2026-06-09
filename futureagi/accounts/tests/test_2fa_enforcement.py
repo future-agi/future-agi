@@ -78,6 +78,51 @@ class TestOrgTwoFactorEnforcement:
             "require2fa": ["Unknown field."],
         }
 
+    def test_2fa_policy_rejects_out_of_range_grace_period_before_state_change(
+        self, auth_client, organization
+    ):
+        organization.require_2fa = False
+        organization.require_2fa_grace_period_days = 7
+        organization.require_2fa_enforced_at = None
+        organization.save()
+
+        response = auth_client.put(
+            "/accounts/organization/2fa-policy/",
+            {"require_2fa": False, "require_2fa_grace_period_days": 31},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 400
+        assert "require_2fa_grace_period_days" in response.json()["details"]
+        organization.refresh_from_db()
+        assert organization.require_2fa is False
+        assert organization.require_2fa_grace_period_days == 7
+        assert organization.require_2fa_enforced_at is None
+
+    def test_disable_2fa_policy_clears_enforcement_timestamp(
+        self, auth_client, organization
+    ):
+        organization.require_2fa = True
+        organization.require_2fa_grace_period_days = 14
+        organization.require_2fa_enforced_at = timezone.now() - timedelta(days=1)
+        organization.save()
+
+        response = auth_client.put(
+            "/accounts/organization/2fa-policy/",
+            {"require_2fa": False, "require_2fa_grace_period_days": 6},
+            content_type="application/json",
+        )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["require_2fa"] is False
+        assert data["require_2fa_grace_period_days"] == 6
+        assert data["require_2fa_enforced_at"] is None
+        organization.refresh_from_db()
+        assert organization.require_2fa is False
+        assert organization.require_2fa_grace_period_days == 6
+        assert organization.require_2fa_enforced_at is None
+
     def test_2fa_policy_grace_period(self, user, organization):
         """Access allowed during grace period with headers."""
         organization.require_2fa = True

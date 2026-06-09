@@ -2874,10 +2874,38 @@ def _check_annotation_queue_create_limit(org, workspace=None):
         raise
 
 
+def _review_workflow_entitlement_denial(request):
+    try:
+        from ee.usage.services.entitlements import Entitlements
+    except ImportError:
+        return None
+
+    org = getattr(request, "organization", None) or request.user.organization
+    feat_check = Entitlements.check_feature(
+        str(org.id),
+        "has_review_workflow",
+    )
+    if not feat_check.allowed:
+        return feat_check.reason
+    return None
+
+
+class AnnotationQueuePagination(ExtendedPageNumberPagination):
+    def get_page_size(self, request):
+        if self.page_size_query_param in request.query_params:
+            return super().get_page_size(request)
+
+        page_size = getattr(request, "validated_query_data", {}).get("page_size")
+        if page_size is not None:
+            return page_size
+
+        return super().get_page_size(request)
+
+
 class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     serializer_class = AnnotationQueueSerializer
     permission_classes = [IsAuthenticated]
-    pagination_class = ExtendedPageNumberPagination
+    pagination_class = AnnotationQueuePagination
     queryset = AnnotationQueue.objects.all()
     _gm = GeneralMethods()
 
@@ -2915,7 +2943,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         else:
             queryset = super().get_queryset()
 
-        queryset = queryset.select_related("created_by").prefetch_related(
+        queryset = queryset.select_related(
+            "created_by", "organization", "workspace"
+        ).prefetch_related(
             Prefetch(
                 "queue_labels",
                 queryset=AnnotationQueueLabel.objects.filter(
@@ -4568,6 +4598,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "prototype_run",
                 "call_execution",
                 "trace_session",
+                Prefetch(
+                    "assignments",
+                    queryset=QueueItemAssignment.objects.filter(
+                        deleted=False
+                    ).select_related("user"),
+                    to_attr="active_assignments",
+                ),
             )
         )
         queue_id = self.kwargs.get("queue_id")
@@ -5072,13 +5109,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         )
         if user and queue and not is_review_mode:
             has_queue_assignments = _queue_has_any_item_assignments(queue_id)
+            is_queue_manager = _is_queue_manager(queue, user)
             should_scope_by_assignment = (
-                has_queue_assignments
+                has_queue_assignments and not is_queue_manager
                 if queue.auto_assign
-                else (not _is_queue_manager(queue, user) or has_queue_assignments)
+                else (not is_queue_manager or has_queue_assignments)
             )
-            if _is_queue_manager(queue, user):
-                should_scope_by_assignment = False
 
         if user and queue and not is_review_mode and should_scope_by_assignment:
             base_qs = _queue_item_user_scope(
@@ -5789,7 +5825,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         # Review mode compares every annotator's scores. Outside review mode,
         # even reviewer/manager users get their own annotation draft so a
         # multi-role user can still annotate an assigned item.
-        annotations_qs = _scores_for_queue_item(item).select_related("label")
+        annotations_qs = _scores_for_queue_item(item).select_related(
+            "label", "annotator"
+        )
         raw_annotator_id = query_params.get("annotator_id") or None
         viewing_annotator_id = None
         if raw_annotator_id and is_reviewer:
@@ -6667,6 +6705,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="bulk-review")
     def bulk_review(self, request, queue_id=None):
         """Approve or send back multiple pending-review items."""
+        entitlement_denial = _review_workflow_entitlement_denial(request)
+        if entitlement_denial:
+            return self._gm.forbidden_response(entitlement_denial)
+
         if not _has_queue_role(
             queue_id,
             request.user,
@@ -6818,19 +6860,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
     @action(detail=True, methods=["post"], url_path="review")
     def review_item(self, request, queue_id=None, pk=None):
         """Approve, request changes, or leave reviewer feedback on an item."""
-        try:
-            from ee.usage.services.entitlements import Entitlements
-        except ImportError:
-            Entitlements = None
-
-        if Entitlements is not None:
-            org = getattr(request, "organization", None) or request.user.organization
-            feat_check = Entitlements.check_feature(
-                str(org.id),
-                "has_review_workflow",
-            )
-            if not feat_check.allowed:
-                return self._gm.forbidden_response(feat_check.reason)
+        entitlement_denial = _review_workflow_entitlement_denial(request)
+        if entitlement_denial:
+            return self._gm.forbidden_response(entitlement_denial)
 
         # Verify requesting user has reviewer or manager role
         if not _has_queue_role(

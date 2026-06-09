@@ -29,6 +29,11 @@ from tracer.models.trace_error_analysis_task import (
     TraceErrorTaskStatus,
 )
 
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
 
 def get_result(response):
     """Extract result from API response wrapper."""
@@ -64,7 +69,7 @@ class TestTraceErrorAnalysisAPI:
     def test_get_error_analysis_unauthenticated(self, api_client, trace):
         """Unauthenticated requests should be rejected."""
         response = api_client.get(f"/tracer/trace-error-analysis/{trace.id}/")
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_error_analysis_success(self, auth_client, trace):
         """Get error analysis for a trace."""
@@ -98,7 +103,7 @@ class TestErrorClusterFeedAPI:
             self.url,
             {"project_id": str(project.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_cluster_feed_missing_project(self, auth_client):
         """Get cluster feed without project ID returns empty or default."""
@@ -179,7 +184,7 @@ class TestErrorClusterDetailAPI:
         """Unauthenticated requests should be rejected."""
         fake_cluster_id = "cluster_123"
         response = api_client.get(f"/tracer/feed/issues/{fake_cluster_id}/")
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_cluster_detail_not_found(self, auth_client):
         """Get cluster detail for non-existent cluster."""
@@ -188,7 +193,7 @@ class TestErrorClusterDetailAPI:
         assert response.status_code in [
             status.HTTP_200_OK,  # May return empty
             status.HTTP_400_BAD_REQUEST,
-            status.HTTP_403_FORBIDDEN,  # Workspace gating rejects before 404
+            status.HTTP_403_FORBIDDEN,
             status.HTTP_404_NOT_FOUND,
         ]
 
@@ -345,7 +350,7 @@ class TestTraceErrorTaskAPI:
     def test_get_error_task_unauthenticated(self, api_client, project):
         """Unauthenticated requests should be rejected."""
         response = api_client.get(f"/tracer/trace-error-task/{project.id}/")
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_error_task_success(self, auth_client, project):
         """Get error task status for a project."""
@@ -382,7 +387,7 @@ class TestTraceErrorTaskAPI:
             {"sampling_rate": 0.5},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_error_task_success(self, auth_client, project):
         """Create or update error task for a project."""

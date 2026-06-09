@@ -14,7 +14,8 @@ class TestEvalTemplateWorkflow:
             {
                 "name": "wf-eval-template",
                 "description": "Workflow test eval",
-                "instructions": "Evaluate whether {{output}} is relevant to {{input}}.",
+                "criteria": "Evaluate {{response}}",
+                "required_keys": ["response"],
             },
             tool_context,
         )
@@ -128,7 +129,8 @@ class TestEvalGroupMultiTemplate:
                 {
                     "name": f"group-tmpl-{i}",
                     "description": f"Template {i}",
-                    "instructions": "Evaluate {{output}} for quality.",
+                    "criteria": "Evaluate {{response}}",
+                    "required_keys": ["response"],
                 },
                 tool_context,
             )

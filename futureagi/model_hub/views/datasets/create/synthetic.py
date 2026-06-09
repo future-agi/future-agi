@@ -432,31 +432,10 @@ class UpdateSyntheticDatasetConfigView(APIView):
             ):
                 return self._gm.bad_request(get_error_message("DATASET_EXIST_IN_ORG"))
 
-            # Check row limit
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    _request_organization(request),
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": validated_data["num_rows"]},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
-                call_log_row.status = APICallStatusChoices.SUCCESS.value
-                call_log_row.save()
-
             # Update the dataset name if it changed
             if new_dataset_name != dataset.name:
                 dataset.name = new_dataset_name
                 dataset.save()
-
-            # Set running status for all columns
-            Column.objects.filter(dataset=dataset, deleted=False).update(
-                status=StatusType.RUNNING.value
-            )
 
             # Handle column changes
             existing_columns = Column.objects.filter(dataset=dataset, deleted=False)
@@ -541,9 +520,30 @@ class UpdateSyntheticDatasetConfigView(APIView):
             current_row_count = existing_rows.count()
             new_row_count = validated_data["num_rows"]
             new_rows_id = []
+            rows_to_add_count = max(new_row_count - current_row_count, 0)
+
+            # Only charge row-add usage when this edit actually appends rows.
+            # Description-only config saves should not mutate existing status
+            # or consume row capacity.
+            if (
+                rows_to_add_count > 0
+                and log_and_deduct_cost_for_resource_request is not None
+            ):
+                call_log_row = log_and_deduct_cost_for_resource_request(
+                    _request_organization(request),
+                    api_call_type=APICallTypeChoices.ROW_ADD.value,
+                    config={"total_rows": rows_to_add_count},
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is None
+                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                ):
+                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                call_log_row.status = APICallStatusChoices.SUCCESS.value
+                call_log_row.save()
 
             if new_row_count > current_row_count:
-                rows_to_add_count = new_row_count - current_row_count
                 last_row = existing_rows.order_by("-order").first()
                 max_order = last_row.order if last_row else -1
 

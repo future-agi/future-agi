@@ -18,7 +18,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FUTUREAGI_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-FI_COLLECTOR_DIR="$(cd "$FUTUREAGI_DIR/../../fi-collector" && pwd 2>/dev/null || echo "")"
+FI_COLLECTOR_DIR="$(cd "$FUTUREAGI_DIR/../fi-collector" && pwd 2>/dev/null || echo "")"
 
 # Parse flags
 RUN_GO=true
@@ -117,7 +117,7 @@ if [ "$RUN_GO" = true ]; then
         cd "$FI_COLLECTOR_DIR"
 
         export CH_TEST_HOST="localhost:18123"
-        export CH_TEST_DATABASE="default"
+        export CH_TEST_DATABASE="test_tfc"
 
         if go test -tags integration -v -count=1 -timeout 120s \
             ./exporter/clickhouse25exporter/ 2>&1; then

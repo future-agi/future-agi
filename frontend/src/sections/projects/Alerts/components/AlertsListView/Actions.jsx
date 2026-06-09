@@ -144,6 +144,7 @@ export default function Actions() {
               <Button
                 variant="contained"
                 color="primary"
+                data-alert-action="new"
                 sx={{
                   px: "24px",
                   borderRadius: "8px",

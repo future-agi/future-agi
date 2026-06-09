@@ -106,7 +106,12 @@ const showModelOptionsPropTypes = {
   id: PropTypes.string,
   control: PropTypes.any,
   responseSchema: PropTypes.array,
-  modelParams: PropTypes.object,
+  modelParams: PropTypes.shape({
+    sliders: PropTypes.any,
+    responseFormat: PropTypes.any,
+    dropdowns: PropTypes.any,
+    reasoning: PropTypes.any,
+  }),
   modelConfig: PropTypes.object,
   voiceOptions: PropTypes.object,
 };
@@ -114,5 +119,6 @@ const showModelOptionsPropTypes = {
 ShowModelOptionsChild.propTypes = showModelOptionsPropTypes;
 
 // @ts-ignore
+ShowModelOptionsChild.propTypes = showModelOptionsPropTypes;
 export const ShowModelOptions = forwardRef(ShowModelOptionsChild);
 ShowModelOptions.propTypes = showModelOptionsPropTypes;

@@ -613,98 +613,96 @@ const EvalPickerList = ({ onSelectEval }) => {
             }
           />
 
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<Iconify icon="mage:filter" width={14} />}
-              onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                height: "32px",
-                borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
-                color:
-                  activeFilterCount > 0 ? "primary.main" : "text.secondary",
-              }}
-            >
-              Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-            </Button>
-
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Iconify icon="mage:filter" width={14} />}
+            onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+            sx={{
+              textTransform: "none",
+              fontSize: "12px",
+              height: "32px",
+              borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
+              color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
+            }}
+          >
+            Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+          </Button>
         </Box>
       </Box>
 
       {/* Quick tag filters */}
 
-        <Box
-          sx={{
-            display: "flex",
-            gap: 0.5,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          {EVAL_TAGS.map((tag) => {
-            const activeTagValues = filters?.tags || [];
-            const tagValues = tag.match || [tag.value];
-            const isActive = tagValues.some((v) => activeTagValues.includes(v));
-            return (
-              <Chip
-                key={tag.value}
-                icon={<Iconify icon={tag.icon} width={14} />}
-                label={tag.label}
-                size="small"
-                variant={isActive ? "filled" : "outlined"}
-                color={isActive ? "primary" : "default"}
-                onClick={() => {
-                  if (isActive) {
-                    const toRemove = new Set(tagValues);
-                    setFilters((prev) => {
-                      const safe = prev || {};
-                      const remaining = (safe.tags || []).filter(
-                        (v) => !toRemove.has(v),
-                      );
-                      if (!remaining.length) {
-                        const next = { ...safe };
-                        delete next.tags;
-                        return Object.keys(next).length ? next : null;
-                      }
-                      return { ...safe, tags: remaining };
-                    });
-                  } else {
-                    setFilters((prev) => {
-                      const safe = prev || {};
-                      return {
-                        ...safe,
-                        tags: [...(safe.tags || []), ...tagValues],
-                      };
-                    });
-                  }
-                  setPage(0);
-                  setExpandedEvalId(null);
-                }}
-                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-              />
-            );
-          })}
-          {filters?.tags?.length ? (
+      <Box
+        sx={{
+          display: "flex",
+          gap: 0.5,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        {EVAL_TAGS.map((tag) => {
+          const activeTagValues = filters?.tags || [];
+          const tagValues = tag.match || [tag.value];
+          const isActive = tagValues.some((v) => activeTagValues.includes(v));
+          return (
             <Chip
-              label="Clear"
+              key={tag.value}
+              icon={<Iconify icon={tag.icon} width={14} />}
+              label={tag.label}
               size="small"
-              variant="outlined"
-              onDelete={() => {
-                setFilters((prev) => {
-                  const safe = prev || {};
-                  const next = { ...safe };
-                  delete next.tags;
-                  return Object.keys(next).length ? next : null;
-                });
+              variant={isActive ? "filled" : "outlined"}
+              color={isActive ? "primary" : "default"}
+              onClick={() => {
+                if (isActive) {
+                  const toRemove = new Set(tagValues);
+                  setFilters((prev) => {
+                    const safe = prev || {};
+                    const remaining = (safe.tags || []).filter(
+                      (v) => !toRemove.has(v),
+                    );
+                    if (!remaining.length) {
+                      const next = { ...safe };
+                      delete next.tags;
+                      return Object.keys(next).length ? next : null;
+                    }
+                    return { ...safe, tags: remaining };
+                  });
+                } else {
+                  setFilters((prev) => {
+                    const safe = prev || {};
+                    return {
+                      ...safe,
+                      tags: [...(safe.tags || []), ...tagValues],
+                    };
+                  });
+                }
                 setPage(0);
                 setExpandedEvalId(null);
               }}
-              sx={{ fontSize: "11px", height: 26 }}
+              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
             />
-          ) : null}
-        </Box>
+          );
+        })}
+        {filters?.tags?.length ? (
+          <Chip
+            label="Clear"
+            size="small"
+            variant="outlined"
+            onDelete={() => {
+              setFilters((prev) => {
+                const safe = prev || {};
+                const next = { ...safe };
+                delete next.tags;
+                return Object.keys(next).length ? next : null;
+              });
+              setPage(0);
+              setExpandedEvalId(null);
+            }}
+            sx={{ fontSize: "11px", height: 26 }}
+          />
+        ) : null}
+      </Box>
 
       {/* Scrollable Table */}
       <TableContainer sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>

@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import { render, screen } from "src/utils/test-utils";
 import SecretKeyRenderer from "../SecretKeyRenderer";
 
@@ -14,6 +14,8 @@ describe("SecretKeyRenderer", () => {
     render(<SecretKeyRenderer value="1234567890abcdef1234567890abcdef" />);
 
     expect(screen.getByText("1234**********cdef")).toBeInTheDocument();
-    expect(screen.queryByText("1234567890abcdef1234567890abcdef")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("1234567890abcdef1234567890abcdef"),
+    ).not.toBeInTheDocument();
   });
 });

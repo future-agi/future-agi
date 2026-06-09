@@ -139,3 +139,27 @@ def test_saml_social_login_rejects_unknown_query_param(api_client):
 
     assert response.status_code == 400
     assert response.json()["details"]["legacy"] == ["Unknown field."]
+
+
+def test_saml_format_suffix_public_boundaries(api_client, monkeypatch):
+    def fail_provider_exchange(*args, **kwargs):
+        raise AssertionError("missing callback code should not contact provider")
+
+    monkeypatch.setattr("saml2_auth.views.requests.post", fail_provider_exchange)
+
+    login_response = api_client.get(
+        "/saml2_auth/login.json",
+        {"provider": "slack"},
+    )
+    assert login_response.status_code == 400
+    assert "provider" in login_response.json()["details"]
+
+    for path in (
+        "/saml2_auth/auth/callback.json",
+        "/saml2_auth/github/callback.json",
+        "/saml2_auth/microsoft/callback.json",
+    ):
+        response = api_client.get(path)
+        assert response.status_code == 302
+        assert response["Location"]
+        assert "sso_token" not in response["Location"]

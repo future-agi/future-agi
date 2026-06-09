@@ -163,10 +163,13 @@ export default function useSaveDraft({ onCreateDraft } = {}) {
             try {
               // Sync backend-assigned edge IDs before onCreateDraft so the
               // store has correct IDs for any subsequent edge operations.
-              if (newVersionData?.nodeConnections) {
+              const nodeConnections =
+                newVersionData?.nodeConnections ||
+                newVersionData?.node_connections;
+              if (nodeConnections) {
                 useAgentPlaygroundStore
                   .getState()
-                  .syncEdgeIdsFromResponse(newVersionData.nodeConnections);
+                  .syncEdgeIdsFromResponse(nodeConnections);
               }
               onCreateDraft?.(newVersionData);
               wasDirtyRef.current = false;

@@ -227,6 +227,7 @@ WSGI_APPLICATION = "tfc.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
+
 def _pg_config(host, port=None, *, name=None, disable_cursors=True, options=None):
     """
     Build a Postgres config dict for a Django DATABASES alias.
@@ -273,7 +274,9 @@ if _read_host:
         port=os.getenv("PGBOUNCER_READ_PORT", os.getenv("PGBOUNCER_PORT", 6432)),
         name=os.getenv("PG_READ_DB", os.getenv("PG_DB", "tfc")),
     )
-    DATABASES["replica"]["TEST"] = {"MIRROR": "default"}  # Tests use default DB, not a real replica
+    DATABASES["replica"]["TEST"] = {
+        "MIRROR": "default"
+    }  # Tests use default DB, not a real replica
 
 # Direct connection (bypasses PgBouncer) — used for migrations that need
 # `lock_timeout` set at connection time. PgBouncer transaction-pool mode
@@ -311,7 +314,9 @@ if _direct_host:
 # router re-reads settings per call, but feature-key constants in hot paths
 # are computed at import time.
 _opt_in_raw = os.getenv("READ_REPLICA_OPT_IN", "")
-READ_REPLICA_OPT_IN: list[str] = [s.strip() for s in _opt_in_raw.split(",") if s.strip()]
+READ_REPLICA_OPT_IN: list[str] = [
+    s.strip() for s in _opt_in_raw.split(",") if s.strip()
+]
 
 DATABASE_ROUTERS = ["tfc.routers.ReadReplicaRouter"]
 
@@ -471,6 +476,9 @@ BILLING_CONFIG_PATH = os.environ.get(
 
 # EE license key (self-hosted only, JWT RS256)
 EE_LICENSE_KEY = os.environ.get("EE_LICENSE_KEY", "")
+EE_LICENSE_PRIVATE_KEY = os.environ.get("EE_LICENSE_PRIVATE_KEY", "").replace(
+    "\\n", "\n"
+)
 
 # Cloud API key for managed AI features (self-hosted → cloud Agentcc gateway)
 FUTUREAGI_CLOUD_API_KEY = os.environ.get("FUTUREAGI_CLOUD_API_KEY", "")
@@ -637,7 +645,7 @@ _ssl = "http://" if _is_local else "https://"
 ssl = _ssl  # exported — used by accounts.utils, accounts.views.workspace_management
 
 BASE_URL = os.getenv(
-    "BASE_URL", "http://localhost:8000" if _is_local else f"https://api.futureagi.com"
+    "BASE_URL", "http://localhost:8000" if _is_local else "https://api.futureagi.com"
 )
 WEBSOCKET_ENDPOINT = os.getenv("WEBSOCKET_ENDPOINT", f"{BASE_URL}/call-websocket/")
 MINIO_URL = os.getenv(
@@ -728,17 +736,25 @@ CHANNEL_LAYERS = {
 }
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
-CACHES = {
-    "default": {
-        "BACKEND": "django_redis.cache.RedisCache",
-        "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
-        "OPTIONS": {
-            "CLIENT_CLASS": "django_redis.client.DefaultClient",
-        },
-        "KEY_PREFIX": "futureagi",
-        "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+if os.getenv("DJANGO_CACHE_BACKEND") == "locmem":
+    CACHES = {
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "futureagi-local-cache",
+        }
     }
-}
+else:
+    CACHES = {
+        "default": {
+            "BACKEND": "django_redis.cache.RedisCache",
+            "LOCATION": os.getenv("REDIS_CACHE_URL", f"{REDIS_URL}"),
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+            },
+            "KEY_PREFIX": "futureagi",
+            "TIMEOUT": 600,  # Default timeout in seconds (10 minutes)
+        }
+    }
 
 # Authentication Security Settings
 MAX_LOGIN_ATTEMPTS = 10  # Maximum failed login attempts before account lockout

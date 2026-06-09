@@ -326,6 +326,20 @@ class GraphDatasetViewSet(GenericViewSet):
                 return self._gm.bad_request(serializer.errors)
 
             row_ids = serializer.validated_data.get("row_ids")
+            task_queue = serializer.validated_data.get("task_queue")
+            dataset = graph_dataset.dataset
+
+            if row_ids is not None:
+                rows = Row.no_workspace_objects.filter(id__in=row_ids, dataset=dataset)
+                found_ids = set(rows.values_list("id", flat=True))
+                missing_ids = [str(rid) for rid in row_ids if rid not in found_ids]
+                if missing_ids:
+                    return self._gm.not_found(
+                        {
+                            "message": get_error_message("DATASET_ROWS_NOT_FOUND"),
+                            "missing_ids": missing_ids,
+                        }
+                    )
 
             graph_version = GraphVersion.no_workspace_objects.get(
                 graph=graph_dataset.graph,
@@ -334,8 +348,9 @@ class GraphDatasetViewSet(GenericViewSet):
 
             execution_ids = execute_rows(
                 graph_version=graph_version,
-                dataset=graph_dataset.dataset,
+                dataset=dataset,
                 row_ids=row_ids,
+                task_queue=task_queue,
             )
 
             return self._gm.create_response({"execution_ids": execution_ids})

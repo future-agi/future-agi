@@ -39,7 +39,7 @@ class TestEvalTemplateCreateV2API:
 
     # --- Happy path ---
 
-    def test_create_pass_fail_eval(self, auth_client):
+    def test_create_pass_fail_eval(self, auth_client, workspace):
         """Create a Pass/Fail eval successfully."""
         response = auth_client.post(self.url, self._valid_payload(), format="json")
         assert response.status_code == 200
@@ -54,6 +54,7 @@ class TestEvalTemplateCreateV2API:
         assert template.output_type_normalized == "pass_fail"
         assert template.pass_threshold == 0.5
         assert template.choice_scores is None
+        assert template.workspace == workspace
 
     def test_create_percentage_eval(self, auth_client):
         """Create a Percentage eval successfully."""

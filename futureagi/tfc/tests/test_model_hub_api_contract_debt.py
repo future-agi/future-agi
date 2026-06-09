@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 
+import pytest
+from rest_framework import status
+
 
 def _repo_root():
     return Path(__file__).resolve().parents[3]
@@ -55,6 +58,383 @@ def _response_has_schema(operation, status_code="200"):
     if status_code not in responses:
         status_code = next(code for code in sorted(responses) if code.startswith("2"))
     return "schema" in responses[status_code]
+
+
+MODEL_HUB_GUARD_UUID = "00000000-0000-0000-0000-000000000001"
+
+
+def _model_hub_ai_custom_metric_guard_cases():
+    return [
+        ("post", "/model-hub/ai-eval-writer/", {}),
+        ("post", "/model-hub/ai-filter/", {}),
+        ("get", "/model-hub/api/model_voices/", None),
+        (
+            "get",
+            f"/model-hub/cells/{MODEL_HUB_GUARD_UUID}/run-error-localizer/",
+            None,
+        ),
+        (
+            "post",
+            f"/model-hub/cells/{MODEL_HUB_GUARD_UUID}/run-error-localizer/",
+            {},
+        ),
+        ("get", f"/model-hub/column-config/{MODEL_HUB_GUARD_UUID}/", None),
+        ("get", f"/model-hub/custom-metric/all/{MODEL_HUB_GUARD_UUID}/", None),
+        ("post", "/model-hub/custom-metric/create/", {}),
+        (
+            "get",
+            f"/model-hub/custom-metric/tag-options/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        ("post", "/model-hub/custom-metric/test/", {}),
+        ("post", "/model-hub/custom-metric/update/", {}),
+        ("get", f"/model-hub/custom-metric/{MODEL_HUB_GUARD_UUID}/", None),
+        ("get", "/model-hub/custom-models/list/", None),
+        ("get", f"/model-hub/custom-models/{MODEL_HUB_GUARD_UUID}/", None),
+        ("post", f"/model-hub/custom-models/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("get", "/model-hub/custom_models/edit/", None),
+        (
+            "post",
+            f"/model-hub/custom_models/update-baseline/{MODEL_HUB_GUARD_UUID}/",
+            {},
+        ),
+        (
+            "post",
+            f"/model-hub/custom_models/update-metric/{MODEL_HUB_GUARD_UUID}/",
+            {},
+        ),
+        ("get", "/model-hub/embeddings/", None),
+        ("get", "/model-hub/embeddings/openai/", None),
+    ]
+
+
+def _model_hub_prompt_workbench_guard_cases():
+    return [
+        ("post", "/model-hub/prompt-templates/", {}),
+        ("post", "/model-hub/prompt-templates/analyze-prompt/", {}),
+        ("post", "/model-hub/prompt-templates/derived-variables/preview/", {}),
+        ("post", "/model-hub/prompt-templates/generate-prompt/", {}),
+        ("post", "/model-hub/prompt-templates/generate-variables/", {}),
+        ("post", "/model-hub/prompt-templates/improve-prompt/", {}),
+        ("put", f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("patch", f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("delete", f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/", None),
+        (
+            "get",
+            f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/all-variables/",
+            None,
+        ),
+        (
+            "post",
+            f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/save-name/",
+            {},
+        ),
+        (
+            "post",
+            f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/save-prompt-folder/",
+            {},
+        ),
+        (
+            "get",
+            f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/stop-streaming/",
+            None,
+        ),
+        (
+            "get",
+            f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/derived-variables/",
+            None,
+        ),
+        (
+            "post",
+            f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/derived-variables/extract/",
+            {},
+        ),
+        (
+            "get",
+            f"/model-hub/prompt-templates/{MODEL_HUB_GUARD_UUID}/derived-variables/output/schema/",
+            None,
+        ),
+        ("get", "/model-hub/prompt/metrics/", None),
+        ("get", "/model-hub/prompt/metrics/empty-screen", None),
+        ("get", "/model-hub/prompt/span-metrics/", None),
+        ("get", "/model-hub/response_schema/", None),
+        ("post", "/model-hub/response_schema/", {}),
+        ("get", f"/model-hub/response_schema/{MODEL_HUB_GUARD_UUID}/", None),
+        ("put", f"/model-hub/response_schema/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("patch", f"/model-hub/response_schema/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("delete", f"/model-hub/response_schema/{MODEL_HUB_GUARD_UUID}/", None),
+    ]
+
+
+def _model_hub_prompt_library_guard_cases():
+    return [
+        ("get", "/model-hub/prompt-base-templates/", None),
+        ("post", "/model-hub/prompt-base-templates/", {}),
+        ("get", "/model-hub/prompt-base-templates/get-all-categories/", None),
+        ("get", f"/model-hub/prompt-base-templates/{MODEL_HUB_GUARD_UUID}/", None),
+        ("put", f"/model-hub/prompt-base-templates/{MODEL_HUB_GUARD_UUID}/", {}),
+        (
+            "patch",
+            f"/model-hub/prompt-base-templates/{MODEL_HUB_GUARD_UUID}/",
+            {},
+        ),
+        (
+            "delete",
+            f"/model-hub/prompt-base-templates/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        ("get", f"/model-hub/prompt-executions/{MODEL_HUB_GUARD_UUID}/", None),
+        ("put", f"/model-hub/prompt-folders/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("get", "/model-hub/prompt-history-executions/", None),
+        (
+            "get",
+            f"/model-hub/prompt-history-executions/execution-details/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        (
+            "get",
+            f"/model-hub/prompt-history-executions/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        ("get", "/model-hub/prompt-labels/", None),
+        ("post", "/model-hub/prompt-labels/", {}),
+        ("post", "/model-hub/prompt-labels/assign-multiple-labels/", {}),
+        ("post", "/model-hub/prompt-labels/create-system-labels/", {}),
+        ("get", "/model-hub/prompt-labels/get-by-name/", None),
+        ("post", "/model-hub/prompt-labels/remove/", {}),
+        ("post", "/model-hub/prompt-labels/set-default/", {}),
+        ("get", "/model-hub/prompt-labels/template-labels/", None),
+        ("get", f"/model-hub/prompt-labels/{MODEL_HUB_GUARD_UUID}/", None),
+        ("put", f"/model-hub/prompt-labels/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("patch", f"/model-hub/prompt-labels/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("delete", f"/model-hub/prompt-labels/{MODEL_HUB_GUARD_UUID}/", None),
+        (
+            "post",
+            f"/model-hub/prompt-labels/{MODEL_HUB_GUARD_UUID}/{MODEL_HUB_GUARD_UUID}/assign-label-by-id/",
+            {},
+        ),
+    ]
+
+
+def _model_hub_feedback_score_guard_cases():
+    return [
+        ("get", "/model-hub/feedback/", None),
+        ("post", "/model-hub/feedback/", {}),
+        ("get", "/model-hub/feedback/get-feedback-details/", None),
+        ("get", "/model-hub/feedback/get-feedback-summary/", None),
+        ("get", "/model-hub/feedback/get_template/", None),
+        ("post", "/model-hub/feedback/submit-feedback/", {}),
+        ("put", f"/model-hub/feedback/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("patch", f"/model-hub/feedback/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("get", "/model-hub/scores/", None),
+        ("post", "/model-hub/scores/", {}),
+        ("get", f"/model-hub/scores/{MODEL_HUB_GUARD_UUID}/", None),
+        ("put", f"/model-hub/scores/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("patch", f"/model-hub/scores/{MODEL_HUB_GUARD_UUID}/", {}),
+    ]
+
+
+def _model_hub_provider_asset_guard_cases():
+    return [
+        ("put", f"/model-hub/api-keys/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("put", f"/model-hub/secrets/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("get", f"/model-hub/tools/{MODEL_HUB_GUARD_UUID}/", None),
+        ("put", f"/model-hub/tools/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("patch", f"/model-hub/tools/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("delete", f"/model-hub/tools/{MODEL_HUB_GUARD_UUID}/", None),
+        ("get", f"/model-hub/tts-voices/{MODEL_HUB_GUARD_UUID}/", None),
+        ("put", f"/model-hub/tts-voices/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("patch", f"/model-hub/tts-voices/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("delete", f"/model-hub/tts-voices/{MODEL_HUB_GUARD_UUID}/", None),
+        ("post", "/model-hub/upload-file/", {}),
+    ]
+
+
+def _model_hub_org_user_guard_cases():
+    return [
+        (
+            "get",
+            f"/model-hub/organizations/{MODEL_HUB_GUARD_UUID}/users/",
+            None,
+        ),
+        (
+            "post",
+            f"/model-hub/organizations/{MODEL_HUB_GUARD_UUID}/users/",
+            {},
+        ),
+        (
+            "get",
+            f"/model-hub/organizations/{MODEL_HUB_GUARD_UUID}/users/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        (
+            "put",
+            f"/model-hub/organizations/{MODEL_HUB_GUARD_UUID}/users/{MODEL_HUB_GUARD_UUID}/",
+            {},
+        ),
+        (
+            "patch",
+            f"/model-hub/organizations/{MODEL_HUB_GUARD_UUID}/users/{MODEL_HUB_GUARD_UUID}/",
+            {},
+        ),
+        (
+            "delete",
+            f"/model-hub/organizations/{MODEL_HUB_GUARD_UUID}/users/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+    ]
+
+
+def _model_hub_queue_review_discussion_guard_cases():
+    return [
+        (
+            "post",
+            f"/model-hub/annotation-queues/{MODEL_HUB_GUARD_UUID}/items/bulk-review/",
+            {"action": "approve", "item_ids": [MODEL_HUB_GUARD_UUID]},
+        ),
+        (
+            "patch",
+            f"/model-hub/annotation-queues/{MODEL_HUB_GUARD_UUID}/items/{MODEL_HUB_GUARD_UUID}/discussion/comments/{MODEL_HUB_GUARD_UUID}/",
+            {"comment": "updated anonymous comment"},
+        ),
+        (
+            "delete",
+            f"/model-hub/annotation-queues/{MODEL_HUB_GUARD_UUID}/items/{MODEL_HUB_GUARD_UUID}/discussion/comments/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+    ]
+
+
+def _model_hub_eval_experiment_utility_guard_cases():
+    return [
+        ("post", "/model-hub/delete-eval-template/", {}),
+        (
+            "post",
+            "/model-hub/duplicate-eval-template/",
+            {"name": "anonymous duplicate eval"},
+        ),
+        ("get", "/model-hub/experiment-detail/", None),
+        ("post", "/model-hub/get-column-values/", {}),
+        ("patch", "/model-hub/knowledge-base/", {}),
+        ("get", "/model-hub/metrics/by-column/", None),
+    ]
+
+
+def _model_hub_optimisation_guard_cases():
+    return [
+        ("get", "/model-hub/optimisation/", None),
+        ("post", "/model-hub/optimisation/create/", {}),
+        ("put", "/model-hub/optimisation/create/", {}),
+        (
+            "post",
+            f"/model-hub/optimisation/update/{MODEL_HUB_GUARD_UUID}/",
+            {},
+        ),
+        (
+            "put",
+            f"/model-hub/optimisation/update/{MODEL_HUB_GUARD_UUID}/",
+            {},
+        ),
+        ("get", f"/model-hub/optimisation/{MODEL_HUB_GUARD_UUID}/", None),
+        (
+            "get",
+            f"/model-hub/optimisation/{MODEL_HUB_GUARD_UUID}/details/",
+            None,
+        ),
+    ]
+
+
+def _model_hub_legacy_optimize_dataset_guard_cases():
+    page_body = {"page": 1, "limit": 10}
+    column_config_body = {"columns": []}
+    return [
+        ("get", "/model-hub/optimize-dataset/", None),
+        (
+            "get",
+            f"/model-hub/optimize-dataset/kb/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        ("post", "/model-hub/optimize-dataset/knowledge-base/", {}),
+        ("get", f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/", None),
+        ("post", f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/", {}),
+        (
+            "get",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/column-config/",
+            None,
+        ),
+        (
+            "post",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/column-config/",
+            column_config_body,
+        ),
+        (
+            "get",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/column-config/prompt-template-explore/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        (
+            "post",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/column-config/prompt-template-explore/{MODEL_HUB_GUARD_UUID}/",
+            column_config_body,
+        ),
+        (
+            "get",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/column-config/right-answers/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        (
+            "post",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/column-config/right-answers/{MODEL_HUB_GUARD_UUID}/",
+            column_config_body,
+        ),
+        (
+            "post",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/prompt-template-explore/{MODEL_HUB_GUARD_UUID}/",
+            page_body,
+        ),
+        (
+            "post",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/prompt-template-result/{MODEL_HUB_GUARD_UUID}/",
+            {},
+        ),
+        (
+            "post",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/right-answers/{MODEL_HUB_GUARD_UUID}/",
+            page_body,
+        ),
+        (
+            "get",
+            f"/model-hub/optimize-dataset/{MODEL_HUB_GUARD_UUID}/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+    ]
+
+
+def _model_hub_performance_and_eval_guard_cases():
+    return [
+        ("get", "/model-hub/overview/", None),
+        ("post", f"/model-hub/performance/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("post", f"/model-hub/performance/detail/{MODEL_HUB_GUARD_UUID}/", {}),
+        ("post", f"/model-hub/performance/export/{MODEL_HUB_GUARD_UUID}/", {}),
+        (
+            "get",
+            f"/model-hub/performance/options/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        ("get", f"/model-hub/performance/report/{MODEL_HUB_GUARD_UUID}/", None),
+        ("post", f"/model-hub/performance/report/{MODEL_HUB_GUARD_UUID}/", {}),
+        (
+            "delete",
+            f"/model-hub/performance/report/{MODEL_HUB_GUARD_UUID}/{MODEL_HUB_GUARD_UUID}/",
+            None,
+        ),
+        (
+            "post",
+            f"/model-hub/performance/tag-distribution/{MODEL_HUB_GUARD_UUID}/",
+            {},
+        ),
+        ("post", "/model-hub/update-eval-template/", {}),
+    ]
 
 
 def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
@@ -218,6 +598,244 @@ def test_model_hub_ai_writer_and_custom_model_apis_stay_out_of_contract_debt():
     assert not response_gaps
     assert protected_paths.isdisjoint(body_gaps)
     assert protected_paths.isdisjoint(response_gaps)
+
+
+@pytest.mark.parametrize(
+    "method,path,body", _model_hub_ai_custom_metric_guard_cases()
+)
+def test_model_hub_ai_custom_metric_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize(
+    "method,path,body", _model_hub_prompt_workbench_guard_cases()
+)
+def test_model_hub_prompt_workbench_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize(
+    "method,path,body", _model_hub_prompt_library_guard_cases()
+)
+def test_model_hub_prompt_library_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize(
+    "method,path,body", _model_hub_feedback_score_guard_cases()
+)
+def test_model_hub_feedback_score_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize(
+    "method,path,body", _model_hub_provider_asset_guard_cases()
+)
+def test_model_hub_provider_asset_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize("method,path,body", _model_hub_org_user_guard_cases())
+def test_model_hub_org_user_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize(
+    "method,path,body", _model_hub_queue_review_discussion_guard_cases()
+)
+def test_model_hub_queue_review_discussion_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize(
+    "method,path,body", _model_hub_eval_experiment_utility_guard_cases()
+)
+def test_model_hub_eval_experiment_utility_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize("method,path,body", _model_hub_optimisation_guard_cases())
+def test_model_hub_optimisation_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize(
+    "method,path,body", _model_hub_legacy_optimize_dataset_guard_cases()
+)
+def test_model_hub_legacy_optimize_dataset_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
+
+
+@pytest.mark.parametrize(
+    "method,path,body", _model_hub_performance_and_eval_guard_cases()
+)
+def test_model_hub_performance_and_eval_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+    response = (
+        request(path, data=body, format="json")
+        if body is not None
+        else request(path)
+    )
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response["Content-Type"].startswith("application/json")
+    assert response.data["type"] == "authentication_error"
+    assert response.data["code"] == "not_authenticated"
 
 
 def test_model_hub_ai_writer_and_custom_model_mutations_have_request_contracts():

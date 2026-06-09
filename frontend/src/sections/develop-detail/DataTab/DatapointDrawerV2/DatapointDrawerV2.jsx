@@ -803,7 +803,9 @@ const DatapointDrawerChild = () => {
                                 }}
                               />
                             </ShowComponent>
-                            <ShowComponent condition={(finalArray?.length ?? 0) > 0}>
+                            <ShowComponent
+                              condition={(finalArray?.length ?? 0) > 0}
+                            >
                               {finalArray?.map((val) => (
                                 <Chip
                                   key={val}

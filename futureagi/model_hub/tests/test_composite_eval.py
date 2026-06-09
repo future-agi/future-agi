@@ -83,6 +83,40 @@ def _create_other_org_composite(user):
     return parent
 
 
+def _create_same_org_other_workspace_composite(organization, user):
+    suffix = uuid.uuid4().hex[:8]
+    other_workspace = Workspace.objects.create(
+        name=f"Sibling Workspace {suffix}",
+        organization=organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    child = EvalTemplate.no_workspace_objects.create(
+        name=f"sibling-child-{suffix}",
+        organization=organization,
+        workspace=other_workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "Pass/Fail"},
+        visible_ui=True,
+        output_type_normalized="pass_fail",
+    )
+    parent = EvalTemplate.no_workspace_objects.create(
+        name=f"sibling-composite-{suffix}",
+        organization=organization,
+        workspace=other_workspace,
+        owner=OwnerChoices.USER.value,
+        config={},
+        visible_ui=True,
+        template_type="composite",
+        aggregation_enabled=True,
+        aggregation_function="weighted_avg",
+        composite_child_axis="pass_fail",
+    )
+    CompositeEvalChild.objects.create(parent=parent, child=child, order=0, weight=1.0)
+    return parent, child
+
+
 @pytest.mark.e2e
 @pytest.mark.django_db
 class TestCompositeEvalCreateAPI:
@@ -144,6 +178,25 @@ class TestCompositeEvalCreateAPI:
             format="json",
         )
         assert response.status_code == 400
+
+    def test_create_rejects_same_org_other_workspace_child(
+        self, auth_client, organization, user
+    ):
+        _, other_workspace_child = _create_same_org_other_workspace_composite(
+            organization, user
+        )
+
+        response = auth_client.post(
+            self.url,
+            {
+                "name": "other-workspace-child",
+                "child_template_ids": [str(other_workspace_child.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "invalid or not accessible" in str(response.data)
 
     def test_create_composite_empty_children_rejected(self, auth_client):
         response = auth_client.post(
@@ -300,7 +353,7 @@ class TestCompositeEvalDetailAPI:
 @pytest.mark.e2e
 @pytest.mark.django_db
 class TestCompositeEvalIsolation:
-    """Composite detail and execute endpoints must not expose other org data."""
+    """Composite endpoints must not expose cross-org or cross-workspace data."""
 
     def test_get_other_org_composite_404(self, auth_client, user):
         other_composite = _create_other_org_composite(user)
@@ -321,6 +374,53 @@ class TestCompositeEvalIsolation:
         )
 
         assert response.status_code == 404
+
+    def test_get_same_org_other_workspace_composite_404(
+        self, auth_client, organization, user
+    ):
+        other_workspace_composite, _ = _create_same_org_other_workspace_composite(
+            organization, user
+        )
+
+        response = auth_client.get(
+            f"/model-hub/eval-templates/{other_workspace_composite.id}/composite/"
+        )
+
+        assert response.status_code == 404
+
+    def test_execute_same_org_other_workspace_composite_404(
+        self, auth_client, organization, user
+    ):
+        other_workspace_composite, _ = _create_same_org_other_workspace_composite(
+            organization, user
+        )
+
+        response = auth_client.post(
+            f"/model-hub/eval-templates/{other_workspace_composite.id}/composite/execute/",
+            {"mapping": {}},
+            format="json",
+        )
+
+        assert response.status_code == 404
+
+    def test_adhoc_execute_rejects_same_org_other_workspace_child(
+        self, auth_client, organization, user
+    ):
+        _, other_workspace_child = _create_same_org_other_workspace_composite(
+            organization, user
+        )
+
+        response = auth_client.post(
+            "/model-hub/eval-templates/composite/execute-adhoc/",
+            {
+                "child_template_ids": [str(other_workspace_child.id)],
+                "mapping": {},
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert "invalid or not accessible" in str(response.data)
 
 
 # =============================================================================
@@ -792,6 +892,25 @@ class TestCompositeEvalUpdateAPI:
             format="json",
         )
         assert resp.status_code == 400
+
+    def test_update_rejects_same_org_other_workspace_child(
+        self, auth_client, child_eval_1, organization, user
+    ):
+        _, other_workspace_child = _create_same_org_other_workspace_composite(
+            organization, user
+        )
+        cid = self._create_composite(
+            auth_client, "other-workspace-update", [str(child_eval_1.id)]
+        )
+
+        resp = auth_client.patch(
+            f"/model-hub/eval-templates/{cid}/composite/",
+            {"child_template_ids": [str(other_workspace_child.id)]},
+            format="json",
+        )
+
+        assert resp.status_code == 400
+        assert "invalid or not accessible" in str(resp.data)
 
     def test_update_nonexistent_composite_404(self, auth_client):
         resp = auth_client.patch(

@@ -525,8 +525,7 @@ const CompositeDetailPanel = ({
                     </Typography>
                     {paramEntries.map(([key, schema]) => {
                       const isNumeric =
-                        schema?.type === "integer" ||
-                        schema?.type === "number";
+                        schema?.type === "integer" || schema?.type === "number";
                       const value = childParams[key];
                       return (
                         <TextField

@@ -65,9 +65,7 @@ const ExperimentEvalCellRenderer = ({ value, eGridCell, ...rest }) => {
     }
   };
 
-  return (
-    <Box sx={{ paddingX: 2, color: "text.primary" }}>{renderText()}</Box>
-  );
+  return <Box sx={{ paddingX: 2, color: "text.primary" }}>{renderText()}</Box>;
 };
 
 ExperimentEvalCellRenderer.propTypes = {
