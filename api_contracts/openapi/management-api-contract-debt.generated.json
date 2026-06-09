@@ -1,9 +1,9 @@
 {
   "generated_from": "api_contracts/openapi/swagger.json",
   "summary": {
-    "paths": 898,
-    "operations": 1195,
-    "mutation_endpoints_without_body_schema": 15,
+    "paths": 980,
+    "operations": 1339,
+    "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
     "operations_without_error_response_schema": 0,
@@ -65,9 +65,9 @@
       "broad_error_response_schemas": 0
     },
     "falcon-ai": {
-      "paths": 1,
-      "operations": 5,
-      "mutation_endpoints_without_body_schema": 3,
+      "paths": 17,
+      "operations": 27,
+      "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
       "operations_without_error_response_schema": 0,
@@ -139,7 +139,16 @@
     "tracer": {
       "paths": 161,
       "operations": 233,
-      "mutation_endpoints_without_body_schema": 12,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "usage": {
+      "paths": 66,
+      "operations": 122,
+      "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
       "operations_without_error_response_schema": 0,
@@ -155,143 +164,7 @@
       "broad_error_response_schemas": 0
     }
   },
-  "mutation_endpoints_without_body_schema": [
-    {
-      "group": "falcon-ai",
-      "method": "POST",
-      "path": "/falcon-ai/.",
-      "operation_id": "falcon-ai_._create",
-      "tags": [
-        "falcon-ai"
-      ]
-    },
-    {
-      "group": "falcon-ai",
-      "method": "PUT",
-      "path": "/falcon-ai/.",
-      "operation_id": "falcon-ai_._update",
-      "tags": [
-        "falcon-ai"
-      ]
-    },
-    {
-      "group": "falcon-ai",
-      "method": "PATCH",
-      "path": "/falcon-ai/.",
-      "operation_id": "falcon-ai_._partial_update",
-      "tags": [
-        "falcon-ai"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "POST",
-      "path": "/tracer/eval-task/",
-      "operation_id": "tracer_eval-task_create",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "POST",
-      "path": "/tracer/eval-task/mark_eval_tasks_deleted/",
-      "operation_id": "tracer_eval-task_mark_eval_tasks_deleted",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "POST",
-      "path": "/tracer/eval-task/pause_eval_task/",
-      "operation_id": "tracer_eval-task_pause_eval_task",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "POST",
-      "path": "/tracer/eval-task/unpause_eval_task/",
-      "operation_id": "tracer_eval-task_unpause_eval_task",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "PATCH",
-      "path": "/tracer/eval-task/update_eval_task/",
-      "operation_id": "tracer_eval-task_update_eval_task",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "PUT",
-      "path": "/tracer/eval-task/{id}/",
-      "operation_id": "tracer_eval-task_update",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "PATCH",
-      "path": "/tracer/eval-task/{id}/",
-      "operation_id": "tracer_eval-task_partial_update",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "POST",
-      "path": "/tracer/user-alerts/",
-      "operation_id": "tracer_user-alerts_create",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "POST",
-      "path": "/tracer/user-alerts/bulk-mute/",
-      "operation_id": "tracer_user-alerts_bulk_mute",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "POST",
-      "path": "/tracer/user-alerts/preview-graph/",
-      "operation_id": "tracer_user-alerts_preview_graph",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "PUT",
-      "path": "/tracer/user-alerts/{id}/",
-      "operation_id": "tracer_user-alerts_update",
-      "tags": [
-        "tracer"
-      ]
-    },
-    {
-      "group": "tracer",
-      "method": "PATCH",
-      "path": "/tracer/user-alerts/{id}/",
-      "operation_id": "tracer_user-alerts_partial_update",
-      "tags": [
-        "tracer"
-      ]
-    }
-  ],
+  "mutation_endpoints_without_body_schema": [],
   "operations_without_response_schema": [],
   "broad_success_response_schemas": []
 }
