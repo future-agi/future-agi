@@ -1,3 +1,4 @@
+import asyncio
 from functools import wraps
 from inspect import Parameter, signature
 
@@ -290,9 +291,12 @@ def validated_request(
             # strict_response_validation=True.
             swagger_options["runtime_response_validation"] = True
 
-        @swagger_auto_schema(**swagger_options)
-        @wraps(view_func)
-        def wrapper(*args, **kwargs):
+        def _run_request_validation(args, kwargs):
+            """Validate query/body per the declared serializers.
+
+            Mutates the request (validated_* attributes) and returns an early
+            error Response, or None when the handler should run.
+            """
             request = _request_from_call(args)
             request.validated_data = {}
             request.validated_query_data = {}
@@ -351,8 +355,10 @@ def validated_request(
                 request.validated_data = serializer.validated_data
                 request.validated_serializer = serializer
 
-            response = view_func(*args, **kwargs)
+            return None
 
+        def _run_response_validation(response):
+            """Check the response against the declared response contract."""
             if not responses or not isinstance(response, Response):
                 return response
 
@@ -381,6 +387,35 @@ def validated_request(
                 )
 
             return response
+
+        if asyncio.iscoroutinefunction(view_func):
+            # Async handlers (e.g. the internal LiveKit API views) need a
+            # coroutine-function wrapper: a sync wrapper erases the handler's
+            # async-ness, Django then treats the whole view as sync, never
+            # awaits AsyncAPIView.dispatch, and every request 500s with
+            # "returned an unawaited coroutine" (found by the first local
+            # voice-sim E2E run — the agent worker's transcript/lifecycle
+            # pushes all failed). Awaiting here also makes the response
+            # contract actually checked for async views.
+            @swagger_auto_schema(**swagger_options)
+            @wraps(view_func)
+            async def wrapper(*args, **kwargs):
+                early = _run_request_validation(args, kwargs)
+                if early is not None:
+                    return early
+                response = await view_func(*args, **kwargs)
+                return _run_response_validation(response)
+
+        else:
+
+            @swagger_auto_schema(**swagger_options)
+            @wraps(view_func)
+            def wrapper(*args, **kwargs):
+                early = _run_request_validation(args, kwargs)
+                if early is not None:
+                    return early
+                response = view_func(*args, **kwargs)
+                return _run_response_validation(response)
 
         return wrapper
 
