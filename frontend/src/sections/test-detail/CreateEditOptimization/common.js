@@ -37,6 +37,12 @@ export const OPTIMIZER_OPTIONS = [
     icon: "/assets/icons/theorems/ic_gepa.svg",
     description: "Genetic Pareto evolutionary optimization",
   },
+  {
+    label: "Agent Learning Kit",
+    value: "agent_learning_kit",
+    icon: "/assets/icons/theorems/ic_metaprompt.svg",
+    description: "Agent-learning-kit candidate optimization (TH-5642)",
+  },
 ];
 
 export const OPTIMIZER_TYPE = {
@@ -46,6 +52,7 @@ export const OPTIMIZER_TYPE = {
   METAPROMPT: "metaprompt",
   PROMPTWIZARD: "promptwizard",
   GEPA: "gepa",
+  AGENT_LEARNING_KIT: "agent_learning_kit",
 };
 
 const RandomSearchOptimizerSchema = z.object({
@@ -122,6 +129,13 @@ const GEPAOptimizerSchema = z.object({
     .min(1, "Max metric calls must be at least 1"),
 });
 
+// Backend builds candidates from the agent's base prompt and applies its own
+// defaults (simulate/utils/agent_prompt_optimiser.py), so only the optional
+// task description is collected here.
+const AgentLearningKitOptimizerSchema = z.object({
+  taskDescription: z.string().optional(),
+});
+
 export const createEditOptimizerSchema = z.discriminatedUnion("optimiserType", [
   z.object({
     optimiserType: z.literal("random_search"),
@@ -159,6 +173,12 @@ export const createEditOptimizerSchema = z.discriminatedUnion("optimiserType", [
     model: z.string().min(1, "Model is required"),
     configuration: GEPAOptimizerSchema,
   }),
+  z.object({
+    optimiserType: z.literal("agent_learning_kit"),
+    name: z.string().min(1, "Name is required"),
+    model: z.string().min(1, "Model is required"),
+    configuration: AgentLearningKitOptimizerSchema,
+  }),
 ]);
 
 export const KeyOptimizerMapping = {
@@ -168,6 +188,7 @@ export const KeyOptimizerMapping = {
   metaprompt: "Meta-Prompt",
   promptwizard: "PromptWizard",
   gepa: "GEPA",
+  agent_learning_kit: "Agent Learning Kit",
 };
 
 export const OptimizerConfigurationMapping = {
@@ -202,5 +223,8 @@ export const OptimizerConfigurationMapping = {
   gepa: {
     taskDescription: "",
     maxMetricCalls: 40,
+  },
+  agent_learning_kit: {
+    taskDescription: "",
   },
 };
