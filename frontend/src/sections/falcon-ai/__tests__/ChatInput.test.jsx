@@ -98,7 +98,8 @@ describe("ChatInput", () => {
   it("disables input when streaming", () => {
     useFalconStore.getState().setStreaming(true, "msg1");
     render(<ChatInput onSend={vi.fn()} />);
-    const input = screen.getByPlaceholderText("Message Falcon AI...");
+    // While streaming the placeholder switches to the responding hint
+    const input = screen.getByPlaceholderText("Falcon is responding…");
     expect(input).toBeDisabled();
   });
 
