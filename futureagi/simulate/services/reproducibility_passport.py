@@ -56,6 +56,15 @@ DRIFT_REASON_BY_SECTION = {
     "execution_options": "Execution metadata or selected ids changed.",
     "execution": "Execution status or counters changed.",
 }
+REPLAY_INPUT_SECTIONS = (
+    "run_test",
+    "agent",
+    "prompt",
+    "scenarios",
+    "eval_configs",
+    "execution_options",
+)
+RUNTIME_SECTIONS = ("execution",)
 
 
 @dataclass(frozen=True)
@@ -123,6 +132,28 @@ def build_test_execution_passport(
     section_hashes = {
         name: stable_hash(payload) for name, payload in sections.items()
     }
+    input_section_hashes = {
+        name: section_hashes[name]
+        for name in REPLAY_INPUT_SECTIONS
+        if name in section_hashes
+    }
+    runtime_section_hashes = {
+        name: section_hashes[name]
+        for name in RUNTIME_SECTIONS
+        if name in section_hashes
+    }
+    input_fingerprint = stable_hash(
+        {
+            "schema_version": PASSPORT_SCHEMA_VERSION,
+            "section_hashes": input_section_hashes,
+        }
+    )
+    runtime_fingerprint = stable_hash(
+        {
+            "schema_version": PASSPORT_SCHEMA_VERSION,
+            "section_hashes": runtime_section_hashes,
+        }
+    )
 
     return {
         "schema_version": PASSPORT_SCHEMA_VERSION,
@@ -132,7 +163,11 @@ def build_test_execution_passport(
                 "section_hashes": section_hashes,
             }
         ),
+        "input_fingerprint": input_fingerprint,
+        "runtime_fingerprint": runtime_fingerprint,
         "section_hashes": section_hashes,
+        "input_section_hashes": input_section_hashes,
+        "runtime_section_hashes": runtime_section_hashes,
         **sections,
     }
 
@@ -151,7 +186,7 @@ def build_replay_plan(test_execution: TestExecution) -> dict[str, object]:
     replay_key = stable_hash(
         {
             "schema_version": passport["schema_version"],
-            "passport_hash": passport["passport_hash"],
+            "input_fingerprint": passport["input_fingerprint"],
             "replay_inputs": replay_inputs,
         }
     )
@@ -159,12 +194,15 @@ def build_replay_plan(test_execution: TestExecution) -> dict[str, object]:
     return {
         "replay_key": replay_key,
         "passport_hash": passport["passport_hash"],
+        "input_fingerprint": passport["input_fingerprint"],
         "can_replay": not any(issue.severity == "blocker" for issue in issues),
         "issues": [issue.as_dict() for issue in issues],
         "replay_inputs": replay_inputs,
         "baseline": {
             "section_hashes": passport["section_hashes"],
+            "input_section_hashes": passport["input_section_hashes"],
             "passport_hash": passport["passport_hash"],
+            "input_fingerprint": passport["input_fingerprint"],
         },
     }
 
@@ -220,6 +258,46 @@ def explain_passport_drift(
         "highest_severity": _highest_drift_severity(changes),
         "changed_sections": diff.changed_sections,
         "changes": changes,
+    }
+
+
+def explain_replay_input_drift(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Explain only replay-input drift, ignoring runtime execution changes."""
+
+    before_hashes = _extract_input_section_hashes(before)
+    after_hashes = _extract_input_section_hashes(after)
+    section_names = sorted(set(before_hashes) | set(after_hashes))
+    changed_sections = [
+        section
+        for section in section_names
+        if before_hashes.get(section) != after_hashes.get(section)
+    ]
+    changes = [
+        {
+            "section": section,
+            "severity": DRIFT_SEVERITY_BY_SECTION.get(section, "info"),
+            "reason": DRIFT_REASON_BY_SECTION.get(
+                section,
+                "The replay input section hash changed.",
+            ),
+            "before_hash": before_hashes.get(section),
+            "after_hash": after_hashes.get(section),
+        }
+        for section in changed_sections
+    ]
+    severity_rank = {"blocker": 0, "warning": 1, "info": 2}
+    changes.sort(key=lambda item: severity_rank.get(str(item["severity"]), 3))
+
+    return {
+        "has_drift": bool(changed_sections),
+        "highest_severity": _highest_drift_severity(changes),
+        "changed_sections": changed_sections,
+        "changes": changes,
+        "before_input_fingerprint": before.get("input_fingerprint"),
+        "after_input_fingerprint": after.get("input_fingerprint"),
     }
 
 
@@ -569,6 +647,23 @@ def _extract_section_hashes(passport: Mapping[str, object]) -> dict[str, str]:
         str(section): str(section_hash)
         for section, section_hash in raw_hashes.items()
         if section_hash is not None
+    }
+
+
+def _extract_input_section_hashes(passport: Mapping[str, object]) -> dict[str, str]:
+    raw_hashes = passport.get("input_section_hashes")
+    if isinstance(raw_hashes, Mapping):
+        return {
+            str(section): str(section_hash)
+            for section, section_hash in raw_hashes.items()
+            if section_hash is not None
+        }
+
+    section_hashes = _extract_section_hashes(passport)
+    return {
+        section: section_hashes[section]
+        for section in REPLAY_INPUT_SECTIONS
+        if section in section_hashes
     }
 
 

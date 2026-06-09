@@ -16,6 +16,7 @@ from simulate.services.reproducibility_passport import (
     build_test_execution_passport,
     diff_passports,
     explain_passport_drift,
+    explain_replay_input_drift,
     stable_hash,
 )
 
@@ -244,6 +245,15 @@ class TestReproducibilityPassport:
             "eval_configs",
             "execution_options",
         }
+        assert set(passport["input_section_hashes"]) == {
+            "run_test",
+            "agent",
+            "prompt",
+            "scenarios",
+            "eval_configs",
+            "execution_options",
+        }
+        assert set(passport["runtime_section_hashes"]) == {"execution"}
         assert passport["agent"]["agent_definition"]["model"] == "gpt-4o-mini"
         assert (
             passport["agent"]["agent_definition"]["model_details"]["api_key"]
@@ -267,6 +277,34 @@ class TestReproducibilityPassport:
         assert replay_plan["replay_inputs"]["scenario_ids"] == [str(scenario.id)]
         assert replay_plan["replay_inputs"]["eval_config_ids"] == [str(eval_config.id)]
         assert replay_plan["baseline"]["passport_hash"] == passport["passport_hash"]
+        assert (
+            replay_plan["baseline"]["input_fingerprint"]
+            == passport["input_fingerprint"]
+        )
+
+        test_execution.status = TestExecutionModel.ExecutionStatus.COMPLETED
+        test_execution.completed_calls = 3
+        test_execution.save()
+        completed_passport = build_test_execution_passport(test_execution)
+        completed_plan = build_replay_plan(test_execution)
+
+        assert completed_passport["passport_hash"] != passport["passport_hash"]
+        assert (
+            completed_passport["runtime_fingerprint"]
+            != passport["runtime_fingerprint"]
+        )
+        assert (
+            completed_passport["input_fingerprint"] == passport["input_fingerprint"]
+        )
+        assert completed_plan["replay_key"] == replay_plan["replay_key"]
+        assert explain_replay_input_drift(passport, completed_passport) == {
+            "has_drift": False,
+            "highest_severity": None,
+            "changed_sections": [],
+            "changes": [],
+            "before_input_fingerprint": passport["input_fingerprint"],
+            "after_input_fingerprint": completed_passport["input_fingerprint"],
+        }
 
     def test_prompt_passport_captures_prompt_snapshot_hash(
         self,

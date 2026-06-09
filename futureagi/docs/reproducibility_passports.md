@@ -14,6 +14,7 @@ from simulate.services.reproducibility_passport import (
     build_test_execution_passport,
     diff_passports,
     explain_passport_drift,
+    explain_replay_input_drift,
 )
 ```
 
@@ -29,6 +30,8 @@ from simulate.services.reproducibility_passport import (
 - `eval_configs`: eval template/config/mapping/filter fields and criteria hash
 - `execution_options`: execution metadata and selected dataset/scenario ids
 - `section_hashes`: stable SHA-256 hashes for every section
+- `input_fingerprint`: hash of replay-relevant inputs only
+- `runtime_fingerprint`: hash of execution status, counters, and timestamps
 - `passport_hash`: a top-level hash of the passport schema and section hashes
 
 Secrets are recursively redacted from nested config objects before hashing or
@@ -52,7 +55,7 @@ The plan includes:
 - `can_replay`: false when required pinned state is missing
 - `issues`: blocker/warning/info readiness checks with remediation text
 - `replay_inputs`: run, prompt, agent, scenario, eval, and dataset-row ids
-- `baseline`: passport and section hashes to compare against later
+- `baseline`: passport hash, input fingerprint, and section hashes
 
 Then capture a passport before starting a rerun or regression investigation:
 
@@ -73,14 +76,18 @@ if drift.has_drift:
 For user-facing or self-healing workflows, use the explanation helper:
 
 ```python
-explanation = explain_passport_drift(original, rerun)
+explanation = explain_replay_input_drift(original, rerun)
 
 if explanation["highest_severity"] == "blocker":
     logger.warning("simulation_replay_inputs_changed", extra=explanation)
 ```
 
-Section-level drift lets the caller decide whether a result changed because of
-model behavior or because the replay inputs were no longer identical.
+`explain_replay_input_drift` ignores runtime-only changes such as status and
+call counters. Use `explain_passport_drift` when the caller also wants to audit
+runtime/output drift.
+
+This split lets the caller decide whether a result changed because of model
+behavior or because the replay inputs were no longer identical.
 
 ## Why this matters
 
