@@ -3448,6 +3448,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             {/* Toolbar */}
             <ObserveToolbar
               dateLabel={dateLabel}
+              fieldLabelMap={filterChipLabelMap}
               dateFilter={
                 selectedTab === "trace"
                   ? primaryTraceDateFilter

@@ -339,6 +339,11 @@ const SINGLE_VALUE_OPS = new Set([
 // List ops — multi-select picker.
 const LIST_VALUE_OPS = new Set(["in", "not_in", "is", "is_not"]);
 
+// Generic placeholders a lossy serializer (e.g. saved eval-task filters) emits
+// when it can't express a field's real type; the registry wins over these on
+// hydration so typed fields aren't downgraded to a plain string row.
+const GENERIC_FIELD_TYPES = new Set(["string", "text"]);
+
 // ---------------------------------------------------------------------------
 // Hook: fetch properties from dashboard metrics
 // ---------------------------------------------------------------------------
@@ -1632,6 +1637,7 @@ const TraceFilterPanel = ({
   isSimulator = false,
   freeSoloValues = false,
   isSpansView = false,
+  fieldLabelMap,
 }) => {
   const { observeId: routeObserveId } = useParams();
   const observeId = projectIdProp || routeObserveId;
@@ -1722,6 +1728,9 @@ const TraceFilterPanel = ({
         panelType: p.type || "string",
         category: p.category, // system, eval, annotation, attribute
         apiColType: p.apiColType,
+        // Query tab flattens type to enum/string, losing "annotator"; pin its
+        // operators to the same ANNOTATOR_OPS the Basic tab uses.
+        ...(p.type === "annotator" ? { operators: ANNOTATOR_OPS } : {}),
       })),
     [properties],
   );
@@ -1752,10 +1761,18 @@ const TraceFilterPanel = ({
   useEffect(() => {
     if (open) {
       if (currentFilters?.length) {
-        // Enrich rows with fieldCategory and fieldType from properties lookup
+        // Registry type/category wins over generic placeholders so a lossy
+        // saved shape (eval-task filters) doesn't downgrade typed fields.
         const enriched = currentFilters.map((f) => {
           const prop = propertyById[f.field];
-          const fieldType = f.fieldType || prop?.type || "string";
+          const fieldType =
+            prop?.type && (!f.fieldType || GENERIC_FIELD_TYPES.has(f.fieldType))
+              ? prop.type
+              : f.fieldType || prop?.type || "string";
+          const fieldCategory =
+            prop?.category && (!f.fieldCategory || f.fieldCategory === "system")
+              ? prop.category
+              : f.fieldCategory || "system";
           // Translate wire ops to the picker's MenuItem values, per fieldType.
           const hydratedOp = ID_ONLY_FIELDS.has(f.field)
             ? "is"
@@ -1780,7 +1797,7 @@ const TraceFilterPanel = ({
           }
           return normalizeFilterRowOperator({
             ...f,
-            fieldCategory: f.fieldCategory || prop?.category || "system",
+            fieldCategory,
             fieldName: f.fieldName || prop?.name,
             fieldType,
             apiColType: f.apiColType || prop?.apiColType,
@@ -2090,6 +2107,7 @@ const TraceFilterPanel = ({
               valueOptions={queryValueOptions}
               valueLoading={queryValuesLoading}
               onFieldChange={setQueryField}
+              valueLabelMap={fieldLabelMap}
             />
             <Stack
               direction="row"
@@ -2146,6 +2164,8 @@ TraceFilterPanel.propTypes = {
   isSimulator: PropTypes.bool,
   freeSoloValues: PropTypes.oneOfType([PropTypes.bool, PropTypes.func]),
   isSpansView: PropTypes.bool,
+  // { field: { rawValue: label } } — Query-tab chip label resolution.
+  fieldLabelMap: PropTypes.object,
 };
 
 export default React.memo(TraceFilterPanel);

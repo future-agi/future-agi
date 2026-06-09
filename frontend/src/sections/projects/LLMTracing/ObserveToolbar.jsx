@@ -66,6 +66,8 @@ const ObserveToolbar = ({
   onClearCompareExtraFilters,
   // Filter fields override (for sessions/users)
   filterFields,
+  // { field: { rawValue: label } } — resolves Query-tab chip values to labels.
+  fieldLabelMap,
   // LLM Tracing tab ("trace" | "spans") — when set, TraceFilterPanel
   // prepends the matching id filter(s) to its property picker.
   tab,
@@ -417,6 +419,7 @@ const ObserveToolbar = ({
             currentFilters={panelFilters}
             filterFields={filterFields}
             tab={tab}
+            fieldLabelMap={fieldLabelMap}
             isSimulator={isSimulator}
             isSpansView={isSpansView}
             source={
@@ -694,6 +697,7 @@ ObserveToolbar.propTypes = {
   onClearExtraFilters: PropTypes.func,
   onClearCompareExtraFilters: PropTypes.func,
   filterFields: PropTypes.array,
+  fieldLabelMap: PropTypes.object,
   tab: PropTypes.oneOf(["trace", "spans"]),
   graphFilters: PropTypes.array,
   onResetView: PropTypes.func,

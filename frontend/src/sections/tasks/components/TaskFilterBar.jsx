@@ -1,10 +1,22 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Typography } from "@mui/material";
 import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import { getRandomId } from "src/utils/utils";
+import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
+import {
+  getPickerOptionLabel,
+  getPickerOptionSecondaryLabel,
+  getPickerOptionValue,
+} from "src/sections/projects/LLMTracing/filterValuePickerUtils";
 
 // ── Operator handling — canonical backend ops ──
 //
@@ -215,11 +227,14 @@ function convertOldToNew(oldFilters) {
 }
 
 // ── Chip display for an active filter ──
-const FilterChip = ({ filter, onRemove }) => {
+const FilterChip = ({ filter, labelMap, onRemove }) => {
   const opLabel = OP_DISPLAY[filter.operator] || filter.operator || "equals";
+  // Resolve opaque ids (e.g. annotator UUIDs) to labels; fall back to raw.
+  const fieldMap = labelMap?.[filter.field];
+  const resolve = (v) => fieldMap?.[String(v)] ?? String(v ?? "");
   const valueStr = Array.isArray(filter.value)
-    ? filter.value.join(", ")
-    : String(filter.value ?? "");
+    ? filter.value.map(resolve).join(", ")
+    : resolve(filter.value);
 
   return (
     <Box
@@ -282,6 +297,7 @@ const FilterChip = ({ filter, onRemove }) => {
 
 FilterChip.propTypes = {
   filter: PropTypes.object.isRequired,
+  labelMap: PropTypes.object,
   onRemove: PropTypes.func.isRequired,
 };
 
@@ -363,6 +379,32 @@ const TaskFilterBar = ({
 
   const hasFilters = panelFilters.length > 0;
 
+  // Build a UUID→name map so annotator chips show the name, not the raw id.
+  const hasAnnotatorFilter = useMemo(
+    () => panelFilters.some((f) => f.field === "annotator"),
+    [panelFilters],
+  );
+  const { data: annotatorFilterOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "traces",
+    enabled: hasAnnotatorFilter,
+  });
+  const filterChipLabelMap = useMemo(() => {
+    if (!annotatorFilterOptions.length) return undefined;
+    const entries = annotatorFilterOptions
+      .map((option) => {
+        const value = String(getPickerOptionValue(option));
+        if (!value) return null;
+        const label = getPickerOptionLabel(option);
+        const email = getPickerOptionSecondaryLabel(option);
+        return [value, email ? `${label} (${email})` : label];
+      })
+      .filter(Boolean);
+    return entries.length ? { annotator: Object.fromEntries(entries) } : undefined;
+  }, [annotatorFilterOptions]);
+
   return (
     <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {hasFilters ? (
@@ -378,6 +420,7 @@ const TaskFilterBar = ({
             <FilterChip
               key={`${f.field}-${idx}`}
               filter={f}
+              labelMap={filterChipLabelMap}
               onRemove={() => handleRemove(idx)}
             />
           ))}
@@ -467,6 +510,7 @@ const TaskFilterBar = ({
         projectId={projectId}
         isSimulator={isSimulator}
         tab={rowTypeToFilterTab(rowType)}
+        fieldLabelMap={filterChipLabelMap}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>

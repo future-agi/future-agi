@@ -543,6 +543,21 @@ FilterRow.propTypes = {
  * @param {string} [activeField] — notifies parent which field is selected (for value fetching)
  * @param {Function} [onFieldChange] — called when field changes (so parent can fetch values)
  */
+// Token values are comma-joined strings; resolve ids (e.g. annotator UUIDs)
+// to labels via valueLabelMap, mirroring FilterChips. Falls back to raw.
+const formatTokenValue = (token, valueLabelMap) => {
+  const map = valueLabelMap?.[token.field];
+  if (!map) return token.value;
+  const resolveOne = (v) => map[String(v ?? "")] ?? String(v ?? "");
+  const value = String(token.value ?? "");
+  return value.includes(",")
+    ? value
+        .split(",")
+        .map((v) => resolveOne(v.trim()))
+        .join(", ")
+    : resolveOne(value);
+};
+
 function QueryInput({
   filterFields,
   fieldMap,
@@ -551,6 +566,7 @@ function QueryInput({
   valueOptions = [],
   valueLoading = false,
   onFieldChange,
+  valueLabelMap = {},
 }) {
   const [tokens, setTokens] = useState(initialTokens);
   const [partialField, setPartialField] = useState(null);
@@ -588,7 +604,12 @@ function QueryInput({
       }));
     if (phase === "operator") {
       const fd = fieldMap[partialField];
-      return getOperators(fd?.type || "string").map((o) => ({
+      // A field may pin its own operators (e.g. annotator → "is" only).
+      const ops =
+        Array.isArray(fd?.operators) && fd.operators.length
+          ? fd.operators
+          : getOperators(fd?.type || "string");
+      return ops.map((o) => ({
         id: o.value,
         label: o.label,
         type: "operator",
@@ -869,7 +890,7 @@ function QueryInput({
                 {tokens.map((token, idx) => (
                   <Chip
                     key={idx}
-                    label={`${fieldMap[token.field]?.label || token.field} ${token.operator} ${token.value}`}
+                    label={`${fieldMap[token.field]?.label || token.field} ${token.operator} ${formatTokenValue(token, valueLabelMap)}`}
                     size="small"
                     onClick={() => editToken(idx)}
                     onDelete={() => handleDeleteToken(idx)}
@@ -948,6 +969,7 @@ QueryInput.propTypes = {
   valueOptions: PropTypes.array,
   valueLoading: PropTypes.bool,
   onFieldChange: PropTypes.func,
+  valueLabelMap: PropTypes.object,
 };
 
 // ---------------------------------------------------------------------------

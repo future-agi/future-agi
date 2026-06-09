@@ -132,16 +132,22 @@ const TaskDetailPage = () => {
     (editType) => {
       const data = formValues;
       const attributeFilters = extractAttributeFilters(data?.filters);
-      // observation_type rows may now carry an array `filterValue` (canonical
-      // `in`/`not_in`) or a scalar (legacy `equals`). Flatten + drop empties
-      // so the BE always sees a flat list of selected values.
-      const observationTypes = (data.filters || [])
-        .filter((f) => f.property === "observation_type")
-        .flatMap((f) => {
-          const v = f?.filterConfig?.filterValue;
-          if (Array.isArray(v)) return v;
-          return v !== undefined && v !== null && v !== "" ? [v] : [];
-        });
+      // Aggregate every non-attribute filter row into its BE key (flattening
+      // arrays). Mirrors create-side getNewTaskFilters so all system filters
+      // (annotator, span_kind, …) round-trip on update.
+      const systemFilters = {};
+      (data.filters || []).forEach((f) => {
+        if (!f?.property || f.property === "attributes") return;
+        const val = f?.filterConfig?.filterValue;
+        const vals = Array.isArray(val)
+          ? val
+          : val !== undefined && val !== null && val !== ""
+            ? [val]
+            : [];
+        if (vals.length === 0) return;
+        if (systemFilters[f.property]) systemFilters[f.property].push(...vals);
+        else systemFilters[f.property] = [...vals];
+      });
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id || item) || [],
@@ -151,9 +157,7 @@ const TaskDetailPage = () => {
             new Date(data.startDate).toISOString(),
             new Date(data.endDate).toISOString(),
           ],
-          ...(observationTypes?.length > 0
-            ? { observation_type: observationTypes }
-            : {}),
+          ...systemFilters,
           ...(attributeFilters?.length > 0
             ? { span_attributes_filters: attributeFilters }
             : {}),
