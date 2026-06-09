@@ -14,6 +14,7 @@ import FalconAIHeader from "./components/FalconAIHeader";
 import MessageList from "./components/MessageList";
 import ChatInput from "./components/ChatInput";
 import SkillPicker from "./components/SkillPicker";
+import prependConversation from "./helpers/prependConversation";
 
 const SIDEBAR_WIDTH = 420;
 
@@ -75,8 +76,12 @@ export default function FalconAISidebar() {
             text.slice(0, 50),
             context.page,
           );
-          convId = resp.result?.id || resp.id;
+          const newConv = resp.result || resp;
+          convId = newConv.id;
           setCurrentConversation(convId);
+          // Register in the conversations list so title_generated finds a
+          // row to update (sidebar-born chats previously lost their titles)
+          prependConversation(newConv, text.slice(0, 50));
         } catch {
           return;
         }

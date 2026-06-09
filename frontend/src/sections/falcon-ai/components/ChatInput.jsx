@@ -30,6 +30,7 @@ export default function ChatInput({ onSend, onStop }) {
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const theme = useTheme();
+  const router = useRouter();
   const inputContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const pickerRef = useRef(null);
@@ -169,13 +170,19 @@ export default function ChatInput({ onSend, onStop }) {
       if (cmd.command === "/clear") {
         resetChat();
         setCurrentConversation(null);
+        // Drop the conversation id from the URL too — otherwise a refresh
+        // re-hydrates the cleared conversation from the route param.
+        // (window.location, not a hook: ChatInput also renders in the
+        // sidebar on arbitrary pages, where no navigation should happen.)
+        if (window.location.pathname.startsWith("/dashboard/falcon-ai")) {
+          router.replace("/dashboard/falcon-ai");
+        }
       }
     },
-    [onSend, triggerSkillsMenu, resetChat, setCurrentConversation],
+    [onSend, triggerSkillsMenu, resetChat, setCurrentConversation, router],
   );
 
   const isDark = theme.palette.mode === "dark";
-  const router = useRouter();
   const connectors = useFalconStore((s) => s.connectors);
   const [plusMenuAnchor, setPlusMenuAnchor] = useState(null);
   const [connectorsSubmenu, setConnectorsSubmenu] = useState(null);

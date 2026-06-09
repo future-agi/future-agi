@@ -17,6 +17,7 @@ import ChatInput from "./components/ChatInput";
 import ChatListPanel from "./components/ChatListPanel";
 import SkillPicker from "./components/SkillPicker";
 import CustomizePanel from "./components/CustomizePanel";
+import prependConversation from "./helpers/prependConversation";
 
 export default function FalconAIFullPage() {
   const { conversationId: urlConversationId } = useParams();
@@ -41,7 +42,7 @@ export default function FalconAIFullPage() {
   const messages = useFalconStore((s) => s.messages);
   const showCustomize = useFalconStore((s) => s.showCustomize);
 
-  const { sendChat, sendStop, sendFeedback } = useFalconSocket();
+  const { sendChat, sendStop, sendFeedback, sendReconnect } = useFalconSocket();
   const context = useFalconContext();
 
   const loadSkillsAndConnectors = useCallback(async () => {
@@ -103,16 +104,9 @@ export default function FalconAIFullPage() {
           const newConv = resp.result || resp;
           convId = newConv.id;
           setCurrentConversation(convId);
-          // Add to sidebar list immediately
-          const store = useFalconStore.getState();
-          store.setConversations([
-            {
-              id: convId,
-              title: newConv.title || text.slice(0, 50),
-              created_at: new Date().toISOString(),
-            },
-            ...(store.conversations || []),
-          ]);
+          // Add to the conversations list immediately so title_generated
+          // finds a row to update
+          prependConversation(newConv, text.slice(0, 50));
         } catch {
           return;
         }
@@ -185,7 +179,7 @@ export default function FalconAIFullPage() {
         bgcolor: "background.default",
       }}
     >
-      <ChatListPanel />
+      <ChatListPanel sendReconnect={sendReconnect} />
 
       {showCustomize ? (
         <CustomizePanel />
