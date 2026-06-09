@@ -51,7 +51,6 @@ from tracer.types.feed_types import (
     EvaluationResult,
     EventsOverTimePoint,
     FeedDetailCore,
-    RcaSummary,
     FeedListResponse,
     FeedListRow,
     FeedSidebar,
@@ -62,6 +61,7 @@ from tracer.types.feed_types import (
     OverviewResponse,
     PatternInsight,
     PatternSummary,
+    RcaSummary,
     Recommendation,
     RepresentativeTrace,
     RootCause,
@@ -111,6 +111,29 @@ def priority_to_severity(priority: str | None) -> str:
 
 def severity_to_priority(severity: str | None) -> str:
     return _SEVERITY_TO_PRIORITY.get(severity or "", severity or "medium")
+
+
+def voice_project_ids(project_ids: list[str]) -> set[str]:
+    """Subset of project_ids whose traces are voice calls.
+
+    Modality is a project-level fact: a project is voice iff a voice-typed
+    simulator AgentDefinition feeds it (via its observability provider).
+    Clusters inherit it at read time — nothing is stamped per cluster.
+    """
+    from simulate.models.agent_definition import AgentDefinition, AgentTypeChoices
+
+    if not project_ids:
+        return set()
+    rows = AgentDefinition.objects.filter(
+        observability_provider__project_id__in=project_ids,
+        agent_type=AgentTypeChoices.VOICE,
+    ).values_list("observability_provider__project_id", flat=True)
+    return {str(pid) for pid in rows}
+
+
+def is_voice_project(project_id) -> bool:
+    """Single-project convenience over voice_project_ids."""
+    return bool(voice_project_ids([str(project_id)]))
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +339,7 @@ def _row_from_cluster(
     users_affected: int,
     sessions: int,
     latest_trace_id: str | None,
+    modality: str = "text",
 ) -> FeedListRow:
     """Build a FeedListRow from a TraceErrorGroup + pre-fetched batch data."""
     assignees: list[str] = []
@@ -325,6 +349,7 @@ def _row_from_cluster(
     return FeedListRow(
         cluster_id=cluster.cluster_id,
         source=cluster.source or "scanner",
+        modality=modality,
         error=ErrorName(
             name=cluster.title or cluster.issue_category or cluster.cluster_id,
             type=cluster.issue_category or cluster.issue_group or "",
@@ -419,6 +444,7 @@ def list_clusters(
     users_map = _fetch_users_affected_batch(cluster_ids)
     sessions_map = _fetch_sessions_batch(cluster_ids)
     latest_trace_map = _fetch_latest_trace_id_batch(cluster_ids)
+    voice_pids = voice_project_ids([str(c.project_id) for c in clusters])
 
     rows = [
         _row_from_cluster(
@@ -427,6 +453,7 @@ def list_clusters(
             users_affected=users_map.get(c.cluster_id, 0),
             sessions=sessions_map.get(c.cluster_id, 0),
             latest_trace_id=latest_trace_map.get(c.cluster_id),
+            modality="voice" if str(c.project_id) in voice_pids else "text",
         )
         for c in clusters
     ]
@@ -491,6 +518,7 @@ def get_cluster_detail(
         users_affected=users_map.get(cluster.cluster_id, 0),
         sessions=sessions_map.get(cluster.cluster_id, 0),
         latest_trace_id=latest_trace_map.get(cluster.cluster_id),
+        modality="voice" if is_voice_project(cluster.project_id) else "text",
     )
 
     success_trace: TracePreview | None = None
@@ -500,6 +528,29 @@ def get_cluster_detail(
             input=_trace_input_str(cluster.success_trace),
             output=_trace_output_str(cluster.success_trace),
         )
+    elif cluster.source == ClusterSource.EVAL and cluster.eval_config_id:
+        # Eval clusters never get the scanner's KNN success match. A genuine
+        # PASSING result for the same eval is the honest "working" reference
+        # (powers the failing-vs-working comparison, e.g. voice call compare).
+        member_ids = _trace_ids_for_cluster(cluster.cluster_id)
+        passing = (
+            EvalLogger.objects.filter(
+                trace__project_id=cluster.project_id,
+                custom_eval_config_id=cluster.eval_config_id,
+                deleted=False,
+            )
+            .filter(Q(output_bool=True) | Q(output_float__gte=1.0))
+            .exclude(trace_id__in=member_ids)
+            .select_related("trace")
+            .order_by("-created_at")
+            .first()
+        )
+        if passing and passing.trace:
+            success_trace = TracePreview(
+                trace_id=str(passing.trace_id),
+                input=_trace_input_str(passing.trace),
+                output=_trace_output_str(passing.trace),
+            )
 
     representative_trace: TracePreview | None = None
     if row.trace_id:
@@ -961,21 +1012,12 @@ def _readable_phrase(
 def _root_input_texts(trace_ids: list[str]) -> dict[str, str]:
     """{trace_id: root-span ``input.value``} for the given traces. Powers the
     failing-vs-passing input corpora for the distinctive-topic builder."""
-    if not trace_ids:
-        return {}
-    rows = (
-        ObservationSpan.objects.filter(trace_id__in=trace_ids)
-        .filter(models.Q(parent_span_id__isnull=True) | models.Q(parent_span_id=""))
-        .values_list("trace_id", "span_attributes")
-    )
+    roots = _get_root_spans_batch(trace_ids)
     out: dict[str, str] = {}
-    for tid, attrs in rows:
-        tid_s = str(tid)
-        if tid_s in out:
-            continue
-        text = (attrs or {}).get("input.value", "") or ""
+    for tid, root in roots.items():
+        text = (root.attrs_string or {}).get("input.value") or root.input or ""
         if text:
-            out[tid_s] = str(text)
+            out[str(tid)] = str(text)
     return out
 
 
@@ -1209,6 +1251,49 @@ def _insight_missing_tool(trace_ids: list[str]) -> PatternInsight | None:
     )
 
 
+def _insight_judge_phrase(cluster_id: str, project_id: str) -> PatternInsight | None:
+    """Eval twin of ``_insight_brief_phrase``: phrase distinctive to this
+    cluster's judge explanations vs the project's other eval clusters
+    (log-odds). Eval clusters often have no scanner briefs and no KNN
+    passing baseline (the embedding pass may never have run for the
+    project), so the contrast is other eval clusters — same shape as the
+    scanner brief contrast."""
+    rows = (
+        ErrorClusterTraces.objects.filter(
+            cluster__project_id=project_id,
+            cluster__source=ClusterSource.EVAL,
+            eval_logger__isnull=False,
+        )
+        .exclude(eval_logger__eval_explanation__isnull=True)
+        .exclude(eval_logger__eval_explanation="")
+        .values_list("cluster__cluster_id", "eval_logger__eval_explanation")
+    )
+    mine: list[str] = []
+    others: list[str] = []
+    for cid, explanation in rows:
+        (mine if cid == cluster_id else others).append(explanation)
+    if len(mine) < 2 or len(others) < 2:
+        return None
+    picked = _readable_phrase(_log_odds_distinctive(mine, others, (2, 3)))
+    if not picked:
+        return None
+    term, z, hits, _base_hits = picked
+    if hits < 2:
+        return None
+    return PatternInsight(
+        title="Common evaluator finding",
+        value=f"{hits} / {len(mine)}",
+        caption=f'evaluators flag **"{term}"** · rare in other clusters',
+        effect=min(1.0, float(z) / 10.0),
+        evidence={
+            "test": "log-odds w/ Dirichlet prior (Monroe)",
+            "z": round(float(z), 2),
+            "hits": hits,
+            "total": len(mine),
+        },
+    )
+
+
 def _scanner_key_moments(trace_ids: list[str]) -> list[KeyMoment]:
     """Deduped kevinified key-moment pairs from the cluster's scan results
     (max 8). Separate from the insight grid — rendered as its own list."""
@@ -1248,7 +1333,9 @@ def _fetch_pattern_summary(cluster_id: str) -> PatternSummary:
     trace_ids = _trace_ids_for_cluster(cluster_id)
     is_scanner = cluster.source == ClusterSource.SCANNER
 
-    baseline_ids = _passing_baseline_trace_ids(cluster_id, project_id, exclude=trace_ids)
+    baseline_ids = _passing_baseline_trace_ids(
+        cluster_id, project_id, exclude=trace_ids
+    )
 
     # Shared builders (both sources) compare vs the KNN-passing baseline.
     candidates: list[PatternInsight | None] = [
@@ -1260,6 +1347,8 @@ def _fetch_pattern_summary(cluster_id: str) -> PatternSummary:
     if is_scanner:
         candidates.append(_insight_missing_tool(trace_ids))
         candidates.append(_insight_brief_phrase(cluster_id, project_id))
+    else:
+        candidates.append(_insight_judge_phrase(cluster_id, project_id))
 
     firing = [c for c in candidates if c is not None]
     firing.sort(key=lambda c: c.effect, reverse=True)
@@ -1428,7 +1517,7 @@ def _attribute_old_key_moments(key_moments: list, trace_id: str) -> list:
     attribution = attribute_key_moments(quotes, trace_dict)
     return [
         {**km, **attr} if not km.get("role") else km
-        for km, attr in zip(key_moments, attribution)
+        for km, attr in zip(key_moments, attribution, strict=False)
     ]
 
 
@@ -1855,11 +1944,12 @@ def _fetch_trace_rows(
     roots_by_trace = _get_root_spans_batch(page_trace_ids)
     scans_by_trace = {
         str(sr.trace_id): sr
-        for sr in TraceScanResult.objects.filter(trace_id__in=page_trace_ids)
-        .only("trace_id", "meta")
+        for sr in TraceScanResult.objects.filter(trace_id__in=page_trace_ids).only(
+            "trace_id", "meta"
+        )
     }
 
-    rows: List[TracesListRow] = []
+    rows: list[TracesListRow] = []
     for trace in page_traces:
         tid = str(trace.id)
 
@@ -2277,7 +2367,7 @@ def _fetch_sidebar_ai_metadata(
         # are case-sensitive, so the iexact="llm" is reproduced with a
         # Python lower() comparison (the same idiom analyze_errors uses
         # for status).
-        llm_span: Optional[CHSpan] = None
+        llm_span: CHSpan | None = None
         with get_reader() as reader:
             for s in reader.list_by_trace(focus_trace_id):
                 if (s.observation_type or "").lower() == "llm":

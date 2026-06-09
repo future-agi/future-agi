@@ -95,6 +95,7 @@ class TrendPointSerializer(serializers.Serializer):
 class FeedListRowSerializer(serializers.Serializer):
     cluster_id = serializers.CharField()
     source = serializers.CharField()
+    modality = serializers.CharField()
     error = ErrorNameSerializer()
     status = serializers.CharField()
     severity = serializers.CharField()

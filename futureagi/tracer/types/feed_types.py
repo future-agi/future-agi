@@ -55,6 +55,9 @@ class FeedListRow:
     last_seen: datetime | None
     trends: list[TrendPoint] = field(default_factory=list)
     assignees: list[str] = field(default_factory=list)
+    # "voice" | "text" — inherited from the project (voice simulator agent),
+    # decides the per-trace surface (call player vs text evidence) in the FE.
+    modality: str = "text"
     model: str | None = None
     model_version: str | None = None
     project: str | None = None

@@ -7,7 +7,6 @@ All return typed dataclasses — no raw dicts at the boundary.
 
 import json
 import random
-from typing import Dict, List, Optional
 
 import structlog
 
@@ -22,7 +21,7 @@ logger = structlog.get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def get_scan_config(project_id: str) -> Optional[ScanConfig]:
+def get_scan_config(project_id: str) -> ScanConfig | None:
     """
     Get scan config for a project. Returns None if scanning is disabled.
 
@@ -48,14 +47,14 @@ def get_scan_config(project_id: str) -> Optional[ScanConfig]:
 # ---------------------------------------------------------------------------
 
 
-def apply_sampling(trace_ids: List[str], sampling_rate: float) -> List[str]:
+def apply_sampling(trace_ids: list[str], sampling_rate: float) -> list[str]:
     """Apply sampling rate to filter trace IDs."""
     if sampling_rate >= 1.0:
         return trace_ids
     return [tid for tid in trace_ids if random.random() < sampling_rate]
 
 
-def filter_already_scanned(trace_ids: List[str]) -> List[str]:
+def filter_already_scanned(trace_ids: list[str]) -> list[str]:
     """Remove trace IDs that already have a scan result."""
     already_scanned = set(
         TraceScanResult.objects.filter(trace_id__in=trace_ids)
@@ -88,7 +87,7 @@ _TOKEN_KEYS = [
 ]
 
 
-def fetch_trace_data(trace_ids: List[str]) -> List[TraceData]:
+def fetch_trace_data(trace_ids: list[str]) -> list[TraceData]:
     """Fetch trace spans from DB and build nested span trees for the scanner."""
     # Was: ObservationSpan.objects.filter(trace_id=).order_by("start_time")
     #      .values("id", "name", "parent_span_id", "start_time", "end_time",
@@ -109,11 +108,11 @@ def fetch_trace_data(trace_ids: List[str]) -> List[TraceData]:
         all_spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
 
     # Group CH spans by trace_id while preserving CH's start_time order.
-    by_trace: Dict[str, List] = {}
+    by_trace: dict[str, list] = {}
     for span in all_spans:
         by_trace.setdefault(str(span.trace_id), []).append(span)
 
-    traces: List[TraceData] = []
+    traces: list[TraceData] = []
     # Iterate the caller-provided trace_ids order so the consumer sees the
     # same order as the legacy per-trace loop (the previous code processed
     # each trace_id in input order).
@@ -123,7 +122,7 @@ def fetch_trace_data(trace_ids: List[str]) -> List[TraceData]:
             continue
 
         # Build flat map
-        span_map: Dict[str, SpanData] = {}
+        span_map: dict[str, SpanData] = {}
         for span in ch_spans:
             span_map[span.id] = _ch_span_to_span(span)
 
@@ -165,7 +164,7 @@ def _ch_span_to_span(span) -> SpanData:
         except (json.JSONDecodeError, TypeError):
             metadata = {}
 
-    attrs: Dict[str, object] = {}
+    attrs: dict[str, object] = {}
     if span.input:
         attrs["input.value"] = span.input
     if span.output:
@@ -181,15 +180,23 @@ def _ch_span_to_span(span) -> SpanData:
     # Surface function-calling tool definitions so the scanner can derive the
     # AVAILABLE tool set (vs. tools actually called). Kept verbatim from the raw
     # span attributes — no transformation, the scanner parses the names.
-    raw_attrs = row.get("span_attributes") or {}
-    if isinstance(raw_attrs, str):
+    # The definitions are a top-level key living in the typed string map or
+    # the attributes_extra JSON overflow, depending on value size. Some
+    # producers wrote attributes_extra as a stringified dict, so the reader
+    # can hand back a double-encoded value — decode up to twice.
+    extra_attrs: dict = {}
+    if span.attributes_extra:
         try:
-            raw_attrs = json.loads(raw_attrs)
+            parsed_extra = json.loads(span.attributes_extra)
+            if isinstance(parsed_extra, str):
+                parsed_extra = json.loads(parsed_extra)
+            extra_attrs = parsed_extra if isinstance(parsed_extra, dict) else {}
         except (json.JSONDecodeError, TypeError):
-            raw_attrs = {}
+            extra_attrs = {}
     for tool_key in ("llm.tools", "gen_ai.tool.definitions"):
-        if isinstance(raw_attrs, dict) and raw_attrs.get(tool_key):
-            attrs[tool_key] = raw_attrs[tool_key]
+        val = (span.attrs_string or {}).get(tool_key) or extra_attrs.get(tool_key)
+        if val:
+            attrs[tool_key] = val
 
     for key in _TOKEN_KEYS:
         if key in metadata:
@@ -224,7 +231,6 @@ def write_scan_results(
     Creates TraceScanResult + TraceScanIssue per trace.
     Failed writes still create a FAILED TraceScanResult to prevent re-scanning.
     """
-    from dataclasses import asdict
 
     from tracer.models.trace_scan import (
         TraceScanIssue,
