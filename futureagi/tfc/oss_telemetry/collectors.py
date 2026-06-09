@@ -61,16 +61,11 @@ def collect_counts(window_start: datetime, window_end: datetime) -> dict[str, in
     def dataset_eval_runs() -> int:
         from model_hub.models.develop_dataset import Cell
 
-        return (
-            Cell.no_workspace_objects.filter(
-                column__source="evaluation",
-                updated_at__gte=window_start,
-                updated_at__lt=window_end,
-            )
-            .values("column_id")
-            .distinct()
-            .count()
-        )
+        return Cell.no_workspace_objects.filter(
+            column__source="evaluation",
+            updated_at__gte=window_start,
+            updated_at__lt=window_end,
+        ).count()
 
     def experiments() -> int:
         from model_hub.models.experiments import ExperimentsTable
