@@ -1036,8 +1036,8 @@ def calculate_numeric_similarity(output: str, expected: str):
             "reason": f"Cannot calculate numeric similarity: {'; '.join(errors)}"
         }
     diff = abs(pred_num - ref_num)
-    normalized_diff = diff / max(pred_num, ref_num, 1)
-    similarity = 1.0 - normalized_diff
+    normalized_diff = diff / max(abs(pred_num), abs(ref_num), 1)
+    similarity = max(0.0, 1.0 - normalized_diff)
     reason = f"Numeric Diff: |{pred_num} - {ref_num}| = {diff}, Normalized Diff: {normalized_diff:.3f}, Similarity: {similarity:.3f}"
     return {
         "result": similarity,
