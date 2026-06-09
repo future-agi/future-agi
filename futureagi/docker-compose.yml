@@ -58,7 +58,7 @@ services:
       - FAST_STARTUP=${FAST_STARTUP:-true}
       - AGENTCC_INTERNAL_URL=http://agentcc-gateway:8080
       - AGENTCC_GATEWAY_INTERNAL_URL=http://agentcc-gateway:8080
-      - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
+      - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:?AGENTCC_INTERNAL_API_KEY must be set}
       # Read replica: uncomment to test read/write split locally (points to same DB).
       # Both PGBOUNCER_READ_HOST and READ_REPLICA_OPT_IN must be set for any
       # routing to happen. See .env.example for the full list of feature keys.
@@ -113,7 +113,7 @@ services:
     env_file:
       - .env
     environment:
-      - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
+      - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:?AGENTCC_INTERNAL_API_KEY must be set}
       # Gateway WORKDIR is /, so credentials_file resolution needs an absolute
       # path. Override the relative value from .env.
       - GOOGLE_APPLICATION_CREDENTIALS=/app/Vertex_AI_Creds.json
@@ -132,7 +132,9 @@ services:
       context: ./code-executor
       dockerfile: Dockerfile
     ports:
-      - "8060:8060"
+      - "127.0.0.1:8060:8060"
+    environment:
+      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?AGENTCC_INTERNAL_API_KEY must be set}
     # Privileged needed for nsjail namespace creation
     privileged: true
     restart: unless-stopped
