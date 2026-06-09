@@ -11,7 +11,10 @@ import { useCancelExecution } from "../test/common";
 import { useTestExecutionStore } from "./states";
 import { RerunTestOptions, TestRunLoadingStatus } from "./common";
 import { ShowComponent } from "src/components/show";
-import { useRerunTest } from "src/api/tests/testDetails";
+import {
+  useExecutionReproducibility,
+  useRerunTest,
+} from "src/api/tests/testDetails";
 import { LoadingButton } from "@mui/lab";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import CustomTooltip from "src/components/tooltip";
@@ -54,7 +57,23 @@ const TestRunDetailHeader = () => {
   );
   const { data: testData } = useTestRunDetails(testId);
   const { data: kpis } = useKpis(executionId);
+  const { data: reproducibility } = useExecutionReproducibility(executionId, {
+    enabled: confirmRerun && !!executionId,
+  });
   const agentType = kpis?.agent_type;
+  const preflight = reproducibility?.preflight;
+  const inputDrift = preflight?.input_drift ?? preflight?.inputDrift;
+  const diagnosis =
+    reproducibility?.score_change_diagnosis ??
+    reproducibility?.scoreChangeDiagnosis;
+  const preflightIssues = preflight?.issues ?? [];
+  const preflightStatus = preflight?.status;
+  const inputFingerprint =
+    reproducibility?.current?.replay_plan?.input_fingerprint ??
+    reproducibility?.current?.replayPlan?.inputFingerprint;
+  const isReplayBlocked = ["blocked", "input_drift_blocked"].includes(
+    preflightStatus,
+  );
   const handleRerun = () => {
     if (agentType === AGENT_TYPES.VOICE) {
       setConfirmRerun(true);
@@ -247,12 +266,65 @@ const TestRunDetailHeader = () => {
           onClose={() => setConfirmRerun(false)}
           onConfirm={() => setConfirmRerun(false)}
           title="Confirm Rerun Test"
-          content="This will rerun all the calls and evaluations present in the test."
+          content={
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+              <Typography typography="m3" color="text.secondary">
+                This will rerun all calls and evaluations in this execution.
+              </Typography>
+              <Box
+                sx={{
+                  border: "1px solid",
+                  borderColor:
+                    preflightStatus === "ready"
+                      ? "success.light"
+                      : "warning.light",
+                  borderRadius: "4px",
+                  padding: 1.25,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 0.75,
+                }}
+              >
+                <Typography
+                  typography="s2"
+                  fontWeight="fontWeightSemiBold"
+                  color={
+                    preflightStatus === "ready"
+                      ? "success.main"
+                      : "warning.main"
+                  }
+                >
+                  Replay preflight: {preflightStatus || "checking"}
+                </Typography>
+                <ShowComponent condition={!!inputFingerprint}>
+                  <Typography typography="s2" color="text.secondary">
+                    Input fingerprint: {String(inputFingerprint).slice(0, 12)}
+                  </Typography>
+                </ShowComponent>
+                <ShowComponent condition={!!inputDrift?.has_drift}>
+                  <Typography typography="s2" color="warning.main">
+                    Drift: {(inputDrift?.changed_sections || []).join(", ")}
+                  </Typography>
+                </ShowComponent>
+                <ShowComponent condition={preflightIssues.length > 0}>
+                  <Typography typography="s2" color="text.secondary">
+                    {preflightIssues[0]?.message}
+                  </Typography>
+                </ShowComponent>
+                <ShowComponent condition={!!diagnosis?.summary}>
+                  <Typography typography="s2" color="text.secondary">
+                    {diagnosis?.summary}
+                  </Typography>
+                </ShowComponent>
+              </Box>
+            </Box>
+          }
           action={
             <LoadingButton
               variant="contained"
               color="primary"
               loading={isRerunPending}
+              disabled={isReplayBlocked}
               size="small"
               onClick={() => {
                 rerunTest({

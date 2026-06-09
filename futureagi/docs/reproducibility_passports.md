@@ -11,7 +11,9 @@ The backend helper lives in:
 ```python
 from simulate.services.reproducibility_passport import (
     build_replay_plan,
+    build_reproducibility_report,
     build_test_execution_passport,
+    capture_reproducibility_snapshot,
     diff_passports,
     explain_passport_drift,
     explain_replay_input_drift,
@@ -57,6 +59,19 @@ The plan includes:
 - `replay_inputs`: run, prompt, agent, scenario, eval, and dataset-row ids
 - `baseline`: passport hash, input fingerprint, and section hashes
 
+The API-ready report combines the current passport, replay plan, stored
+snapshots, input drift, full drift, and score-change diagnosis:
+
+```python
+report = build_reproducibility_report(test_execution)
+```
+
+The same report is available over HTTP:
+
+```text
+GET /simulate/test-executions/{test_execution_id}/reproducibility/
+```
+
 Then capture a passport before starting a rerun or regression investigation:
 
 ```python
@@ -97,3 +112,16 @@ The same artifact can support several product surfaces:
 - self-healing workflows that explain which input section changed
 - audit logs for prompt and eval version changes
 - bug reports that are useful without exposing raw transcripts or credentials
+
+## Stored snapshots
+
+Execution lifecycle code stores best-effort `start` and terminal `completion`
+snapshots in `TestExecution.execution_metadata["reproducibility_passports"]`.
+The passport intentionally excludes that internal metadata key while hashing
+execution options, so saving a snapshot does not make the next passport drift
+against itself.
+
+```python
+capture_reproducibility_snapshot(test_execution, "start")
+capture_reproducibility_snapshot(test_execution, "completion")
+```

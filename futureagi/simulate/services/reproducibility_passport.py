@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -17,14 +18,19 @@ from decimal import Decimal
 from uuid import UUID
 
 from django.db.models import Model, QuerySet
+from django.utils import timezone
 
 from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
 from simulate.models.scenarios import Scenarios
 from simulate.models.test_execution import TestExecution
 
+logger = logging.getLogger(__name__)
+
 PASSPORT_SCHEMA_VERSION = "2026-06-09"
+REPRO_METADATA_KEY = "reproducibility_passports"
 REDACTED = "[redacted]"
+INTERNAL_EXECUTION_METADATA_KEYS = (REPRO_METADATA_KEY,)
 SECRET_KEY_FRAGMENTS = (
     "api_key",
     "apikey",
@@ -106,6 +112,109 @@ class ReplayReadinessIssue:
             "message": self.message,
             "remediation": self.remediation,
         }
+
+
+def build_reproducibility_report(test_execution: TestExecution) -> dict[str, object]:
+    """Return the API-ready reproducibility state for a test execution."""
+
+    current_passport = build_test_execution_passport(test_execution)
+    replay_plan = build_replay_plan(test_execution)
+    snapshots = get_reproducibility_snapshots(test_execution)
+    start_snapshot = snapshots.get("start")
+    completion_snapshot = snapshots.get("completion")
+
+    baseline_passport = None
+    if isinstance(start_snapshot, Mapping):
+        baseline_passport = _mapping_or_empty(start_snapshot.get("passport"))
+    if not baseline_passport:
+        baseline_passport = current_passport
+
+    input_drift = explain_replay_input_drift(baseline_passport, current_passport)
+    full_drift = explain_passport_drift(baseline_passport, current_passport)
+    score_change_diagnosis = diagnose_eval_score_change(
+        baseline_passport,
+        current_passport,
+    )
+
+    return {
+        "test_execution_id": str(test_execution.id),
+        "run_test_id": str(test_execution.run_test_id),
+        "current": {
+            "passport": current_passport,
+            "replay_plan": replay_plan,
+        },
+        "snapshots": snapshots,
+        "preflight": {
+            "can_replay": replay_plan["can_replay"],
+            "issues": replay_plan["issues"],
+            "input_drift": input_drift,
+            "status": _preflight_status(replay_plan, input_drift),
+        },
+        "drift": {
+            "from_start": full_drift,
+            "input_from_start": input_drift,
+        },
+        "score_change_diagnosis": score_change_diagnosis,
+        "has_start_snapshot": isinstance(start_snapshot, Mapping),
+        "has_completion_snapshot": isinstance(completion_snapshot, Mapping),
+    }
+
+
+def capture_reproducibility_snapshot(
+    test_execution: TestExecution,
+    stage: str,
+) -> dict[str, object]:
+    """Store a passport snapshot in execution metadata without a migration."""
+
+    if stage not in {"start", "completion"}:
+        raise ValueError("stage must be 'start' or 'completion'")
+
+    passport = build_test_execution_passport(test_execution)
+    replay_plan = build_replay_plan(test_execution)
+    snapshot = {
+        "stage": stage,
+        "captured_at": timezone.now().isoformat(),
+        "passport_hash": passport["passport_hash"],
+        "input_fingerprint": passport["input_fingerprint"],
+        "runtime_fingerprint": passport["runtime_fingerprint"],
+        "section_hashes": passport["section_hashes"],
+        "input_section_hashes": passport["input_section_hashes"],
+        "runtime_section_hashes": passport["runtime_section_hashes"],
+        "passport": passport,
+        "replay_plan": replay_plan,
+    }
+
+    metadata = dict(test_execution.execution_metadata or {})
+    snapshots = dict(metadata.get(REPRO_METADATA_KEY) or {})
+    snapshots[stage] = snapshot
+    metadata[REPRO_METADATA_KEY] = snapshots
+    test_execution.execution_metadata = metadata
+    test_execution.save(update_fields=["execution_metadata"])
+    return snapshot
+
+
+def safe_capture_reproducibility_snapshot(
+    test_execution: TestExecution,
+    stage: str,
+) -> dict[str, object] | None:
+    """Best-effort snapshot capture for execution lifecycle hooks."""
+
+    try:
+        return capture_reproducibility_snapshot(test_execution, stage)
+    except Exception:
+        logger.exception(
+            "Failed to capture reproducibility snapshot",
+            extra={"test_execution_id": str(test_execution.id), "stage": stage},
+        )
+        return None
+
+
+def get_reproducibility_snapshots(
+    test_execution: TestExecution,
+) -> dict[str, object]:
+    metadata = test_execution.execution_metadata or {}
+    snapshots = metadata.get(REPRO_METADATA_KEY)
+    return dict(snapshots) if isinstance(snapshots, Mapping) else {}
 
 
 def build_test_execution_passport(
@@ -301,6 +410,40 @@ def explain_replay_input_drift(
     }
 
 
+def diagnose_eval_score_change(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Explain likely score-change causes from replay-input drift."""
+
+    input_drift = explain_replay_input_drift(before, after)
+    if not input_drift["has_drift"]:
+        return {
+            "classification": "runtime_or_model_behavior",
+            "confidence": "medium",
+            "summary": (
+                "Replay inputs match. Any score change is more likely from model "
+                "nondeterminism, provider behavior, or runtime output differences."
+            ),
+            "evidence": [],
+            "recommended_action": (
+                "Compare call transcripts, provider responses, and eval outputs."
+            ),
+        }
+
+    changed_sections = input_drift["changed_sections"]
+    return {
+        "classification": "replay_inputs_changed",
+        "confidence": "high",
+        "summary": (
+            "Replay inputs changed before scores were compared, so the score delta "
+            "cannot be attributed to model behavior alone."
+        ),
+        "evidence": input_drift["changes"],
+        "recommended_action": _diagnosis_recommendation(changed_sections),
+    }
+
+
 def stable_hash(value: object) -> str:
     """Hash a JSON-compatible value after stable normalization."""
 
@@ -413,7 +556,9 @@ def _execution_options_section(
     test_execution: TestExecution,
     run_test: RunTest,
 ) -> dict[str, object]:
-    metadata = _normalize(test_execution.execution_metadata or {})
+    metadata = _normalize(
+        _external_execution_metadata(test_execution.execution_metadata or {})
+    )
     return {
         "execution_metadata": metadata,
         "execution_metadata_hash": stable_hash(metadata),
@@ -530,6 +675,42 @@ def _replay_readiness_issues(
         )
 
     return issues
+
+
+def _external_execution_metadata(
+    execution_metadata: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        str(key): value
+        for key, value in execution_metadata.items()
+        if str(key) not in INTERNAL_EXECUTION_METADATA_KEYS
+    }
+
+
+def _preflight_status(
+    replay_plan: Mapping[str, object],
+    input_drift: Mapping[str, object],
+) -> str:
+    if not replay_plan.get("can_replay"):
+        return "blocked"
+    if input_drift.get("highest_severity") == "blocker":
+        return "input_drift_blocked"
+    if input_drift.get("has_drift") or replay_plan.get("issues"):
+        return "warning"
+    return "ready"
+
+
+def _diagnosis_recommendation(changed_sections: Sequence[object]) -> str:
+    sections = {str(section) for section in changed_sections}
+    if "eval_configs" in sections:
+        return "Review eval template, mapping, filter, and threshold changes first."
+    if "prompt" in sections:
+        return "Compare prompt version snapshots before interpreting score deltas."
+    if "agent" in sections:
+        return "Compare agent version snapshots and simulator settings."
+    if "scenarios" in sections:
+        return "Verify the same scenario and dataset rows were replayed."
+    return "Resolve replay-input drift before attributing score deltas."
 
 
 def _agent_definition_payload(

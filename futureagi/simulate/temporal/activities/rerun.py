@@ -186,6 +186,20 @@ async def finalize_rerun_execution(input: FinalizeRerunInput) -> None:
             # Still in progress - just update counts and status
             await test_execution.asave(update_fields=update_fields)
 
+        if final_status in [
+            TestExecution.ExecutionStatus.COMPLETED,
+            TestExecution.ExecutionStatus.FAILED,
+        ]:
+            from asgiref.sync import sync_to_async
+            from simulate.services.reproducibility_passport import (
+                safe_capture_reproducibility_snapshot,
+            )
+
+            await sync_to_async(
+                safe_capture_reproducibility_snapshot,
+                thread_sensitive=True,
+            )(test_execution, "completion")
+
         logger.info(
             "finalized_rerun_execution",
             test_execution_id=input.test_execution_id,

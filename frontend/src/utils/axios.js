@@ -1244,6 +1244,8 @@ export const endpoints = {
       `/simulate/call-executions/${executionId}/branch-analysis/`,
     cancelExecution: (id) => `/simulate/test-executions/${id}/cancel/`,
     rerunExecution: (id) => `/simulate/test-executions/${id}/rerun-calls/`,
+    reproducibility: (id) =>
+      `/simulate/test-executions/${id}/reproducibility/`,
     getDetailLogs: (id) => `/simulate/call-executions/${id}/logs/`,
     getErrorLocalizerTasks: (id) =>
       `/simulate/call-executions/${id}/error-localizer-tasks/`,

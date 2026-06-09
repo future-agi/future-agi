@@ -675,6 +675,16 @@ async def finalize_test_execution(input: FinalizeInput) -> None:
                 ]
             )
 
+        from asgiref.sync import sync_to_async
+        from simulate.services.reproducibility_passport import (
+            safe_capture_reproducibility_snapshot,
+        )
+
+        await sync_to_async(
+            safe_capture_reproducibility_snapshot,
+            thread_sensitive=True,
+        )(test_execution, "completion")
+
         activity.logger.info(f"Finalized test execution: {input.test_execution_id}")
 
     except TestExecution.DoesNotExist:

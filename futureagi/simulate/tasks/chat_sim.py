@@ -26,6 +26,9 @@ from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
 )
+from simulate.services.reproducibility_passport import (
+    safe_capture_reproducibility_snapshot,
+)
 from simulate.utils.chat_simulation import (
     _aggregate_chat_metrics,
     _calculate_tokens_from_messages,
@@ -316,6 +319,7 @@ def monitor_test_execution_for_chat(test_execution_id: str):
         ):
             test_execution.status = TestExecution.ExecutionStatus.COMPLETED
             test_execution.save()
+            safe_capture_reproducibility_snapshot(test_execution, "completion")
 
             logger.info(f"Test execution {test_execution.id} marked as completed")
 
@@ -373,6 +377,7 @@ def monitor_test_execution_for_chat(test_execution_id: str):
         elif all_terminal and not has_any_completed and has_any_failed:
             test_execution.status = TestExecution.ExecutionStatus.FAILED
             test_execution.save(update_fields=["status"])
+            safe_capture_reproducibility_snapshot(test_execution, "completion")
             status_changed = True
             logger.info(
                 f"Test execution {test_execution.id} marked as FAILED (all calls failed)"
@@ -386,6 +391,7 @@ def monitor_test_execution_for_chat(test_execution_id: str):
             test_execution.save(
                 update_fields=["status", "eval_explanation_summary_status"]
             )
+            safe_capture_reproducibility_snapshot(test_execution, "completion")
             status_changed = True
 
             # Lazy import to avoid circular dependency

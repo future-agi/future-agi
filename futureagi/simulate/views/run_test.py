@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 import structlog
 from django.db import connection, models, transaction
 from django.db.models import Avg, Count, Max, Prefetch, Q
-from django.http import HttpResponse
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg import openapi
@@ -147,6 +147,10 @@ from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
     run_new_evals_on_call_executions_task,
+)
+from simulate.services.reproducibility_passport import (
+    build_reproducibility_report,
+    safe_capture_reproducibility_snapshot,
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
 from simulate.utils.baseline import resolve_baseline_id
@@ -815,6 +819,7 @@ class RunTestExecutionView(APIView):
                 agent_definition=run_test.agent_definition,
                 agent_version=run_test.agent_version,
             )
+            safe_capture_reproducibility_snapshot(test_execution, "start")
 
             # Start Temporal workflow
             workflow_id = start_test_execution_workflow(
@@ -1917,6 +1922,51 @@ class RunTestCallExecutionsView(APIView):
         }
 
         return snapshot_as_call_exec
+
+
+class TestExecutionReproducibilityView(APIView):
+    """Return replay passport, preflight, drift, and diagnosis for an execution."""
+
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        responses={
+            200: openapi.Schema(type=openapi.TYPE_OBJECT),
+            404: ErrorResponseSerializer,
+            500: ErrorResponseSerializer,
+        },
+    )
+    def get(self, request, test_execution_id, *args, **kwargs):
+        try:
+            user_organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            if not user_organization:
+                return Response(
+                    {"error": "Organization not found for the user."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            test_execution = get_object_or_404(
+                TestExecution,
+                id=test_execution_id,
+                run_test__organization=user_organization,
+                run_test__deleted=False,
+            )
+            return Response(
+                build_reproducibility_report(test_execution),
+                status=status.HTTP_200_OK,
+            )
+        except Http404:
+            return Response(
+                {"error": "Test execution not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to build reproducibility report: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class TestExecutionDetailView(APIView):

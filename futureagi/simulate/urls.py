@@ -56,6 +56,7 @@ from simulate.views.run_test import (
     TestExecutionDetailView,
     TestExecutionOptimiserAnalysisRefreshView,
     TestExecutionOptimiserAnalysisView,
+    TestExecutionReproducibilityView,
     TestExecutionRerunView,
     TestExecutionStatusView,
     UpdateEvalConfigView,
@@ -428,6 +429,11 @@ urlpatterns = [
         "test-executions/<uuid:test_execution_id>/column-order/",
         TestExecutionColumnOrderView.as_view(),
         name="test-execution-column-order",
+    ),
+    path(
+        "test-executions/<uuid:test_execution_id>/reproducibility/",
+        TestExecutionReproducibilityView.as_view(),
+        name="test-execution-reproducibility",
     ),
     path(
         "call-executions/<uuid:call_execution_id>/",

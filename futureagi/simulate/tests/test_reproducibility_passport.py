@@ -13,10 +13,13 @@ from simulate.models.test_execution import TestExecution as TestExecutionModel
 from simulate.services.reproducibility_passport import (
     REDACTED,
     build_replay_plan,
+    build_reproducibility_report,
     build_test_execution_passport,
+    capture_reproducibility_snapshot,
     diff_passports,
     explain_passport_drift,
     explain_replay_input_drift,
+    get_reproducibility_snapshots,
     stable_hash,
 )
 
@@ -419,3 +422,70 @@ class TestReproducibilityPassport:
             "message": "Prompt simulation does not have a pinned prompt version.",
             "remediation": "Attach a prompt version before treating reruns as exact.",
         }
+
+    def test_snapshots_do_not_poison_input_fingerprint(
+        self,
+        test_execution,
+        scenario,
+        agent_version,
+    ):
+        test_execution.agent_version = agent_version
+        test_execution.scenario_ids = [str(scenario.id)]
+        test_execution.execution_metadata = {
+            "column_order": ["overall_score"],
+            "active_rerun_workflow_id": "wf-before",
+        }
+        test_execution.save()
+
+        before = build_test_execution_passport(test_execution)
+        start_snapshot = capture_reproducibility_snapshot(test_execution, "start")
+        test_execution.refresh_from_db()
+        after_start = build_test_execution_passport(test_execution)
+        completion_snapshot = capture_reproducibility_snapshot(
+            test_execution,
+            "completion",
+        )
+        test_execution.refresh_from_db()
+        after_completion = build_test_execution_passport(test_execution)
+
+        assert start_snapshot["input_fingerprint"] == before["input_fingerprint"]
+        assert (
+            completion_snapshot["input_fingerprint"]
+            == before["input_fingerprint"]
+        )
+        assert after_start["input_fingerprint"] == before["input_fingerprint"]
+        assert after_completion["input_fingerprint"] == before["input_fingerprint"]
+        assert set(get_reproducibility_snapshots(test_execution)) == {
+            "start",
+            "completion",
+        }
+
+    def test_report_includes_preflight_drift_and_score_change_diagnosis(
+        self,
+        test_execution,
+        scenario,
+        agent_version,
+    ):
+        test_execution.agent_version = agent_version
+        test_execution.scenario_ids = [str(scenario.id)]
+        test_execution.save()
+        capture_reproducibility_snapshot(test_execution, "start")
+
+        test_execution.execution_metadata = {
+            **test_execution.execution_metadata,
+            "column_order": ["overall_score", "latency_ms"],
+        }
+        test_execution.save()
+
+        report = build_reproducibility_report(test_execution)
+
+        assert report["has_start_snapshot"] is True
+        assert report["has_completion_snapshot"] is False
+        assert report["preflight"]["status"] == "warning"
+        assert report["drift"]["input_from_start"]["changed_sections"] == [
+            "execution_options"
+        ]
+        assert (
+            report["score_change_diagnosis"]["classification"]
+            == "replay_inputs_changed"
+        )
