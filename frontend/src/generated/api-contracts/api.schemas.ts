@@ -6610,6 +6610,37 @@ export interface AnnotationsLabelsApi {
   readonly archived?: boolean;
 }
 
+export type AnnotationLabelCreateRequestApiType = typeof AnnotationLabelCreateRequestApiType[keyof typeof AnnotationLabelCreateRequestApiType];
+
+
+export const AnnotationLabelCreateRequestApiType = {
+  text: 'text',
+  numeric: 'numeric',
+  categorical: 'categorical',
+  star: 'star',
+  thumbs_up_down: 'thumbs_up_down',
+} as const;
+
+export type AnnotationLabelCreateRequestApiSettings = { [key: string]: unknown };
+
+export interface AnnotationLabelCreateRequestApi {
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
+  type: AnnotationLabelCreateRequestApiType;
+  settings?: AnnotationLabelCreateRequestApiSettings;
+  project?: string;
+  description?: string;
+  allow_notes?: boolean;
+}
+
+export interface AnnotationLabelCreateResponseApi {
+  status?: boolean;
+  result: AnnotationsLabelsApi;
+}
+
 export interface AnnotationLabelRestoreResponseApi {
   status?: boolean;
   result: AnnotationsLabelsApi;

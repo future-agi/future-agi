@@ -1372,7 +1372,10 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   );
 
   const columnConfig = useMemo(
-    () => tableData?.data?.result?.column_config ?? [],
+    () =>
+      tableData?.data?.result?.column_config ??
+      tableData?.data?.result?.columnConfig ??
+      [],
     [tableData],
   );
 
@@ -1616,11 +1619,14 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
               Loading datasets...
             </MenuItem>
           )}
-          {(datasets || []).map((ds) => (
-            <MenuItem key={ds.dataset_id} value={ds.dataset_id}>
-              {ds.name}
-            </MenuItem>
-          ))}
+          {(datasets || []).map((ds) => {
+            const optionId = ds.dataset_id || ds.datasetId || ds.id;
+            return (
+              <MenuItem key={optionId} value={optionId}>
+                {ds.name}
+              </MenuItem>
+            );
+          })}
         </TextField>
 
         {datasetId && (

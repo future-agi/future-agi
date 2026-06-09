@@ -14214,17 +14214,44 @@ export const ModelHubAnnotationsLabelsListResponse = zod.array(ModelHubAnnotatio
  */
 export const modelHubAnnotationsLabelsCreateBodyNameMax = 255;
 
-
+export const modelHubAnnotationsLabelsCreateBodySettingsDefault = {  };
+export const modelHubAnnotationsLabelsCreateBodyDescriptionDefault = ``;
+export const modelHubAnnotationsLabelsCreateBodyAllowNotesDefault = false;
 
 export const ModelHubAnnotationsLabelsCreateBody = zod.object({
   "name": zod.string().min(1).max(modelHubAnnotationsLabelsCreateBodyNameMax),
   "type": zod.enum(['text', 'numeric', 'categorical', 'star', 'thumbs_up_down']),
   "settings": zod.object({
 
+}).passthrough().default(modelHubAnnotationsLabelsCreateBodySettingsDefault),
+  "project": zod.string().uuid().optional(),
+  "description": zod.string().default(modelHubAnnotationsLabelsCreateBodyDescriptionDefault),
+  "allow_notes": zod.boolean().default(modelHubAnnotationsLabelsCreateBodyAllowNotesDefault)
+})
+
+export const modelHubAnnotationsLabelsCreateResponseStatusDefault = true;
+export const modelHubAnnotationsLabelsCreateResponseResultNameMax = 255;
+
+
+
+export const ModelHubAnnotationsLabelsCreateResponse = zod.object({
+  "status": zod.boolean().default(modelHubAnnotationsLabelsCreateResponseStatusDefault),
+  "result": zod.object({
+  "id": zod.string().uuid().optional(),
+  "name": zod.string().min(1).max(modelHubAnnotationsLabelsCreateResponseResultNameMax),
+  "type": zod.enum(['text', 'numeric', 'categorical', 'star', 'thumbs_up_down']),
+  "organization": zod.string().uuid().optional(),
+  "settings": zod.object({
+
 }).passthrough().optional(),
   "project": zod.string().uuid().optional(),
   "description": zod.string().optional(),
-  "allow_notes": zod.boolean().optional()
+  "allow_notes": zod.boolean().optional(),
+  "created_at": zod.string().datetime({"offset":true}).optional(),
+  "trace_annotations_count": zod.number().optional(),
+  "annotation_count": zod.number().optional(),
+  "archived": zod.boolean().optional()
+})
 })
 
 

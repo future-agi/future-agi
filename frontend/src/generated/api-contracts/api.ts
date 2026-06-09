@@ -177,6 +177,8 @@ import type {
   AgentccWebhooksListParams,
   AllActiveTestsApi,
   AnnotationActionMessageResponseApi,
+  AnnotationLabelCreateRequestApi,
+  AnnotationLabelCreateResponseApi,
   AnnotationLabelRestoreResponseApi,
   AnnotationQueueApi,
   AnnotationSummaryResponseApi,
@@ -24407,20 +24409,35 @@ export const modelHubAnnotationsLabelsList = async (params?: ModelHubAnnotations
 
 
 
-export type modelHubAnnotationsLabelsCreateResponse201 = {
-  data: AnnotationsLabelsApi
-  status: 201
+export type modelHubAnnotationsLabelsCreateResponse200 = {
+  data: AnnotationLabelCreateResponseApi
+  status: 200
+}
+
+export type modelHubAnnotationsLabelsCreateResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type modelHubAnnotationsLabelsCreateResponse403 = {
+  data: ApiTextErrorResponseApi
+  status: 403
+}
+
+export type modelHubAnnotationsLabelsCreateResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
 }
 
 export type modelHubAnnotationsLabelsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 500>
 }
 
-export type modelHubAnnotationsLabelsCreateResponseSuccess = (modelHubAnnotationsLabelsCreateResponse201) & {
+export type modelHubAnnotationsLabelsCreateResponseSuccess = (modelHubAnnotationsLabelsCreateResponse200) & {
   headers: Headers;
 };
-export type modelHubAnnotationsLabelsCreateResponseError = (modelHubAnnotationsLabelsCreateResponseDefault) & {
+export type modelHubAnnotationsLabelsCreateResponseError = (modelHubAnnotationsLabelsCreateResponse400 | modelHubAnnotationsLabelsCreateResponse403 | modelHubAnnotationsLabelsCreateResponse500 | modelHubAnnotationsLabelsCreateResponseDefault) & {
   headers: Headers;
 };
 
@@ -24437,7 +24454,7 @@ export const getModelHubAnnotationsLabelsCreateUrl = () => {
 /**
  * Custom create to provide clearer error responses in GM format.
  */
-export const modelHubAnnotationsLabelsCreate = async (annotationsLabelsApi: NonReadonly<AnnotationsLabelsApi>, options?: RequestInit): Promise<modelHubAnnotationsLabelsCreateResponse> => {
+export const modelHubAnnotationsLabelsCreate = async (annotationLabelCreateRequestApi: AnnotationLabelCreateRequestApi, options?: RequestInit): Promise<modelHubAnnotationsLabelsCreateResponse> => {
 
   return apiMutator<modelHubAnnotationsLabelsCreateResponse>(getModelHubAnnotationsLabelsCreateUrl(),
   {
@@ -24445,7 +24462,7 @@ export const modelHubAnnotationsLabelsCreate = async (annotationsLabelsApi: NonR
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      annotationsLabelsApi,)
+      annotationLabelCreateRequestApi,)
   }
 );}
 
