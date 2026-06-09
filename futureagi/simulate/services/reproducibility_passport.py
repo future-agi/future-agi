@@ -38,6 +38,24 @@ SECRET_KEY_FRAGMENTS = (
     "secret",
     "token",
 )
+DRIFT_SEVERITY_BY_SECTION = {
+    "agent": "blocker",
+    "prompt": "blocker",
+    "scenarios": "blocker",
+    "eval_configs": "blocker",
+    "run_test": "warning",
+    "execution_options": "warning",
+    "execution": "info",
+}
+DRIFT_REASON_BY_SECTION = {
+    "agent": "The agent definition, version snapshot, or simulator changed.",
+    "prompt": "The prompt template, prompt version, or prompt snapshot changed.",
+    "scenarios": "The scenario set, dataset links, metadata, or source hashes changed.",
+    "eval_configs": "The eval templates, configs, mappings, or filters changed.",
+    "run_test": "Run-level settings changed.",
+    "execution_options": "Execution metadata or selected ids changed.",
+    "execution": "Execution status or counters changed.",
+}
 
 
 @dataclass(frozen=True)
@@ -58,6 +76,26 @@ class PassportDiff:
             "changed_sections": self.changed_sections,
             "before_hashes": self.before_hashes,
             "after_hashes": self.after_hashes,
+        }
+
+
+@dataclass(frozen=True)
+class ReplayReadinessIssue:
+    """A concrete reason a run may not be replayable as-is."""
+
+    severity: str
+    code: str
+    section: str
+    message: str
+    remediation: str
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "severity": self.severity,
+            "code": self.code,
+            "section": self.section,
+            "message": self.message,
+            "remediation": self.remediation,
         }
 
 
@@ -99,6 +137,38 @@ def build_test_execution_passport(
     }
 
 
+def build_replay_plan(test_execution: TestExecution) -> dict[str, object]:
+    """Build a replay-oriented plan from a test execution passport.
+
+    The plan is intentionally declarative. It does not rerun anything; it tells
+    a caller which stable inputs should be used and whether the current run has
+    enough pinned state to make a future replay trustworthy.
+    """
+
+    passport = build_test_execution_passport(test_execution)
+    issues = _replay_readiness_issues(passport)
+    replay_inputs = _replay_inputs(passport)
+    replay_key = stable_hash(
+        {
+            "schema_version": passport["schema_version"],
+            "passport_hash": passport["passport_hash"],
+            "replay_inputs": replay_inputs,
+        }
+    )
+
+    return {
+        "replay_key": replay_key,
+        "passport_hash": passport["passport_hash"],
+        "can_replay": not any(issue.severity == "blocker" for issue in issues),
+        "issues": [issue.as_dict() for issue in issues],
+        "replay_inputs": replay_inputs,
+        "baseline": {
+            "section_hashes": passport["section_hashes"],
+            "passport_hash": passport["passport_hash"],
+        },
+    }
+
+
 def diff_passports(
     before: Mapping[str, object],
     after: Mapping[str, object],
@@ -120,6 +190,37 @@ def diff_passports(
         },
         after_hashes={section: after_hashes.get(section) for section in section_names},
     )
+
+
+def explain_passport_drift(
+    before: Mapping[str, object],
+    after: Mapping[str, object],
+) -> dict[str, object]:
+    """Return a severity-ranked explanation of section-level drift."""
+
+    diff = diff_passports(before, after)
+    changes = [
+        {
+            "section": section,
+            "severity": DRIFT_SEVERITY_BY_SECTION.get(section, "info"),
+            "reason": DRIFT_REASON_BY_SECTION.get(
+                section,
+                "The section hash changed.",
+            ),
+            "before_hash": diff.before_hashes.get(section),
+            "after_hash": diff.after_hashes.get(section),
+        }
+        for section in diff.changed_sections
+    ]
+    severity_rank = {"blocker": 0, "warning": 1, "info": 2}
+    changes.sort(key=lambda item: severity_rank.get(str(item["severity"]), 3))
+
+    return {
+        "has_drift": diff.has_drift,
+        "highest_severity": _highest_drift_severity(changes),
+        "changed_sections": diff.changed_sections,
+        "changes": changes,
+    }
 
 
 def stable_hash(value: object) -> str:
@@ -244,6 +345,115 @@ def _execution_options_section(
     }
 
 
+def _replay_inputs(passport: Mapping[str, object]) -> dict[str, object]:
+    agent = _mapping_or_empty(passport.get("agent"))
+    agent_definition = _mapping_or_empty(agent.get("agent_definition"))
+    agent_version = _mapping_or_empty(agent.get("agent_version"))
+    simulator_agent = _mapping_or_empty(agent.get("simulator_agent"))
+    prompt = _mapping_or_empty(passport.get("prompt"))
+    scenarios = _sequence_or_empty(passport.get("scenarios"))
+    eval_configs = _sequence_or_empty(passport.get("eval_configs"))
+    run_test = _mapping_or_empty(passport.get("run_test"))
+
+    return {
+        "run_test_id": run_test.get("id"),
+        "source_type": run_test.get("source_type"),
+        "agent_definition_id": agent_definition.get("id"),
+        "agent_version_id": agent_version.get("id"),
+        "simulator_agent_id": simulator_agent.get("id"),
+        "prompt_template_id": prompt.get("prompt_template_id"),
+        "prompt_version_id": prompt.get("prompt_version_id"),
+        "scenario_ids": [scenario.get("id") for scenario in scenarios],
+        "eval_config_ids": [config.get("id") for config in eval_configs],
+        "dataset_row_ids": run_test.get("dataset_row_ids", []),
+        "enable_tool_evaluation": run_test.get("enable_tool_evaluation"),
+    }
+
+
+def _replay_readiness_issues(
+    passport: Mapping[str, object],
+) -> list[ReplayReadinessIssue]:
+    issues: list[ReplayReadinessIssue] = []
+    run_test = _mapping_or_empty(passport.get("run_test"))
+    execution = _mapping_or_empty(passport.get("execution"))
+    agent = _mapping_or_empty(passport.get("agent"))
+    prompt = _mapping_or_empty(passport.get("prompt"))
+    scenarios = _sequence_or_empty(passport.get("scenarios"))
+    eval_configs = _sequence_or_empty(passport.get("eval_configs"))
+
+    source_type = run_test.get("source_type")
+    if source_type == RunTest.SourceTypes.PROMPT and not prompt.get(
+        "prompt_version_id"
+    ):
+        issues.append(
+            ReplayReadinessIssue(
+                severity="blocker",
+                code="missing_prompt_version",
+                section="prompt",
+                message="Prompt simulation does not have a pinned prompt version.",
+                remediation="Attach a prompt version before treating reruns as exact.",
+            )
+        )
+
+    agent_definition = _mapping_or_empty(agent.get("agent_definition"))
+    agent_version = _mapping_or_empty(agent.get("agent_version"))
+    if source_type == RunTest.SourceTypes.AGENT_DEFINITION and not agent_definition:
+        issues.append(
+            ReplayReadinessIssue(
+                severity="blocker",
+                code="missing_agent_definition",
+                section="agent",
+                message="Agent-definition simulation has no agent definition.",
+                remediation="Attach the agent definition used by the original run.",
+            )
+        )
+    elif source_type == RunTest.SourceTypes.AGENT_DEFINITION and not agent_version:
+        issues.append(
+            ReplayReadinessIssue(
+                severity="warning",
+                code="missing_agent_version_snapshot",
+                section="agent",
+                message="Agent-definition simulation has no pinned agent version.",
+                remediation="Create or attach an agent version snapshot for reruns.",
+            )
+        )
+
+    requested_scenarios = execution.get("scenario_ids") or []
+    if not scenarios:
+        issues.append(
+            ReplayReadinessIssue(
+                severity="blocker",
+                code="missing_scenarios",
+                section="scenarios",
+                message="No scenarios are available in the passport.",
+                remediation="Attach at least one scenario before replaying this run.",
+            )
+        )
+    elif requested_scenarios and len(scenarios) != len(requested_scenarios):
+        issues.append(
+            ReplayReadinessIssue(
+                severity="blocker",
+                code="scenario_selection_mismatch",
+                section="scenarios",
+                message="Some scenario ids from the execution were not resolved.",
+                remediation="Restore the missing scenarios or replay a new baseline.",
+            )
+        )
+
+    if not eval_configs:
+        issues.append(
+            ReplayReadinessIssue(
+                severity="warning",
+                code="missing_eval_configs",
+                section="eval_configs",
+                message="No eval configs are attached to the run.",
+                remediation="Attach eval configs before comparing eval outcomes.",
+            )
+        )
+
+    return issues
+
+
 def _agent_definition_payload(
     agent_definition: Model | None,
 ) -> dict[str, object] | None:
@@ -360,6 +570,29 @@ def _extract_section_hashes(passport: Mapping[str, object]) -> dict[str, str]:
         for section, section_hash in raw_hashes.items()
         if section_hash is not None
     }
+
+
+def _highest_drift_severity(changes: Sequence[Mapping[str, object]]) -> str | None:
+    if not changes:
+        return None
+
+    severity_rank = {"blocker": 0, "warning": 1, "info": 2}
+    return str(
+        min(
+            (change.get("severity", "info") for change in changes),
+            key=lambda severity: severity_rank.get(str(severity), 3),
+        )
+    )
+
+
+def _mapping_or_empty(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _sequence_or_empty(value: object) -> Sequence[Mapping[str, object]]:
+    if not isinstance(value, Sequence) or isinstance(value, str | bytes | bytearray):
+        return []
+    return [item for item in value if isinstance(item, Mapping)]
 
 
 def _model_id(instance: object | None, attr: str = "id") -> str | None:

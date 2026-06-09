@@ -10,8 +10,10 @@ The backend helper lives in:
 
 ```python
 from simulate.services.reproducibility_passport import (
+    build_replay_plan,
     build_test_execution_passport,
     diff_passports,
+    explain_passport_drift,
 )
 ```
 
@@ -35,7 +37,24 @@ hashes instead of copied into the passport.
 
 ## How to use it for replay
 
-Capture a passport before starting a rerun or regression investigation:
+First build a replay plan:
+
+```python
+plan = build_replay_plan(test_execution)
+
+if not plan["can_replay"]:
+    logger.warning("simulation_replay_not_ready", extra={"issues": plan["issues"]})
+```
+
+The plan includes:
+
+- `replay_key`: stable key for this replay baseline
+- `can_replay`: false when required pinned state is missing
+- `issues`: blocker/warning/info readiness checks with remediation text
+- `replay_inputs`: run, prompt, agent, scenario, eval, and dataset-row ids
+- `baseline`: passport and section hashes to compare against later
+
+Then capture a passport before starting a rerun or regression investigation:
 
 ```python
 original = build_test_execution_passport(test_execution)
@@ -49,6 +68,15 @@ drift = diff_passports(original, rerun)
 
 if drift.has_drift:
     logger.info("simulation_replay_drift", extra=drift.as_dict())
+```
+
+For user-facing or self-healing workflows, use the explanation helper:
+
+```python
+explanation = explain_passport_drift(original, rerun)
+
+if explanation["highest_severity"] == "blocker":
+    logger.warning("simulation_replay_inputs_changed", extra=explanation)
 ```
 
 Section-level drift lets the caller decide whether a result changed because of

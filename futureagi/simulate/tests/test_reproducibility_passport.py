@@ -12,8 +12,10 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import TestExecution as TestExecutionModel
 from simulate.services.reproducibility_passport import (
     REDACTED,
+    build_replay_plan,
     build_test_execution_passport,
     diff_passports,
+    explain_passport_drift,
     stable_hash,
 )
 
@@ -258,6 +260,14 @@ class TestReproducibilityPassport:
             == REDACTED
         )
 
+        replay_plan = build_replay_plan(test_execution)
+
+        assert replay_plan["can_replay"] is True
+        assert replay_plan["replay_inputs"]["agent_version_id"] == str(agent_version.id)
+        assert replay_plan["replay_inputs"]["scenario_ids"] == [str(scenario.id)]
+        assert replay_plan["replay_inputs"]["eval_config_ids"] == [str(eval_config.id)]
+        assert replay_plan["baseline"]["passport_hash"] == passport["passport_hash"]
+
     def test_prompt_passport_captures_prompt_snapshot_hash(
         self,
         prompt_run_test,
@@ -301,3 +311,73 @@ class TestReproducibilityPassport:
         assert diff.has_drift is True
         assert diff.changed_sections == ["eval_configs"]
         assert diff.as_dict()["has_drift"] is True
+
+        drift = explain_passport_drift(before, after)
+
+        assert drift["highest_severity"] == "blocker"
+        assert drift["changes"] == [
+            {
+                "section": "eval_configs",
+                "severity": "blocker",
+                "reason": "The eval templates, configs, mappings, or filters changed.",
+                "before_hash": before["section_hashes"]["eval_configs"],
+                "after_hash": after["section_hashes"]["eval_configs"],
+            }
+        ]
+
+    def test_replay_plan_flags_unpinned_agent_versions(self, test_execution, scenario):
+        test_execution.scenario_ids = [str(scenario.id)]
+        test_execution.save()
+
+        replay_plan = build_replay_plan(test_execution)
+
+        assert replay_plan["can_replay"] is True
+        assert replay_plan["issues"] == [
+            {
+                "severity": "warning",
+                "code": "missing_agent_version_snapshot",
+                "section": "agent",
+                "message": "Agent-definition simulation has no pinned agent version.",
+                "remediation": "Create or attach an agent version snapshot for reruns.",
+            },
+            {
+                "severity": "warning",
+                "code": "missing_eval_configs",
+                "section": "eval_configs",
+                "message": "No eval configs are attached to the run.",
+                "remediation": "Attach eval configs before comparing eval outcomes.",
+            },
+        ]
+
+    def test_replay_plan_blocks_prompt_runs_without_prompt_version(
+        self,
+        db,
+        organization,
+        workspace,
+        prompt_scenario,
+    ):
+        run_test = RunTest.objects.create(
+            name="Unpinned prompt run",
+            source_type=RunTest.SourceTypes.PROMPT,
+            organization=organization,
+            workspace=workspace,
+        )
+        run_test.scenarios.add(prompt_scenario)
+        execution = TestExecutionModel.objects.create(
+            run_test=run_test,
+            status=TestExecutionModel.ExecutionStatus.PENDING,
+            total_scenarios=1,
+            total_calls=1,
+            scenario_ids=[str(prompt_scenario.id)],
+        )
+
+        replay_plan = build_replay_plan(execution)
+
+        assert replay_plan["can_replay"] is False
+        assert replay_plan["issues"][0] == {
+            "severity": "blocker",
+            "code": "missing_prompt_version",
+            "section": "prompt",
+            "message": "Prompt simulation does not have a pinned prompt version.",
+            "remediation": "Attach a prompt version before treating reruns as exact.",
+        }
