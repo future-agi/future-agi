@@ -226,8 +226,10 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         # pivot surface an explicit error state on the UI when every eval
         # row for a (trace, config) pair errored.
         # Column order must match what ``pivot_eval_results`` expects:
-        # trace_id, eval_config_id, avg_score, pass_rate, success_count,
-        # error_count, eval_count, str_lists.
+        # trace_id, eval_config_id, avg_score, pass_rate, pass_count,
+        # fail_count, success_count, error_count, eval_count, str_lists.
+        # pass_count/fail_count feed the count-mode pivot (list_voice_calls);
+        # the default pivot mode ignores them.
         query = f"""
         SELECT
             trace_id,
@@ -242,6 +244,12 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
                 CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ), NULL) AS pass_rate,
+            countIf(
+                output_bool = 1 AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS pass_count,
+            countIf(
+                output_bool = 0 AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+            ) AS fail_count,
             countIf(
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS success_count,

@@ -21,6 +21,7 @@ from django.db.models import (
     FloatField,
     IntegerField,
     JSONField,
+    Max,
     OuterRef,
     Q,
     Subquery,
@@ -68,6 +69,7 @@ from tracer.serializers.trace import (
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.graph_dispatch import (
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
@@ -77,7 +79,6 @@ from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
     UserListQueryBuilder,
 )
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.observability_providers import ObservabilityService
@@ -86,6 +87,8 @@ from tracer.utils.annotations import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    build_eval_task_map,
+    eval_count_cell,
     get_annotation_labels_for_project,
     get_default_trace_config,
     update_column_config_based_on_eval_config,
@@ -2451,7 +2454,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             ):
                                 total_eval_configs[
                                     str(metric["custom_eval_config_id"]) + "**" + choice
-                                ] = metric["custom_eval_config__name"] + " - " + choice
+                                ] = (
+                                    metric["custom_eval_config__name"] + " - " + choice
+                                )
                 else:
                     score = (
                         metric["avg_float_score"]
@@ -3839,41 +3844,74 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval config IDs. Project mode uses a CH dict-lookup (fast);
-        # org mode uses a PG scan because the CH dict-lookup takes a single
-        # project_id — multi-project CH variant not implemented yet.
+        # Get eval config IDs together with the (eval_task, target_type) each
+        # config was actually applied under. Project mode uses a CH dict-lookup
+        # (fast); org mode uses a PG scan because the CH dict-lookup takes a
+        # single project_id — multi-project CH variant not implemented yet.
+        #
+        # Only NON-DELETED EvalLogger rows are considered. ``build_eval_task_map``
+        # groups the surviving rows by (config, task, target_type), so a config
+        # whose loggers under a given task are all soft-deleted drops out of
+        # that task; one deleted everywhere disappears entirely. It keeps the
+        # most-recent surviving (task, target_type) per config.
         eval_config_ids = []
+        discovery_rows = []  # (config_id, eval_task_id, target_type, last_seen)
         if org_scope:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=EvalLogger.objects.filter(
+            rows = (
+                EvalLogger.objects.filter(
                     trace_id__in=Trace.objects.filter(
                         project_id__in=org_project_ids
-                    ).values("id")
+                    ).values("id"),
+                    deleted=False,
                 )
-                .values("custom_eval_config_id")
-                .distinct(),
-                deleted=False,
-            ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
+                .values("custom_eval_config_id", "eval_task_id", "target_type")
+                .annotate(last_seen=Max("created_at"))
+                .order_by()
+            )
+            discovery_rows = [
+                (
+                    r["custom_eval_config_id"],
+                    r["eval_task_id"],
+                    r["target_type"],
+                    r["last_seen"],
+                )
+                for r in rows
+            ]
         else:
             eval_table, eval_nd = eval_logger_source()
             ch_result = analytics.execute_ch_query(
-                "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
+                "SELECT toString(custom_eval_config_id) AS cid, "
+                "toString(eval_task_id) AS task_id, "
+                "target_type AS target_type, "
+                "max(created_at) AS last_seen "
                 f"FROM {eval_table} FINAL "
                 f"WHERE {eval_nd} "
                 "AND dictGet('trace_dict', 'project_id', "
-                "trace_id) = toUUID(%(pid)s)",
+                "trace_id) = toUUID(%(pid)s) "
+                "GROUP BY cid, task_id, target_type",
                 {"pid": str(project_id)},
                 timeout_ms=30000,
             )
-            ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-            if ch_ids:
-                eval_configs = CustomEvalConfig.objects.filter(
-                    id__in=ch_ids, deleted=False
-                ).select_related("eval_template")
-                eval_config_ids = [str(c.id) for c in eval_configs]
-            else:
-                eval_configs = []
+            discovery_rows = [
+                (
+                    r.get("cid"),
+                    r.get("task_id"),
+                    r.get("target_type"),
+                    r.get("last_seen"),
+                )
+                for r in ch_result.data
+            ]
+
+        ch_ids = [str(r[0]) for r in discovery_rows if r[0]]
+        if ch_ids:
+            eval_configs = CustomEvalConfig.objects.filter(
+                id__in=ch_ids, deleted=False
+            ).select_related("eval_template")
+            eval_config_ids = [str(c.id) for c in eval_configs]
+        else:
+            eval_configs = []
+
+        eval_task_map = build_eval_task_map(discovery_rows, eval_config_ids)
 
         # Annotation labels — skip in org-scoped mode (deferred enhancement)
         if org_scope:
@@ -3958,6 +3996,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 eval_map = builder.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
                     list(eval_result.data[0].keys()) if eval_result.data else [],
+                    count_mode=True,
                 )
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)
@@ -4027,8 +4066,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Build column config — get_default_trace_config() already includes
         # all standard columns (latency, tokens, cost, user_id, etc.)
         column_config = get_default_trace_config()
+        # skip_choices=True: CHOICES evals render as a SINGLE chip-style column
+        # (id=config_id) carrying per-label counts, not one column per choice.
         column_config = update_column_config_based_on_eval_config(
-            column_config, eval_configs
+            column_config, eval_configs, skip_choices=True, eval_task_map=eval_task_map
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -4072,30 +4113,20 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "user_id": user_id_map.get(trace_id),
             }
 
-            # Add eval metrics
+            # Add eval metrics. count_mode pivot gives raw appearance counts;
+            # eval_count_cell renders each eval as ONE column whose value is a
+            # chip-style counts object (Pass/Fail -> {"pass","fail"}, Choices ->
+            # {label: count}) or a plain average (Score).
             trace_evals = eval_map.get(trace_id, {})
             for config in eval_configs:
                 config_id = str(config.id)
                 if config_id not in trace_evals:
                     continue
                 scores = trace_evals[config_id]
-                # CHOICES eval: spread per-choice percentages into
-                # separate columns keyed ``{config_id}**{choice}``.
-                if isinstance(scores, dict) and scores.get("per_choice"):
-                    for choice, pct in scores["per_choice"].items():
-                        entry[f"{config_id}**{choice}"] = pct
-                elif isinstance(scores, dict) and "avg_score" in scores:
-                    # Prefer ``avg_score`` when it's present. A plain
-                    # ``avg_score or pass_rate`` drops a legitimate 0.0
-                    # (Fail) because ``0.0`` is falsy — use an explicit
-                    # ``None`` check so Fail doesn't silently fall
-                    # through to ``pass_rate``.
-                    avg_val = scores.get("avg_score")
-                    entry[config_id] = (
-                        avg_val if avg_val is not None else scores.get("pass_rate")
-                    )
-                else:
+                if isinstance(scores, dict) and scores.get("error"):
                     entry[config_id] = scores
+                    continue
+                entry[config_id] = eval_count_cell(scores, config)
 
             # Add annotations
             trace_annotations = annotation_map.get(trace_id, {})
@@ -4155,19 +4186,29 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         page_size = validated_data.get("page_size", 30)
         page_number = page - 1  # Convert 1-based to 0-based
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
+        # Get eval config IDs (with the eval_task + target_type each was applied
+        # under) from CH. Only non-deleted rows count; build_eval_task_map keeps
+        # the most-recent surviving (task, target_type) per config.
         eval_config_ids = []
         eval_table, eval_nd = eval_logger_source()
         ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
+            "SELECT toString(custom_eval_config_id) AS cid, "
+            "toString(eval_task_id) AS task_id, "
+            "target_type AS target_type, "
+            "max(created_at) AS last_seen "
             f"FROM {eval_table} FINAL "
             f"WHERE {eval_nd} "
             "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
+            "trace_id) = toUUID(%(pid)s) "
+            "GROUP BY cid, task_id, target_type",
             {"pid": str(project_id)},
             timeout_ms=30000,
         )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
+        discovery_rows = [
+            (r.get("cid"), r.get("task_id"), r.get("target_type"), r.get("last_seen"))
+            for r in ch_result.data
+        ]
+        ch_ids = [str(r[0]) for r in discovery_rows if r[0]]
         if ch_ids:
             eval_configs = CustomEvalConfig.objects.filter(
                 id__in=ch_ids, deleted=False
@@ -4175,6 +4216,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
             eval_configs = []
+        eval_task_map = build_eval_task_map(discovery_rows, eval_config_ids)
 
         # Get annotation labels that have actual annotations/scores for this project
         annotation_labels = get_annotation_labels_for_project(project_id)
@@ -4269,6 +4311,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 eval_map = TraceListQueryBuilder.pivot_eval_results(
                     [(list(row.values())) for row in eval_result.data],
                     list(eval_result.data[0].keys()) if eval_result.data else [],
+                    count_mode=True,
                 )
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)
@@ -4278,9 +4321,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 4 (child spans) removed — observation_span is a detail-only field.
 
-        # Build column config
+        # Build column config. skip_choices=True: CHOICES evals render as a
+        # SINGLE chip-style column carrying per-label counts.
         column_config = update_column_config_based_on_eval_config(
-            [], eval_configs, is_simulator=True
+            [],
+            eval_configs,
+            is_simulator=True,
+            skip_choices=True,
+            eval_task_map=eval_task_map,
         )
         column_config = update_span_column_config_based_on_annotations(
             column_config, annotation_labels
@@ -4377,33 +4425,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             metric_entry["error"] = True
                             metrics[config_id] = metric_entry
                             continue
-                        if isinstance(scores, dict):
-                            if scores.get("per_choice"):
-                                metric_entry["output"] = [
-                                    k for k, v in scores["per_choice"].items() if v > 0
-                                ]
-                                metric_entry["output_type"] = "str_list"
-                            elif "str_list" in scores and scores["str_list"]:
-                                metric_entry["output"] = scores["str_list"]
-                                metric_entry["output_type"] = "str_list"
-                            elif "avg_score" in scores:
-                                score_val = scores.get("avg_score") or scores.get(
-                                    "pass_rate"
-                                )
-                                if output_type == "Pass/Fail":
-                                    metric_entry["output"] = (
-                                        "Pass"
-                                        if score_val and score_val > 0
-                                        else "Fail"
-                                    )
-                                else:
-                                    metric_entry["output"] = (
-                                        round(score_val, 2)
-                                        if isinstance(score_val, (int, float))
-                                        else score_val
-                                    )
-                        else:
-                            metric_entry["output"] = scores
+                        # count_mode chip value: Pass/Fail -> {"pass","fail"},
+                        # Choices -> {label: count}, Score -> numeric average.
+                        metric_entry["output"] = eval_count_cell(scores, config)
                         metrics[config_id] = metric_entry
                 if metrics:
                     entry["eval_outputs"] = metrics

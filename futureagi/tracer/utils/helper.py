@@ -38,6 +38,12 @@ class FieldConfig:
     # value from eval_outputs without parsing the id.
     source_field: str | None = None
     parent_eval_id: str | None = None
+    # Clusters eval columns by the eval_task that ran the config, and records
+    # the target_type (span/trace/session) the config was applied at. Populated
+    # only for eval columns when an eval_task_map is supplied; None otherwise.
+    eval_task_id: str | None = None
+    eval_task_name: str | None = None
+    target_type: str | None = None
 
 
 def get_sort_query(sort_by, sort_order="desc"):
@@ -268,9 +274,21 @@ def update_column_config_based_on_eval_config(
     custom_eval_configs: list[CustomEvalConfig],
     skip_choices: bool | None = False,
     is_simulator: bool = False,
+    eval_task_map: dict[str, dict] | None = None,
 ):
+    """Append one column per eval config (or per choice for CHOICES evals).
+
+    ``eval_task_map`` optionally clusters each eval column under the eval_task
+    that ran it: ``{config_id: {"eval_task_id", "eval_task_name",
+    "target_type"}}``. When provided, those three fields are stamped onto each
+    eval column (CHOICES sub-columns inherit the parent config's mapping) so
+    the frontend can group eval results by task and show the applied
+    target_type. Configs absent from the map get ``None`` for all three.
+    """
     if not column_config:
         column_config = []
+
+    eval_task_map = eval_task_map or {}
 
     for item in custom_eval_configs:
         eval_template_config = item.eval_template.config or {}
@@ -282,6 +300,11 @@ def update_column_config_based_on_eval_config(
         name_prefix = "" if is_simulator else "Avg. "
 
         eval_template_id = str(item.eval_template.id)
+
+        task_info = eval_task_map.get(str(item.id), {})
+        eval_task_id = task_info.get("eval_task_id")
+        eval_task_name = task_info.get("eval_task_name")
+        target_type = task_info.get("target_type")
 
         if choices and output_type == EvalOutputType.CHOICES.value and not skip_choices:
             for choice in choices:
@@ -296,6 +319,9 @@ def update_column_config_based_on_eval_config(
                     ),
                     choices_map=choices_map,
                     eval_template_id=eval_template_id,
+                    eval_task_id=eval_task_id,
+                    eval_task_name=eval_task_name,
+                    target_type=target_type,
                 )
                 present_config = asdict(present_config)
                 if not any(
@@ -313,6 +339,9 @@ def update_column_config_based_on_eval_config(
                 choices_map=choices_map,
                 choices=choices,
                 eval_template_id=eval_template_id,
+                eval_task_id=eval_task_id,
+                eval_task_name=eval_task_name,
+                target_type=target_type,
             )
             present_config = asdict(present_config)
             if not any(
@@ -321,6 +350,112 @@ def update_column_config_based_on_eval_config(
                 column_config.append(present_config)
 
     return column_config
+
+
+def eval_count_cell(scores, eval_config):
+    """Chip-style value for one count-mode eval cell.
+
+    Shared by the trace/voice/span list endpoints so the Pass/Fail + Choices
+    "count" rendering lives in one place. Given a count-mode pivot cell
+    (``pivot_eval_results(..., count_mode=True)``) and its ``CustomEvalConfig``,
+    returns the value to render:
+
+      * Choices   -> ``{label: count}`` zero-filled across the template's
+                     declared choices (one chip per label).
+      * Pass/Fail -> ``{"pass": n, "fail": n}`` (exact appearance counts).
+      * Score     -> the numeric average (or ``None``).
+
+    Callers must handle the ``{"error": True}`` marker before calling this; a
+    non-dict ``scores`` is returned unchanged.
+    """
+    if not isinstance(scores, dict):
+        return scores
+
+    template = getattr(eval_config, "eval_template", None)
+    output_type = (getattr(template, "config", None) or {}).get(
+        "output", EvalOutputType.SCORE.value
+    )
+
+    if output_type == EvalOutputType.CHOICES.value:
+        counts = scores.get("choice_counts", {}) or {}
+        template_choices = getattr(template, "choices", None) or []
+        if template_choices:
+            return {
+                str(choice): int(counts.get(str(choice), 0))
+                for choice in template_choices
+            }
+        return {str(k): int(v) for k, v in counts.items()}
+
+    if output_type == EvalOutputType.PASS_FAIL.value:
+        return {
+            "pass": int(scores.get("pass_count", 0) or 0),
+            "fail": int(scores.get("fail_count", 0) or 0),
+        }
+
+    return scores.get("avg_score")
+
+
+def build_eval_task_map(discovery_rows, alive_config_ids):
+    """Cluster eval configs by the eval_task that ran them + the target_type.
+
+    Shared by the trace/span/voice list endpoints to enrich each eval column
+    with the eval_task it belongs to and the target_type it was applied at.
+
+    ``discovery_rows``: iterable of ``(config_id, eval_task_id, target_type,
+    last_seen)`` tuples — typically the ``(config, task, target_type)`` groups
+    of NON-DELETED rows in the eval_logger table, each carrying that group's
+    ``max(created_at)`` as ``last_seen``. Because the not-deleted filter is
+    applied before grouping, a config whose loggers under a given task are all
+    soft-deleted produces no row for that task and so drops out of it.
+    ``alive_config_ids``: ids whose ``CustomEvalConfig`` is not soft-deleted;
+    rows for any other config are ignored.
+
+    Returns ``{config_id: {"eval_task_id", "eval_task_name", "target_type"}}``
+    keeping the most-recent surviving ``(task, target_type)`` per config
+    (single task + single target_type per eval column).
+    """
+    from tracer.models.eval_task import EvalTask
+
+    alive = {str(c) for c in alive_config_ids}
+    # config_id -> (eval_task_id, target_type, last_seen)
+    chosen: dict[str, tuple] = {}
+    for config_id, eval_task_id, target_type, last_seen in discovery_rows:
+        if not config_id:
+            continue
+        config_id = str(config_id)
+        if config_id not in alive:
+            continue
+        existing = chosen.get(config_id)
+        if existing is None or (
+            last_seen is not None
+            and existing[2] is not None
+            and last_seen > existing[2]
+        ):
+            chosen[config_id] = (
+                str(eval_task_id) if eval_task_id else None,
+                target_type or None,
+                last_seen,
+            )
+
+    task_ids = {v[0] for v in chosen.values() if v[0]}
+    task_names = (
+        {
+            str(tid): name
+            for tid, name in EvalTask.objects.filter(id__in=task_ids).values_list(
+                "id", "name"
+            )
+        }
+        if task_ids
+        else {}
+    )
+    return {
+        cid: {
+            "eval_task_id": eval_task_id,
+            "eval_task_name": task_names.get(eval_task_id) if eval_task_id else None,
+            "target_type": target_type,
+        }
+        for cid, (eval_task_id, target_type, _last_seen) in chosen.items()
+    }
 
 
 def _validate_span_attribute_filter(column_id, filter_config):
