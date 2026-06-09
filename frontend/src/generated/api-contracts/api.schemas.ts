@@ -6607,6 +6607,7 @@ export interface AnnotationsLabelsApi {
   readonly created_at?: string;
   readonly trace_annotations_count?: number;
   readonly annotation_count?: number;
+  readonly archived?: boolean;
 }
 
 export interface AnnotationLabelRestoreResponseApi {
@@ -8759,6 +8760,9 @@ export type DatasetTableMetadataApiStatus = { [key: string]: unknown };
 export interface DatasetTableMetadataApi {
   /** @minLength 1 */
   dataset_name: string;
+  experiment_id?: string;
+  /** @minLength 1 */
+  experiment_name?: string;
   total_rows?: number;
   total_pages?: number;
   error_messages?: string[];
@@ -9247,6 +9251,14 @@ export interface EvalSummaryTemplateDeleteResponseApi {
   result: EvalSummaryTemplateDeleteResponseResultApi;
 }
 
+export type EvalTemplateApiOwner = typeof EvalTemplateApiOwner[keyof typeof EvalTemplateApiOwner];
+
+
+export const EvalTemplateApiOwner = {
+  system: 'system',
+  user: 'user',
+} as const;
+
 export type EvalTemplateApiConfig = { [key: string]: unknown };
 
 export interface EvalTemplateApi {
@@ -9255,11 +9267,7 @@ export interface EvalTemplateApi {
      * @maxLength 50
      */
   name: string;
-  /**
-     * @minLength 1
-     * @maxLength 50
-     */
-  owner?: string;
+  owner?: EvalTemplateApiOwner;
   config: EvalTemplateApiConfig;
   eval_tags?: string[];
 }
@@ -9394,6 +9402,8 @@ export const CompositeEvalCreateRequestApiAggregationFunction = {
 
 export type CompositeEvalCreateRequestApiChildWeights = { [key: string]: unknown };
 
+export type CompositeEvalCreateRequestApiChildPinnedVersions = { [key: string]: unknown };
+
 export type CompositeEvalCreateRequestApiCompositeChildAxis = typeof CompositeEvalCreateRequestApiCompositeChildAxis[keyof typeof CompositeEvalCreateRequestApiCompositeChildAxis];
 
 
@@ -9417,6 +9427,7 @@ export interface CompositeEvalCreateRequestApi {
   aggregation_enabled?: boolean;
   aggregation_function?: CompositeEvalCreateRequestApiAggregationFunction;
   child_weights?: CompositeEvalCreateRequestApiChildWeights;
+  child_pinned_versions?: CompositeEvalCreateRequestApiChildPinnedVersions;
   composite_child_axis?: CompositeEvalCreateRequestApiCompositeChildAxis;
 }
 
@@ -9614,10 +9625,28 @@ export const EvalListFiltersApiEvalTypeItem = {
   agent: 'agent',
 } as const;
 
+export type EvalListFiltersApiEvalTypeNotItem = typeof EvalListFiltersApiEvalTypeNotItem[keyof typeof EvalListFiltersApiEvalTypeNotItem];
+
+
+export const EvalListFiltersApiEvalTypeNotItem = {
+  llm: 'llm',
+  code: 'code',
+  agent: 'agent',
+} as const;
+
 export type EvalListFiltersApiOutputTypeItem = typeof EvalListFiltersApiOutputTypeItem[keyof typeof EvalListFiltersApiOutputTypeItem];
 
 
 export const EvalListFiltersApiOutputTypeItem = {
+  pass_fail: 'pass_fail',
+  percentage: 'percentage',
+  deterministic: 'deterministic',
+} as const;
+
+export type EvalListFiltersApiOutputTypeNotItem = typeof EvalListFiltersApiOutputTypeNotItem[keyof typeof EvalListFiltersApiOutputTypeNotItem];
+
+
+export const EvalListFiltersApiOutputTypeNotItem = {
   pass_fail: 'pass_fail',
   percentage: 'percentage',
   deterministic: 'deterministic',
@@ -9631,13 +9660,27 @@ export const EvalListFiltersApiTemplateTypeItem = {
   composite: 'composite',
 } as const;
 
+export type EvalListFiltersApiTemplateTypeNotItem = typeof EvalListFiltersApiTemplateTypeNotItem[keyof typeof EvalListFiltersApiTemplateTypeNotItem];
+
+
+export const EvalListFiltersApiTemplateTypeNotItem = {
+  single: 'single',
+  composite: 'composite',
+} as const;
+
 export interface EvalListFiltersApi {
   eval_type?: EvalListFiltersApiEvalTypeItem[];
+  eval_type_not?: EvalListFiltersApiEvalTypeNotItem[];
   output_type?: EvalListFiltersApiOutputTypeItem[];
+  output_type_not?: EvalListFiltersApiOutputTypeNotItem[];
   template_type?: EvalListFiltersApiTemplateTypeItem[];
+  template_type_not?: EvalListFiltersApiTemplateTypeNotItem[];
   tags?: string[];
+  tags_not?: string[];
   created_by?: string[];
+  created_by_not?: string[];
   names?: string[];
+  names_not?: string[];
 }
 
 export interface EvalListRequestApi {
@@ -9728,6 +9771,8 @@ export const CompositeEvalUpdateRequestApiAggregationFunction = {
 
 export type CompositeEvalUpdateRequestApiChildWeights = { [key: string]: unknown };
 
+export type CompositeEvalUpdateRequestApiChildPinnedVersions = { [key: string]: unknown };
+
 export type CompositeEvalUpdateRequestApiCompositeChildAxis = typeof CompositeEvalUpdateRequestApiCompositeChildAxis[keyof typeof CompositeEvalUpdateRequestApiCompositeChildAxis];
 
 
@@ -9751,6 +9796,7 @@ export interface CompositeEvalUpdateRequestApi {
   aggregation_function?: CompositeEvalUpdateRequestApiAggregationFunction;
   child_template_ids?: string[];
   child_weights?: CompositeEvalUpdateRequestApiChildWeights;
+  child_pinned_versions?: CompositeEvalUpdateRequestApiChildPinnedVersions;
   composite_child_axis?: CompositeEvalUpdateRequestApiCompositeChildAxis;
 }
 
@@ -13822,10 +13868,6 @@ export interface AgentDefinitionResponseApi {
   readonly knowledge_base?: string;
   /** Organization this agent definition belongs to */
   readonly organization?: string;
-  /**
-     * API key for the agent
-     * @minLength 1
-     */
   readonly api_key?: string;
   readonly observability_provider?: string;
   readonly created_at?: string;
@@ -16019,7 +16061,10 @@ export interface CallExecutionDetailApi {
   /** Call summary from the service */
   call_summary?: string;
   readonly recordings?: string;
+  readonly test_execution_id?: string;
   readonly scenario_id?: string;
+  readonly scenario_graph?: string;
+  readonly scenario_graph_id?: string;
   readonly avg_agent_latency?: number;
   /**
      * Average agent latency in milliseconds (time taken by agent to respond after user's pause)
@@ -18383,8 +18428,12 @@ export type EvalTaskApiFilters = {
   date_range?: string[];
   /** Lower-bound ISO timestamp for legacy task filters. */
   created_at?: string;
-  /** Trace session id to constrain the task. */
-  session_id?: string;
+  /** Trace session id(s) to constrain the task. */
+  session_id?: string[];
+  /** Trace id(s) to constrain linked-source tasks. */
+  trace_id?: string[];
+  /** Observation span id(s) to constrain linked-source tasks. */
+  span_id?: string[];
   /** Observation span type(s), for example llm, tool, or chain. */
   observation_type?: string[];
   span_attributes_filters?: EvalTaskApiFiltersSpanAttributesFiltersItem[];
@@ -18605,6 +18654,7 @@ export interface FeedUpdateBodyApi {
 export interface CreateLinearIssueApi {
   /** @minLength 1 */
   team_id: string;
+  trace_id?: string;
   title?: string;
   description?: string;
   priority?: number;
@@ -23020,6 +23070,7 @@ type?: ModelHubAnnotationsLabelsListType;
 search?: string;
 include_usage_count?: boolean;
 include_archived?: boolean;
+archived?: boolean;
 };
 
 export type ModelHubAnnotationsLabelsListType = typeof ModelHubAnnotationsLabelsListType[keyof typeof ModelHubAnnotationsLabelsListType];
