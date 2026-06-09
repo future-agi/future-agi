@@ -1172,12 +1172,9 @@ def process_single_error_localization(task_id):
         try:
             localizer = ErrorLocalizer(
                 eval_name=task.eval_template.name,
-                choices=(
-                    task.eval_template.choices if task.eval_template.choices else []
-                ),
+                choices=task.eval_template.choices or [],
                 rule_prompt=task.rule_prompt,
                 input=task.input_data,
-                input_keys=task.input_keys,
                 input_type=task.input_types,
                 evaluation_result=task.eval_result,
                 evaluation_explanation=task.eval_explanation,
