@@ -65,6 +65,15 @@ class ImagineAnalysisView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    def _get_scoped_saved_view(self, request, saved_view_id, project_id=None):
+        queryset = SavedView.objects.select_related("project").filter(
+            id=saved_view_id,
+            project__deleted=False,
+        )
+        if project_id:
+            queryset = queryset.filter(project_id=project_id)
+        return queryset.get()
+
     @validated_request(
         request_serializer=TriggerAnalysisSerializer,
         responses={200: ImagineAnalysisResponseSerializer, **ERROR_RESPONSES},
@@ -76,8 +85,9 @@ class ImagineAnalysisView(APIView):
 
         # Validate saved view exists
         try:
-            saved_view = SavedView.objects.get(
-                id=data["saved_view_id"],
+            saved_view = self._get_scoped_saved_view(
+                request,
+                data["saved_view_id"],
                 project_id=data["project_id"],
             )
         except SavedView.DoesNotExist:
@@ -180,10 +190,18 @@ class ImagineAnalysisView(APIView):
         """Poll for analysis results."""
         saved_view_id = request.validated_query_data["saved_view_id"]
         trace_id = request.validated_query_data["trace_id"]
+        org = getattr(request, "organization", None) or request.user.organization
 
-        analyses = ImagineAnalysis.objects.filter(
-            saved_view_id=saved_view_id,
+        try:
+            saved_view = self._get_scoped_saved_view(request, saved_view_id)
+        except SavedView.DoesNotExist:
+            return self._gm.not_found("Saved view not found")
+
+        analyses = ImagineAnalysis.no_workspace_objects.filter(
+            saved_view=saved_view,
             trace_id=trace_id,
+            project=saved_view.project,
+            organization=org,
             deleted=False,
         ).values("id", "widget_id", "status", "content", "error")
 

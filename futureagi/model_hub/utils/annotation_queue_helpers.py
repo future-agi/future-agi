@@ -46,7 +46,6 @@ AUTOMATION_RULE_FILTER_ERROR_MESSAGE = (
     "Rule evaluation failed while applying filters. Check the selected fields "
     "and values, then try again."
 )
-TERMINAL_TRACE_SPAN_STATUSES = {"OK", "ERROR"}
 TRACE_IN_PROGRESS_ADD_ERROR = (
     "Trace is still in progress and can't be added to an annotation queue yet."
 )
@@ -136,6 +135,16 @@ def _root_span_filter():
     return Q(parent_span_id__isnull=True) | Q(parent_span_id="")
 
 
+def _terminal_trace_span_status_filter():
+    return Q(status__iexact="OK") | Q(status__iexact="ERROR")
+
+
+def _trace_project_workspace_filter(workspace):
+    if getattr(workspace, "is_default", False):
+        return Q(project__workspace=workspace) | Q(project__workspace__isnull=True)
+    return Q(project__workspace=workspace)
+
+
 def is_source_available_for_annotation(source_type, source_obj):
     """Return ``(is_available, reason)`` for queue add-items.
 
@@ -149,7 +158,7 @@ def is_source_available_for_annotation(source_type, source_obj):
     root_spans = source_obj.observation_spans.filter(_root_span_filter())
     if not root_spans.exists():
         return True, None
-    if root_spans.filter(status__in=TERMINAL_TRACE_SPAN_STATUSES).exists():
+    if root_spans.filter(_terminal_trace_span_status_filter()).exists():
         return True, None
     return False, TRACE_IN_PROGRESS_ADD_ERROR
 
@@ -175,13 +184,13 @@ def filter_available_source_ids_for_annotation(
     available_qs = Trace.objects.filter(id__in=ordered_ids).annotate(
         _has_root_span=Exists(root_spans),
         _has_terminal_root_span=Exists(
-            root_spans.filter(status__in=TERMINAL_TRACE_SPAN_STATUSES)
+            root_spans.filter(_terminal_trace_span_status_filter())
         ),
     )
     if organization is not None:
         available_qs = available_qs.filter(project__organization=organization)
     if workspace is not None:
-        available_qs = available_qs.filter(project__workspace=workspace)
+        available_qs = available_qs.filter(_trace_project_workspace_filter(workspace))
 
     available_set = {
         str(trace_id)

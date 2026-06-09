@@ -28,6 +28,18 @@ from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.storage_client import ensure_bucket, get_object_url, get_storage_client
 
+
+def get_compare_local_root():
+    return os.getenv("COMPARE_DATASET_LOCAL_ROOT") or os.path.join("media", "compare")
+
+
+def get_compare_local_dir(compare_id):
+    return os.path.join(get_compare_local_root(), str(compare_id))
+
+
+def get_compare_metadata_path(compare_id):
+    return os.path.join(get_compare_local_dir(compare_id), "metadata.json")
+
 # Map raw format names from detect_audio_format() (ffmpeg) to proper MIME types.
 # Shared by upload_audio_to_s3() and upload_audio_to_s3_duration().
 _FORMAT_TO_MIME = {
@@ -524,7 +536,11 @@ def upload_image_to_s3(
                     traceback.print_exc()
                     raise ValueError(get_error_message("INVALID_BASE64_STRING")) from e
 
-        img = Image.open(BytesIO(img_bytes))
+        try:
+            img = Image.open(BytesIO(img_bytes))
+        except Image.UnidentifiedImageError as e:
+            logger.warning(f"Skipping image upload: payload is not a valid image file: {str(e)}")
+            raise ValueError(get_error_message("INVALID_IMAGE")) from e
         format_detected = img.format
         if format_detected:
             format_detected = format_detected.lower()

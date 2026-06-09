@@ -789,9 +789,9 @@ class TestUpdateNodeAPI:
         create_response = authenticated_client.post(
             create_url, data=create_data, format="json"
         )
-        assert (
-            create_response.status_code == status.HTTP_201_CREATED
-        ), f"Create failed: {create_response.data}"
+        assert create_response.status_code == status.HTTP_201_CREATED, (
+            f"Create failed: {create_response.data}"
+        )
         node_id = create_response.data["result"]["id"]
 
         # Update with new output ports only
@@ -1122,6 +1122,139 @@ class TestSubgraphReferenceScopeAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.unit
+class TestPromptTemplateScopeAPI:
+    def test_create_rejects_other_workspace_prompt_template(
+        self, authenticated_client, graph, graph_version, llm_node_template, user
+    ):
+        from model_hub.models.run_prompt import PromptTemplate
+
+        other_workspace = Workspace.objects.create(
+            name="Other Prompt Workspace",
+            organization=graph.organization,
+            is_active=True,
+            created_by=user,
+        )
+        foreign_pt = PromptTemplate.no_workspace_objects.create(
+            name="Foreign Workspace Prompt",
+            organization=graph.organization,
+            workspace=other_workspace,
+            created_by=user,
+        )
+
+        node_id = str(uuid.uuid4())
+        response = authenticated_client.post(
+            _node_create_url(graph, graph_version),
+            {
+                "id": node_id,
+                "type": "atomic",
+                "name": "Cross Workspace Prompt",
+                "node_template_id": str(llm_node_template.id),
+                "prompt_template": {
+                    "messages": [
+                        {
+                            "id": "msg-0",
+                            "role": "user",
+                            "content": [{"type": "text", "text": "Hello"}],
+                        }
+                    ],
+                    "prompt_template_id": str(foreign_pt.id),
+                },
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert not Node.no_workspace_objects.filter(id=node_id).exists()
+
+    def test_patch_rejects_prompt_version_from_another_template(
+        self,
+        authenticated_client,
+        graph,
+        graph_version,
+        node,
+        llm_node_template,
+        prompt_template,
+        draft_prompt_version,
+        other_prompt_version,
+        prompt_template_node,
+    ):
+        node.node_template = llm_node_template
+        node.save(skip_validation=True)
+        prompt_template_node.prompt_version = draft_prompt_version
+        prompt_template_node.save()
+
+        response = authenticated_client.patch(
+            _node_detail_url(graph, graph_version, node.id),
+            {
+                "prompt_template": {
+                    "messages": [
+                        {
+                            "id": "msg-0",
+                            "role": "user",
+                            "content": [{"type": "text", "text": "Updated"}],
+                        }
+                    ],
+                    "prompt_template_id": str(prompt_template.id),
+                    "prompt_version_id": str(other_prompt_version.id),
+                }
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        prompt_template_node.refresh_from_db()
+        other_prompt_version.refresh_from_db()
+        assert prompt_template_node.prompt_version_id == draft_prompt_version.id
+        assert other_prompt_version.prompt_config_snapshot == []
+
+    def test_patch_name_rejects_other_workspace_prompt_link(
+        self,
+        authenticated_client,
+        graph,
+        graph_version,
+        node,
+        prompt_template_node,
+        user,
+    ):
+        from model_hub.models.run_prompt import PromptTemplate, PromptVersion
+
+        other_workspace = Workspace.objects.create(
+            name="Other Prompt Workspace",
+            organization=graph.organization,
+            is_active=True,
+            created_by=user,
+        )
+        foreign_pt = PromptTemplate.no_workspace_objects.create(
+            name="Foreign Workspace Prompt",
+            organization=graph.organization,
+            workspace=other_workspace,
+            created_by=user,
+        )
+        foreign_pv = PromptVersion.no_workspace_objects.create(
+            original_template=foreign_pt,
+            template_version="v1",
+            prompt_config_snapshot={"messages": []},
+            is_draft=True,
+        )
+        prompt_template_node.prompt_template = foreign_pt
+        prompt_template_node.prompt_version = foreign_pv
+        prompt_template_node.save()
+        original_name = node.name
+
+        response = authenticated_client.patch(
+            _node_detail_url(graph, graph_version, node.id),
+            {"name": "Renamed"},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        node.refresh_from_db()
+        foreign_pt.refresh_from_db()
+        assert node.name == original_name
+        assert foreign_pt.name == "Foreign Workspace Prompt"
 
 
 @pytest.mark.unit

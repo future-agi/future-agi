@@ -22,6 +22,11 @@ from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
 
 def get_result(response):
     """Extract result from API response wrapper."""
@@ -82,7 +87,7 @@ class TestObservationSpanRetrieveAPI:
     def test_retrieve_span_unauthenticated(self, api_client, observation_span):
         """Unauthenticated requests should be rejected."""
         response = api_client.get(f"/tracer/observation-span/{observation_span.id}/")
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_retrieve_span_success(self, auth_client, observation_span):
         """Retrieve an observation span by ID."""
@@ -285,7 +290,7 @@ class TestObservationSpanCreateAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_span_success(self, auth_client, project, trace):
         """Create a new observation span."""
@@ -416,7 +421,7 @@ class TestObservationSpanBulkCreateAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_bulk_create_spans_success(self, auth_client, project, trace):
         """Bulk create multiple observation spans."""
@@ -486,7 +491,7 @@ class TestObservationSpanListSpansAPI:
             "/tracer/observation-span/list_spans/",
             {"project_version_id": str(project_version.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_spans_missing_project_version(self, auth_client):
         """List spans fails without project version ID."""
@@ -571,6 +576,40 @@ class TestObservationSpanListSpansAPI:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_list_spans_falls_back_to_postgres_when_clickhouse_fails(
+        self, auth_client, project_version, observation_span, monkeypatch
+    ):
+        from tracer.services.clickhouse.query_service import QueryType
+        from tracer.views.observation_span import ObservationSpanView
+
+        observation_span.project_version = project_version
+        observation_span.save(update_fields=["project_version"])
+
+        monkeypatch.setattr(
+            "tracer.views.observation_span.AnalyticsQueryService.should_use_clickhouse",
+            lambda self, query_type: query_type == QueryType.SPAN_LIST,
+        )
+
+        def fail_clickhouse(
+            self, request, project_version_id, project_version, analytics, validated_data
+        ):
+            raise RuntimeError("clickhouse unavailable")
+
+        monkeypatch.setattr(
+            ObservationSpanView,
+            "_list_spans_non_observe_clickhouse",
+            fail_clickhouse,
+        )
+
+        response = auth_client.get(
+            "/tracer/observation-span/list_spans/",
+            {"project_version_id": str(project_version.id), "filters": "[]"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = get_result(response).get("table", [])
+        assert any(row["span_id"] == observation_span.id for row in rows)
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -583,7 +622,7 @@ class TestObservationSpanListSpansObserveAPI:
             "/tracer/observation-span/list_spans_observe/",
             {"project_id": str(observe_project.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_spans_observe_missing_project(self, auth_client):
         """List spans observe fails without project ID."""
@@ -611,6 +650,45 @@ class TestObservationSpanListSpansObserveAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_list_spans_observe_falls_back_to_postgres_when_clickhouse_fails(
+        self, auth_client, observe_project, session_trace, monkeypatch
+    ):
+        from tracer.services.clickhouse.query_service import QueryType
+        from tracer.views.observation_span import ObservationSpanView
+
+        span = ObservationSpan.objects.create(
+            id=f"observe_span_{uuid.uuid4().hex[:8]}",
+            project=observe_project,
+            trace=session_trace,
+            name="Observe Fallback Span",
+            observation_type="llm",
+            start_time=timezone.now() - timedelta(seconds=5),
+            end_time=timezone.now(),
+        )
+
+        monkeypatch.setattr(
+            "tracer.views.observation_span.AnalyticsQueryService.should_use_clickhouse",
+            lambda self, query_type: query_type == QueryType.SPAN_LIST,
+        )
+
+        def fail_clickhouse(self, request, project_id, validated_data, analytics):
+            raise RuntimeError("clickhouse unavailable")
+
+        monkeypatch.setattr(
+            ObservationSpanView,
+            "_list_spans_clickhouse",
+            fail_clickhouse,
+        )
+
+        response = auth_client.get(
+            "/tracer/observation-span/list_spans_observe/",
+            {"project_id": str(observe_project.id), "filters": "[]"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        rows = get_result(response).get("table", [])
+        assert any(row["span_id"] == span.id for row in rows)
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -628,7 +706,7 @@ class TestObservationSpanSubmitFeedbackAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_submit_feedback_success(self, auth_client, observation_span):
         """Submit feedback for an observation span."""
@@ -701,7 +779,7 @@ class TestObservationSpanGraphMethodsAPI:
             {"project_id": str(project.id)},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_graph_methods_missing_project(self, auth_client):
         """Get graph methods fails without project ID."""
@@ -727,6 +805,60 @@ class TestObservationSpanGraphMethodsAPI:
         # Accept 200 or 400
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_400_BAD_REQUEST]
 
+    def test_get_graph_methods_filtered_system_metric_falls_back_to_postgres(
+        self, auth_client, observe_project, monkeypatch
+    ):
+        """Span graph filters use the list-query metric aliases in PG fallback."""
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService.should_use_clickhouse",
+            lambda self, query_type: True,
+        )
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService.execute_ch_query",
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("ch down")),
+        )
+
+        trace = Trace.objects.create(project=observe_project, name="Span Graph Trace")
+        ObservationSpan.objects.create(
+            id=f"span_{uuid.uuid4().hex[:16]}",
+            project=observe_project,
+            trace=trace,
+            name="Span Graph Root",
+            observation_type="llm",
+            start_time=timezone.now(),
+            latency_ms=250,
+            total_tokens=10,
+            prompt_tokens=4,
+            completion_tokens=6,
+            cost=0.001,
+            status="OK",
+        )
+
+        response = auth_client.post(
+            "/tracer/observation-span/get_graph_methods/",
+            {
+                "project_id": str(observe_project.id),
+                "interval": "day",
+                "property": "average",
+                "req_data_config": {"id": "latency", "type": "SYSTEM_METRIC"},
+                "filters": [
+                    {
+                        "column_id": "latency",
+                        "filter_config": {
+                            "filter_type": "number",
+                            "filter_op": "greater_than_or_equal",
+                            "filter_value": 0,
+                            "col_type": "SYSTEM_METRIC",
+                        },
+                    }
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert isinstance(get_result(response).get("data"), list)
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -738,7 +870,7 @@ class TestObservationSpanGetFieldsAPI:
         response = api_client.get(
             "/tracer/observation-span/get_observation_span_fields/"
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_get_fields_success(self, auth_client):
         """Get available observation span fields."""
@@ -766,7 +898,7 @@ class TestObservationSpanAddAnnotationsAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_add_annotations_success(
         self, auth_client, observation_span, project_version
@@ -822,7 +954,7 @@ class TestObservationSpanExportAPI:
             "/tracer/observation-span/get_spans_export_data/",
             {"project_version_id": str(project_version.id)},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_export_spans_missing_project_version(self, auth_client):
         """Export spans fails without project version ID."""
@@ -861,7 +993,7 @@ class TestObservationSpanCreateOtelSpanAPI:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_otel_span_success(self, auth_client, project, trace):
         """Create an OTEL-format observation span."""
@@ -981,7 +1113,7 @@ class TestObservationSpanRetrieveLoadingAPI:
             "/tracer/observation-span/retrieve_loading/",
             {"span_id": observation_span.id},
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_retrieve_loading_missing_span_id(self, auth_client):
         """Retrieve loading fails without span ID."""

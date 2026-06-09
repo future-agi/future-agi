@@ -13,10 +13,10 @@ from tracer.models.project import Project
 from tracer.models.saved_view import SavedView
 from tracer.serializers.saved_view import (
     SavedViewCreateSerializer,
-    SavedViewDetailSerializer,
     SavedViewDetailResponseSerializer,
-    SavedViewListSerializer,
+    SavedViewDetailSerializer,
     SavedViewListResponseSerializer,
+    SavedViewListSerializer,
     SavedViewMessageResponseSerializer,
     SavedViewReorderSerializer,
     SavedViewUpdateSerializer,
@@ -180,7 +180,11 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 saved_view.save()
             except IntegrityError:
                 # A view with this name already exists for this user+project — update it instead
-                lookup = {"created_by": request.user, "name": data["name"], "deleted": False}
+                lookup = {
+                    "created_by": request.user,
+                    "name": data["name"],
+                    "deleted": False,
+                }
                 if project is not None:
                     lookup["project"] = project
                 else:
@@ -218,6 +222,8 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 return self._gm.bad_request(serializer.errors)
 
             data = serializer.validated_data
+            if instance.project_id is None and data.get("visibility") == "project":
+                data["visibility"] = "personal"
             for attr, value in data.items():
                 setattr(instance, attr, value)
             instance.updated_by = request.user
@@ -262,14 +268,20 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
             new_name = request.data.get("name", f"{original.name} (Copy)")
 
             # Calculate next position
-            max_position = (
-                SavedView.objects.filter(
-                    project=original.project,
-                    created_by=request.user,
-                    deleted=False,
+            position_qs = SavedView.objects.filter(
+                created_by=request.user,
+                deleted=False,
+            )
+            if original.project_id is not None:
+                position_qs = position_qs.filter(project=original.project)
+            else:
+                position_qs = position_qs.filter(
+                    project__isnull=True,
+                    workspace=request.workspace,
+                    tab_type=original.tab_type,
                 )
-                .aggregate(max_pos=models.Max("position"))
-                .get("max_pos")
+            max_position = position_qs.aggregate(max_pos=models.Max("position")).get(
+                "max_pos"
             )
             next_position = (max_position or 0) + 1
 
@@ -332,8 +344,8 @@ class SavedViewViewSet(BaseModelViewSetMixin, ModelViewSet):
                 if tab_type:
                     accessible_views = accessible_views.filter(tab_type=tab_type)
 
-            accessible_ids = set(str(v.id) for v in accessible_views)
-            requested_ids = set(str(vid) for vid in view_ids)
+            accessible_ids = {str(v.id) for v in accessible_views}
+            requested_ids = {str(vid) for vid in view_ids}
             if not requested_ids.issubset(accessible_ids):
                 return self._gm.bad_request(
                     "Some view IDs are not accessible or do not exist."

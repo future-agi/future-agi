@@ -38,7 +38,11 @@ export function buildCompositeChildConfigs(children = []) {
         : existingConfig?.params;
     const nextConfig = { ...existingConfig };
 
-    if (params && typeof params === "object" && Object.keys(params).length > 0) {
+    if (
+      params &&
+      typeof params === "object" &&
+      Object.keys(params).length > 0
+    ) {
       nextConfig.params = params;
     }
 

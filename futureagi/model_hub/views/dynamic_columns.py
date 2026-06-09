@@ -705,7 +705,7 @@ class ClassifyColumnView(APIView):
         try:
             close_old_connections()
             if not cell.value:
-                return None
+                return None, None
 
             prompt = (
                 f"Classify the following text into exactly one of these labels: {', '.join(labels)}.\n\n"

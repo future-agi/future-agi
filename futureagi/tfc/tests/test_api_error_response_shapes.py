@@ -14,9 +14,9 @@ PROTOCOL_COMPATIBILITY_ALLOWLIST = {
 }
 
 RAW_ERROR_DEBT_BY_FILE = {
+    Path("futureagi/model_hub/views/dataset_optimization.py"): 8,
     Path("futureagi/tracer/views/annotation.py"): 1,
     Path("futureagi/tracer/views/charts.py"): 1,
-    Path("futureagi/model_hub/views/dataset_optimization.py"): 8,
 }
 
 

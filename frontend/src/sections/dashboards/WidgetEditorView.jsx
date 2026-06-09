@@ -1771,7 +1771,6 @@ export default function WidgetEditorView() {
     const timeRange =
       timePreset === "custom" && customDateRange
         ? {
-            preset: "custom",
             custom_start: customDateRange[0].toISOString(),
             custom_end: customDateRange[1].toISOString(),
           }

@@ -1029,12 +1029,18 @@ const FilterPanel = ({
         const isNeg = key.endsWith("_not");
         const field = isNeg ? key.slice(0, -4) : key;
         if (Array.isArray(val)) {
-          const op = isNeg ? "is_not" : (fieldMap[field]?.type === "enum" ? "is" : "contains");
-          val.forEach((v) =>
-            initial.push({ field, operator: op, value: v }),
-          );
+          const op = isNeg
+            ? "is_not"
+            : fieldMap[field]?.type === "enum"
+              ? "is"
+              : "contains";
+          val.forEach((v) => initial.push({ field, operator: op, value: v }));
         } else if (val) {
-          initial.push({ field, operator: isNeg ? "not_equals" : "contains", value: val });
+          initial.push({
+            field,
+            operator: isNeg ? "not_equals" : "contains",
+            value: val,
+          });
         }
       }
       if (initial.length > 0) setRows(initial);
@@ -1057,7 +1063,8 @@ const FilterPanel = ({
         const isEmpty = !val || (Array.isArray(val) && val.length === 0);
         if (isEmpty) continue;
         const values = Array.isArray(val) ? val : [val];
-        const isNeg = row.operator === "is_not" || row.operator === "not_equals";
+        const isNeg =
+          row.operator === "is_not" || row.operator === "not_equals";
         const key = isNeg ? `${row.field}_not` : row.field;
         if (!result[key]) result[key] = [];
         result[key].push(...values);

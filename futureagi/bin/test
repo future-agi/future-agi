@@ -6,6 +6,20 @@ set -e
 
 COMPOSE_FILE="docker-compose.test.yml"
 COMPOSE_PROJECT="futureagi-test"
+PYTHON_BIN="${PYTHON_BIN:-}"
+
+if [ -z "$PYTHON_BIN" ]; then
+    if [ -x ".venv/bin/python" ]; then
+        PYTHON_BIN=".venv/bin/python"
+    elif command -v python > /dev/null 2>&1; then
+        PYTHON_BIN="python"
+    elif command -v python3 > /dev/null 2>&1; then
+        PYTHON_BIN="python3"
+    else
+        echo "Error: python, python3, or .venv/bin/python is required" >&2
+        exit 127
+    fi
+fi
 
 # Colors
 RED='\033[0;31m'
@@ -64,23 +78,50 @@ services_running() {
 wait_for_services() {
     echo -e "${YELLOW}Waiting for services...${NC}"
 
-    # Wait for postgres
-    for i in {1..30}; do
-        if docker compose -f $COMPOSE_FILE -p $COMPOSE_PROJECT exec -T test-db pg_isready -U test_user -d test_tfc > /dev/null 2>&1; then
-            break
+    for ((i = 1; i <= 30; i++)); do
+        missing=()
+
+        if ! "$PYTHON_BIN" - localhost 15432 > /dev/null 2>&1 <<'PY'
+import socket
+import sys
+
+with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=1):
+    pass
+PY
+        then
+            missing+=("postgres:15432")
         fi
+
+        if ! "$PYTHON_BIN" - localhost 16379 > /dev/null 2>&1 <<'PY'
+import socket
+import sys
+
+with socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=1):
+    pass
+PY
+        then
+            missing+=("redis:16379")
+        fi
+
+        if ! curl -fsS --max-time 2 http://localhost:18123/ping > /dev/null 2>&1; then
+            missing+=("clickhouse:18123")
+        fi
+
+        if ! curl -fsS --max-time 2 http://localhost:19005/minio/health/live > /dev/null 2>&1; then
+            missing+=("minio:19005")
+        fi
+
+        if [ ${#missing[@]} -eq 0 ]; then
+            echo -e "${GREEN}Services ready${NC}"
+            return
+        fi
+
         sleep 1
     done
 
-    # Wait for redis
-    for i in {1..30}; do
-        if docker compose -f $COMPOSE_FILE -p $COMPOSE_PROJECT exec -T test-redis redis-cli ping > /dev/null 2>&1; then
-            break
-        fi
-        sleep 1
-    done
-
-    echo -e "${GREEN}Services ready${NC}"
+    echo -e "${RED}Error: test services did not become reachable: ${missing[*]}${NC}" >&2
+    docker compose -f $COMPOSE_FILE -p $COMPOSE_PROJECT ps >&2 || true
+    exit 1
 }
 
 # Start services
@@ -90,8 +131,9 @@ start_services() {
     else
         echo -e "${YELLOW}Starting test services...${NC}"
         docker compose -f $COMPOSE_FILE -p $COMPOSE_PROJECT up -d
-        wait_for_services
     fi
+
+    wait_for_services
 }
 
 # Stop services
@@ -104,12 +146,22 @@ stop_services() {
 # Run migrations
 run_migrations() {
     echo -e "${YELLOW}Running migrations...${NC}"
-    python manage.py migrate --run-syncdb > /dev/null 2>&1
+    local log_file
+    log_file="$(mktemp "${TMPDIR:-/tmp}/futureagi-test-migrate.XXXXXX")"
+
+    if ! "$PYTHON_BIN" manage.py migrate --run-syncdb > "$log_file" 2>&1; then
+        echo -e "${RED}Error: migrations failed${NC}" >&2
+        tail -n 80 "$log_file" >&2 || true
+        echo "Full migration log: $log_file" >&2
+        exit 1
+    fi
+
+    rm -f "$log_file"
 }
 
 # Run pytest
 run_pytest() {
-    pytest --reuse-db "$@"
+    "$PYTHON_BIN" -m pytest --reuse-db --import-mode=importlib "$@"
 }
 
 # Get changed test files

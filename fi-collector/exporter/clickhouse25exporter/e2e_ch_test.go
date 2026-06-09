@@ -8,11 +8,11 @@
 // Prerequisites:
 //   - CH 25.3 running at the address in CH_TEST_HOST (default: localhost:18123)
 //   - Schema 002–014 applied (run-e2e.sh handles this via Django migrate)
-//   - Database: default (or override with CH_TEST_DATABASE)
+//   - Database: test_tfc (or override with CH_TEST_DATABASE)
 //
 // Run:
 //
-//	CH_TEST_HOST=localhost:18123 go test -tags integration -run TestE2E ./exporter/clickhouse25exporter/
+//	CH_TEST_HOST=localhost:18123 CH_TEST_DATABASE=test_tfc go test -tags integration -run TestE2E ./exporter/clickhouse25exporter/
 //
 //go:build integration
 
@@ -50,7 +50,7 @@ func chTestDatabase() string {
 	if db := os.Getenv("CH_TEST_DATABASE"); db != "" {
 		return db
 	}
-	return "default"
+	return "test_tfc"
 }
 
 // skipIfNoCH skips the test when the CH sidecar is not reachable.
@@ -317,7 +317,7 @@ func waitForRow(t *testing.T, host, spanID string, timeout time.Duration) map[st
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	query := fmt.Sprintf(
-		"SELECT * FROM spans WHERE id = '%s' FINAL FORMAT JSONEachRow",
+		"SELECT * FROM spans FINAL WHERE id = '%s' FORMAT JSONEachRow",
 		spanID,
 	)
 	for time.Now().Before(deadline) {
@@ -646,7 +646,7 @@ func TestE2E_MultiSpanTrace(t *testing.T) {
 	ingestSpans(t, w, buildToolSpan(traceID, child1SpanID, rootSpanID))
 	ingestSpans(t, w, buildToolSpan(traceID, child2SpanID, rootSpanID))
 
-	traceIDHex := strings.ToLower(fmt.Sprintf("%032x", traceID))
+	traceIDHex := traceIDToUUIDString(pcommon.TraceID(traceID))
 	query := fmt.Sprintf(
 		"SELECT id FROM spans FINAL WHERE trace_id = '%s' AND project_id = '%s' ORDER BY id",
 		traceIDHex, testProjectID,

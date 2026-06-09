@@ -250,7 +250,8 @@ def _extract_metadata(log: dict, eval_attributes: dict):
 
 def _extract_recording_urls(log: dict, eval_attributes: dict):
     """Extracts recording URLs and adds them to eval_attributes."""
-    recording = log.get("artifact", {}).get("recording")
+    artifact = log.get("artifact")
+    recording = artifact.get("recording") if isinstance(artifact, dict) else None
     if not (recording and isinstance(recording, dict)):
         return
 

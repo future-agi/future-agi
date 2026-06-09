@@ -18,9 +18,7 @@ def _repo_root():
 
 
 def _swagger():
-    with (
-        _repo_root() / "api_contracts" / "openapi" / "swagger.json"
-    ).open() as f:
+    with (_repo_root() / "api_contracts" / "openapi" / "swagger.json").open() as f:
         return json.load(f)
 
 
@@ -48,10 +46,7 @@ def _body_ref(operation):
 
 
 def _response_ref(operation, status_code="200"):
-    return (
-        operation["responses"][status_code]["schema"]["$ref"]
-        .rsplit("/", 1)[-1]
-    )
+    return operation["responses"][status_code]["schema"]["$ref"].rsplit("/", 1)[-1]
 
 
 def test_feed_endpoints_have_enveloped_response_contracts():
@@ -60,15 +55,9 @@ def test_feed_endpoints_have_enveloped_response_contracts():
         ("GET", "/tracer/feed/issues/stats/"): "FeedStatsApiResponse",
         ("GET", "/tracer/feed/issues/{cluster_id}/"): "FeedDetailApiResponse",
         ("PATCH", "/tracer/feed/issues/{cluster_id}/"): "FeedDetailApiResponse",
-        ("GET", "/tracer/feed/issues/{cluster_id}/overview/"): (
-            "OverviewApiResponse"
-        ),
-        ("GET", "/tracer/feed/issues/{cluster_id}/traces/"): (
-            "TracesTabApiResponse"
-        ),
-        ("GET", "/tracer/feed/issues/{cluster_id}/trends/"): (
-            "TrendsTabApiResponse"
-        ),
+        ("GET", "/tracer/feed/issues/{cluster_id}/overview/"): ("OverviewApiResponse"),
+        ("GET", "/tracer/feed/issues/{cluster_id}/traces/"): ("TracesTabApiResponse"),
+        ("GET", "/tracer/feed/issues/{cluster_id}/trends/"): ("TrendsTabApiResponse"),
         ("GET", "/tracer/feed/issues/{cluster_id}/sidebar/"): (
             "FeedSidebarApiResponse"
         ),
@@ -78,9 +67,7 @@ def test_feed_endpoints_have_enveloped_response_contracts():
         ("POST", "/tracer/feed/issues/{cluster_id}/deep-analysis/"): (
             "DeepAnalysisDispatchApiResponse"
         ),
-        ("GET", "/tracer/feed/integrations/linear/teams/"): (
-            "LinearTeamsResponse"
-        ),
+        ("GET", "/tracer/feed/integrations/linear/teams/"): ("LinearTeamsResponse"),
         ("POST", "/tracer/feed/issues/{cluster_id}/create-linear-issue/"): (
             "CreateLinearIssueResponse"
         ),
@@ -145,9 +132,7 @@ def test_imagine_and_trace_error_task_have_runtime_contracts():
     expected_responses = {
         ("GET", "/tracer/imagine-analysis/"): "ImagineAnalysisResponse",
         ("POST", "/tracer/imagine-analysis/"): "ImagineAnalysisResponse",
-        ("GET", "/tracer/trace-error-task/{project_id}/"): (
-            "TraceErrorTaskResponse"
-        ),
+        ("GET", "/tracer/trace-error-task/{project_id}/"): ("TraceErrorTaskResponse"),
         ("POST", "/tracer/trace-error-task/{project_id}/"): (
             "TraceErrorTaskUpdateResponse"
         ),
@@ -243,15 +228,17 @@ def test_webhook_signature_uses_original_retell_payload():
 
     with (
         patch(
-            "tracer.views.observability_provider.AgentDefinition.objects.select_related"
+            "tracer.views.observability_provider.AgentDefinition.no_workspace_objects.select_related"
         ) as select_related,
-        patch("tracer.views.observability_provider.Retell") as retell_cls,
+        patch(
+            "tracer.views.observability_provider.verify_retell_webhook"
+        ) as verify_retell_webhook,
         patch(
             "tracer.views.observability_provider.normalize_and_store_logs"
         ) as normalize_and_store_logs,
     ):
         select_related.return_value.filter.return_value = queryset
-        retell_cls.return_value.verify.return_value = True
+        verify_retell_webhook.return_value = True
 
         request = APIRequestFactory().post(
             "/tracer/webhook/",
@@ -262,7 +249,51 @@ def test_webhook_signature_uses_original_retell_payload():
         response = WebhookHandlerView.as_view()(request)
 
     assert response.status_code == 200
-    signed_payload = retell_cls.return_value.verify.call_args.args[0]
+    signed_payload = verify_retell_webhook.call_args.args[0]
     assert json.loads(signed_payload) == payload
+    assert verify_retell_webhook.call_args.kwargs["api_key"] == "retell-secret"
+    assert verify_retell_webhook.call_args.kwargs["signature"] == "signature"
     normalize_and_store_logs.delay.assert_called_once()
     assert normalize_and_store_logs.delay.call_args.kwargs["body"] == payload
+
+
+def test_webhook_invalid_signature_does_not_dispatch_logs():
+    payload = {
+        "event": "call_analyzed",
+        "interaction_type": "voice",
+        "call": {
+            "agent_id": "agent-1",
+        },
+    }
+    agent_definition = Mock(id="agent-definition-1")
+    agent_definition.latest_version.configuration_snapshot = {
+        "api_key": "retell-secret"
+    }
+    queryset = Mock()
+    queryset.iterator.return_value = [agent_definition]
+
+    with (
+        patch(
+            "tracer.views.observability_provider.AgentDefinition.no_workspace_objects.select_related"
+        ) as select_related,
+        patch(
+            "tracer.views.observability_provider.verify_retell_webhook"
+        ) as verify_retell_webhook,
+        patch(
+            "tracer.views.observability_provider.normalize_and_store_logs"
+        ) as normalize_and_store_logs,
+    ):
+        select_related.return_value.filter.return_value = queryset
+        verify_retell_webhook.return_value = False
+
+        request = APIRequestFactory().post(
+            "/tracer/webhook/",
+            payload,
+            format="json",
+            HTTP_X_RETELL_SIGNATURE="bad-signature",
+        )
+        response = WebhookHandlerView.as_view()(request)
+
+    assert response.status_code == 400
+    assert response.data["result"] == "Invalid webhook signature"
+    normalize_and_store_logs.delay.assert_not_called()

@@ -1,3 +1,4 @@
+import binascii
 import os
 from datetime import timedelta
 
@@ -689,6 +690,8 @@ def accept_invitation_mail(request, uidb64, token):
             status=status.HTTP_200_OK,
         )
 
+    except (binascii.Error, TypeError, UnicodeDecodeError, ValueError, ValidationError):
+        return _gm.bad_request("Invitation link is invalid or has expired.")
     except User.DoesNotExist:
         return _gm.bad_request(
             "An Error Occured! Please ask your Administrator to Resend Invitation Link"

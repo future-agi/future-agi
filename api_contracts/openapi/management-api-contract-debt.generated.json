@@ -1,8 +1,8 @@
 {
   "generated_from": "api_contracts/openapi/swagger.json",
   "summary": {
-    "paths": 980,
-    "operations": 1339,
+    "paths": 976,
+    "operations": 1323,
     "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
@@ -102,7 +102,7 @@
     },
     "model-hub": {
       "paths": 368,
-      "operations": 476,
+      "operations": 472,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
@@ -137,8 +137,8 @@
       "broad_error_response_schemas": 0
     },
     "tracer": {
-      "paths": 161,
-      "operations": 233,
+      "paths": 157,
+      "operations": 221,
       "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,

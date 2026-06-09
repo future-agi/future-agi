@@ -377,6 +377,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
           AND observation_span_id IN %(span_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY observation_span_id, custom_eval_config_id
+        SETTINGS max_bytes_before_external_group_by = 1073741824, max_bytes_before_external_sort = 1073741824
         """
         return query, params
 

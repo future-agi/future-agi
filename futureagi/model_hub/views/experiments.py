@@ -89,6 +89,7 @@ from model_hub.utils.function_eval_params import (
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.utils.utils import get_diff
 from model_hub.views.experiment_runner import ExperimentRunner
+from tfc.middleware.workspace_context import get_current_workspace
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
@@ -133,7 +134,7 @@ _DEFAULT_EXPERIMENT_COMPARISON_WEIGHTS = {
 
 
 def _request_workspace_filter(request, field_name="dataset__workspace"):
-    workspace = getattr(request, "workspace", None)
+    workspace = getattr(request, "workspace", None) or get_current_workspace()
     if not workspace:
         return Q()
     if getattr(workspace, "is_default", False):
@@ -652,14 +653,7 @@ class ExperimentsTableDetailView(BaseModelViewSetMixin, generics.ListAPIView):
     def get_queryset(self):
         dataset_id = self.request.query_params.get("dataset_id")
 
-        # Get base queryset with automatic filtering from mixin
-        experiments = super().get_queryset()
-
-        # Apply dataset organization filtering
-        experiments = experiments.filter(
-            dataset__organization=getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        experiments = _scoped_experiment_queryset(self.request)
 
         if dataset_id:
             experiments = experiments.filter(dataset_id=dataset_id)

@@ -177,6 +177,40 @@ const ProjectDetail = lazyWithRetry(
 const HuggingFacePage = lazyWithRetry(
   () => import("src/pages/dashboard/huggingface/HuggingFace"),
 );
+const Models = lazyWithRetry(() => import("src/pages/dashboard/models/Models"));
+const ModelDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/models/ModelDetail"),
+);
+const Performance = lazyWithRetry(
+  () => import("src/pages/dashboard/models/Performance/Performance"),
+);
+const CustomMetric = lazyWithRetry(
+  () => import("src/pages/dashboard/models/CustomMetric/CustomMetric"),
+);
+const Datasets = lazyWithRetry(
+  () => import("src/sections/model/datasets/Datasets"),
+);
+const DatasetDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/models/DatasetDetail"),
+);
+const OptimizeList = lazyWithRetry(
+  () => import("src/sections/model/optimize/OptimizeList"),
+);
+const OptimizeDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/models/OptimizeDetail"),
+);
+const PerformanceReport = lazyWithRetry(
+  () =>
+    import("src/pages/dashboard/models/PerformanceReport/PerformanceReport"),
+);
+const ModeConfig = lazyWithRetry(
+  () => import("src/pages/dashboard/models/ModelConfig/ModeConfig"),
+);
+const DatasetContextProvider = lazyWithRetry(() =>
+  import("src/pages/dashboard/models/DatasetContext").then((module) => ({
+    default: module.DatasetContextProvider,
+  })),
+);
 const IndividualExperimentWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/Develop/IndividualExperimentWrapper"),
 );
@@ -379,6 +413,10 @@ const AnnotationQueuesPage = lazyWithRetry(
 function LegacyFeedDetailRedirect() {
   const { id } = useParams();
   return <Navigate to={`/dashboard/error-feed/${id}`} replace />;
+}
+function ModelDetailDefaultRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/dashboard/models/${id}/performance`} replace />;
 }
 const QueueDetailPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/queue-detail"),
@@ -764,6 +802,16 @@ export const dashboardRoutes = (
               ),
             },
             {
+              path: "integrations/:connectionId",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <IntegrationDetailPage />
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
               path: "ai-providers",
               element: (
                 <WorkspaceRoleProtection
@@ -793,52 +841,47 @@ export const dashboardRoutes = (
         },
       ],
     },
-    // {
-    //   path: "models",
-    //   children: [
-    //     { element: <Models />, index: true },
-    //     {
-    //       path: ":id",
-    //       element: (
-    //         <DatasetContextProvider>
-    //           <ModelDetail />
-    //         </DatasetContextProvider>
-    //       ),
-    //       children: [
-    //         {
-    //           index: true,
-    //           element: <Navigate to="/dashboard/models" replace />,
-    //         },
-    //         { path: "performance", element: <Performance /> },
-    //         { path: "custom-metrics", element: <CustomMetric /> },
-    //         {
-    //           path: "datasets",
-
-    //           children: [
-    //             { index: true, element: <Datasets /> },
-
-    //             {
-    //               path: ":dataset",
-    //               element: <DatasetDetail />,
-    //             },
-    //           ],
-    //         },
-    //         {
-    //           path: "optimize",
-    //           children: [
-    //             { index: true, element: <OptimizeList /> },
-    //             {
-    //               path: ":optimizeId",
-    //               element: <OptimizeDetail />,
-    //             },
-    //           ],
-    //         },
-    //         { path: "report", element: <PerformanceReport /> },
-    //         { path: "config", element: <ModeConfig /> },
-    //       ],
-    //     },
-    //   ],
-    // },
+    {
+      path: "models",
+      children: [
+        { element: <Models />, index: true },
+        {
+          path: ":id",
+          element: (
+            <DatasetContextProvider>
+              <ModelDetail />
+            </DatasetContextProvider>
+          ),
+          children: [
+            { index: true, element: <ModelDetailDefaultRedirect /> },
+            { path: "performance", element: <Performance /> },
+            { path: "custom-metrics", element: <CustomMetric /> },
+            {
+              path: "datasets",
+              children: [
+                { index: true, element: <Datasets /> },
+                {
+                  path: ":dataset",
+                  element: <DatasetDetail />,
+                },
+              ],
+            },
+            {
+              path: "optimize",
+              children: [
+                { index: true, element: <OptimizeList /> },
+                {
+                  path: ":optimizeId",
+                  element: <OptimizeDetail />,
+                },
+              ],
+            },
+            { path: "report", element: <PerformanceReport /> },
+            { path: "config", element: <ModeConfig /> },
+          ],
+        },
+      ],
+    },
 
     ...(!isOSS
       ? [

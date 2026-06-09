@@ -7,6 +7,7 @@ from rest_framework import status
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.views.develop_dataset import CompareDatasetsView
+from tfc.utils.storage import get_compare_local_dir
 
 
 @pytest.fixture
@@ -115,7 +116,7 @@ def test_compare_delete_falls_back_to_synchronous_cleanup(
 ):
     compare_id = uuid.uuid4()
     monkeypatch.chdir(tmp_path)
-    compare_dir = Path("compare") / str(compare_id)
+    compare_dir = Path(get_compare_local_dir(compare_id))
     compare_dir.mkdir(parents=True)
     (compare_dir / "metadata.json").write_text("{}", encoding="utf-8")
 
@@ -135,6 +136,7 @@ def test_compare_delete_falls_back_to_synchronous_cleanup(
 
     assert response.status_code == status.HTTP_200_OK
     assert response.json()["result"] == {"message": "File(s) deleted successfully"}
+    assert compare_dir.resolve().parent == tmp_path / "media" / "compare"
     assert not compare_dir.exists()
 
 

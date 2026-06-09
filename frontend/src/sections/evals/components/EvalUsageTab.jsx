@@ -412,14 +412,7 @@ const EvalUsageTab = ({
               />
             </Box>
           </Box>
-          <Box
-            sx={{
-              flex: 1,
-              minHeight: 0,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
+          <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
             <DataTable
               columns={columns}
               data={filteredLogs}
@@ -589,7 +582,6 @@ const EvalUsageTab = ({
     </Box>
   );
 };
-
 
 // ── Detail panel content with Formatted/JSON tabs + feedback ──
 const DetailPanelContent = ({

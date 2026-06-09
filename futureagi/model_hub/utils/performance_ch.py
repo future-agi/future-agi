@@ -236,11 +236,13 @@ def calculate_performance_details(
         if filter_type == "property":
             if filter_data_type == "string":
                 query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))),{filter_value})"
-                query = f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
+                query = (
+                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
                 indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
                 AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
+                )
             else:
                 query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
 
@@ -269,9 +271,11 @@ def calculate_performance_details(
         filter_query = ""
 
     limit_query = ""
+    offset_query = ""
 
     if unpaginated is False:
-        limit_query = f"LIMIT {limit+1}"
+        limit_query = f"LIMIT {limit + 1}"
+        offset_query = f"OFFSET {offset or 0}"
 
     metric_type_filter = " AND  has(Features.Key, 'node_id') "
 
@@ -315,7 +319,7 @@ def calculate_performance_details(
                 AND deleted=0
             {order_query}
             {limit_query}
-            OFFSET {offset}
+            {offset_query}
         """
 
     clickhouse_client = ClickHouseClientSingleton()  # Your ClickHouse client class
@@ -430,11 +434,13 @@ def get_performance_details_query(
         if filter_type == "property":
             if filter_data_type == "string":
                 query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))),{filter_value})"
-                query = f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
+                query = (
+                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
                 indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
                 AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
+                )
             else:
                 query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
 
@@ -551,11 +557,13 @@ def get_all_tags_distribution(
         if filter_type == "property":
             if filter_data_type == "string":
                 query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))),{filter_value})"
-                query = f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
+                query = (
+                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
                 indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
                 AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
+                )
             else:
                 query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
 
@@ -629,7 +637,7 @@ def get_all_tags_distribution(
                         WHEN '{agg_by}' = 'monthly' THEN toStartOfMonth(EventDate)
                     END AS agg_time,
                     arrayMap(
-                        x -> length(arrayFilter(x -> startsWith(x, {"'POSITIVE'" if tag_type == 'good' else "'NEGATIVE'" }), splitByString(';', arrayElement(EvalResults.Value, indexOf(EvalResults.Key, toString(x))) ))),
+                        x -> length(arrayFilter(x -> startsWith(x, {"'POSITIVE'" if tag_type == "good" else "'NEGATIVE'"}), splitByString(';', arrayElement(EvalResults.Value, indexOf(EvalResults.Key, toString(x))) ))),
                         ['metric_{metric_id}_tags']
                     ) AS metricValue
                 FROM events
@@ -673,11 +681,13 @@ def get_top_tags_distribution(
         if filter_type == "property":
             if filter_data_type == "string":
                 query = f"hasAll(splitByString(';',arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))),{filter_value})"
-                query = f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
+                query = (
+                    f"arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 IN (SELECT DISTINCT arrayElement(Features.Value, indexOf(Features.Key, 'conversation_id')) \
                 AS conv_id FROM events WHERE hasAll(splitByString(';',arrayElement(EvalResults.Value, \
                 indexOf(EvalResults.Key, '{filter_key}'))),{filter_value}) \
                 AND NOT has(Features.Key, 'node_id') AND deleted = 0)"
+                )
             else:
                 query = f"toFloat32(arrayElement(EvalResults.Value, indexOf(EvalResults.Key, '{filter_key}'))) {filter_operator} {filter_value[0]}"
 
@@ -713,7 +723,7 @@ def get_top_tags_distribution(
                     )
                 ) AS tag
             FROM events
-            WHERE startsWith(tag, {"'POSITIVE'" if tag_type == 'good' else "'NEGATIVE'" })
+            WHERE startsWith(tag, {"'POSITIVE'" if tag_type == "good" else "'NEGATIVE'"})
             {filter_query} AND has(EvalResults.Key, 'metric_{metric_id}_tags')
         )
         GROUP BY tag

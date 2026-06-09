@@ -4,6 +4,7 @@ import time
 
 import structlog
 from drf_yasg.utils import swagger_auto_schema
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -33,6 +34,8 @@ logger = structlog.get_logger(__name__)
 
 class MCPToolCallView(APIView):
     """Execute a tool call via internal API (used by stdio proxy)."""
+
+    permission_classes = [IsAuthenticated]
 
     @validated_request(
         request_serializer=MCPToolCallRequestSerializer,
@@ -165,6 +168,8 @@ class MCPToolCallView(APIView):
 
 class MCPToolListView(APIView):
     """List available tools for the authenticated user."""
+
+    permission_classes = [IsAuthenticated]
 
     @swagger_auto_schema(
         responses={

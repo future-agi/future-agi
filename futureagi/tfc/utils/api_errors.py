@@ -131,6 +131,9 @@ def first_error_code(value: Any, default_code: str = "error") -> str:
     if code:
         return str(code)
     if isinstance(value, Mapping):
+        explicit_code = value.get("error_code") or value.get("code")
+        if explicit_code:
+            return str(explicit_code)
         for item in value.values():
             nested_code = first_error_code(item, "")
             if nested_code:
