@@ -39,11 +39,12 @@ class CustomAIModel(BaseModel):
             self._actual_json = ApiKey().decrypt_json(self.key_config)
 
     def save(self, *args, **kwargs):
-        # if self.key_config and not all(
-        #     [v.startswith(b"gAAAAA".decode()) for v in self.key_config.values()]
-        # ):
-        self._actual_json = self.key_config
-        self.key_config = ApiKey().encrypt_json(self.key_config)
+        if self.key_config and not all(
+            isinstance(v, str) and v.startswith("gAAAAA")
+            for v in self.key_config.values()
+        ):
+            self._actual_json = self.key_config
+            self.key_config = ApiKey().encrypt_json(self.key_config)
         self.full_clean()
         super().save(*args, **kwargs)
 
