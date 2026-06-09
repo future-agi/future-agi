@@ -195,15 +195,18 @@ class InternalAPIView(AsyncAPIView):
     authentication_classes = []
     permission_classes = []
 
+    def get_authenticate_header(self, request: Request) -> str:
+        return "Bearer"
+
     def initial(self, request: Request, *args, **kwargs) -> None:
         super().initial(request, *args, **kwargs)
-        secret = settings.INTERNAL_API_SECRET
-        if not secret:
-            raise _forbidden("INTERNAL_API_SECRET not configured")
-
         auth_header = request.META.get("HTTP_AUTHORIZATION", "")
         if not auth_header.startswith("Bearer "):
             raise _forbidden("Missing Bearer token")
+
+        secret = settings.INTERNAL_API_SECRET
+        if not secret:
+            raise _forbidden("INTERNAL_API_SECRET not configured")
 
         token = auth_header[7:]
         if token != secret:

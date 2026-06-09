@@ -33,9 +33,7 @@ import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TestPlayground from "./TestPlayground";
 import { buildCompositeChildConfigs } from "../Helpers/compositeRuntimeConfig";
 import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys";
-import CodeEvalEditor, {
-  PYTHON_CODE_TEMPLATE,
-} from "./CodeEvalEditor";
+import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import { extractVariables } from "src/utils/utils";
@@ -344,7 +342,7 @@ const EvalCreatePage = () => {
       eval_type: evalType,
       instructions:
         evalType === "code"
-          ? ""
+          ? undefined
           : evalType === "llm"
             ? instructions ||
               messages.find((m) => m.role === "system")?.content ||
@@ -424,7 +422,7 @@ const EvalCreatePage = () => {
       );
       return;
     }
-    if (isOSS && FAGI_MODEL_VALUES.has(model)) {
+    if (isOSS && evalType !== "code" && FAGI_MODEL_VALUES.has(model)) {
       enqueueSnackbar(
         "Turing models are not available in OSS. Please select your own model.",
         { variant: "error" },
@@ -800,7 +798,13 @@ const EvalCreatePage = () => {
                       fontWeight={600}
                       sx={{ mb: 0.5 }}
                     >
-                      Eval Name<Box component="span" sx={{ color: "error.main", ml: 0.25 }}>*</Box>
+                      Eval Name
+                      <Box
+                        component="span"
+                        sx={{ color: "error.main", ml: 0.25 }}
+                      >
+                        *
+                      </Box>
                     </Typography>
                     <TextField
                       fullWidth

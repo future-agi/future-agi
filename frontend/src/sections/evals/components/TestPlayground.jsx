@@ -832,11 +832,14 @@ const TestPlayground = React.forwardRef(
       codeParamsRef.current = codeParams;
     }, [codeParams]);
 
-    const handleCodeParamChange = useCallback((key, value) => {
-      const next = { ...codeParamsRef.current, [key]: value };
-      setInternalCodeParams(next);
-      onCodeParamsChange?.(next);
-    }, [onCodeParamsChange]);
+    const handleCodeParamChange = useCallback(
+      (key, value) => {
+        const next = { ...codeParamsRef.current, [key]: value };
+        setInternalCodeParams(next);
+        onCodeParamsChange?.(next);
+      },
+      [onCodeParamsChange],
+    );
 
     const visibleFunctionParamEntries = React.useMemo(() => {
       if (!functionParamsSchema) return [];

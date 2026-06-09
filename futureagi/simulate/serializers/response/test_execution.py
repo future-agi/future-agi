@@ -33,3 +33,4 @@ class RerunCallsResponseSerializer(serializers.Serializer):
     failed_reruns = FailedRerunItemSerializer(many=True)
     success_count = serializers.IntegerField()
     failure_count = serializers.IntegerField()
+    dispatch_error = serializers.CharField(required=False, allow_null=True)

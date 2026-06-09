@@ -860,8 +860,7 @@ function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
         },
         onError: (err) => {
           const message =
-            err?.response?.data?.result ||
-            "Failed to create Linear issue";
+            err?.response?.data?.result || "Failed to create Linear issue";
           enqueueSnackbar(message, { variant: "error" });
         },
       },
@@ -1563,9 +1562,7 @@ export default function ErrorMetadataPanel({ error }) {
             />
             <MetaRow
               label="Version"
-              value={
-                sidebar?.aiMetadata?.modelVersion ?? error.modelVersion
-              }
+              value={sidebar?.aiMetadata?.modelVersion ?? error.modelVersion}
               icon="mdi:tag-outline"
               monospace
             />

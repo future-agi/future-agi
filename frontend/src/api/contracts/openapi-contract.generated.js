@@ -5,7 +5,7 @@
 export const OPENAPI_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 980,
+  "endpointCount": 976,
   "endpoints": {
     "/accounts/2fa/recovery-codes/": {
       "get": {
@@ -9376,8 +9376,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/falcon-ai/quick-analysis/": {
       "post": {
         "operationId": "falcon-ai_quick-analysis_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/QuickAnalysis"
         },
@@ -9385,6 +9385,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "responses": {
           "200": {
             "$ref": "#/definitions/QuickAnalysisResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/FalconErrorResponse"
           },
           "429": {
             "$ref": "#/definitions/FalconErrorResponse"
@@ -10401,6 +10404,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "boolean",
               "default": false
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
             }
           }
         },
@@ -12702,32 +12712,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/ApiKey"
-                }
-              }
-            }
+            "$ref": "#/definitions/ApiKeyListResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -12736,15 +12736,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "model-hub_api-keys_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/ApiKey"
+          "$ref": "#/definitions/ApiKeyRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/ApiKey"
+          "200": {
+            "$ref": "#/definitions/ApiKeySuccessResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -12761,7 +12776,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ApiKey"
+            "$ref": "#/definitions/ApiKeySuccessResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -12770,15 +12800,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "put": {
         "operationId": "model-hub_api-keys_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/ApiKey"
+          "$ref": "#/definitions/ApiKeyRequest"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ApiKey"
+            "$ref": "#/definitions/ApiKeyResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -12787,15 +12832,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "model-hub_api-keys_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/ApiKey"
+          "$ref": "#/definitions/ApiKeyRequest"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/ApiKey"
+            "$ref": "#/definitions/ApiKeyResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -21917,6 +21977,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "integer"
             }
+          },
+          "search": {
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          "is_active": {
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
           }
         },
         "responses": {
@@ -21952,23 +22024,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
         }
-      },
-      "post": {
-        "operationId": "model-hub_organizations_users_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/DevelopAnnotationsUser"
-        },
-        "queryParameters": {},
-        "responses": {
-          "201": {
-            "$ref": "#/definitions/DevelopAnnotationsUser"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
       }
     },
     "/model-hub/organizations/{organization_id}/users/{id}/": {
@@ -21982,52 +22037,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "200": {
             "$ref": "#/definitions/DevelopAnnotationsUser"
           },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "model-hub_organizations_users_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/DevelopAnnotationsUser"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/DevelopAnnotationsUser"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "model-hub_organizations_users_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/DevelopAnnotationsUser"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/DevelopAnnotationsUser"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "model-hub_organizations_users_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -24959,15 +24968,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "put": {
         "operationId": "model-hub_scores_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/Score"
+          "$ref": "#/definitions/UpdateScore"
         },
         "queryParameters": {},
         "responses": {
           "200": {
             "$ref": "#/definitions/Score"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -24976,15 +25000,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "model-hub_scores_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/Score"
+          "$ref": "#/definitions/UpdateScore"
         },
         "queryParameters": {},
         "responses": {
           "200": {
             "$ref": "#/definitions/Score"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -29955,78 +29994,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "/tracer/charts/": {
-      "get": {
-        "operationId": "tracer_charts_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {
-          "page": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          "limit": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/FetchGraph"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "tracer_charts_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/FetchGraph"
-        },
-        "queryParameters": {},
-        "responses": {
-          "201": {
-            "$ref": "#/definitions/FetchGraph"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
     "/tracer/charts/fetch_graph/": {
       "get": {
         "operationId": "tracer_charts_fetch_graph",
@@ -30076,69 +30043,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
               }
             }
           },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/tracer/charts/{id}/": {
-      "get": {
-        "operationId": "tracer_charts_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/FetchGraph"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "tracer_charts_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/FetchGraph"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/FetchGraph"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "tracer_charts_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/FetchGraph"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/FetchGraph"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "tracer_charts_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -30953,7 +30857,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "results": {
                 "type": "array",
                 "items": {
-                  "$ref": "#/definitions/Dataset"
+                  "$ref": "#/definitions/ObserveDataset"
                 }
               }
             }
@@ -30968,12 +30872,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/Dataset"
+          "$ref": "#/definitions/ObserveDataset"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/Dataset"
+            "$ref": "#/definitions/ObserveDataset"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -30987,12 +30891,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/Dataset"
+          "$ref": "#/definitions/ObserveDataset"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/Dataset"
+            "$ref": "#/definitions/ObserveDataset"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31006,12 +30910,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/Dataset"
+          "$ref": "#/definitions/ObserveDataset"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/Dataset"
+            "$ref": "#/definitions/ObserveDataset"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31028,7 +30932,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/Dataset"
+            "$ref": "#/definitions/ObserveDataset"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31040,12 +30944,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/Dataset"
+          "$ref": "#/definitions/ObserveDataset"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/Dataset"
+            "$ref": "#/definitions/ObserveDataset"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31057,12 +30961,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/Dataset"
+          "$ref": "#/definitions/ObserveDataset"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/Dataset"
+            "$ref": "#/definitions/ObserveDataset"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31138,15 +31042,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "tracer_eval-task_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
           "$ref": "#/definitions/EvalTask"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/EvalTask"
+          "200": {
+            "$ref": "#/definitions/EvalTaskCreateResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31456,15 +31360,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/mark_eval_tasks_deleted/": {
       "post": {
         "operationId": "tracer_eval-task_mark_eval_tasks_deleted",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/EvalTask"
+          "$ref": "#/definitions/EvalTaskDeleteRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/EvalTask"
+          "200": {
+            "$ref": "#/definitions/EvalTaskMessageResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31475,15 +31379,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/pause_eval_task/": {
       "post": {
         "operationId": "tracer_eval-task_pause_eval_task",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/EvalTask"
+          "$ref": "#/definitions/EmptyRequest"
         },
-        "queryParameters": {},
+        "queryParameters": {
+          "eval_task_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
         "responses": {
-          "201": {
-            "$ref": "#/definitions/EvalTask"
+          "200": {
+            "$ref": "#/definitions/EvalTaskMessageResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31494,15 +31406,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/unpause_eval_task/": {
       "post": {
         "operationId": "tracer_eval-task_unpause_eval_task",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/EvalTask"
+          "$ref": "#/definitions/EmptyRequest"
         },
-        "queryParameters": {},
+        "queryParameters": {
+          "eval_task_id": {
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        },
         "responses": {
-          "201": {
-            "$ref": "#/definitions/EvalTask"
+          "200": {
+            "$ref": "#/definitions/EvalTaskMessageResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31513,15 +31433,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/eval-task/update_eval_task/": {
       "patch": {
         "operationId": "tracer_eval-task_update_eval_task",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/EvalTask"
+          "$ref": "#/definitions/EvalTaskUpdateRequest"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/EvalTask"
+            "$ref": "#/definitions/EvalTaskUpdateResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -31547,7 +31467,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "put": {
         "operationId": "tracer_eval-task_update",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/EvalTask"
@@ -31564,7 +31484,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "tracer_eval-task_partial_update",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/EvalTask"
@@ -32140,6 +32060,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/GetAnnotationLabelsResponse"
           },
           "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
             "$ref": "#/definitions/ApiErrorResponse"
           },
           "500": {
@@ -34643,12 +34566,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/SharedLinkList"
+          "$ref": "#/definitions/SharedLinkCreate"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/SharedLinkList"
+            "$ref": "#/definitions/SharedLinkCreate"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -34677,12 +34600,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/SharedLinkList"
+          "$ref": "#/definitions/SharedLinkUpdate"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/SharedLinkList"
+            "$ref": "#/definitions/SharedLinkUpdate"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -34694,12 +34617,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/SharedLinkList"
+          "$ref": "#/definitions/SharedLinkUpdate"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/SharedLinkList"
+            "$ref": "#/definitions/SharedLinkUpdate"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -34725,12 +34648,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/SharedLinkList"
+          "$ref": "#/definitions/AddAccess"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/SharedLinkList"
+            "$ref": "#/definitions/AddAccess"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -34774,78 +34697,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           },
           "410": {
             "$ref": "#/definitions/SharedLinkResolveError"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/tracer/trace-annotation/": {
-      "get": {
-        "operationId": "tracer_trace-annotation_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {
-          "page": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          "limit": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/GetTraceAnnotation"
-                }
-              }
-            }
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "post": {
-        "operationId": "tracer_trace-annotation_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/GetTraceAnnotation"
-        },
-        "queryParameters": {},
-        "responses": {
-          "201": {
-            "$ref": "#/definitions/GetTraceAnnotation"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -34912,69 +34763,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "500": {
             "$ref": "#/definitions/ApiErrorResponse"
           },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      }
-    },
-    "/tracer/trace-annotation/{id}/": {
-      "get": {
-        "operationId": "tracer_trace-annotation_read",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GetTraceAnnotation"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "put": {
-        "operationId": "tracer_trace-annotation_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/GetTraceAnnotation"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GetTraceAnnotation"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "patch": {
-        "operationId": "tracer_trace-annotation_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": {
-          "$ref": "#/definitions/GetTraceAnnotation"
-        },
-        "queryParameters": {},
-        "responses": {
-          "200": {
-            "$ref": "#/definitions/GetTraceAnnotation"
-          },
-          "default": {
-            "$ref": "#/definitions/ManagementAPIErrorResponse"
-          }
-        }
-      },
-      "delete": {
-        "operationId": "tracer_trace-annotation_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {},
-        "responses": {
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }
@@ -36437,15 +36225,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "tracer_user-alert-logs_create",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/UserAlertMonitorLog"
+          "$ref": "#/definitions/UserAlertMonitorLogWriteRequest"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/UserAlertMonitorLog"
+            "$ref": "#/definitions/UserAlertMonitorLogWriteResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36511,15 +36305,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/user-alert-logs/resolve/": {
       "post": {
         "operationId": "tracer_user-alert-logs_mark_as_resolved",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/UserAlertMonitorLog"
+          "$ref": "#/definitions/UserAlertMonitorLogResolveRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/UserAlertMonitorLog"
+          "200": {
+            "$ref": "#/definitions/UserAlertMonitorLogResolveResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36545,15 +36342,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "put": {
         "operationId": "tracer_user-alert-logs_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/UserAlertMonitorLog"
+          "$ref": "#/definitions/UserAlertMonitorLogWriteRequest"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/UserAlertMonitorLog"
+            "$ref": "#/definitions/UserAlertMonitorLogWriteResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36562,15 +36365,21 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "tracer_user-alert-logs_partial_update",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/UserAlertMonitorLog"
+          "$ref": "#/definitions/UserAlertMonitorLogWriteRequest"
         },
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/UserAlertMonitorLog"
+            "$ref": "#/definitions/UserAlertMonitorLogWriteResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36663,7 +36472,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "post": {
         "operationId": "tracer_user-alerts_create",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/UserAlertMonitor"
@@ -36682,15 +36491,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/user-alerts/bulk-mute/": {
       "post": {
         "operationId": "tracer_user-alerts_bulk_mute",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/UserAlertMonitor"
+          "$ref": "#/definitions/UserAlertMonitorBulkMuteRequest"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/UserAlertMonitor"
+            "$ref": "#/definitions/UserAlertMonitorBulkMuteRequest"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36823,15 +36632,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/user-alerts/preview-graph/": {
       "post": {
         "operationId": "tracer_user-alerts_preview_graph",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
-          "$ref": "#/definitions/UserAlertMonitor"
+          "$ref": "#/definitions/UserAlertMonitorPreviewGraph"
         },
         "queryParameters": {},
         "responses": {
           "201": {
-            "$ref": "#/definitions/UserAlertMonitor"
+            "$ref": "#/definitions/UserAlertMonitorPreviewGraph"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36857,7 +36666,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "put": {
         "operationId": "tracer_user-alerts_update",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/UserAlertMonitor"
@@ -36874,7 +36683,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "patch": {
         "operationId": "tracer_user-alerts_partial_update",
-        "runtimeRequestValidation": false,
+        "runtimeRequestValidation": true,
         "runtimeResponseValidation": false,
         "requestBody": {
           "$ref": "#/definitions/UserAlertMonitor"
@@ -38036,10 +37845,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/usage/get-customer-invoices/": {
       "get": {
         "operationId": "usage_get-customer-invoices_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
-        "queryParameters": {},
+        "queryParameters": {
+          "page": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        },
         "responses": {
           "200": {
             "$ref": "#/definitions/CustomerInvoicesResponse"
@@ -38071,8 +37896,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/usage/get-last-four-digits/": {
       "get": {
         "operationId": "usage_get-last-four-digits_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {},
         "responses": {
@@ -40102,9 +39927,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_add-addon_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/UsageEmptyRequest"
+        },
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40207,9 +40034,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_addon_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/UsageEmptyRequest"
+        },
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40806,9 +40635,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_payment-methods_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/UsageEmptyRequest"
+        },
         "queryParameters": {},
         "responses": {
           "200": {
@@ -40876,9 +40707,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_payment-methods_default_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/UsageEmptyRequest"
+        },
         "queryParameters": {},
         "responses": {
           "200": {
@@ -41016,9 +40849,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_reinstate-addon_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/UsageEmptyRequest"
+        },
         "queryParameters": {},
         "responses": {
           "200": {
@@ -41121,9 +40956,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       },
       "delete": {
         "operationId": "usage_v2_remove-addon_delete",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
-        "requestBody": null,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
+        "requestBody": {
+          "$ref": "#/definitions/UsageEmptyRequest"
+        },
         "queryParameters": {},
         "responses": {
           "200": {
@@ -41281,13 +41118,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "string",
               "minLength": 1
-            }
-          },
-          "workspace_id": {
-            "required": false,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
             }
           }
         },
@@ -41970,8 +41800,33 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "title": "Result",
-          "type": "string",
-          "x-nullable": true
+          "type": "object",
+          "x-nullable": true,
+          "description": "String error message or structured account/login error metadata.",
+          "x-string-or-object": true,
+          "properties": {
+            "error": {
+              "type": "string"
+            },
+            "error_code": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            },
+            "blocked": {
+              "type": "boolean"
+            },
+            "remaining_attempts": {
+              "type": "integer"
+            },
+            "block_time": {
+              "type": "integer"
+            },
+            "block_time_remaining": {
+              "type": "integer"
+            }
+          }
         },
         "message": {
           "title": "Message",
@@ -42198,6 +42053,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "AddAccess": {
+      "required": [
+        "emails"
+      ],
+      "type": "object",
+      "properties": {
+        "emails": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "minLength": 1
+          },
+          "minItems": 1
+        }
+      }
+    },
     "AddApiColumnRequest": {
       "required": [
         "column_name",
@@ -42419,6 +42291,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Plan",
           "type": "string",
           "enum": [
+            "payg",
             "boost",
             "scale",
             "enterprise"
@@ -46828,18 +46701,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "ApiKey": {
+    "ApiKeyListResponse": {
+      "required": [
+        "count",
+        "results"
+      ],
+      "type": "object",
+      "properties": {
+        "count": {
+          "title": "Count",
+          "type": "integer"
+        },
+        "next": {
+          "title": "Next",
+          "type": "string",
+          "x-nullable": true
+        },
+        "previous": {
+          "title": "Previous",
+          "type": "string",
+          "x-nullable": true
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/ApiKeyResponse"
+          }
+        }
+      }
+    },
+    "ApiKeyRequest": {
       "required": [
         "provider"
       ],
       "type": "object",
       "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true
-        },
         "provider": {
           "title": "Provider",
           "type": "string",
@@ -46852,22 +46748,56 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "maxLength": 2500,
           "x-nullable": true
         },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true,
-          "x-nullable": true
-        },
-        "masked_actual_key": {
-          "title": "Masked actual key",
-          "type": "string",
-          "readOnly": true
-        },
         "config_json": {
           "title": "Config json",
           "type": "object",
           "x-nullable": true
+        }
+      }
+    },
+    "ApiKeyResponse": {
+      "required": [
+        "provider"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "provider": {
+          "title": "Provider",
+          "type": "string",
+          "maxLength": 50,
+          "minLength": 1
+        },
+        "organization": {
+          "title": "Organization",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "masked_actual_key": {
+          "title": "Masked actual key",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "ApiKeySuccessResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/ApiKeyResponse"
         }
       }
     },
@@ -49390,6 +49320,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "object",
           "x-nullable": true
         },
+        "child_configs": {
+          "title": "Child configs",
+          "type": "object",
+          "x-nullable": true
+        },
         "pass_threshold": {
           "title": "Pass threshold",
           "type": "number",
@@ -49454,6 +49389,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "child_pinned_versions": {
           "title": "Child pinned versions",
+          "type": "object",
+          "x-nullable": true
+        },
+        "child_configs": {
+          "title": "Child configs",
           "type": "object",
           "x-nullable": true
         },
@@ -49631,6 +49571,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "child_pinned_versions": {
           "title": "Child pinned versions",
+          "type": "object",
+          "x-nullable": true
+        },
+        "child_configs": {
+          "title": "Child configs",
           "type": "object",
           "x-nullable": true
         },
@@ -51093,71 +51038,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "format": "date-time",
           "readOnly": true
-        }
-      }
-    },
-    "Dataset": {
-      "required": [
-        "name",
-        "organization"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid",
-          "readOnly": true
-        },
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "maxLength": 2000,
-          "minLength": 1
-        },
-        "organization": {
-          "title": "Organization",
-          "type": "string",
-          "format": "uuid"
-        },
-        "model_type": {
-          "title": "Model type",
-          "type": "string",
-          "enum": [
-            "Numeric",
-            "ScoreCategorical",
-            "Ranking",
-            "BinaryClassification",
-            "Regression",
-            "ObjectDetection",
-            "Segmentation",
-            "GenerativeLLM",
-            "GenerativeImage",
-            "GenerativeVideo",
-            "TTS",
-            "STT",
-            "MultiModal"
-          ]
-        },
-        "source": {
-          "title": "Source",
-          "type": "string",
-          "enum": [
-            "demo",
-            "build",
-            "sdk",
-            "observe",
-            "knowledge_base",
-            "scenario",
-            "experiment_snapshot",
-            "graph"
-          ]
-        },
-        "user": {
-          "title": "User",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
         }
       }
     },
@@ -53962,6 +53842,256 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EvalTaskCreateResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/EvalTaskCreateResult"
+        }
+      }
+    },
+    "EvalTaskDeleteRequest": {
+      "required": [
+        "eval_task_ids"
+      ],
+      "type": "object",
+      "properties": {
+        "eval_task_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      }
+    },
+    "EvalTaskMessageResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/EvalTaskMessageResult"
+        }
+      }
+    },
+    "EvalTaskUpdateRequest": {
+      "required": [
+        "edit_type",
+        "eval_task_id"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "filters": {
+          "title": "Filters",
+          "type": "object",
+          "x-nullable": true,
+          "properties": {
+            "project_id": {
+              "type": "string",
+              "x-nullable": true,
+              "description": "Project scope for the evaluation task."
+            },
+            "date_range": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 2,
+              "description": "Inclusive start/end ISO timestamps."
+            },
+            "created_at": {
+              "type": "string",
+              "description": "Lower-bound ISO timestamp for legacy task filters."
+            },
+            "session_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Trace session id(s) to constrain the task."
+            },
+            "trace_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Trace id(s) to constrain linked-source tasks."
+            },
+            "span_id": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Observation span id(s) to constrain linked-source tasks."
+            },
+            "observation_type": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Observation span type(s), for example llm, tool, or chain."
+            },
+            "span_attributes_filters": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "column_id": {
+                    "type": "string",
+                    "description": "Column or attribute id to filter on."
+                  },
+                  "display_name": {
+                    "type": "string",
+                    "description": "Optional UI label for chips and saved views."
+                  },
+                  "source": {
+                    "type": "string",
+                    "description": "Optional source surface for mixed-source filters, for example traces, datasets, or simulation."
+                  },
+                  "output_type": {
+                    "type": "string",
+                    "description": "Optional metric output type metadata used by eval and annotation filters."
+                  },
+                  "filter_config": {
+                    "type": "object",
+                    "properties": {
+                      "filter_type": {
+                        "type": "string",
+                        "description": "Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array."
+                      },
+                      "filter_op": {
+                        "type": "string",
+                        "description": "Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null."
+                      },
+                      "filter_value": {
+                        "description": "Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type."
+                      },
+                      "col_type": {
+                        "type": "string",
+                        "description": "Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL."
+                      }
+                    },
+                    "required": [
+                      "filter_type",
+                      "filter_op"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "column_id",
+                  "filter_config"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "sampling_rate": {
+          "title": "Sampling rate",
+          "type": "number",
+          "maximum": 100,
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "spans_limit": {
+          "title": "Spans limit",
+          "type": "integer",
+          "maximum": 1000000,
+          "minimum": 1,
+          "x-nullable": true
+        },
+        "run_type": {
+          "title": "Run type",
+          "type": "string",
+          "enum": [
+            "continuous",
+            "historical"
+          ]
+        },
+        "row_type": {
+          "title": "Row type",
+          "type": "string",
+          "enum": [
+            "spans",
+            "traces",
+            "sessions",
+            "voiceCalls"
+          ]
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "enum": [
+            "pending",
+            "running",
+            "completed",
+            "failed",
+            "paused",
+            "deleted"
+          ]
+        },
+        "evals": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "edit_type": {
+          "title": "Edit type",
+          "type": "string",
+          "enum": [
+            "edit_rerun",
+            "fresh_run"
+          ]
+        },
+        "eval_task_id": {
+          "title": "Eval task id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "EvalTaskUpdateResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/EvalTaskUpdateResult"
+        }
+      }
+    },
     "EvalTemplate": {
       "required": [
         "name",
@@ -56074,8 +56204,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "type": "object",
             "additionalProperties": {
-              "type": "string",
-              "x-nullable": true
+              "type": "object"
             }
           }
         },
@@ -56132,8 +56261,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         }
       }
@@ -56145,120 +56273,105 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Guardrails",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "routing": {
           "title": "Routing",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "cache": {
           "title": "Cache",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "rate_limiting": {
           "title": "Rate limiting",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "budgets": {
           "title": "Budgets",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "cost_tracking": {
           "title": "Cost tracking",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "ip_acl": {
           "title": "Ip acl",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "alerting": {
           "title": "Alerting",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "privacy": {
           "title": "Privacy",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "tool_policy": {
           "title": "Tool policy",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "mcp": {
           "title": "Mcp",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "a2a": {
           "title": "A2a",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "audit": {
           "title": "Audit",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "model_database": {
           "title": "Model database",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "model_map": {
           "title": "Model map",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         }
       }
@@ -56340,8 +56453,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         }
       }
@@ -56375,8 +56487,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         }
       }
@@ -56412,8 +56523,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Arguments",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           },
           "default": {}
         }
@@ -56480,8 +56590,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object",
+            "x-json-value": true,
+            "description": "Any valid JSON value."
           }
         }
       }
@@ -56539,8 +56650,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Config",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object",
+            "x-json-value": true,
+            "description": "Any valid JSON value."
           }
         }
       }
@@ -56670,36 +56782,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/AnnotationLabelResponse"
           }
-        }
-      }
-    },
-    "GetTraceAnnotation": {
-      "type": "object",
-      "properties": {
-        "observation_span_id": {
-          "title": "Observation span id",
-          "type": "string",
-          "maxLength": 255,
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "trace_id": {
-          "title": "Trace id",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
-        },
-        "annotators": {
-          "title": "Annotators",
-          "type": "string",
-          "default": [],
-          "description": "JSON-encoded UUID list."
-        },
-        "exclude_annotators": {
-          "title": "Exclude annotators",
-          "type": "string",
-          "default": [],
-          "description": "JSON-encoded UUID list."
         }
       }
     },
@@ -60941,6 +61023,71 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ObserveDataset": {
+      "required": [
+        "name"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 2000,
+          "minLength": 1
+        },
+        "organization": {
+          "title": "Organization",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "model_type": {
+          "title": "Model type",
+          "type": "string",
+          "enum": [
+            "Numeric",
+            "ScoreCategorical",
+            "Ranking",
+            "BinaryClassification",
+            "Regression",
+            "ObjectDetection",
+            "Segmentation",
+            "GenerativeLLM",
+            "GenerativeImage",
+            "GenerativeVideo",
+            "TTS",
+            "STT",
+            "MultiModal"
+          ]
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "enum": [
+            "demo",
+            "build",
+            "sdk",
+            "observe",
+            "knowledge_base",
+            "scenario",
+            "experiment_snapshot",
+            "graph"
+          ]
+        },
+        "user": {
+          "title": "User",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        }
+      }
+    },
     "ObserveGraphDataRequest": {
       "required": [
         "project_id",
@@ -61364,6 +61511,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "optimized_k_prompts": {
           "title": "Optimized k prompts",
+          "type": "string",
+          "readOnly": true
+        },
+        "user_eval_template_ids": {
+          "title": "User eval template ids",
           "type": "string",
           "readOnly": true
         },
@@ -62429,6 +62581,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/PerformanceFilter"
           },
           "default": []
+        },
+        "page": {
+          "title": "Page",
+          "type": "integer",
+          "minimum": 1
         },
         "start_date": {
           "title": "Start date",
@@ -64331,7 +64488,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "is_sample": {
           "title": "Is sample",
-          "type": "boolean"
+          "type": "boolean",
+          "readOnly": true
         },
         "prompt_version": {
           "title": "Prompt version",
@@ -64480,7 +64638,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "is_sample": {
           "title": "Is sample",
-          "type": "boolean"
+          "type": "boolean",
+          "readOnly": true
         },
         "parent_folder": {
           "title": "Parent folder",
@@ -64794,6 +64953,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Organization",
           "type": "string",
           "format": "uuid",
+          "readOnly": true,
           "x-nullable": true
         },
         "prompt_folder": {
@@ -64811,6 +64971,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Created by",
           "type": "string",
           "format": "uuid",
+          "readOnly": true,
           "x-nullable": true
         }
       }
@@ -65862,6 +66023,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "failure_count": {
           "title": "Failure count",
           "type": "integer"
+        },
+        "dispatch_error": {
+          "title": "Dispatch error",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
         }
       }
     },
@@ -68388,6 +68555,55 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "SharedLinkCreate": {
+      "required": [
+        "resource_type",
+        "resource_id"
+      ],
+      "type": "object",
+      "properties": {
+        "resource_type": {
+          "title": "Resource type",
+          "type": "string",
+          "enum": [
+            "trace",
+            "dashboard",
+            "project"
+          ]
+        },
+        "resource_id": {
+          "title": "Resource id",
+          "type": "string",
+          "maxLength": 255,
+          "minLength": 1
+        },
+        "access_type": {
+          "title": "Access type",
+          "type": "string",
+          "enum": [
+            "public",
+            "restricted"
+          ],
+          "default": "restricted"
+        },
+        "expires_at": {
+          "title": "Expires at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "emails": {
+          "description": "Emails to grant access to (for restricted links).",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "email",
+            "minLength": 1
+          },
+          "default": []
+        }
+      }
+    },
     "SharedLinkDetail": {
       "type": "object",
       "properties": {
@@ -68654,6 +68870,29 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "data": {
           "$ref": "#/definitions/SharedLinkResolvedData"
+        }
+      }
+    },
+    "SharedLinkUpdate": {
+      "type": "object",
+      "properties": {
+        "access_type": {
+          "title": "Access type",
+          "type": "string",
+          "enum": [
+            "public",
+            "restricted"
+          ]
+        },
+        "is_active": {
+          "title": "Is active",
+          "type": "boolean"
+        },
+        "expires_at": {
+          "title": "Expires at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
         }
       }
     },
@@ -69370,6 +69609,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
       ],
       "type": "object",
       "properties": {
+        "old_workspace_id": {
+          "title": "Old workspace id",
+          "type": "string",
+          "format": "uuid"
+        },
         "new_workspace_id": {
           "title": "New workspace id",
           "type": "string",
@@ -69552,8 +69796,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "columns": {
           "type": "array",
           "items": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object"
           }
         },
         "dataset": {
@@ -71631,6 +71874,30 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "UpdateScore": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "title": "Value",
+          "type": "object"
+        },
+        "notes": {
+          "title": "Notes",
+          "type": "string",
+          "x-nullable": true
+        },
+        "score_source": {
+          "title": "Score source",
+          "type": "string",
+          "enum": [
+            "human",
+            "api",
+            "auto",
+            "imported"
+          ]
+        }
+      }
+    },
     "UpdateUser": {
       "required": [
         "user_id"
@@ -72632,6 +72899,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "UserAlertMonitorBulkMuteRequest": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "is_mute": {
+          "title": "Is mute",
+          "type": "boolean",
+          "default": true
+        },
+        "select_all": {
+          "title": "Select all",
+          "type": "boolean",
+          "default": false
+        },
+        "exclude_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        }
+      }
+    },
     "UserAlertMonitorDuplicate": {
       "required": [
         "id",
@@ -72734,6 +73032,179 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "UserAlertMonitorLogResolveRequest": {
+      "type": "object",
+      "properties": {
+        "log_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        },
+        "select_all": {
+          "title": "Select all",
+          "type": "boolean",
+          "default": false
+        },
+        "exclude_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "default": []
+        }
+      }
+    },
+    "UserAlertMonitorLogResolveResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "title": "Result",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "UserAlertMonitorLogWriteRequest": {
+      "required": [
+        "alert",
+        "type",
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "alert": {
+          "title": "Alert",
+          "type": "string",
+          "format": "uuid"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "critical",
+            "warning"
+          ]
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "resolved": {
+          "title": "Resolved",
+          "type": "boolean",
+          "default": false
+        },
+        "resolved_at": {
+          "title": "Resolved at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "link": {
+          "title": "Link",
+          "type": "string",
+          "format": "uri",
+          "x-nullable": true
+        },
+        "time_window_start": {
+          "title": "Time window start",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "time_window_end": {
+          "title": "Time window end",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        }
+      }
+    },
+    "UserAlertMonitorLogWriteResponse": {
+      "required": [
+        "id",
+        "alert",
+        "type",
+        "message",
+        "resolved",
+        "created_at"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "alert": {
+          "title": "Alert",
+          "type": "string",
+          "format": "uuid"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "critical",
+            "warning"
+          ]
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "resolved": {
+          "title": "Resolved",
+          "type": "boolean"
+        },
+        "resolved_at": {
+          "title": "Resolved at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "resolved_by": {
+          "$ref": "#/definitions/User"
+        },
+        "link": {
+          "title": "Link",
+          "type": "string",
+          "format": "uri",
+          "x-nullable": true
+        },
+        "time_window_start": {
+          "title": "Time window start",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "time_window_end": {
+          "title": "Time window end",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
     "UserAlertMonitorMetricOptionsResponse": {
       "type": "object",
       "properties": {
@@ -72748,6 +73219,196 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/UserAlertMonitorMetricOption"
           },
           "readOnly": true
+        }
+      }
+    },
+    "UserAlertMonitorPreviewGraph": {
+      "required": [
+        "project",
+        "metric_type",
+        "threshold_operator",
+        "organization"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "project": {
+          "title": "Project",
+          "type": "string",
+          "format": "uuid"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "metric_name": {
+          "title": "Metric name",
+          "type": "string",
+          "readOnly": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true
+        },
+        "updated_at": {
+          "title": "Updated at",
+          "type": "string",
+          "format": "date-time",
+          "readOnly": true
+        },
+        "deleted": {
+          "title": "Deleted",
+          "type": "boolean"
+        },
+        "deleted_at": {
+          "title": "Deleted at",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "metric_type": {
+          "title": "Metric type",
+          "type": "string",
+          "enum": [
+            "count_of_errors",
+            "error_rates_for_function_calling",
+            "error_free_session_rates",
+            "service_provider_error_rates",
+            "llm_api_failure_rates",
+            "span_response_time",
+            "llm_response_time",
+            "token_usage",
+            "daily_tokens_spent",
+            "monthly_tokens_spent",
+            "evaluation_metrics"
+          ]
+        },
+        "metric": {
+          "title": "Metric",
+          "description": "Id of the evaluation template.",
+          "type": "string",
+          "maxLength": 2556,
+          "x-nullable": true
+        },
+        "threshold_operator": {
+          "title": "Threshold operator",
+          "type": "string",
+          "enum": [
+            "greater_than",
+            "less_than"
+          ]
+        },
+        "threshold_type": {
+          "title": "Threshold type",
+          "description": "Method to set the threshold for the monitor (Static or Percentage change).",
+          "type": "string",
+          "enum": [
+            "static",
+            "percentage_change"
+          ]
+        },
+        "threshold_metric_value": {
+          "title": "Threshold metric value",
+          "description": "For choice and pass/fail evals, the specific metric value to monitor.",
+          "type": "string",
+          "maxLength": 255,
+          "x-nullable": true
+        },
+        "critical_threshold_value": {
+          "title": "Critical threshold value",
+          "type": "number",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "warning_threshold_value": {
+          "title": "Warning threshold value",
+          "type": "number",
+          "minimum": 0,
+          "x-nullable": true
+        },
+        "alert_frequency": {
+          "title": "Alert frequency",
+          "description": "Frequency of alert checks in minutes.",
+          "type": "integer",
+          "maximum": 2147483647,
+          "minimum": 5
+        },
+        "auto_threshold_time_window": {
+          "title": "Auto threshold time window",
+          "description": "For auto-thresholding. The time window in minutes to calculate the historical mean",
+          "type": "integer",
+          "maximum": 2147483647,
+          "minimum": 0
+        },
+        "last_checked_at": {
+          "title": "Last checked at",
+          "description": "The last time the monitor was checked for alerts.",
+          "type": "string",
+          "format": "date-time",
+          "x-nullable": true
+        },
+        "notification_emails": {
+          "type": "array",
+          "items": {
+            "title": "Notification emails",
+            "type": "string",
+            "format": "email",
+            "maxLength": 254,
+            "minLength": 1
+          }
+        },
+        "slack_webhook_url": {
+          "title": "Slack webhook url",
+          "type": "string",
+          "format": "uri",
+          "maxLength": 200,
+          "x-nullable": true
+        },
+        "slack_notes": {
+          "title": "Slack notes",
+          "type": "string",
+          "x-nullable": true
+        },
+        "is_mute": {
+          "title": "Is mute",
+          "type": "boolean"
+        },
+        "filters": {
+          "title": "Filters",
+          "type": "object",
+          "x-nullable": true
+        },
+        "logs": {
+          "type": "array",
+          "items": {
+            "title": "Logs",
+            "type": "object"
+          },
+          "x-nullable": true
+        },
+        "organization": {
+          "title": "Organization",
+          "type": "string",
+          "format": "uuid"
+        },
+        "workspace": {
+          "title": "Workspace",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
+        },
+        "created_by": {
+          "title": "Created by",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         }
       }
     },
@@ -79391,6 +80052,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Criteria",
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "EvalTaskCreateResult": {
+      "required": [
+        "id"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "EvalTaskMessageResult": {
+      "required": [
+        "message"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "EvalTaskUpdateResult": {
+      "required": [
+        "message",
+        "edit_type",
+        "task_id"
+      ],
+      "type": "object",
+      "properties": {
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1
+        },
+        "edit_type": {
+          "title": "Edit type",
+          "type": "string",
+          "enum": [
+            "edit_rerun",
+            "fresh_run"
+          ]
+        },
+        "task_id": {
+          "title": "Task id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
@@ -87619,9 +88334,86 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "minLength": 1
         },
+        "trace_type": {
+          "title": "Trace type",
+          "type": "string",
+          "minLength": 1
+        },
+        "model_type": {
+          "title": "Model type",
+          "type": "string",
+          "minLength": 1
+        },
+        "metadata": {
+          "title": "Metadata",
+          "type": "object",
+          "x-nullable": true
+        },
         "config": {
           "title": "Config",
-          "type": "object"
+          "type": "object",
+          "x-nullable": true
+        },
+        "session_config": {
+          "title": "Session config",
+          "type": "object",
+          "x-nullable": true
+        },
+        "tags": {
+          "title": "Tags",
+          "type": "object",
+          "x-nullable": true
+        },
+        "organization": {
+          "title": "Organization",
+          "type": "string",
+          "minLength": 1
+        },
+        "url_path": {
+          "title": "Url path",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "workspace": {
+          "title": "Workspace",
+          "type": "string",
+          "minLength": 1
+        },
+        "created_by": {
+          "title": "Created by",
+          "type": "object",
+          "x-nullable": true
+        },
+        "updated_by": {
+          "title": "Updated by",
+          "type": "object",
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "updated_at": {
+          "title": "Updated at",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "widgets": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "widget_count": {
+          "title": "Widget count",
+          "type": "integer"
         }
       }
     },
@@ -88350,6 +89142,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
             }
           },
           "readOnly": true
+        },
+        "dispatch_error": {
+          "title": "Dispatch error",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
         },
         "skipped": {
           "title": "Skipped",
@@ -90630,6 +91429,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Weight",
           "type": "number"
         },
+        "config": {
+          "title": "Config",
+          "type": "object",
+          "default": {}
+        },
         "required_keys": {
           "type": "array",
           "items": {
@@ -91255,6 +92059,71 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_token": {
           "title": "Total token",
           "type": "number"
+        }
+      }
+    },
+    "Dataset": {
+      "required": [
+        "name",
+        "organization"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid",
+          "readOnly": true
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "maxLength": 2000,
+          "minLength": 1
+        },
+        "organization": {
+          "title": "Organization",
+          "type": "string",
+          "format": "uuid"
+        },
+        "model_type": {
+          "title": "Model type",
+          "type": "string",
+          "enum": [
+            "Numeric",
+            "ScoreCategorical",
+            "Ranking",
+            "BinaryClassification",
+            "Regression",
+            "ObjectDetection",
+            "Segmentation",
+            "GenerativeLLM",
+            "GenerativeImage",
+            "GenerativeVideo",
+            "TTS",
+            "STT",
+            "MultiModal"
+          ]
+        },
+        "source": {
+          "title": "Source",
+          "type": "string",
+          "enum": [
+            "demo",
+            "build",
+            "sdk",
+            "observe",
+            "knowledge_base",
+            "scenario",
+            "experiment_snapshot",
+            "graph"
+          ]
+        },
+        "user": {
+          "title": "User",
+          "type": "string",
+          "format": "uuid",
+          "x-nullable": true
         }
       }
     },

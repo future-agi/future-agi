@@ -1582,47 +1582,49 @@ class AgentccGatewayViewSet(ViewSet):
                 .first()
             )
             if not active_config:
-                active_config = AgentccOrgConfig.no_workspace_objects.create(
+                new_config = AgentccOrgConfig(
                     organization=org,
                     version=1,
                     is_active=True,
                     cost_tracking=default_cost_tracking_config(),
+                    created_by=user,
+                    change_description=desc or "Config update v1",
                 )
+            else:
+                # Derive next version from locked active config — safe because
+                # select_for_update prevents concurrent reads of this row.
+                next_version = active_config.version + 1
 
-            # Derive next version from locked active config — safe because
-            # select_for_update prevents concurrent reads of this row.
-            next_version = active_config.version + 1
+                AgentccOrgConfig.no_workspace_objects.filter(
+                    organization=org,
+                    is_active=True,
+                    deleted=False,
+                ).update(is_active=False)
 
-            AgentccOrgConfig.no_workspace_objects.filter(
-                organization=org,
-                is_active=True,
-                deleted=False,
-            ).update(is_active=False)
-
-            new_config = AgentccOrgConfig(
-                organization=org,
-                version=next_version,
-                guardrails=active_config.guardrails,
-                routing=active_config.routing,
-                cache=active_config.cache,
-                rate_limiting=active_config.rate_limiting,
-                budgets=active_config.budgets,
-                cost_tracking=normalize_cost_tracking_config(
-                    active_config.cost_tracking
-                ),
-                ip_acl=active_config.ip_acl,
-                alerting=active_config.alerting,
-                privacy=active_config.privacy,
-                tool_policy=active_config.tool_policy,
-                mcp=active_config.mcp,
-                a2a=active_config.a2a,
-                audit=active_config.audit,
-                model_database=active_config.model_database,
-                model_map=active_config.model_map,
-                is_active=True,
-                created_by=user,
-                change_description=desc or f"Config update v{next_version}",
-            )
+                new_config = AgentccOrgConfig(
+                    organization=org,
+                    version=next_version,
+                    guardrails=active_config.guardrails,
+                    routing=active_config.routing,
+                    cache=active_config.cache,
+                    rate_limiting=active_config.rate_limiting,
+                    budgets=active_config.budgets,
+                    cost_tracking=normalize_cost_tracking_config(
+                        active_config.cost_tracking
+                    ),
+                    ip_acl=active_config.ip_acl,
+                    alerting=active_config.alerting,
+                    privacy=active_config.privacy,
+                    tool_policy=active_config.tool_policy,
+                    mcp=active_config.mcp,
+                    a2a=active_config.a2a,
+                    audit=active_config.audit,
+                    model_database=active_config.model_database,
+                    model_map=active_config.model_map,
+                    is_active=True,
+                    created_by=user,
+                    change_description=desc or f"Config update v{next_version}",
+                )
             updater_fn(new_config)
             new_config.save()
 

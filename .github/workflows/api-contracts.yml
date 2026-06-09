@@ -180,13 +180,48 @@ jobs:
       PG_TEST_DB: test_tfc_test
       PG_USER: postgres
       PG_PASSWORD: postgres
+      CH_HOST: localhost
+      CH_PORT: 19000
+      CH_DATABASE: test_tfc
+      CH25_HOST: localhost
+      CH25_HTTP_PORT: 18123
+      CH25_TCP_PORT: 19000
+      CH25_DATABASE: test_tfc
       CH_USE_REPLICATED_ENGINES: "false"
       CH25_DROP_LEGACY_CDC_CHAIN: "true"
+      REDIS_URL: redis://localhost:6379/0
+      REDIS_LOCK_URL: redis://localhost:6379/2
       TESTING: "false"
       EE_REPO_READ_TOKEN: ${{ secrets.EE_REPO_READ_TOKEN }}
       EE_REPO_BRANCH: ${{ github.head_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Start ClickHouse test service
+        run: |
+          docker run -d \
+            --name futureagi-api-contracts-clickhouse \
+            --ulimit nofile=262144:262144 \
+            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -e CLICKHOUSE_DB=test_tfc \
+            -p 18123:8123 \
+            -p 19000:9000 \
+            -v "$PWD/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro" \
+            -v "$PWD/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro" \
+            clickhouse/clickhouse-server:25.3-alpine
+
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:18123/ping >/dev/null; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs futureagi-api-contracts-clickhouse
+          echo "::error::ClickHouse did not become ready on localhost:18123"
+          exit 1
 
       - name: Require private EE checkout token
         working-directory: .
@@ -220,24 +255,6 @@ jobs:
         working-directory: futureagi/ee
         run: git config --unset-all http.https://github.com/.extraheader || true
 
-      - name: Start ClickHouse 25.3
-        run: |
-          docker run -d --name ch-test \
-            -p 18123:8123 -p 19000:9000 \
-            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
-            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
-            -e CLICKHOUSE_DB=test_tfc \
-            -v "$PWD/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro" \
-            -v "$PWD/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro" \
-            clickhouse/clickhouse-server:25.3-alpine
-          for i in $(seq 1 30); do
-            if docker exec ch-test clickhouse-client --query 'SELECT 1' >/dev/null 2>&1; then
-              echo "ClickHouse ready"; exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::ClickHouse did not become ready"; docker logs ch-test | tail -50; exit 1
-
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -248,6 +265,15 @@ jobs:
 
       - name: Install backend dependencies
         run: uv sync --frozen
+
+      - name: Apply ClickHouse test schema
+        run: >
+          uv run python -m tracer.services.clickhouse.v2.apply_schema
+          --schema-dir tracer/services/clickhouse/v2/schema
+          --ch-host localhost
+          --ch-http-port 18123
+          --ch-user default
+          --ch-database test_tfc
 
       - name: Check generated Swagger schema
         working-directory: .

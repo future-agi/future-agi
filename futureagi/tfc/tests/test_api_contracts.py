@@ -462,6 +462,41 @@ def test_error_envelope_preserves_details_attr_and_extra_metadata():
     assert response["request_id"] == "req_123"
 
 
+def test_bad_request_preserves_structured_error_code_result():
+    response = GeneralMethods().bad_request(
+        {
+            "error": "Invalid credentials",
+            "error_code": "LOGIN_INVALID_CREDENTIALS",
+            "remaining_attempts": 4,
+        }
+    )
+
+    assert response.status_code == 400
+    assert response.data["status"] is False
+    assert response.data["code"] == "LOGIN_INVALID_CREDENTIALS"
+    assert response.data["detail"] == "Invalid credentials"
+    assert response.data["result"]["error_code"] == "LOGIN_INVALID_CREDENTIALS"
+    assert response.data["result"]["remaining_attempts"] == 4
+
+
+def test_not_found_preserves_structured_error_metadata_result():
+    response = GeneralMethods().not_found(
+        {
+            "message": "Some graphs were not found.",
+            "missing_ids": ["graph-id"],
+        }
+    )
+
+    assert response.status_code == 404
+    assert response.data["status"] is False
+    assert response.data["code"] == "not_found"
+    assert response.data["detail"] == "Some graphs were not found."
+    assert response.data["result"] == {
+        "message": "Some graphs were not found.",
+        "missing_ids": ["graph-id"],
+    }
+
+
 def test_usage_limit_response_uses_common_error_envelope():
     response = GeneralMethods().usage_limit_response(
         SimpleNamespace(

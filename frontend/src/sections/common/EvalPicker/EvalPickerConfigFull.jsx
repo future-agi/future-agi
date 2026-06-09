@@ -548,7 +548,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // the name to where the eval was created (dataset / experiment /
       // workbench / …); the timestamp avoids collisions on the backend
       // uniqueness check for same-source same-day repeats.
-      if (isEditMode) {
+      if (isEditMode || source === "composite") {
         setEvalName(evalData?.name || fullEval.name || "");
       } else {
         const baseName =
@@ -882,9 +882,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
     // In edit mode: evalData.name is the saved instance name — skip
     // fullEval.name (template name) so it never overwrites the instance name.
-    const resolvedName = isEditMode
-      ? evalName || evalData?.name
-      : evalName || fullEval?.name || evalData?.name;
+    const resolvedName =
+      source === "composite"
+        ? fullEval?.name || evalData?.name || evalName
+        : isEditMode
+          ? evalName || evalData?.name
+          : evalName || fullEval?.name || evalData?.name;
 
     if (templateType === "composite") {
       // Composite metrics don't carry prompt/model/output-type/choice-score
@@ -1477,7 +1480,10 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     Code evaluator returns a score between 0 and 1. Set a pass
                     threshold below.
                   </Typography>
-                  <Typography variant="subtitle2"  sx={{ mb: 0.5,color:"text.primary" }}>
+                  <Typography
+                    variant="subtitle2"
+                    sx={{ mb: 0.5, color: "text.primary" }}
+                  >
                     Pass Threshold
                   </Typography>
                   <Typography
@@ -1768,49 +1774,51 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   />
                 )}
 
-                {source !== "composite" && visibleCodeParamEntries.length > 0 && (
-                  <Box sx={{ mt: 2 }}>
-                    <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                      Parameters
-                    </Typography>
-                    {visibleCodeParamEntries.map(([key, schema]) => (
-                      <TextField
-                        key={key}
-                        fullWidth
-                        size="small"
-                        type={
-                          schema?.type === "integer" || schema?.type === "number"
-                            ? "number"
-                            : "text"
-                        }
-                        label={key}
-                        value={codeParams[key] ?? ""}
-                        onChange={(e) => {
-                          // BE's `type: number` schema rejects strings; coerce here.
-                          const raw = e.target.value;
-                          const isNumeric =
+                {source !== "composite" &&
+                  visibleCodeParamEntries.length > 0 && (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                        Parameters
+                      </Typography>
+                      {visibleCodeParamEntries.map(([key, schema]) => (
+                        <TextField
+                          key={key}
+                          fullWidth
+                          size="small"
+                          type={
                             schema?.type === "integer" ||
-                            schema?.type === "number";
-                          let next = raw;
-                          if (isNumeric && raw !== "") {
-                            const n = Number(raw);
-                            if (!Number.isNaN(n)) next = n;
+                            schema?.type === "number"
+                              ? "number"
+                              : "text"
                           }
-                          handleCodeParamChange(key, next);
-                        }}
-                        helperText={
-                          configParamsDesc?.[key] || schema?.description || ""
-                        }
-                        placeholder={
-                          schema?.nullable
-                            ? "optional"
-                            : String(schema?.default ?? "")
-                        }
-                        sx={{ mb: 1 }}
-                      />
-                    ))}
-                  </Box>
-                )}
+                          label={key}
+                          value={codeParams[key] ?? ""}
+                          onChange={(e) => {
+                            // BE's `type: number` schema rejects strings; coerce here.
+                            const raw = e.target.value;
+                            const isNumeric =
+                              schema?.type === "integer" ||
+                              schema?.type === "number";
+                            let next = raw;
+                            if (isNumeric && raw !== "") {
+                              const n = Number(raw);
+                              if (!Number.isNaN(n)) next = n;
+                            }
+                            handleCodeParamChange(key, next);
+                          }}
+                          helperText={
+                            configParamsDesc?.[key] || schema?.description || ""
+                          }
+                          placeholder={
+                            schema?.nullable
+                              ? "optional"
+                              : String(schema?.default ?? "")
+                          }
+                          sx={{ mb: 1 }}
+                        />
+                      ))}
+                    </Box>
+                  )}
               </Box>
             </Box>
           }

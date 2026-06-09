@@ -1,6 +1,5 @@
 import json
-from datetime import datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from django.contrib.auth import get_user_model
@@ -12,7 +11,7 @@ from accounts.models.workspace import Workspace
 from model_hub.models.ai_model import AIModel
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
-from tracer.models.observation_span import EndUser, ObservationSpan
+from tracer.models.observation_span import EndUser
 from tracer.models.project import Project
 from tracer.models.trace import Trace
 from tracer.services.clickhouse.query_service import QueryResult
@@ -319,7 +318,10 @@ class TestUsersViewAPI(APITestCase):
 
         response = self.client.get(self.url, data)
 
-        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        self.assertIn(
+            response.status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
 
     @patch(_EXECUTE_CH_PATH)
     def test_users_list_sql_exception_handling(self, mock_get_spans):
@@ -636,7 +638,9 @@ class TestUserMetricsAndGraphAPI(APITestCase):
 
         response = self.client.post(url, data, format="json")
 
-        self.assertIn(response.status_code, (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN))
+        self.assertIn(
+            response.status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
 
     # ============ GET USER GRAPH DATA TESTS ============
-

@@ -208,12 +208,7 @@ class TestCreateEvalTemplateTool:
         assert "criteria-eval" in result.content
 
     def test_create_without_variable_in_criteria(self, tool_context):
-        """Creating eval template without template variable in criteria succeeds.
-
-        The tool now allows plain-text criteria without {{var}} placeholders.
-        Variables are extracted from the instructions text; if none are found,
-        required_keys is simply empty.
-        """
+        """Creating eval template without template variable in criteria should fail."""
         result = run_tool(
             "create_eval_template",
             {
@@ -224,9 +219,8 @@ class TestCreateEvalTemplateTool:
             tool_context,
         )
 
-        assert not result.is_error
-        assert result.data["name"] == "no-var-eval"
-        assert result.data["required_keys"] == []
+        assert result.is_error
+        assert "template variable" in result.content.lower()
 
     def test_create_without_criteria(self, tool_context):
         """Creating eval template without criteria should fail for non-Function types."""
@@ -267,14 +261,11 @@ class TestCreateEvalTemplateTool:
 
     def test_create_duplicate_system_name(self, tool_context):
         """Cannot create user template with same name as system template."""
-        # Create system template with a valid name format
-        sys_template = make_eval_template(
-            tool_context, name="test-system-eval", owner="system"
-        )
+        eval_template = make_eval_template(tool_context, name="system-eval")
         result = run_tool(
             "create_eval_template",
             {
-                "name": sys_template.name,
+                "name": eval_template.name,
                 "criteria": "Evaluate {{response}}",
                 "required_keys": ["response"],
             },
@@ -379,10 +370,6 @@ class TestDeleteEvalTemplateTool:
         assert result.is_error
 
 
-@pytest.mark.skip(
-    reason="create_eval_group tool exists but is not registered in "
-    "ai_tools/tools/__init__.py — production registration bug, not a test issue"
-)
 class TestCreateEvalGroupTool:
     def test_create_group(self, tool_context, eval_template):
         result = run_tool(

@@ -551,8 +551,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   // current path is snake_case — accept either so the panel doesn't
   // silently render empty if a stale renderer hits a new backend (or
   // vice versa).
-  const warningGroups =
-    data?.warning_groups || data?.warningGroups || [];
+  const warningGroups = data?.warning_groups || data?.warningGroups || [];
   const errorGroupsTruncated =
     data?.error_groups_truncated ?? data?.errorGroupsTruncated ?? false;
   const warningGroupsTruncated =

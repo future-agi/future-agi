@@ -383,6 +383,65 @@ class TestVoiceAnnotationRegressionE2E:
             deleted=False,
         ).exists()
 
+    def test_filter_add_default_workspace_accepts_null_workspace_trace(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+    ):
+        legacy_project = Project.objects.create(
+            name=f"Legacy null workspace observe {uuid.uuid4().hex[:8]}",
+            organization=organization,
+            workspace=None,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        legacy_trace = Trace.objects.create(
+            project=legacy_project,
+            name="Legacy null workspace trace",
+        )
+        ObservationSpan.objects.create(
+            id=f"legacy_null_ws_root_{uuid.uuid4().hex[:16]}",
+            project=legacy_project,
+            trace=legacy_trace,
+            name="Legacy null workspace root",
+            observation_type="conversation",
+            start_time=timezone.now(),
+            parent_span_id=None,
+            status="ok",
+        )
+        queue = _queue(
+            "Default workspace null-workspace trace",
+            organization,
+            workspace,
+            user,
+            project=legacy_project,
+        )
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": QueueItemSourceType.TRACE.value,
+                    "project_id": str(legacy_project.id),
+                }
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        result = resp.data["result"]
+        assert result["added"] == 1
+        assert result["total_matching"] == 1
+        assert result["errors"] == []
+        assert QueueItem.objects.filter(
+            queue=queue,
+            trace=legacy_trace,
+            deleted=False,
+        ).exists()
+
     def test_th4782_simulation_queue_submit_uses_call_execution_source(
         self,
         auth_client,

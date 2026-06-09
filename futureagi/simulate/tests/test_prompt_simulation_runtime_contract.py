@@ -6,6 +6,9 @@ from rest_framework import status
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from simulate.models import RunTest, Scenarios
 
+ANONYMOUS_PROMPT_TEMPLATE_ID = "00000000-0000-4000-8000-000000001024"
+ANONYMOUS_PROMPT_RUN_TEST_ID = "00000000-0000-4000-8000-000000001025"
+
 
 @pytest.fixture
 def prompt_template(db, organization, workspace):
@@ -46,6 +49,65 @@ def scenario(db, organization, workspace):
         organization=organization,
         workspace=workspace,
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("get", "/simulate/prompt-simulations/scenarios/", None),
+        (
+            "get",
+            f"/simulate/prompt-templates/{ANONYMOUS_PROMPT_TEMPLATE_ID}/simulations/",
+            None,
+        ),
+        (
+            "post",
+            f"/simulate/prompt-templates/{ANONYMOUS_PROMPT_TEMPLATE_ID}/simulations/",
+            {},
+        ),
+        (
+            "get",
+            f"/simulate/prompt-templates/{ANONYMOUS_PROMPT_TEMPLATE_ID}/simulations/{ANONYMOUS_PROMPT_RUN_TEST_ID}/",
+            None,
+        ),
+        (
+            "patch",
+            f"/simulate/prompt-templates/{ANONYMOUS_PROMPT_TEMPLATE_ID}/simulations/{ANONYMOUS_PROMPT_RUN_TEST_ID}/",
+            {},
+        ),
+        (
+            "delete",
+            f"/simulate/prompt-templates/{ANONYMOUS_PROMPT_TEMPLATE_ID}/simulations/{ANONYMOUS_PROMPT_RUN_TEST_ID}/",
+            None,
+        ),
+        (
+            "post",
+            f"/simulate/prompt-templates/{ANONYMOUS_PROMPT_TEMPLATE_ID}/simulations/{ANONYMOUS_PROMPT_RUN_TEST_ID}/execute/",
+            {},
+        ),
+        (
+            "get",
+            f"/simulate/export/{ANONYMOUS_PROMPT_RUN_TEST_ID}/?type=runtest",
+            None,
+        ),
+    ],
+)
+def test_prompt_simulation_and_export_routes_reject_anonymous_before_work(
+    api_client, method, path, body
+):
+    request = getattr(api_client, method)
+
+    if body is None:
+        response = request(path)
+    else:
+        response = request(path, body, format="json")
+
+    assert response.status_code in {
+        status.HTTP_401_UNAUTHORIZED,
+        status.HTTP_403_FORBIDDEN,
+    }
+    assert response.headers["content-type"].startswith("application/json")
 
 
 @pytest.mark.integration

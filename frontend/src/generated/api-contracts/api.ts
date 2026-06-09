@@ -36,6 +36,7 @@ import type {
   AccountsUserProfileResponseApi,
   AccountsWorkspaceListListParams,
   AccountsWorkspaceMembersListParams,
+  AddAccessApi,
   AddApiColumnRequestApi,
   AddAsNewDatasetRequestApi,
   AddEvalConfigsRequestApi,
@@ -186,7 +187,10 @@ import type {
   ApiDetailErrorResponseApi,
   ApiErrorResponseApi,
   ApiErrorWithDetailsResponseApi,
-  ApiKeyApi,
+  ApiKeyListResponseApi,
+  ApiKeyRequestApi,
+  ApiKeyResponseApi,
+  ApiKeySuccessResponseApi,
   ApiPublicOtelV1TracesCreateBodyOne,
   ApiPublicOtelV1TracesCreateBodyTwo,
   ApiSelectionTooLargeErrorApi,
@@ -309,7 +313,6 @@ import type {
   DatasetAddEmptyRowsRequestApi,
   DatasetAddRowsFromExistingRequestApi,
   DatasetAddRowsRequestApi,
-  DatasetApi,
   DatasetBehaviorRequestApi,
   DatasetCellDataRequestApi,
   DatasetCellDataResponseApi,
@@ -407,6 +410,11 @@ import type {
   EvalSummaryTemplateMutationRequestApi,
   EvalSummaryTemplateResponseApi,
   EvalTaskApi,
+  EvalTaskCreateResponseApi,
+  EvalTaskDeleteRequestApi,
+  EvalTaskMessageResponseApi,
+  EvalTaskUpdateRequestApi,
+  EvalTaskUpdateResponseApi,
   EvalTemplateApi,
   EvalTemplateBulkDeleteRequestApi,
   EvalTemplateBulkDeleteResponseApi,
@@ -477,7 +485,6 @@ import type {
   FeedbackApi,
   FetchAssistantRequestApi,
   FetchAssistantResponseApi,
-  FetchGraphApi,
   FileUploadResponseApi,
   GatewayBatchCancelResponseApi,
   GatewayBatchDetailResponseApi,
@@ -507,7 +514,6 @@ import type {
   GatewayToggleGuardrailRequestApi,
   GenerateScenarioApi,
   GetAnnotationLabelsResponseApi,
-  GetTraceAnnotationApi,
   GetTraceAnnotationValuesResponseApi,
   GraphCreateApi,
   GraphDetailApi,
@@ -652,7 +658,6 @@ import type {
   ModelHubAnnotationsLabelsListParams,
   ModelHubAnnotationsList200,
   ModelHubAnnotationsListParams,
-  ModelHubApiKeysList200,
   ModelHubApiKeysListParams,
   ModelHubDatasetOptimizationList200,
   ModelHubDatasetOptimizationListParams,
@@ -746,6 +751,7 @@ import type {
   ObservabilityProviderApi,
   ObservationAttributeListResponseApi,
   ObservationSpanApi,
+  ObserveDatasetApi,
   ObserveGraphDataRequestApi,
   ObserveGraphDataResponseApi,
   OperationConfigResponseApi,
@@ -988,10 +994,11 @@ import type {
   SessionComparisonResponseApi,
   SetupIntentConfirmRequestApi,
   ShadowResultsWebhookRequestApi,
+  SharedLinkCreateApi,
   SharedLinkDetailApi,
-  SharedLinkListApi,
   SharedLinkResolveErrorApi,
   SharedLinkResolveResponseApi,
+  SharedLinkUpdateApi,
   SignupRequestApi,
   SimulateAgentDefinitionsListParams,
   SimulateApiAgentDefinitionOperationsList200,
@@ -1093,8 +1100,6 @@ import type {
   TraceToGraphResponseApi,
   TracerChartsFetchGraph200,
   TracerChartsFetchGraphParams,
-  TracerChartsList200,
-  TracerChartsListParams,
   TracerCustomEvalConfigList200,
   TracerCustomEvalConfigListCustomEvalConfigs200,
   TracerCustomEvalConfigListCustomEvalConfigsParams,
@@ -1120,6 +1125,8 @@ import type {
   TracerEvalTaskListEvalTasksParams,
   TracerEvalTaskListEvalTasksWithProjectNameParams,
   TracerEvalTaskListParams,
+  TracerEvalTaskPauseEvalTaskParams,
+  TracerEvalTaskUnpauseEvalTaskParams,
   TracerFeedIssuesListParams,
   TracerFeedIssuesReadParams,
   TracerFeedIssuesRootCauseListParams,
@@ -1181,8 +1188,6 @@ import type {
   TracerTraceAgentGraph200,
   TracerTraceAgentGraphParams,
   TracerTraceAnnotationGetAnnotationValuesParams,
-  TracerTraceAnnotationList200,
-  TracerTraceAnnotationListParams,
   TracerTraceGetEvalNames200,
   TracerTraceGetEvalNamesParams,
   TracerTraceGetProperties200,
@@ -1236,6 +1241,7 @@ import type {
   UpdateOrganizationBillingRequestApi,
   UpdatePortApi,
   UpdateRunTestApi,
+  UpdateScoreApi,
   UpdateUserApi,
   UpgradeToPaygConfirmRequestApi,
   UpgradeToPaygPostResponseApi,
@@ -1254,6 +1260,7 @@ import type {
   UsageBudgetMutationResponseApi,
   UsageEmptyRequestApi,
   UsageErrorResponseApi,
+  UsageGetCustomerInvoicesListParams,
   UsageInvoiceDetailResponseApi,
   UsageInvoiceListResponseApi,
   UsageMessageResponseApi,
@@ -1277,10 +1284,16 @@ import type {
   UsageWorkspaceEvalSummaryListParams,
   UsageWorkspaceUsageSummaryListParams,
   UserAlertMonitorApi,
+  UserAlertMonitorBulkMuteRequestApi,
   UserAlertMonitorDuplicateApi,
   UserAlertMonitorDuplicateResponseApi,
   UserAlertMonitorLogApi,
+  UserAlertMonitorLogResolveRequestApi,
+  UserAlertMonitorLogResolveResponseApi,
+  UserAlertMonitorLogWriteRequestApi,
+  UserAlertMonitorLogWriteResponseApi,
   UserAlertMonitorMetricOptionsResponseApi,
+  UserAlertMonitorPreviewGraphApi,
   UserChecksResponseApi,
   UserCodeExampleResponseApi,
   UserCreateApi,
@@ -8768,8 +8781,7 @@ export const getAgentPlaygroundGraphsPartialUpdateUrl = (id: string,) => {
 }
 
 /**
- * Does NOT touch versions.
- * @summary Update graph metadata only (name, description).
+ * ViewSet for Graph CRUD and version management.
  */
 export const agentPlaygroundGraphsPartialUpdate = async (id: string,
     graphUpdateApi: GraphUpdateApi, options?: RequestInit): Promise<agentPlaygroundGraphsPartialUpdateResponse> => {
@@ -8829,7 +8841,7 @@ export const getAgentPlaygroundGraphsDeleteUrl = (id: string,) => {
 }
 
 /**
- * ViewSet for Graph CRUD and version management.
+ * Soft-delete a graph through the router detail route with cascade validation.
  */
 export const agentPlaygroundGraphsDelete = async (id: string, options?: RequestInit): Promise<agentPlaygroundGraphsDeleteResponse> => {
 
@@ -18817,6 +18829,11 @@ export type falconAiQuickAnalysisCreateResponse200 = {
   status: 200
 }
 
+export type falconAiQuickAnalysisCreateResponse400 = {
+  data: FalconErrorResponseApi
+  status: 400
+}
+
 export type falconAiQuickAnalysisCreateResponse429 = {
   data: FalconErrorResponseApi
   status: 429
@@ -18834,13 +18851,13 @@ export type falconAiQuickAnalysisCreateResponse504 = {
 
 export type falconAiQuickAnalysisCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 429 | 502 | 504>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 429 | 502 | 504>
 }
 
 export type falconAiQuickAnalysisCreateResponseSuccess = (falconAiQuickAnalysisCreateResponse200) & {
   headers: Headers;
 };
-export type falconAiQuickAnalysisCreateResponseError = (falconAiQuickAnalysisCreateResponse429 | falconAiQuickAnalysisCreateResponse502 | falconAiQuickAnalysisCreateResponse504 | falconAiQuickAnalysisCreateResponseDefault) & {
+export type falconAiQuickAnalysisCreateResponseError = (falconAiQuickAnalysisCreateResponse400 | falconAiQuickAnalysisCreateResponse429 | falconAiQuickAnalysisCreateResponse502 | falconAiQuickAnalysisCreateResponse504 | falconAiQuickAnalysisCreateResponseDefault) & {
   headers: Headers;
 };
 
@@ -25221,19 +25238,44 @@ export const modelHubAnnotationsUpdateCells = async (id: string,
 
 
 export type modelHubApiKeysListResponse200 = {
-  data: ModelHubApiKeysList200
+  data: ApiKeyListResponseApi
   status: 200
+}
+
+export type modelHubApiKeysListResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubApiKeysListResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubApiKeysListResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubApiKeysListResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubApiKeysListResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubApiKeysListResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
 export type modelHubApiKeysListResponseSuccess = (modelHubApiKeysListResponse200) & {
   headers: Headers;
 };
-export type modelHubApiKeysListResponseError = (modelHubApiKeysListResponseDefault) & {
+export type modelHubApiKeysListResponseError = (modelHubApiKeysListResponse400 | modelHubApiKeysListResponse403 | modelHubApiKeysListResponse404 | modelHubApiKeysListResponse409 | modelHubApiKeysListResponse500 | modelHubApiKeysListResponseDefault) & {
   headers: Headers;
 };
 
@@ -25271,20 +25313,45 @@ export const modelHubApiKeysList = async (params?: ModelHubApiKeysListParams, op
 
 
 
-export type modelHubApiKeysCreateResponse201 = {
-  data: ApiKeyApi
-  status: 201
+export type modelHubApiKeysCreateResponse200 = {
+  data: ApiKeySuccessResponseApi
+  status: 200
+}
+
+export type modelHubApiKeysCreateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubApiKeysCreateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubApiKeysCreateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubApiKeysCreateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubApiKeysCreateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubApiKeysCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
-export type modelHubApiKeysCreateResponseSuccess = (modelHubApiKeysCreateResponse201) & {
+export type modelHubApiKeysCreateResponseSuccess = (modelHubApiKeysCreateResponse200) & {
   headers: Headers;
 };
-export type modelHubApiKeysCreateResponseError = (modelHubApiKeysCreateResponseDefault) & {
+export type modelHubApiKeysCreateResponseError = (modelHubApiKeysCreateResponse400 | modelHubApiKeysCreateResponse403 | modelHubApiKeysCreateResponse404 | modelHubApiKeysCreateResponse409 | modelHubApiKeysCreateResponse500 | modelHubApiKeysCreateResponseDefault) & {
   headers: Headers;
 };
 
@@ -25298,7 +25365,7 @@ export const getModelHubApiKeysCreateUrl = () => {
   return `/model-hub/api-keys/`
 }
 
-export const modelHubApiKeysCreate = async (apiKeyApi: NonReadonly<ApiKeyApi>, options?: RequestInit): Promise<modelHubApiKeysCreateResponse> => {
+export const modelHubApiKeysCreate = async (apiKeyRequestApi: ApiKeyRequestApi, options?: RequestInit): Promise<modelHubApiKeysCreateResponse> => {
 
   return apiMutator<modelHubApiKeysCreateResponse>(getModelHubApiKeysCreateUrl(),
   {
@@ -25306,26 +25373,51 @@ export const modelHubApiKeysCreate = async (apiKeyApi: NonReadonly<ApiKeyApi>, o
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      apiKeyApi,)
+      apiKeyRequestApi,)
   }
 );}
 
 
 
 export type modelHubApiKeysReadResponse200 = {
-  data: ApiKeyApi
+  data: ApiKeySuccessResponseApi
   status: 200
+}
+
+export type modelHubApiKeysReadResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubApiKeysReadResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubApiKeysReadResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubApiKeysReadResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubApiKeysReadResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubApiKeysReadResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
 export type modelHubApiKeysReadResponseSuccess = (modelHubApiKeysReadResponse200) & {
   headers: Headers;
 };
-export type modelHubApiKeysReadResponseError = (modelHubApiKeysReadResponseDefault) & {
+export type modelHubApiKeysReadResponseError = (modelHubApiKeysReadResponse400 | modelHubApiKeysReadResponse403 | modelHubApiKeysReadResponse404 | modelHubApiKeysReadResponse409 | modelHubApiKeysReadResponse500 | modelHubApiKeysReadResponseDefault) & {
   headers: Headers;
 };
 
@@ -25353,19 +25445,44 @@ export const modelHubApiKeysRead = async (id: string, options?: RequestInit): Pr
 
 
 export type modelHubApiKeysUpdateResponse200 = {
-  data: ApiKeyApi
+  data: ApiKeyResponseApi
   status: 200
+}
+
+export type modelHubApiKeysUpdateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubApiKeysUpdateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubApiKeysUpdateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubApiKeysUpdateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubApiKeysUpdateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubApiKeysUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
 export type modelHubApiKeysUpdateResponseSuccess = (modelHubApiKeysUpdateResponse200) & {
   headers: Headers;
 };
-export type modelHubApiKeysUpdateResponseError = (modelHubApiKeysUpdateResponseDefault) & {
+export type modelHubApiKeysUpdateResponseError = (modelHubApiKeysUpdateResponse400 | modelHubApiKeysUpdateResponse403 | modelHubApiKeysUpdateResponse404 | modelHubApiKeysUpdateResponse409 | modelHubApiKeysUpdateResponse500 | modelHubApiKeysUpdateResponseDefault) & {
   headers: Headers;
 };
 
@@ -25380,7 +25497,7 @@ export const getModelHubApiKeysUpdateUrl = (id: string,) => {
 }
 
 export const modelHubApiKeysUpdate = async (id: string,
-    apiKeyApi: NonReadonly<ApiKeyApi>, options?: RequestInit): Promise<modelHubApiKeysUpdateResponse> => {
+    apiKeyRequestApi: ApiKeyRequestApi, options?: RequestInit): Promise<modelHubApiKeysUpdateResponse> => {
 
   return apiMutator<modelHubApiKeysUpdateResponse>(getModelHubApiKeysUpdateUrl(id),
   {
@@ -25388,26 +25505,51 @@ export const modelHubApiKeysUpdate = async (id: string,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      apiKeyApi,)
+      apiKeyRequestApi,)
   }
 );}
 
 
 
 export type modelHubApiKeysPartialUpdateResponse200 = {
-  data: ApiKeyApi
+  data: ApiKeyResponseApi
   status: 200
+}
+
+export type modelHubApiKeysPartialUpdateResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubApiKeysPartialUpdateResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubApiKeysPartialUpdateResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubApiKeysPartialUpdateResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubApiKeysPartialUpdateResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubApiKeysPartialUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
 export type modelHubApiKeysPartialUpdateResponseSuccess = (modelHubApiKeysPartialUpdateResponse200) & {
   headers: Headers;
 };
-export type modelHubApiKeysPartialUpdateResponseError = (modelHubApiKeysPartialUpdateResponseDefault) & {
+export type modelHubApiKeysPartialUpdateResponseError = (modelHubApiKeysPartialUpdateResponse400 | modelHubApiKeysPartialUpdateResponse403 | modelHubApiKeysPartialUpdateResponse404 | modelHubApiKeysPartialUpdateResponse409 | modelHubApiKeysPartialUpdateResponse500 | modelHubApiKeysPartialUpdateResponseDefault) & {
   headers: Headers;
 };
 
@@ -25422,7 +25564,7 @@ export const getModelHubApiKeysPartialUpdateUrl = (id: string,) => {
 }
 
 export const modelHubApiKeysPartialUpdate = async (id: string,
-    apiKeyApi: NonReadonly<ApiKeyApi>, options?: RequestInit): Promise<modelHubApiKeysPartialUpdateResponse> => {
+    apiKeyRequestApi: ApiKeyRequestApi, options?: RequestInit): Promise<modelHubApiKeysPartialUpdateResponse> => {
 
   return apiMutator<modelHubApiKeysPartialUpdateResponse>(getModelHubApiKeysPartialUpdateUrl(id),
   {
@@ -25430,7 +25572,7 @@ export const modelHubApiKeysPartialUpdate = async (id: string,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      apiKeyApi,)
+      apiKeyRequestApi,)
   }
 );}
 
@@ -42843,48 +42985,6 @@ export const modelHubOrganizationsUsersList = async (organizationId: string,
 
 
 
-export type modelHubOrganizationsUsersCreateResponse201 = {
-  data: DevelopAnnotationsUserApi
-  status: 201
-}
-
-export type modelHubOrganizationsUsersCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
-}
-
-export type modelHubOrganizationsUsersCreateResponseSuccess = (modelHubOrganizationsUsersCreateResponse201) & {
-  headers: Headers;
-};
-export type modelHubOrganizationsUsersCreateResponseError = (modelHubOrganizationsUsersCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubOrganizationsUsersCreateResponse = (modelHubOrganizationsUsersCreateResponseSuccess | modelHubOrganizationsUsersCreateResponseError)
-
-export const getModelHubOrganizationsUsersCreateUrl = (organizationId: string,) => {
-
-
-
-
-  return `/model-hub/organizations/${organizationId}/users/`
-}
-
-export const modelHubOrganizationsUsersCreate = async (organizationId: string,
-    developAnnotationsUserApi: NonReadonly<DevelopAnnotationsUserApi>, options?: RequestInit): Promise<modelHubOrganizationsUsersCreateResponse> => {
-
-  return apiMutator<modelHubOrganizationsUsersCreateResponse>(getModelHubOrganizationsUsersCreateUrl(organizationId),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      developAnnotationsUserApi,)
-  }
-);}
-
-
-
 export type modelHubOrganizationsUsersReadResponse200 = {
   data: DevelopAnnotationsUserApi
   status: 200
@@ -42920,136 +43020,6 @@ export const modelHubOrganizationsUsersRead = async (organizationId: string,
   {
     ...options,
     method: 'GET'
-
-
-  }
-);}
-
-
-
-export type modelHubOrganizationsUsersUpdateResponse200 = {
-  data: DevelopAnnotationsUserApi
-  status: 200
-}
-
-export type modelHubOrganizationsUsersUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type modelHubOrganizationsUsersUpdateResponseSuccess = (modelHubOrganizationsUsersUpdateResponse200) & {
-  headers: Headers;
-};
-export type modelHubOrganizationsUsersUpdateResponseError = (modelHubOrganizationsUsersUpdateResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubOrganizationsUsersUpdateResponse = (modelHubOrganizationsUsersUpdateResponseSuccess | modelHubOrganizationsUsersUpdateResponseError)
-
-export const getModelHubOrganizationsUsersUpdateUrl = (organizationId: string,
-    id: string,) => {
-
-
-
-
-  return `/model-hub/organizations/${organizationId}/users/${id}/`
-}
-
-export const modelHubOrganizationsUsersUpdate = async (organizationId: string,
-    id: string,
-    developAnnotationsUserApi: NonReadonly<DevelopAnnotationsUserApi>, options?: RequestInit): Promise<modelHubOrganizationsUsersUpdateResponse> => {
-
-  return apiMutator<modelHubOrganizationsUsersUpdateResponse>(getModelHubOrganizationsUsersUpdateUrl(organizationId,id),
-  {
-    ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      developAnnotationsUserApi,)
-  }
-);}
-
-
-
-export type modelHubOrganizationsUsersPartialUpdateResponse200 = {
-  data: DevelopAnnotationsUserApi
-  status: 200
-}
-
-export type modelHubOrganizationsUsersPartialUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type modelHubOrganizationsUsersPartialUpdateResponseSuccess = (modelHubOrganizationsUsersPartialUpdateResponse200) & {
-  headers: Headers;
-};
-export type modelHubOrganizationsUsersPartialUpdateResponseError = (modelHubOrganizationsUsersPartialUpdateResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubOrganizationsUsersPartialUpdateResponse = (modelHubOrganizationsUsersPartialUpdateResponseSuccess | modelHubOrganizationsUsersPartialUpdateResponseError)
-
-export const getModelHubOrganizationsUsersPartialUpdateUrl = (organizationId: string,
-    id: string,) => {
-
-
-
-
-  return `/model-hub/organizations/${organizationId}/users/${id}/`
-}
-
-export const modelHubOrganizationsUsersPartialUpdate = async (organizationId: string,
-    id: string,
-    developAnnotationsUserApi: NonReadonly<DevelopAnnotationsUserApi>, options?: RequestInit): Promise<modelHubOrganizationsUsersPartialUpdateResponse> => {
-
-  return apiMutator<modelHubOrganizationsUsersPartialUpdateResponse>(getModelHubOrganizationsUsersPartialUpdateUrl(organizationId,id),
-  {
-    ...options,
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      developAnnotationsUserApi,)
-  }
-);}
-
-
-
-export type modelHubOrganizationsUsersDeleteResponse204 = {
-  data: void
-  status: 204
-}
-
-export type modelHubOrganizationsUsersDeleteResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 204>
-}
-
-export type modelHubOrganizationsUsersDeleteResponseSuccess = (modelHubOrganizationsUsersDeleteResponse204) & {
-  headers: Headers;
-};
-export type modelHubOrganizationsUsersDeleteResponseError = (modelHubOrganizationsUsersDeleteResponseDefault) & {
-  headers: Headers;
-};
-
-export type modelHubOrganizationsUsersDeleteResponse = (modelHubOrganizationsUsersDeleteResponseSuccess | modelHubOrganizationsUsersDeleteResponseError)
-
-export const getModelHubOrganizationsUsersDeleteUrl = (organizationId: string,
-    id: string,) => {
-
-
-
-
-  return `/model-hub/organizations/${organizationId}/users/${id}/`
-}
-
-export const modelHubOrganizationsUsersDelete = async (organizationId: string,
-    id: string, options?: RequestInit): Promise<modelHubOrganizationsUsersDeleteResponse> => {
-
-  return apiMutator<modelHubOrganizationsUsersDeleteResponse>(getModelHubOrganizationsUsersDeleteUrl(organizationId,id),
-  {
-    ...options,
-    method: 'DELETE'
 
 
   }
@@ -48004,15 +47974,40 @@ export type modelHubScoresUpdateResponse200 = {
   status: 200
 }
 
+export type modelHubScoresUpdateResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type modelHubScoresUpdateResponse403 = {
+  data: ApiTextErrorResponseApi
+  status: 403
+}
+
+export type modelHubScoresUpdateResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type modelHubScoresUpdateResponse409 = {
+  data: ApiTextErrorResponseApi
+  status: 409
+}
+
+export type modelHubScoresUpdateResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type modelHubScoresUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
 export type modelHubScoresUpdateResponseSuccess = (modelHubScoresUpdateResponse200) & {
   headers: Headers;
 };
-export type modelHubScoresUpdateResponseError = (modelHubScoresUpdateResponseDefault) & {
+export type modelHubScoresUpdateResponseError = (modelHubScoresUpdateResponse400 | modelHubScoresUpdateResponse403 | modelHubScoresUpdateResponse404 | modelHubScoresUpdateResponse409 | modelHubScoresUpdateResponse500 | modelHubScoresUpdateResponseDefault) & {
   headers: Headers;
 };
 
@@ -48034,7 +48029,7 @@ DELETE /model-hub/scores/<id>/
  * @summary Universal Score CRUD.
  */
 export const modelHubScoresUpdate = async (id: string,
-    scoreApi: NonReadonly<ScoreApi>, options?: RequestInit): Promise<modelHubScoresUpdateResponse> => {
+    updateScoreApi: UpdateScoreApi, options?: RequestInit): Promise<modelHubScoresUpdateResponse> => {
 
   return apiMutator<modelHubScoresUpdateResponse>(getModelHubScoresUpdateUrl(id),
   {
@@ -48042,7 +48037,7 @@ export const modelHubScoresUpdate = async (id: string,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      scoreApi,)
+      updateScoreApi,)
   }
 );}
 
@@ -48053,15 +48048,40 @@ export type modelHubScoresPartialUpdateResponse200 = {
   status: 200
 }
 
+export type modelHubScoresPartialUpdateResponse400 = {
+  data: ApiTextErrorResponseApi
+  status: 400
+}
+
+export type modelHubScoresPartialUpdateResponse403 = {
+  data: ApiTextErrorResponseApi
+  status: 403
+}
+
+export type modelHubScoresPartialUpdateResponse404 = {
+  data: ApiTextErrorResponseApi
+  status: 404
+}
+
+export type modelHubScoresPartialUpdateResponse409 = {
+  data: ApiTextErrorResponseApi
+  status: 409
+}
+
+export type modelHubScoresPartialUpdateResponse500 = {
+  data: ApiTextErrorResponseApi
+  status: 500
+}
+
 export type modelHubScoresPartialUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
 export type modelHubScoresPartialUpdateResponseSuccess = (modelHubScoresPartialUpdateResponse200) & {
   headers: Headers;
 };
-export type modelHubScoresPartialUpdateResponseError = (modelHubScoresPartialUpdateResponseDefault) & {
+export type modelHubScoresPartialUpdateResponseError = (modelHubScoresPartialUpdateResponse400 | modelHubScoresPartialUpdateResponse403 | modelHubScoresPartialUpdateResponse404 | modelHubScoresPartialUpdateResponse409 | modelHubScoresPartialUpdateResponse500 | modelHubScoresPartialUpdateResponseDefault) & {
   headers: Headers;
 };
 
@@ -48083,7 +48103,7 @@ DELETE /model-hub/scores/<id>/
  * @summary Universal Score CRUD.
  */
 export const modelHubScoresPartialUpdate = async (id: string,
-    scoreApi: NonReadonly<ScoreApi>, options?: RequestInit): Promise<modelHubScoresPartialUpdateResponse> => {
+    updateScoreApi: UpdateScoreApi, options?: RequestInit): Promise<modelHubScoresPartialUpdateResponse> => {
 
   return apiMutator<modelHubScoresPartialUpdateResponse>(getModelHubScoresPartialUpdateUrl(id),
   {
@@ -48091,7 +48111,7 @@ export const modelHubScoresPartialUpdate = async (id: string,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      scoreApi,)
+      updateScoreApi,)
   }
 );}
 
@@ -57965,98 +57985,6 @@ export const tracerBulkAnnotationCreate = async (bulkAnnotationRequestApi: BulkA
 
 
 
-export type tracerChartsListResponse200 = {
-  data: TracerChartsList200
-  status: 200
-}
-
-export type tracerChartsListResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type tracerChartsListResponseSuccess = (tracerChartsListResponse200) & {
-  headers: Headers;
-};
-export type tracerChartsListResponseError = (tracerChartsListResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerChartsListResponse = (tracerChartsListResponseSuccess | tracerChartsListResponseError)
-
-export const getTracerChartsListUrl = (params?: TracerChartsListParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()))
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/tracer/charts/?${stringifiedParams}` : `/tracer/charts/`
-}
-
-export const tracerChartsList = async (params?: TracerChartsListParams, options?: RequestInit): Promise<tracerChartsListResponse> => {
-
-  return apiMutator<tracerChartsListResponse>(getTracerChartsListUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export type tracerChartsCreateResponse201 = {
-  data: FetchGraphApi
-  status: 201
-}
-
-export type tracerChartsCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
-}
-
-export type tracerChartsCreateResponseSuccess = (tracerChartsCreateResponse201) & {
-  headers: Headers;
-};
-export type tracerChartsCreateResponseError = (tracerChartsCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerChartsCreateResponse = (tracerChartsCreateResponseSuccess | tracerChartsCreateResponseError)
-
-export const getTracerChartsCreateUrl = () => {
-
-
-
-
-  return `/tracer/charts/`
-}
-
-export const tracerChartsCreate = async (fetchGraphApi: FetchGraphApi, options?: RequestInit): Promise<tracerChartsCreateResponse> => {
-
-  return apiMutator<tracerChartsCreateResponse>(getTracerChartsCreateUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      fetchGraphApi,)
-  }
-);}
-
-
-
 export type tracerChartsFetchGraphResponse200 = {
   data: TracerChartsFetchGraph200
   status: 200
@@ -58116,170 +58044,6 @@ export const tracerChartsFetchGraph = async (params?: TracerChartsFetchGraphPara
   {
     ...options,
     method: 'GET'
-
-
-  }
-);}
-
-
-
-export type tracerChartsReadResponse200 = {
-  data: FetchGraphApi
-  status: 200
-}
-
-export type tracerChartsReadResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type tracerChartsReadResponseSuccess = (tracerChartsReadResponse200) & {
-  headers: Headers;
-};
-export type tracerChartsReadResponseError = (tracerChartsReadResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerChartsReadResponse = (tracerChartsReadResponseSuccess | tracerChartsReadResponseError)
-
-export const getTracerChartsReadUrl = (id: string,) => {
-
-
-
-
-  return `/tracer/charts/${id}/`
-}
-
-export const tracerChartsRead = async (id: string, options?: RequestInit): Promise<tracerChartsReadResponse> => {
-
-  return apiMutator<tracerChartsReadResponse>(getTracerChartsReadUrl(id),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export type tracerChartsUpdateResponse200 = {
-  data: FetchGraphApi
-  status: 200
-}
-
-export type tracerChartsUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type tracerChartsUpdateResponseSuccess = (tracerChartsUpdateResponse200) & {
-  headers: Headers;
-};
-export type tracerChartsUpdateResponseError = (tracerChartsUpdateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerChartsUpdateResponse = (tracerChartsUpdateResponseSuccess | tracerChartsUpdateResponseError)
-
-export const getTracerChartsUpdateUrl = (id: string,) => {
-
-
-
-
-  return `/tracer/charts/${id}/`
-}
-
-export const tracerChartsUpdate = async (id: string,
-    fetchGraphApi: FetchGraphApi, options?: RequestInit): Promise<tracerChartsUpdateResponse> => {
-
-  return apiMutator<tracerChartsUpdateResponse>(getTracerChartsUpdateUrl(id),
-  {
-    ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      fetchGraphApi,)
-  }
-);}
-
-
-
-export type tracerChartsPartialUpdateResponse200 = {
-  data: FetchGraphApi
-  status: 200
-}
-
-export type tracerChartsPartialUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type tracerChartsPartialUpdateResponseSuccess = (tracerChartsPartialUpdateResponse200) & {
-  headers: Headers;
-};
-export type tracerChartsPartialUpdateResponseError = (tracerChartsPartialUpdateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerChartsPartialUpdateResponse = (tracerChartsPartialUpdateResponseSuccess | tracerChartsPartialUpdateResponseError)
-
-export const getTracerChartsPartialUpdateUrl = (id: string,) => {
-
-
-
-
-  return `/tracer/charts/${id}/`
-}
-
-export const tracerChartsPartialUpdate = async (id: string,
-    fetchGraphApi: FetchGraphApi, options?: RequestInit): Promise<tracerChartsPartialUpdateResponse> => {
-
-  return apiMutator<tracerChartsPartialUpdateResponse>(getTracerChartsPartialUpdateUrl(id),
-  {
-    ...options,
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      fetchGraphApi,)
-  }
-);}
-
-
-
-export type tracerChartsDeleteResponse204 = {
-  data: void
-  status: 204
-}
-
-export type tracerChartsDeleteResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 204>
-}
-
-export type tracerChartsDeleteResponseSuccess = (tracerChartsDeleteResponse204) & {
-  headers: Headers;
-};
-export type tracerChartsDeleteResponseError = (tracerChartsDeleteResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerChartsDeleteResponse = (tracerChartsDeleteResponseSuccess | tracerChartsDeleteResponseError)
-
-export const getTracerChartsDeleteUrl = (id: string,) => {
-
-
-
-
-  return `/tracer/charts/${id}/`
-}
-
-export const tracerChartsDelete = async (id: string, options?: RequestInit): Promise<tracerChartsDeleteResponse> => {
-
-  return apiMutator<tracerChartsDeleteResponse>(getTracerChartsDeleteUrl(id),
-  {
-    ...options,
-    method: 'DELETE'
 
 
   }
@@ -59713,7 +59477,7 @@ export const tracerDatasetList = async (params?: TracerDatasetListParams, option
 
 
 export type tracerDatasetCreateResponse201 = {
-  data: DatasetApi
+  data: ObserveDatasetApi
   status: 201
 }
 
@@ -59739,7 +59503,7 @@ export const getTracerDatasetCreateUrl = () => {
   return `/tracer/dataset/`
 }
 
-export const tracerDatasetCreate = async (datasetApi: NonReadonly<DatasetApi>, options?: RequestInit): Promise<tracerDatasetCreateResponse> => {
+export const tracerDatasetCreate = async (observeDatasetApi: NonReadonly<ObserveDatasetApi>, options?: RequestInit): Promise<tracerDatasetCreateResponse> => {
 
   return apiMutator<tracerDatasetCreateResponse>(getTracerDatasetCreateUrl(),
   {
@@ -59747,14 +59511,14 @@ export const tracerDatasetCreate = async (datasetApi: NonReadonly<DatasetApi>, o
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      datasetApi,)
+      observeDatasetApi,)
   }
 );}
 
 
 
 export type tracerDatasetAddToExistingDatasetResponse201 = {
-  data: DatasetApi
+  data: ObserveDatasetApi
   status: 201
 }
 
@@ -59780,7 +59544,7 @@ export const getTracerDatasetAddToExistingDatasetUrl = () => {
   return `/tracer/dataset/add_to_existing_dataset/`
 }
 
-export const tracerDatasetAddToExistingDataset = async (datasetApi: NonReadonly<DatasetApi>, options?: RequestInit): Promise<tracerDatasetAddToExistingDatasetResponse> => {
+export const tracerDatasetAddToExistingDataset = async (observeDatasetApi: NonReadonly<ObserveDatasetApi>, options?: RequestInit): Promise<tracerDatasetAddToExistingDatasetResponse> => {
 
   return apiMutator<tracerDatasetAddToExistingDatasetResponse>(getTracerDatasetAddToExistingDatasetUrl(),
   {
@@ -59788,14 +59552,14 @@ export const tracerDatasetAddToExistingDataset = async (datasetApi: NonReadonly<
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      datasetApi,)
+      observeDatasetApi,)
   }
 );}
 
 
 
 export type tracerDatasetAddToNewDatasetResponse201 = {
-  data: DatasetApi
+  data: ObserveDatasetApi
   status: 201
 }
 
@@ -59821,7 +59585,7 @@ export const getTracerDatasetAddToNewDatasetUrl = () => {
   return `/tracer/dataset/add_to_new_dataset/`
 }
 
-export const tracerDatasetAddToNewDataset = async (datasetApi: NonReadonly<DatasetApi>, options?: RequestInit): Promise<tracerDatasetAddToNewDatasetResponse> => {
+export const tracerDatasetAddToNewDataset = async (observeDatasetApi: NonReadonly<ObserveDatasetApi>, options?: RequestInit): Promise<tracerDatasetAddToNewDatasetResponse> => {
 
   return apiMutator<tracerDatasetAddToNewDatasetResponse>(getTracerDatasetAddToNewDatasetUrl(),
   {
@@ -59829,14 +59593,14 @@ export const tracerDatasetAddToNewDataset = async (datasetApi: NonReadonly<Datas
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      datasetApi,)
+      observeDatasetApi,)
   }
 );}
 
 
 
 export type tracerDatasetReadResponse200 = {
-  data: DatasetApi
+  data: ObserveDatasetApi
   status: 200
 }
 
@@ -59876,7 +59640,7 @@ export const tracerDatasetRead = async (id: string, options?: RequestInit): Prom
 
 
 export type tracerDatasetUpdateResponse200 = {
-  data: DatasetApi
+  data: ObserveDatasetApi
   status: 200
 }
 
@@ -59903,7 +59667,7 @@ export const getTracerDatasetUpdateUrl = (id: string,) => {
 }
 
 export const tracerDatasetUpdate = async (id: string,
-    datasetApi: NonReadonly<DatasetApi>, options?: RequestInit): Promise<tracerDatasetUpdateResponse> => {
+    observeDatasetApi: NonReadonly<ObserveDatasetApi>, options?: RequestInit): Promise<tracerDatasetUpdateResponse> => {
 
   return apiMutator<tracerDatasetUpdateResponse>(getTracerDatasetUpdateUrl(id),
   {
@@ -59911,14 +59675,14 @@ export const tracerDatasetUpdate = async (id: string,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      datasetApi,)
+      observeDatasetApi,)
   }
 );}
 
 
 
 export type tracerDatasetPartialUpdateResponse200 = {
-  data: DatasetApi
+  data: ObserveDatasetApi
   status: 200
 }
 
@@ -59945,7 +59709,7 @@ export const getTracerDatasetPartialUpdateUrl = (id: string,) => {
 }
 
 export const tracerDatasetPartialUpdate = async (id: string,
-    datasetApi: NonReadonly<DatasetApi>, options?: RequestInit): Promise<tracerDatasetPartialUpdateResponse> => {
+    observeDatasetApi: NonReadonly<ObserveDatasetApi>, options?: RequestInit): Promise<tracerDatasetPartialUpdateResponse> => {
 
   return apiMutator<tracerDatasetPartialUpdateResponse>(getTracerDatasetPartialUpdateUrl(id),
   {
@@ -59953,7 +59717,7 @@ export const tracerDatasetPartialUpdate = async (id: string,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      datasetApi,)
+      observeDatasetApi,)
   }
 );}
 
@@ -60050,17 +59814,17 @@ export const tracerEvalTaskList = async (params?: TracerEvalTaskListParams, opti
 
 
 
-export type tracerEvalTaskCreateResponse201 = {
-  data: EvalTaskApi
-  status: 201
+export type tracerEvalTaskCreateResponse200 = {
+  data: EvalTaskCreateResponseApi
+  status: 200
 }
 
 export type tracerEvalTaskCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type tracerEvalTaskCreateResponseSuccess = (tracerEvalTaskCreateResponse201) & {
+export type tracerEvalTaskCreateResponseSuccess = (tracerEvalTaskCreateResponse200) & {
   headers: Headers;
 };
 export type tracerEvalTaskCreateResponseError = (tracerEvalTaskCreateResponseDefault) & {
@@ -60352,17 +60116,17 @@ export const tracerEvalTaskListEvalTasksWithProjectName = async (params?: Tracer
 
 
 
-export type tracerEvalTaskMarkEvalTasksDeletedResponse201 = {
-  data: EvalTaskApi
-  status: 201
+export type tracerEvalTaskMarkEvalTasksDeletedResponse200 = {
+  data: EvalTaskMessageResponseApi
+  status: 200
 }
 
 export type tracerEvalTaskMarkEvalTasksDeletedResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type tracerEvalTaskMarkEvalTasksDeletedResponseSuccess = (tracerEvalTaskMarkEvalTasksDeletedResponse201) & {
+export type tracerEvalTaskMarkEvalTasksDeletedResponseSuccess = (tracerEvalTaskMarkEvalTasksDeletedResponse200) & {
   headers: Headers;
 };
 export type tracerEvalTaskMarkEvalTasksDeletedResponseError = (tracerEvalTaskMarkEvalTasksDeletedResponseDefault) & {
@@ -60379,7 +60143,7 @@ export const getTracerEvalTaskMarkEvalTasksDeletedUrl = () => {
   return `/tracer/eval-task/mark_eval_tasks_deleted/`
 }
 
-export const tracerEvalTaskMarkEvalTasksDeleted = async (evalTaskApi: NonReadonly<EvalTaskApi>, options?: RequestInit): Promise<tracerEvalTaskMarkEvalTasksDeletedResponse> => {
+export const tracerEvalTaskMarkEvalTasksDeleted = async (evalTaskDeleteRequestApi: EvalTaskDeleteRequestApi, options?: RequestInit): Promise<tracerEvalTaskMarkEvalTasksDeletedResponse> => {
 
   return apiMutator<tracerEvalTaskMarkEvalTasksDeletedResponse>(getTracerEvalTaskMarkEvalTasksDeletedUrl(),
   {
@@ -60387,23 +60151,23 @@ export const tracerEvalTaskMarkEvalTasksDeleted = async (evalTaskApi: NonReadonl
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      evalTaskApi,)
+      evalTaskDeleteRequestApi,)
   }
 );}
 
 
 
-export type tracerEvalTaskPauseEvalTaskResponse201 = {
-  data: EvalTaskApi
-  status: 201
+export type tracerEvalTaskPauseEvalTaskResponse200 = {
+  data: EvalTaskMessageResponseApi
+  status: 200
 }
 
 export type tracerEvalTaskPauseEvalTaskResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type tracerEvalTaskPauseEvalTaskResponseSuccess = (tracerEvalTaskPauseEvalTaskResponse201) & {
+export type tracerEvalTaskPauseEvalTaskResponseSuccess = (tracerEvalTaskPauseEvalTaskResponse200) & {
   headers: Headers;
 };
 export type tracerEvalTaskPauseEvalTaskResponseError = (tracerEvalTaskPauseEvalTaskResponseDefault) & {
@@ -60412,39 +60176,51 @@ export type tracerEvalTaskPauseEvalTaskResponseError = (tracerEvalTaskPauseEvalT
 
 export type tracerEvalTaskPauseEvalTaskResponse = (tracerEvalTaskPauseEvalTaskResponseSuccess | tracerEvalTaskPauseEvalTaskResponseError)
 
-export const getTracerEvalTaskPauseEvalTaskUrl = () => {
+export const getTracerEvalTaskPauseEvalTaskUrl = (params: TracerEvalTaskPauseEvalTaskParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/tracer/eval-task/pause_eval_task/`
+  return stringifiedParams.length > 0 ? `/tracer/eval-task/pause_eval_task/?${stringifiedParams}` : `/tracer/eval-task/pause_eval_task/`
 }
 
-export const tracerEvalTaskPauseEvalTask = async (evalTaskApi: NonReadonly<EvalTaskApi>, options?: RequestInit): Promise<tracerEvalTaskPauseEvalTaskResponse> => {
+export const tracerEvalTaskPauseEvalTask = async (emptyRequestApi: EmptyRequestApi,
+    params: TracerEvalTaskPauseEvalTaskParams, options?: RequestInit): Promise<tracerEvalTaskPauseEvalTaskResponse> => {
 
-  return apiMutator<tracerEvalTaskPauseEvalTaskResponse>(getTracerEvalTaskPauseEvalTaskUrl(),
+  return apiMutator<tracerEvalTaskPauseEvalTaskResponse>(getTracerEvalTaskPauseEvalTaskUrl(params),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      evalTaskApi,)
+      emptyRequestApi,)
   }
 );}
 
 
 
-export type tracerEvalTaskUnpauseEvalTaskResponse201 = {
-  data: EvalTaskApi
-  status: 201
+export type tracerEvalTaskUnpauseEvalTaskResponse200 = {
+  data: EvalTaskMessageResponseApi
+  status: 200
 }
 
 export type tracerEvalTaskUnpauseEvalTaskResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type tracerEvalTaskUnpauseEvalTaskResponseSuccess = (tracerEvalTaskUnpauseEvalTaskResponse201) & {
+export type tracerEvalTaskUnpauseEvalTaskResponseSuccess = (tracerEvalTaskUnpauseEvalTaskResponse200) & {
   headers: Headers;
 };
 export type tracerEvalTaskUnpauseEvalTaskResponseError = (tracerEvalTaskUnpauseEvalTaskResponseDefault) & {
@@ -60453,30 +60229,42 @@ export type tracerEvalTaskUnpauseEvalTaskResponseError = (tracerEvalTaskUnpauseE
 
 export type tracerEvalTaskUnpauseEvalTaskResponse = (tracerEvalTaskUnpauseEvalTaskResponseSuccess | tracerEvalTaskUnpauseEvalTaskResponseError)
 
-export const getTracerEvalTaskUnpauseEvalTaskUrl = () => {
+export const getTracerEvalTaskUnpauseEvalTaskUrl = (params: TracerEvalTaskUnpauseEvalTaskParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/tracer/eval-task/unpause_eval_task/`
+  return stringifiedParams.length > 0 ? `/tracer/eval-task/unpause_eval_task/?${stringifiedParams}` : `/tracer/eval-task/unpause_eval_task/`
 }
 
-export const tracerEvalTaskUnpauseEvalTask = async (evalTaskApi: NonReadonly<EvalTaskApi>, options?: RequestInit): Promise<tracerEvalTaskUnpauseEvalTaskResponse> => {
+export const tracerEvalTaskUnpauseEvalTask = async (emptyRequestApi: EmptyRequestApi,
+    params: TracerEvalTaskUnpauseEvalTaskParams, options?: RequestInit): Promise<tracerEvalTaskUnpauseEvalTaskResponse> => {
 
-  return apiMutator<tracerEvalTaskUnpauseEvalTaskResponse>(getTracerEvalTaskUnpauseEvalTaskUrl(),
+  return apiMutator<tracerEvalTaskUnpauseEvalTaskResponse>(getTracerEvalTaskUnpauseEvalTaskUrl(params),
   {
     ...options,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      evalTaskApi,)
+      emptyRequestApi,)
   }
 );}
 
 
 
 export type tracerEvalTaskUpdateEvalTaskResponse200 = {
-  data: EvalTaskApi
+  data: EvalTaskUpdateResponseApi
   status: 200
 }
 
@@ -60507,7 +60295,7 @@ export const getTracerEvalTaskUpdateEvalTaskUrl = () => {
 Edit & Re-run: Preserves existing results and only runs missing evaluations
  * @summary Update an evaluation task with either fresh run or edit & re-run logic.
  */
-export const tracerEvalTaskUpdateEvalTask = async (evalTaskApi: NonReadonly<EvalTaskApi>, options?: RequestInit): Promise<tracerEvalTaskUpdateEvalTaskResponse> => {
+export const tracerEvalTaskUpdateEvalTask = async (evalTaskUpdateRequestApi: EvalTaskUpdateRequestApi, options?: RequestInit): Promise<tracerEvalTaskUpdateEvalTaskResponse> => {
 
   return apiMutator<tracerEvalTaskUpdateEvalTaskResponse>(getTracerEvalTaskUpdateEvalTaskUrl(),
   {
@@ -60515,7 +60303,7 @@ export const tracerEvalTaskUpdateEvalTask = async (evalTaskApi: NonReadonly<Eval
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      evalTaskApi,)
+      evalTaskUpdateRequestApi,)
   }
 );}
 
@@ -61554,6 +61342,11 @@ export type tracerGetAnnotationLabelsListResponse400 = {
   status: 400
 }
 
+export type tracerGetAnnotationLabelsListResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
+}
+
 export type tracerGetAnnotationLabelsListResponse500 = {
   data: ApiErrorResponseApi
   status: 500
@@ -61561,13 +61354,13 @@ export type tracerGetAnnotationLabelsListResponse500 = {
 
 export type tracerGetAnnotationLabelsListResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404 | 500>
 }
 
 export type tracerGetAnnotationLabelsListResponseSuccess = (tracerGetAnnotationLabelsListResponse200) & {
   headers: Headers;
 };
-export type tracerGetAnnotationLabelsListResponseError = (tracerGetAnnotationLabelsListResponse400 | tracerGetAnnotationLabelsListResponse500 | tracerGetAnnotationLabelsListResponseDefault) & {
+export type tracerGetAnnotationLabelsListResponseError = (tracerGetAnnotationLabelsListResponse400 | tracerGetAnnotationLabelsListResponse404 | tracerGetAnnotationLabelsListResponse500 | tracerGetAnnotationLabelsListResponseDefault) & {
   headers: Headers;
 };
 
@@ -65433,7 +65226,7 @@ export const tracerSharedLinksList = async (params?: TracerSharedLinksListParams
 
 
 export type tracerSharedLinksCreateResponse201 = {
-  data: SharedLinkListApi
+  data: SharedLinkCreateApi
   status: 201
 }
 
@@ -65462,7 +65255,7 @@ export const getTracerSharedLinksCreateUrl = () => {
 /**
  * CRUD for shared links. Requires authentication.
  */
-export const tracerSharedLinksCreate = async (sharedLinkListApi: NonReadonly<SharedLinkListApi>, options?: RequestInit): Promise<tracerSharedLinksCreateResponse> => {
+export const tracerSharedLinksCreate = async (sharedLinkCreateApi: SharedLinkCreateApi, options?: RequestInit): Promise<tracerSharedLinksCreateResponse> => {
 
   return apiMutator<tracerSharedLinksCreateResponse>(getTracerSharedLinksCreateUrl(),
   {
@@ -65470,7 +65263,7 @@ export const tracerSharedLinksCreate = async (sharedLinkListApi: NonReadonly<Sha
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      sharedLinkListApi,)
+      sharedLinkCreateApi,)
   }
 );}
 
@@ -65520,7 +65313,7 @@ export const tracerSharedLinksRead = async (id: string, options?: RequestInit): 
 
 
 export type tracerSharedLinksUpdateResponse200 = {
-  data: SharedLinkListApi
+  data: SharedLinkUpdateApi
   status: 200
 }
 
@@ -65550,7 +65343,7 @@ export const getTracerSharedLinksUpdateUrl = (id: string,) => {
  * CRUD for shared links. Requires authentication.
  */
 export const tracerSharedLinksUpdate = async (id: string,
-    sharedLinkListApi: NonReadonly<SharedLinkListApi>, options?: RequestInit): Promise<tracerSharedLinksUpdateResponse> => {
+    sharedLinkUpdateApi: SharedLinkUpdateApi, options?: RequestInit): Promise<tracerSharedLinksUpdateResponse> => {
 
   return apiMutator<tracerSharedLinksUpdateResponse>(getTracerSharedLinksUpdateUrl(id),
   {
@@ -65558,14 +65351,14 @@ export const tracerSharedLinksUpdate = async (id: string,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      sharedLinkListApi,)
+      sharedLinkUpdateApi,)
   }
 );}
 
 
 
 export type tracerSharedLinksPartialUpdateResponse200 = {
-  data: SharedLinkListApi
+  data: SharedLinkUpdateApi
   status: 200
 }
 
@@ -65595,7 +65388,7 @@ export const getTracerSharedLinksPartialUpdateUrl = (id: string,) => {
  * CRUD for shared links. Requires authentication.
  */
 export const tracerSharedLinksPartialUpdate = async (id: string,
-    sharedLinkListApi: NonReadonly<SharedLinkListApi>, options?: RequestInit): Promise<tracerSharedLinksPartialUpdateResponse> => {
+    sharedLinkUpdateApi: SharedLinkUpdateApi, options?: RequestInit): Promise<tracerSharedLinksPartialUpdateResponse> => {
 
   return apiMutator<tracerSharedLinksPartialUpdateResponse>(getTracerSharedLinksPartialUpdateUrl(id),
   {
@@ -65603,7 +65396,7 @@ export const tracerSharedLinksPartialUpdate = async (id: string,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      sharedLinkListApi,)
+      sharedLinkUpdateApi,)
   }
 );}
 
@@ -65653,7 +65446,7 @@ export const tracerSharedLinksDelete = async (id: string, options?: RequestInit)
 
 
 export type tracerSharedLinksAddAccessResponse201 = {
-  data: SharedLinkListApi
+  data: AddAccessApi
   status: 201
 }
 
@@ -65683,7 +65476,7 @@ export const getTracerSharedLinksAddAccessUrl = (id: string,) => {
  * Add email(s) to the ACL of a shared link.
  */
 export const tracerSharedLinksAddAccess = async (id: string,
-    sharedLinkListApi: NonReadonly<SharedLinkListApi>, options?: RequestInit): Promise<tracerSharedLinksAddAccessResponse> => {
+    addAccessApi: AddAccessApi, options?: RequestInit): Promise<tracerSharedLinksAddAccessResponse> => {
 
   return apiMutator<tracerSharedLinksAddAccessResponse>(getTracerSharedLinksAddAccessUrl(id),
   {
@@ -65691,7 +65484,7 @@ export const tracerSharedLinksAddAccess = async (id: string,
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      sharedLinkListApi,)
+      addAccessApi,)
   }
 );}
 
@@ -65807,98 +65600,6 @@ export const tracerSharedRead = async (token: string, options?: RequestInit): Pr
 
 
 
-export type tracerTraceAnnotationListResponse200 = {
-  data: TracerTraceAnnotationList200
-  status: 200
-}
-
-export type tracerTraceAnnotationListResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type tracerTraceAnnotationListResponseSuccess = (tracerTraceAnnotationListResponse200) & {
-  headers: Headers;
-};
-export type tracerTraceAnnotationListResponseError = (tracerTraceAnnotationListResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerTraceAnnotationListResponse = (tracerTraceAnnotationListResponseSuccess | tracerTraceAnnotationListResponseError)
-
-export const getTracerTraceAnnotationListUrl = (params?: TracerTraceAnnotationListParams,) => {
-  const normalizedParams = new URLSearchParams();
-
-  Object.entries(params || {}).forEach(([key, value]) => {
-
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()))
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString())
-    }
-  });
-
-  const stringifiedParams = normalizedParams.toString();
-
-  return stringifiedParams.length > 0 ? `/tracer/trace-annotation/?${stringifiedParams}` : `/tracer/trace-annotation/`
-}
-
-export const tracerTraceAnnotationList = async (params?: TracerTraceAnnotationListParams, options?: RequestInit): Promise<tracerTraceAnnotationListResponse> => {
-
-  return apiMutator<tracerTraceAnnotationListResponse>(getTracerTraceAnnotationListUrl(params),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export type tracerTraceAnnotationCreateResponse201 = {
-  data: GetTraceAnnotationApi
-  status: 201
-}
-
-export type tracerTraceAnnotationCreateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
-}
-
-export type tracerTraceAnnotationCreateResponseSuccess = (tracerTraceAnnotationCreateResponse201) & {
-  headers: Headers;
-};
-export type tracerTraceAnnotationCreateResponseError = (tracerTraceAnnotationCreateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerTraceAnnotationCreateResponse = (tracerTraceAnnotationCreateResponseSuccess | tracerTraceAnnotationCreateResponseError)
-
-export const getTracerTraceAnnotationCreateUrl = () => {
-
-
-
-
-  return `/tracer/trace-annotation/`
-}
-
-export const tracerTraceAnnotationCreate = async (getTraceAnnotationApi: GetTraceAnnotationApi, options?: RequestInit): Promise<tracerTraceAnnotationCreateResponse> => {
-
-  return apiMutator<tracerTraceAnnotationCreateResponse>(getTracerTraceAnnotationCreateUrl(),
-  {
-    ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      getTraceAnnotationApi,)
-  }
-);}
-
-
-
 export type tracerTraceAnnotationGetAnnotationValuesResponse200 = {
   data: GetTraceAnnotationValuesResponseApi
   status: 200
@@ -65953,170 +65654,6 @@ export const tracerTraceAnnotationGetAnnotationValues = async (params?: TracerTr
   {
     ...options,
     method: 'GET'
-
-
-  }
-);}
-
-
-
-export type tracerTraceAnnotationReadResponse200 = {
-  data: GetTraceAnnotationApi
-  status: 200
-}
-
-export type tracerTraceAnnotationReadResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type tracerTraceAnnotationReadResponseSuccess = (tracerTraceAnnotationReadResponse200) & {
-  headers: Headers;
-};
-export type tracerTraceAnnotationReadResponseError = (tracerTraceAnnotationReadResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerTraceAnnotationReadResponse = (tracerTraceAnnotationReadResponseSuccess | tracerTraceAnnotationReadResponseError)
-
-export const getTracerTraceAnnotationReadUrl = (id: string,) => {
-
-
-
-
-  return `/tracer/trace-annotation/${id}/`
-}
-
-export const tracerTraceAnnotationRead = async (id: string, options?: RequestInit): Promise<tracerTraceAnnotationReadResponse> => {
-
-  return apiMutator<tracerTraceAnnotationReadResponse>(getTracerTraceAnnotationReadUrl(id),
-  {
-    ...options,
-    method: 'GET'
-
-
-  }
-);}
-
-
-
-export type tracerTraceAnnotationUpdateResponse200 = {
-  data: GetTraceAnnotationApi
-  status: 200
-}
-
-export type tracerTraceAnnotationUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type tracerTraceAnnotationUpdateResponseSuccess = (tracerTraceAnnotationUpdateResponse200) & {
-  headers: Headers;
-};
-export type tracerTraceAnnotationUpdateResponseError = (tracerTraceAnnotationUpdateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerTraceAnnotationUpdateResponse = (tracerTraceAnnotationUpdateResponseSuccess | tracerTraceAnnotationUpdateResponseError)
-
-export const getTracerTraceAnnotationUpdateUrl = (id: string,) => {
-
-
-
-
-  return `/tracer/trace-annotation/${id}/`
-}
-
-export const tracerTraceAnnotationUpdate = async (id: string,
-    getTraceAnnotationApi: GetTraceAnnotationApi, options?: RequestInit): Promise<tracerTraceAnnotationUpdateResponse> => {
-
-  return apiMutator<tracerTraceAnnotationUpdateResponse>(getTracerTraceAnnotationUpdateUrl(id),
-  {
-    ...options,
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      getTraceAnnotationApi,)
-  }
-);}
-
-
-
-export type tracerTraceAnnotationPartialUpdateResponse200 = {
-  data: GetTraceAnnotationApi
-  status: 200
-}
-
-export type tracerTraceAnnotationPartialUpdateResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
-}
-
-export type tracerTraceAnnotationPartialUpdateResponseSuccess = (tracerTraceAnnotationPartialUpdateResponse200) & {
-  headers: Headers;
-};
-export type tracerTraceAnnotationPartialUpdateResponseError = (tracerTraceAnnotationPartialUpdateResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerTraceAnnotationPartialUpdateResponse = (tracerTraceAnnotationPartialUpdateResponseSuccess | tracerTraceAnnotationPartialUpdateResponseError)
-
-export const getTracerTraceAnnotationPartialUpdateUrl = (id: string,) => {
-
-
-
-
-  return `/tracer/trace-annotation/${id}/`
-}
-
-export const tracerTraceAnnotationPartialUpdate = async (id: string,
-    getTraceAnnotationApi: GetTraceAnnotationApi, options?: RequestInit): Promise<tracerTraceAnnotationPartialUpdateResponse> => {
-
-  return apiMutator<tracerTraceAnnotationPartialUpdateResponse>(getTracerTraceAnnotationPartialUpdateUrl(id),
-  {
-    ...options,
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      getTraceAnnotationApi,)
-  }
-);}
-
-
-
-export type tracerTraceAnnotationDeleteResponse204 = {
-  data: void
-  status: 204
-}
-
-export type tracerTraceAnnotationDeleteResponseDefault = {
-  data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 204>
-}
-
-export type tracerTraceAnnotationDeleteResponseSuccess = (tracerTraceAnnotationDeleteResponse204) & {
-  headers: Headers;
-};
-export type tracerTraceAnnotationDeleteResponseError = (tracerTraceAnnotationDeleteResponseDefault) & {
-  headers: Headers;
-};
-
-export type tracerTraceAnnotationDeleteResponse = (tracerTraceAnnotationDeleteResponseSuccess | tracerTraceAnnotationDeleteResponseError)
-
-export const getTracerTraceAnnotationDeleteUrl = (id: string,) => {
-
-
-
-
-  return `/tracer/trace-annotation/${id}/`
-}
-
-export const tracerTraceAnnotationDelete = async (id: string, options?: RequestInit): Promise<tracerTraceAnnotationDeleteResponse> => {
-
-  return apiMutator<tracerTraceAnnotationDeleteResponse>(getTracerTraceAnnotationDeleteUrl(id),
-  {
-    ...options,
-    method: 'DELETE'
 
 
   }
@@ -67887,19 +67424,29 @@ export const tracerUserAlertLogsList = async (params?: TracerUserAlertLogsListPa
 
 
 export type tracerUserAlertLogsCreateResponse201 = {
-  data: UserAlertMonitorLogApi
+  data: UserAlertMonitorLogWriteResponseApi
   status: 201
+}
+
+export type tracerUserAlertLogsCreateResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerUserAlertLogsCreateResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
 }
 
 export type tracerUserAlertLogsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 404>
 }
 
 export type tracerUserAlertLogsCreateResponseSuccess = (tracerUserAlertLogsCreateResponse201) & {
   headers: Headers;
 };
-export type tracerUserAlertLogsCreateResponseError = (tracerUserAlertLogsCreateResponseDefault) & {
+export type tracerUserAlertLogsCreateResponseError = (tracerUserAlertLogsCreateResponse400 | tracerUserAlertLogsCreateResponse404 | tracerUserAlertLogsCreateResponseDefault) & {
   headers: Headers;
 };
 
@@ -67913,7 +67460,7 @@ export const getTracerUserAlertLogsCreateUrl = () => {
   return `/tracer/user-alert-logs/`
 }
 
-export const tracerUserAlertLogsCreate = async (userAlertMonitorLogApi: NonReadonly<UserAlertMonitorLogApi>, options?: RequestInit): Promise<tracerUserAlertLogsCreateResponse> => {
+export const tracerUserAlertLogsCreate = async (userAlertMonitorLogWriteRequestApi: UserAlertMonitorLogWriteRequestApi, options?: RequestInit): Promise<tracerUserAlertLogsCreateResponse> => {
 
   return apiMutator<tracerUserAlertLogsCreateResponse>(getTracerUserAlertLogsCreateUrl(),
   {
@@ -67921,7 +67468,7 @@ export const tracerUserAlertLogsCreate = async (userAlertMonitorLogApi: NonReado
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      userAlertMonitorLogApi,)
+      userAlertMonitorLogWriteRequestApi,)
   }
 );}
 
@@ -67978,20 +67525,25 @@ export const tracerUserAlertLogsListAll = async (params?: TracerUserAlertLogsLis
 
 
 
-export type tracerUserAlertLogsMarkAsResolvedResponse201 = {
-  data: UserAlertMonitorLogApi
-  status: 201
+export type tracerUserAlertLogsMarkAsResolvedResponse200 = {
+  data: UserAlertMonitorLogResolveResponseApi
+  status: 200
+}
+
+export type tracerUserAlertLogsMarkAsResolvedResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
 }
 
 export type tracerUserAlertLogsMarkAsResolvedResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200 | 400>
 }
 
-export type tracerUserAlertLogsMarkAsResolvedResponseSuccess = (tracerUserAlertLogsMarkAsResolvedResponse201) & {
+export type tracerUserAlertLogsMarkAsResolvedResponseSuccess = (tracerUserAlertLogsMarkAsResolvedResponse200) & {
   headers: Headers;
 };
-export type tracerUserAlertLogsMarkAsResolvedResponseError = (tracerUserAlertLogsMarkAsResolvedResponseDefault) & {
+export type tracerUserAlertLogsMarkAsResolvedResponseError = (tracerUserAlertLogsMarkAsResolvedResponse400 | tracerUserAlertLogsMarkAsResolvedResponseDefault) & {
   headers: Headers;
 };
 
@@ -68005,7 +67557,7 @@ export const getTracerUserAlertLogsMarkAsResolvedUrl = () => {
   return `/tracer/user-alert-logs/resolve/`
 }
 
-export const tracerUserAlertLogsMarkAsResolved = async (userAlertMonitorLogApi: NonReadonly<UserAlertMonitorLogApi>, options?: RequestInit): Promise<tracerUserAlertLogsMarkAsResolvedResponse> => {
+export const tracerUserAlertLogsMarkAsResolved = async (userAlertMonitorLogResolveRequestApi: UserAlertMonitorLogResolveRequestApi, options?: RequestInit): Promise<tracerUserAlertLogsMarkAsResolvedResponse> => {
 
   return apiMutator<tracerUserAlertLogsMarkAsResolvedResponse>(getTracerUserAlertLogsMarkAsResolvedUrl(),
   {
@@ -68013,7 +67565,7 @@ export const tracerUserAlertLogsMarkAsResolved = async (userAlertMonitorLogApi: 
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      userAlertMonitorLogApi,)
+      userAlertMonitorLogResolveRequestApi,)
   }
 );}
 
@@ -68060,19 +67612,29 @@ export const tracerUserAlertLogsRead = async (id: string, options?: RequestInit)
 
 
 export type tracerUserAlertLogsUpdateResponse200 = {
-  data: UserAlertMonitorLogApi
+  data: UserAlertMonitorLogWriteResponseApi
   status: 200
+}
+
+export type tracerUserAlertLogsUpdateResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerUserAlertLogsUpdateResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
 }
 
 export type tracerUserAlertLogsUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>
 }
 
 export type tracerUserAlertLogsUpdateResponseSuccess = (tracerUserAlertLogsUpdateResponse200) & {
   headers: Headers;
 };
-export type tracerUserAlertLogsUpdateResponseError = (tracerUserAlertLogsUpdateResponseDefault) & {
+export type tracerUserAlertLogsUpdateResponseError = (tracerUserAlertLogsUpdateResponse400 | tracerUserAlertLogsUpdateResponse404 | tracerUserAlertLogsUpdateResponseDefault) & {
   headers: Headers;
 };
 
@@ -68087,7 +67649,7 @@ export const getTracerUserAlertLogsUpdateUrl = (id: string,) => {
 }
 
 export const tracerUserAlertLogsUpdate = async (id: string,
-    userAlertMonitorLogApi: NonReadonly<UserAlertMonitorLogApi>, options?: RequestInit): Promise<tracerUserAlertLogsUpdateResponse> => {
+    userAlertMonitorLogWriteRequestApi: UserAlertMonitorLogWriteRequestApi, options?: RequestInit): Promise<tracerUserAlertLogsUpdateResponse> => {
 
   return apiMutator<tracerUserAlertLogsUpdateResponse>(getTracerUserAlertLogsUpdateUrl(id),
   {
@@ -68095,26 +67657,36 @@ export const tracerUserAlertLogsUpdate = async (id: string,
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      userAlertMonitorLogApi,)
+      userAlertMonitorLogWriteRequestApi,)
   }
 );}
 
 
 
 export type tracerUserAlertLogsPartialUpdateResponse200 = {
-  data: UserAlertMonitorLogApi
+  data: UserAlertMonitorLogWriteResponseApi
   status: 200
+}
+
+export type tracerUserAlertLogsPartialUpdateResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerUserAlertLogsPartialUpdateResponse404 = {
+  data: ApiErrorResponseApi
+  status: 404
 }
 
 export type tracerUserAlertLogsPartialUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 404>
 }
 
 export type tracerUserAlertLogsPartialUpdateResponseSuccess = (tracerUserAlertLogsPartialUpdateResponse200) & {
   headers: Headers;
 };
-export type tracerUserAlertLogsPartialUpdateResponseError = (tracerUserAlertLogsPartialUpdateResponseDefault) & {
+export type tracerUserAlertLogsPartialUpdateResponseError = (tracerUserAlertLogsPartialUpdateResponse400 | tracerUserAlertLogsPartialUpdateResponse404 | tracerUserAlertLogsPartialUpdateResponseDefault) & {
   headers: Headers;
 };
 
@@ -68129,7 +67701,7 @@ export const getTracerUserAlertLogsPartialUpdateUrl = (id: string,) => {
 }
 
 export const tracerUserAlertLogsPartialUpdate = async (id: string,
-    userAlertMonitorLogApi: NonReadonly<UserAlertMonitorLogApi>, options?: RequestInit): Promise<tracerUserAlertLogsPartialUpdateResponse> => {
+    userAlertMonitorLogWriteRequestApi: UserAlertMonitorLogWriteRequestApi, options?: RequestInit): Promise<tracerUserAlertLogsPartialUpdateResponse> => {
 
   return apiMutator<tracerUserAlertLogsPartialUpdateResponse>(getTracerUserAlertLogsPartialUpdateUrl(id),
   {
@@ -68137,7 +67709,7 @@ export const tracerUserAlertLogsPartialUpdate = async (id: string,
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      userAlertMonitorLogApi,)
+      userAlertMonitorLogWriteRequestApi,)
   }
 );}
 
@@ -68323,7 +67895,7 @@ export const tracerUserAlertsCreate = async (userAlertMonitorApi: NonReadonly<Us
 
 
 export type tracerUserAlertsBulkMuteResponse201 = {
-  data: UserAlertMonitorApi
+  data: UserAlertMonitorBulkMuteRequestApi
   status: 201
 }
 
@@ -68349,7 +67921,7 @@ export const getTracerUserAlertsBulkMuteUrl = () => {
   return `/tracer/user-alerts/bulk-mute/`
 }
 
-export const tracerUserAlertsBulkMute = async (userAlertMonitorApi: NonReadonly<UserAlertMonitorApi>, options?: RequestInit): Promise<tracerUserAlertsBulkMuteResponse> => {
+export const tracerUserAlertsBulkMute = async (userAlertMonitorBulkMuteRequestApi: UserAlertMonitorBulkMuteRequestApi, options?: RequestInit): Promise<tracerUserAlertsBulkMuteResponse> => {
 
   return apiMutator<tracerUserAlertsBulkMuteResponse>(getTracerUserAlertsBulkMuteUrl(),
   {
@@ -68357,7 +67929,7 @@ export const tracerUserAlertsBulkMute = async (userAlertMonitorApi: NonReadonly<
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      userAlertMonitorApi,)
+      userAlertMonitorBulkMuteRequestApi,)
   }
 );}
 
@@ -68537,7 +68109,7 @@ export const tracerUserAlertsMetricOptions = async (params?: TracerUserAlertsMet
 
 
 export type tracerUserAlertsPreviewGraphResponse201 = {
-  data: UserAlertMonitorApi
+  data: UserAlertMonitorPreviewGraphApi
   status: 201
 }
 
@@ -68567,7 +68139,7 @@ export const getTracerUserAlertsPreviewGraphUrl = () => {
  * Returns time-series data for a temporary monitor's metric, suitable for graphing a preview.
 Accepts monitor configuration in the request body.
  */
-export const tracerUserAlertsPreviewGraph = async (userAlertMonitorApi: NonReadonly<UserAlertMonitorApi>, options?: RequestInit): Promise<tracerUserAlertsPreviewGraphResponse> => {
+export const tracerUserAlertsPreviewGraph = async (userAlertMonitorPreviewGraphApi: NonReadonly<UserAlertMonitorPreviewGraphApi>, options?: RequestInit): Promise<tracerUserAlertsPreviewGraphResponse> => {
 
   return apiMutator<tracerUserAlertsPreviewGraphResponse>(getTracerUserAlertsPreviewGraphUrl(),
   {
@@ -68575,7 +68147,7 @@ export const tracerUserAlertsPreviewGraph = async (userAlertMonitorApi: NonReado
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      userAlertMonitorApi,)
+      userAlertMonitorPreviewGraphApi,)
   }
 );}
 
@@ -70881,17 +70453,28 @@ export type usageGetCustomerInvoicesListResponseError = (usageGetCustomerInvoice
 
 export type usageGetCustomerInvoicesListResponse = (usageGetCustomerInvoicesListResponseSuccess | usageGetCustomerInvoicesListResponseError)
 
-export const getUsageGetCustomerInvoicesListUrl = () => {
+export const getUsageGetCustomerInvoicesListUrl = (params?: UsageGetCustomerInvoicesListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/usage/get-customer-invoices/`
+  return stringifiedParams.length > 0 ? `/usage/get-customer-invoices/?${stringifiedParams}` : `/usage/get-customer-invoices/`
 }
 
-export const usageGetCustomerInvoicesList = async ( options?: RequestInit): Promise<usageGetCustomerInvoicesListResponse> => {
+export const usageGetCustomerInvoicesList = async (params?: UsageGetCustomerInvoicesListParams, options?: RequestInit): Promise<usageGetCustomerInvoicesListResponse> => {
 
-  return apiMutator<usageGetCustomerInvoicesListResponse>(getUsageGetCustomerInvoicesListUrl(),
+  return apiMutator<usageGetCustomerInvoicesListResponse>(getUsageGetCustomerInvoicesListUrl(params),
   {
     ...options,
     method: 'GET'
@@ -73946,14 +73529,15 @@ export const getUsageV2AddAddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2AddAddonDelete = async ( options?: RequestInit): Promise<usageV2AddAddonDeleteResponse> => {
+export const usageV2AddAddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2AddAddonDeleteResponse> => {
 
   return apiMutator<usageV2AddAddonDeleteResponse>(getUsageV2AddAddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
   }
 );}
 
@@ -74167,14 +73751,15 @@ export const getUsageV2AddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2AddonDelete = async ( options?: RequestInit): Promise<usageV2AddonDeleteResponse> => {
+export const usageV2AddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2AddonDeleteResponse> => {
 
   return apiMutator<usageV2AddonDeleteResponse>(getUsageV2AddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
   }
 );}
 
@@ -75358,14 +74943,16 @@ export const getUsageV2PaymentMethodsDeleteUrl = (pmId: string,) => {
 /**
  * Manage a specific payment method.
  */
-export const usageV2PaymentMethodsDelete = async (pmId: string, options?: RequestInit): Promise<usageV2PaymentMethodsDeleteResponse> => {
+export const usageV2PaymentMethodsDelete = async (pmId: string,
+    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsDeleteResponse> => {
 
   return apiMutator<usageV2PaymentMethodsDeleteResponse>(getUsageV2PaymentMethodsDeleteUrl(pmId),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
   }
 );}
 
@@ -75506,14 +75093,16 @@ export const getUsageV2PaymentMethodsDefaultDeleteUrl = (pmId: string,) => {
 /**
  * Manage a specific payment method.
  */
-export const usageV2PaymentMethodsDefaultDelete = async (pmId: string, options?: RequestInit): Promise<usageV2PaymentMethodsDefaultDeleteResponse> => {
+export const usageV2PaymentMethodsDefaultDelete = async (pmId: string,
+    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsDefaultDeleteResponse> => {
 
   return apiMutator<usageV2PaymentMethodsDefaultDeleteResponse>(getUsageV2PaymentMethodsDefaultDeleteUrl(pmId),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
   }
 );}
 
@@ -75801,14 +75390,15 @@ export const getUsageV2ReinstateAddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2ReinstateAddonDelete = async ( options?: RequestInit): Promise<usageV2ReinstateAddonDeleteResponse> => {
+export const usageV2ReinstateAddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2ReinstateAddonDeleteResponse> => {
 
   return apiMutator<usageV2ReinstateAddonDeleteResponse>(getUsageV2ReinstateAddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
   }
 );}
 
@@ -76022,14 +75612,15 @@ export const getUsageV2RemoveAddonDeleteUrl = () => {
 /**
  * Add or remove an add-on subscription.
  */
-export const usageV2RemoveAddonDelete = async ( options?: RequestInit): Promise<usageV2RemoveAddonDeleteResponse> => {
+export const usageV2RemoveAddonDelete = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2RemoveAddonDeleteResponse> => {
 
   return apiMutator<usageV2RemoveAddonDeleteResponse>(getUsageV2RemoveAddonDeleteUrl(),
   {
     ...options,
-    method: 'DELETE'
-
-
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
   }
 );}
 
@@ -76333,7 +75924,7 @@ and projected month-end usage.
 
 Query params:
     period: YYYY-MM (default: current month)
-    workspace_id: optional (filter by workspace)
+    period_end: YYYY-MM (optional; defaults to period for a single month)
  * @summary Get usage overview for the current billing period.
  */
 export const usageV2UsageOverviewList = async (params?: UsageV2UsageOverviewListParams, options?: RequestInit): Promise<usageV2UsageOverviewListResponse> => {

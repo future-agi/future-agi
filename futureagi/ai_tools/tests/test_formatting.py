@@ -55,7 +55,7 @@ class TestDashboardLink:
     def test_known_entity(self):
         link = dashboard_link("dataset", "abc-123")
         assert "[" in link
-        assert "develop/abc-123" in link
+        assert "dashboard/develop/abc-123" in link
 
     def test_custom_label(self):
         link = dashboard_link("evaluation", "id-1", label="My Eval")
@@ -64,8 +64,7 @@ class TestDashboardLink:
 
     def test_unknown_entity_uses_type_as_path(self):
         link = dashboard_link("custom_thing", "id-2")
-        # Unknown entity types fall back to get-started path
-        assert "get-started" in link
+        assert "dashboard/get-started" in link
 
     def test_default_label_shows_short_id(self):
         link = dashboard_link("dataset", "abcdefgh-1234")

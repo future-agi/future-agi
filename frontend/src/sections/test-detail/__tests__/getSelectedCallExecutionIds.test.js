@@ -54,7 +54,7 @@ describe("getSelectedCallExecutionIds (TH-4954 regression)", () => {
     expect(getSelectedCallExecutionIds().sort()).toEqual(["a", "b", "c"]);
   });
 
-  it("getSelectedCallExecutionIdsFilter wraps the IDs into a list filter", () => {
+  it("getSelectedCallExecutionIdsFilter wraps the IDs into a categorical multi-select filter", () => {
     useTestDetailStore.setState({
       selectedFixableRecommendations: [
         { index: 0, callExecutionIds: ["a", "b"] },

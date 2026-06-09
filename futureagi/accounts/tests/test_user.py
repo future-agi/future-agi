@@ -423,6 +423,61 @@ class TestUserOnboardingAPI:
         assert user.role == "data_scientist"
         assert "Analyze data" in user.goals
 
+    def test_post_onboarding_allows_workspace_viewer_profile_update(
+        self, api_client, organization, workspace
+    ):
+        """Workspace viewers can still save user-owned onboarding data."""
+        from accounts.models import User
+        from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.workspace import WorkspaceMembership
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        viewer = User.objects.create_user(
+            email="onboarding-viewer@futureagi.com",
+            password="testpassword123",
+            name="Onboarding Viewer",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER_VIEW_ONLY,
+            is_active=True,
+        )
+        org_membership = OrganizationMembership.no_workspace_objects.create(
+            user=viewer,
+            organization=organization,
+            role=OrganizationRoles.MEMBER_VIEW_ONLY,
+            level=Level.VIEWER,
+            is_active=True,
+        )
+        WorkspaceMembership.no_workspace_objects.create(
+            workspace=workspace,
+            user=viewer,
+            role=OrganizationRoles.WORKSPACE_VIEWER,
+            level=Level.WORKSPACE_VIEWER,
+            organization_membership=org_membership,
+            is_active=True,
+        )
+
+        login = api_client.post(
+            "/accounts/token/",
+            {"email": viewer.email, "password": "testpassword123"},
+            format="json",
+        )
+        assert login.status_code == status.HTTP_200_OK
+
+        response = api_client.post(
+            "/accounts/onboarding/",
+            {"role": "data_scientist", "goals": ["Run evaluations"]},
+            format="json",
+            HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}",
+            HTTP_X_ORGANIZATION_ID=str(organization.id),
+            HTTP_X_WORKSPACE_ID=str(workspace.id),
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        viewer.refresh_from_db()
+        assert viewer.role == "data_scientist"
+        assert viewer.goals == ["Run evaluations"]
+
     def test_post_onboarding_missing_role(self, auth_client, user):
         """Onboarding fails without role."""
         response = auth_client.post(
@@ -544,28 +599,30 @@ class TestMultiOrgLogin:
     def test_login_with_organization_id(
         self, api_client, user, organization, clear_cache
     ):
-        """Login succeeds — org resolution happens via middleware, not login."""
+        """Login rejects unsupported organization_id selection."""
         response = api_client.post(
             "/accounts/token/",
             {
                 "email": user.email,
                 "password": "testpassword123",
+                "organization_id": str(organization.id),
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_200_OK
+        assert_unknown_field(response, "organization_id")
 
     def test_login_with_invalid_organization_id(self, api_client, user, clear_cache):
-        """Login succeeds — org resolution happens via middleware, not login."""
+        """Login rejects organization_id even when the value is not a real org."""
         response = api_client.post(
             "/accounts/token/",
             {
                 "email": user.email,
                 "password": "testpassword123",
+                "organization_id": "00000000-0000-0000-0000-000000000000",
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_200_OK
+        assert_unknown_field(response, "organization_id")
 
 
 @pytest.mark.integration

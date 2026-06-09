@@ -11,17 +11,30 @@ const puppeteer = require("puppeteer-core");
 
 const APP_BASE = process.env.APP_BASE || "http://127.0.0.1:3032";
 const SCREENSHOT_PATH = "/tmp/settings-workspace-integrations-smoke.png";
+const DETAIL_ROUTE_EXCLUDED_PLATFORMS = new Set(["linear"]);
 
 async function main() {
   const auth = await createAuthenticatedContext();
-  const listPayload = await auth.client.get(apiPath("/integrations/connections/"), {
-    query: { page_number: 0, page_size: 20 },
-  });
+  const listPayload = await auth.client.get(
+    apiPath("/integrations/connections/"),
+    {
+      query: { page_number: 0, page_size: 20 },
+    },
+  );
   const connections = Array.isArray(listPayload?.connections)
     ? listPayload.connections
     : [];
-  assert(connections.length > 0, "No live integration connection is available for browser smoke.");
-  const connection = connections[0];
+  assert(
+    connections.length > 0,
+    "No live integration connection is available for browser smoke.",
+  );
+  const connection = connections.find(
+    (candidate) => !DETAIL_ROUTE_EXCLUDED_PLATFORMS.has(candidate.platform),
+  );
+  assert(
+    connection,
+    "No sync-capable integration connection is available for browser detail smoke.",
+  );
   const displayName =
     connection.display_name || connection.external_project_name || "Unnamed";
   const hostUrl = connection.host_url || "—";
@@ -30,9 +43,12 @@ async function main() {
   const detail = await auth.client.get(
     apiPath("/integrations/connections/{id}/", { id: connection.id }),
   );
-  const logsPayload = await auth.client.get(apiPath("/integrations/sync-logs/"), {
-    query: { connection_id: connection.id, page_number: 0, page_size: 10 },
-  });
+  const logsPayload = await auth.client.get(
+    apiPath("/integrations/sync-logs/"),
+    {
+      query: { connection_id: connection.id, page_number: 0, page_size: 10 },
+    },
+  );
 
   const apiFailures = [];
   const pageErrors = [];
@@ -53,6 +69,7 @@ async function main() {
   });
 
   const page = await browser.newPage();
+  await page.setBypassServiceWorker(true);
   await installRuntimeConfig(page, auth);
   await page.evaluateOnNewDocument(
     ({ tokens, organizationId, workspaceId, user }) => {
@@ -60,9 +77,11 @@ async function main() {
       localStorage.setItem("refreshToken", tokens.refresh || "");
       localStorage.setItem("rememberMe", "true");
       localStorage.setItem("initial-render", "done");
-      if (organizationId) sessionStorage.setItem("organizationId", organizationId);
+      if (organizationId)
+        sessionStorage.setItem("organizationId", organizationId);
       if (workspaceId) sessionStorage.setItem("workspaceId", workspaceId);
-      if (user?.id) sessionStorage.setItem("futureagi-current-user-id", user.id);
+      if (user?.id)
+        sessionStorage.setItem("futureagi-current-user-id", user.id);
     },
     {
       tokens: auth.tokens,
@@ -99,17 +118,24 @@ async function main() {
     await waitForVisibleText(page, "Manage workspace integrations", {
       exact: true,
     });
-    await waitForVisibleText(page, "Connect external observability platforms to import traces");
+    await waitForVisibleText(
+      page,
+      "Connect external observability platforms to import traces",
+    );
     await waitForVisibleText(page, displayName);
     await waitForVisibleText(page, hostUrl);
     await waitForVisibleText(page, traceLabel);
     if (connection.status) {
-      await waitForVisibleText(page, startCase(connection.status), { exact: true });
+      await waitForVisibleText(page, startCase(connection.status), {
+        exact: true,
+      });
     }
 
     const detailResponse = page.waitForResponse(
       (response) =>
-        response.url().includes(`/integrations/connections/${connection.id}/`) &&
+        response
+          .url()
+          .includes(`/integrations/connections/${connection.id}/`) &&
         response.status() < 400,
       { timeout: 60000 },
     );
@@ -126,6 +152,10 @@ async function main() {
       clickVisibleText(page, displayName),
     ]);
 
+    await assertCurrentPath(
+      page,
+      `/dashboard/settings/workspace/${auth.workspaceId}/integrations/${connection.id}`,
+    );
     await waitForVisibleText(page, "Back to Integrations", { exact: true });
     await waitForVisibleText(page, detail.display_name, { exact: true });
     await waitForVisibleText(page, detail.host_url, { exact: true });
@@ -145,6 +175,16 @@ async function main() {
     await waitForNoVisibleText(page, "Invalid Date");
     await page.screenshot({ path: SCREENSHOT_PATH, fullPage: true });
     evidence.screenshot = SCREENSHOT_PATH;
+    evidence.detail_path = `/dashboard/settings/workspace/${auth.workspaceId}/integrations/${connection.id}`;
+
+    await clickVisibleText(page, "Back to Integrations");
+    await assertCurrentPath(
+      page,
+      `/dashboard/settings/workspace/${auth.workspaceId}/integrations`,
+    );
+    await waitForVisibleText(page, "Manage workspace integrations", {
+      exact: true,
+    });
 
     assert(apiFailures.length === 0, `API failures: ${apiFailures.join("; ")}`);
     assert(pageErrors.length === 0, `Page errors: ${pageErrors.join("; ")}`);
@@ -204,7 +244,11 @@ async function clickVisibleText(page, text) {
         (candidate) =>
           isVisible(candidate) &&
           String(candidate.textContent || "").includes(expectedText) &&
-          Boolean(candidate.closest(".MuiCardActionArea-root,button,a,[role='button']")),
+          Boolean(
+            candidate.closest(
+              ".MuiCardActionArea-root,button,a,[role='button']",
+            ),
+          ),
       );
     },
     { timeout: 30000 },
@@ -225,7 +269,9 @@ async function clickVisibleText(page, text) {
       (candidate) =>
         isVisible(candidate) &&
         String(candidate.textContent || "").includes(expectedText) &&
-        Boolean(candidate.closest(".MuiCardActionArea-root,button,a,[role='button']")),
+        Boolean(
+          candidate.closest(".MuiCardActionArea-root,button,a,[role='button']"),
+        ),
     );
     element.closest(".MuiCardActionArea-root,button,a,[role='button']").click();
   }, text);
@@ -290,6 +336,14 @@ async function waitForNoVisibleText(
     },
     { timeout },
     { text, exact },
+  );
+}
+
+async function assertCurrentPath(page, expectedPath, { timeout = 30000 } = {}) {
+  await page.waitForFunction(
+    (path) => window.location.pathname === path,
+    { timeout },
+    expectedPath,
   );
 }
 

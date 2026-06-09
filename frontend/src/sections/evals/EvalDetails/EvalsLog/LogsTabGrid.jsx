@@ -345,9 +345,12 @@ const LogsTabGrid = ({
         onSelectionChanged(null);
         setSelectedAll(false);
 
-        // Calculate page size dynamically from AG Grid request
-        const pageSize = request.endRow - request.startRow;
-        const pageNumber = Math.floor((request?.startRow ?? 0) / pageSize);
+        // Calculate page size dynamically from AG Grid request.
+        // onGridReady calls getRows without a `request`, so default safely.
+        const startRow = request?.startRow ?? 0;
+        const endRow = request?.endRow ?? startRow + 10;
+        const pageSize = endRow - startRow;
+        const pageNumber = Math.floor(startRow / pageSize);
         const source = isFeedback
           ? "feedback"
           : isEvalPlayGround

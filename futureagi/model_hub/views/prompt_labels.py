@@ -85,7 +85,9 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     def handle_exception(self, exc):
         if isinstance(exc, DRFValidationError):
             return self.gm.bad_request(_exception_detail_to_text(exc.detail))
-        if isinstance(exc, (NotAuthenticated, PermissionDenied)):
+        if isinstance(exc, NotAuthenticated):
+            return self.gm.unauthorized_response()
+        if isinstance(exc, PermissionDenied):
             return self.gm.forbidden_response(_exception_detail_to_text(exc.detail))
         if isinstance(exc, Http404):
             return self.gm.not_found("Prompt label resource not found")
@@ -96,6 +98,7 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         serializer.save(
             organization=getattr(self.request, "organization", None)
             or self.request.user.organization,
+            workspace=getattr(self.request, "workspace", None),
             type=LabelTypeChoices.CUSTOM.value,
         )
 
@@ -109,7 +112,8 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     def perform_update(self, serializer):
         serializer.save(
             organization=getattr(self.request, "organization", None)
-            or self.request.user.organization
+            or self.request.user.organization,
+            workspace=getattr(self.request, "workspace", None),
         )
 
     def destroy(self, request, *args, **kwargs):
@@ -390,10 +394,21 @@ class PromptLabelViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             or request.user.organization,
             deleted=False,
         ).order_by("created_at")
+        allowed_label_filter = Q(
+            organization=getattr(request, "organization", None)
+            or request.user.organization,
+            workspace=request.workspace,
+        ) | Q(organization__isnull=True, type=LabelTypeChoices.SYSTEM.value)
         data = [
             {
                 "version": v.template_version,
-                "labels": list(v.labels.values_list("name", flat=True)),
+                "labels": list(
+                    PromptLabel.no_workspace_objects.filter(
+                        allowed_label_filter,
+                        prompt_versions=v,
+                        deleted=False,
+                    ).values_list("name", flat=True)
+                ),
                 "is_default": v.is_default,
                 "is_draft": v.is_draft,
             }

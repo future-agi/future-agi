@@ -512,8 +512,24 @@ def process_dataset_from_file(dataset_id, file_url, original_filename):
                 str(dataset.id), data.to_dict(), column_mapping, row_mapping
             )
 
-            # Start media upload processing in a separate task to avoid threading conflicts
-            process_media_uploads.delay(str(dataset.id))
+            media_column_types = [
+                DataTypeChoices.IMAGE.value,
+                DataTypeChoices.IMAGES.value,
+                DataTypeChoices.AUDIO.value,
+                DataTypeChoices.DOCUMENT.value,
+            ]
+            has_media_cells = Cell.objects.filter(
+                dataset_id=dataset.id,
+                status=CellStatus.RUNNING.value,
+                column__data_type__in=media_column_types,
+            ).exists()
+            if has_media_cells:
+                # Start media upload processing in a separate task to avoid threading conflicts.
+                process_media_uploads.delay(str(dataset.id))
+            else:
+                logger.info(
+                    f"No media cells to process for dataset {dataset_id}; skipping media upload task"
+                )
 
             logger.info(
                 "Skipping recommendations to avoid threading conflicts with gevent"

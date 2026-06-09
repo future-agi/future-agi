@@ -1,3 +1,4 @@
+/* eslint-disable react/prop-types */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import PropTypes from "prop-types";
 import { render, screen, userEvent, waitFor } from "src/utils/test-utils";
