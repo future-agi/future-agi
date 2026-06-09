@@ -153,10 +153,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
         span_extra = f"AND {span_where}" if span_where else ""
         final_filter = f"WHERE {output_where}" if output_where else ""
         order_by = self._order_by()
-        pagination = (
-            "LIMIT %(limit)s OFFSET %(offset)s"
-            if self.limit is not None and self.offset is not None
-            else ""
+        paginated = self.limit is not None and self.offset is not None
+        pagination = "LIMIT %(limit)s OFFSET %(offset)s" if paginated else ""
+        # Skip the window count for unpaginated exports — avoids materializing a worktable.
+        total_count_select = (
+            "count() OVER() AS total_count" if paginated else "0 AS total_count"
         )
 
         # P3b step1.5 id-remap resolution (see id_remap_sql / DESIGN §3): map a
@@ -337,7 +338,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
         counted_rows AS (
             SELECT
                 *,
-                count() OVER() AS total_count
+                {total_count_select}
             FROM final_rows
             {final_filter}
         )

@@ -3,6 +3,7 @@ import io
 import json
 import math
 import traceback
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -27,8 +28,8 @@ from django.db.models import (
     Value,
     When,
 )
-from django.db.models.functions import Coalesce, JSONObject, Round
-from django.http import FileResponse, HttpResponse
+from django.db.models.functions import Cast, Coalesce, Floor, JSONObject, NullIf, Round
+from django.http import FileResponse, HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
@@ -75,6 +76,8 @@ from tracer.services.clickhouse.graph_dispatch import (
 )
 from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
+    EvalMetricsQueryBuilder,
+    TimeSeriesQueryBuilder,
     UserListQueryBuilder,
 )
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
@@ -2451,7 +2454,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             ):
                                 total_eval_configs[
                                     str(metric["custom_eval_config_id"]) + "**" + choice
-                                ] = metric["custom_eval_config__name"] + " - " + choice
+                                ] = (
+                                    metric["custom_eval_config__name"] + " - " + choice
+                                )
                 else:
                     score = (
                         metric["avg_float_score"]
@@ -4681,6 +4686,62 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request("Failed to compute agent graph")
 
 
+USERS_EXPORT_COLUMNS = [
+    ("User ID", "user_id"),
+    ("User ID Type", "user_id_type"),
+    ("User ID Hash", "user_id_hash"),
+    ("First Active", "activated_at"),
+    ("Last Active", "last_active"),
+    ("No. of Traces", "num_traces"),
+    ("No. of Sessions", "num_sessions"),
+    ("Avg Session Duration (s)", "avg_session_duration"),
+    ("Total Tokens", "total_tokens"),
+    ("Total Cost ($)", "total_cost"),
+    ("Avg Latency / Trace (ms)", "avg_trace_latency"),
+    ("No. of LLM Calls", "num_llm_calls"),
+    ("Guardrails Triggered", "num_guardrails_triggered"),
+    ("Evals Pass Rate (%)", "bool_eval_pass_rate"),
+    ("Input Tokens", "input_tokens"),
+    ("Output Tokens", "output_tokens"),
+]
+
+
+def _format_users_export_cell(value):
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return value
+
+
+def _stream_users_csv(rows, project_id):
+    def generate():
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow([header for header, _ in USERS_EXPORT_COLUMNS])
+        yield buffer.getvalue()
+        buffer.seek(0)
+        buffer.truncate()
+        for row in rows:
+            writer.writerow(
+                [
+                    _format_users_export_cell(row.get(field))
+                    for _, field in USERS_EXPORT_COLUMNS
+                ]
+            )
+            yield buffer.getvalue()
+            buffer.seek(0)
+            buffer.truncate()
+
+    filename = (
+        f"users_{project_id or 'all'}_"
+        f"{datetime.utcnow().strftime('%Y%m%dT%H%M%SZ')}.csv"
+    )
+    response = StreamingHttpResponse(generate(), content_type="text/csv")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
 class UsersView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -4688,6 +4749,8 @@ class UsersView(APIView):
     @validated_request(
         query_serializer=UsersQuerySerializer,
         responses={200: UsersResponseSerializer, **ERROR_RESPONSES},
+        # `export=true` returns text/csv; list returns JSON.
+        produces=["application/json", "text/csv"],
     )
     def get(self, request, *args, **kwargs):
         """
@@ -4703,10 +4766,9 @@ class UsersView(APIView):
             current_page = query_data.get("current_page_index", 0)
             search_name = search.strip() if search else None
             organization_id = request.user.organization.id
-            limit = page_size
-            offset = current_page * page_size
             sort_params = query_data.get("sort_params", [])
             filters = query_data.get("filters", [])
+            export = bool(query_data.get("export"))
 
             # Convert string parameters to appropriate types
             try:
@@ -4715,6 +4777,12 @@ class UsersView(APIView):
             except (ValueError, TypeError):
                 page_size = 10
                 current_page = 0
+            if export:
+                limit = None
+                offset = None
+            else:
+                limit = page_size
+                offset = current_page * page_size
 
             # CH25 EndUser cutover (DESIGN §4.3): the curated source is now the
             # v2 `end_users` RMT, which has NO `workspace_id` column (schema
@@ -4756,6 +4824,9 @@ class UsersView(APIView):
             formatted = builder.format_rows(result.data)
             output = formatted["table"]
             count = formatted["total_count"]
+
+            if export:
+                return _stream_users_csv(output, project_id)
 
             # Enrich with aggregated span attributes from ClickHouse
             end_user_ids = [
