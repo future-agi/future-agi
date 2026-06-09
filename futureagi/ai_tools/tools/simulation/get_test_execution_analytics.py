@@ -165,6 +165,7 @@ class GetTestExecutionAnalyticsTool(BaseTool):
 
         data = {
             "id": str(execution.id),
+            "run_test_id": str(execution.run_test.id) if execution.run_test else None,
             "status": execution.status,
             "total_calls": execution.total_calls,
             "completed_calls": execution.completed_calls,

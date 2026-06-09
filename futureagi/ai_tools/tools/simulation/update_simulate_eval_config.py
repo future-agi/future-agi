@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -10,7 +9,9 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
-from ai_tools.tools.simulation.create_simulate_eval_config import VALID_EVAL_MODELS
+from tracer.models.custom_eval_config import ModelChoices
+
+VALID_EVAL_MODELS = {choice.value for choice in ModelChoices}
 
 
 class UpdateSimulateEvalConfigInput(PydanticBaseModel):
@@ -20,15 +21,15 @@ class UpdateSimulateEvalConfigInput(PydanticBaseModel):
     eval_config_id: UUID = Field(
         description="The UUID of the SimulateEvalConfig to update"
     )
-    name: Optional[str] = Field(
+    name: str | None = Field(
         default=None,
         description="New name for the eval config",
     )
-    config: Optional[dict] = Field(
+    config: dict | None = Field(
         default=None,
         description="Updated runtime configuration for the evaluation",
     )
-    mapping: Optional[dict] = Field(
+    mapping: dict | None = Field(
         default=None,
         description=(
             "Updated mapping of eval template input keys to call execution fields. "
@@ -38,21 +39,21 @@ class UpdateSimulateEvalConfigInput(PydanticBaseModel):
             "assistant_chat_transcript."
         ),
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         default=None,
         description="Model to use for evaluation",
     )
 
     @field_validator("model")
     @classmethod
-    def check_model(cls, v: Optional[str]) -> Optional[str]:
+    def check_model(cls, v: str | None) -> str | None:
         if v is not None and v not in VALID_EVAL_MODELS:
             raise ValueError(
                 f"Invalid model '{v}'. Must be one of: {sorted(VALID_EVAL_MODELS)}"
             )
         return v
 
-    error_localizer: Optional[bool] = Field(
+    error_localizer: bool | None = Field(
         default=None,
         description="Enable or disable error localization for this eval config",
     )

@@ -68,6 +68,10 @@ class GetTestExecutionTool(BaseTool):
         info = key_value_block(
             [
                 ("ID", f"`{execution.id}`"),
+                (
+                    "Run Test ID",
+                    f"`{execution.run_test.id}`" if execution.run_test else "—",
+                ),
                 ("Run Test", run_test_name),
                 ("Agent", agent_name),
                 ("Status", format_status(execution.status)),
@@ -166,6 +170,7 @@ class GetTestExecutionTool(BaseTool):
 
         data = {
             "id": str(execution.id),
+            "run_test_id": str(execution.run_test.id) if execution.run_test else None,
             "run_test": run_test_name,
             "agent": agent_name,
             "status": execution.status,

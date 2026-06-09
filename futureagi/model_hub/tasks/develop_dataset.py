@@ -486,6 +486,31 @@ def create_synthetic_dataset(
             except Exception as col_error:
                 logger.error(f"Error processing column {column_name}: {str(col_error)}")
                 continue
+
+        # The view pre-creates exactly num_rows placeholder Row/Cell records
+        # (value=None) before generation. When the model returns fewer rows than
+        # requested, the fill loop above only populates min(generated, requested)
+        # of them — leaving the trailing placeholders permanently blank, which
+        # surfaced as "N empty rows" in the dataset (TH-4872). Delete the
+        # unfilled tail so a request for N rows yields only populated rows rather
+        # than padding the shortfall with blanks.
+        generated_count = synthetic_df.shape[0]
+        if generated_count < len(rows):
+            unfilled_ids = [row.id for row in rows[generated_count:]]
+            if unfilled_ids:
+                Cell.objects.filter(
+                    dataset=dataset, row_id__in=unfilled_ids
+                ).delete()
+                Row.objects.filter(id__in=unfilled_ids).delete()
+                logger.warning(
+                    "Synthetic generation produced %d of %d requested rows; "
+                    "removed %d unfilled placeholder rows to avoid blank rows "
+                    "(TH-4872).",
+                    generated_count,
+                    len(rows),
+                    len(unfilled_ids),
+                )
+
         agent.update_current_creation(100.0)
 
         recommendations = EvalRecommender(dataset_id=dataset_id).recommend_evals()

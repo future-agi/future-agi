@@ -114,6 +114,7 @@ class ListTestExecutionsTool(BaseTool):
             data_list.append(
                 {
                     "id": str(ex.id),
+                    "run_test_id": str(params.run_test_id),
                     "status": ex.status,
                     "total_calls": total_calls,
                     "completed_calls": completed_calls,

@@ -217,7 +217,127 @@ class CompareVersionsSerializer(serializers.Serializer):
         return data
 
 
+class PromptTemplateListRequestSerializer(serializers.Serializer):
+    """Query parameters for listing prompt templates in the workspace.
+
+    Returns paginated prompt template records (id, name, folder, modality,
+    updated_at). Use this for any "list prompt templates", "show my
+    prompts", "find prompt named X" query. Filter by search (matches name),
+    modality (chat/completion/image/etc.), or page through results.
+    """
+
+    search = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text=(
+            "Filter by template name (case-insensitive substring match). "
+            "Example: 'summari' matches 'summarization-v3'."
+        ),
+    )
+    page = serializers.IntegerField(
+        min_value=1,
+        default=1,
+        help_text="Page number, 1-indexed. Default 1.",
+    )
+    page_size = serializers.IntegerField(
+        min_value=1,
+        max_value=100,
+        default=20,
+        help_text="Number of templates per page. Range 1-100. Default 20.",
+    )
+    ordering = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text=(
+            "Sort order. One of: 'name', '-name', 'created_at', "
+            "'-created_at'. Prefix with '-' for descending."
+        ),
+    )
+    modality = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Filter by model modality. List of strings, e.g. ['chat'], "
+            "['completion'], ['image']. Omit to include all modalities."
+        ),
+    )
+
+
 class PromptTemplateSerializer(serializers.ModelSerializer):
+    """A prompt template is a reusable, versioned LLM prompt definition.
+
+    Templates have versions (drafts, defaults, named labels) that capture
+    the actual messages, model config, and execution settings. Use prompt
+    folders to organise templates into groups.
+    """
+
+    id = serializers.UUIDField(
+        read_only=True,
+        help_text=(
+            "Unique prompt template identifier. UUID v4 format. "
+            "Example: '550e8400-e29b-41d4-a716-446655440000'. "
+            "**How to get it:** call `list_prompt_templates` to discover "
+            "template IDs (optionally filter by 'search' query param to find "
+            "by name)."
+        ),
+    )
+    name = serializers.CharField(
+        max_length=255,
+        help_text=(
+            "Human-readable prompt template name. Must be unique within the "
+            "workspace. Use kebab-case or descriptive phrases. "
+            "Examples: 'customer-support-greeting', 'summarization-v3', "
+            "'rag-final-answer'."
+        ),
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text=(
+            "Optional free-form description of what the prompt is for. "
+            "Example: 'Generates polite customer support replies given a "
+            "ticket summary and tone tag.'"
+        ),
+    )
+    variable_names = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "List of variable names referenced inside the prompt messages, "
+            "e.g. ['user_name', 'ticket_summary', 'tone']. These are the "
+            "placeholders that callers must provide at runtime. Auto-derived "
+            "from the prompt body if omitted."
+        ),
+    )
+    placeholders = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Optional default values for the template's variables. "
+            "Object with shape {variable_name: default_value}. Example: "
+            "{'tone': 'friendly', 'user_name': 'there'}. Used in playgrounds "
+            "and previews when no explicit value is supplied."
+        ),
+    )
+    prompt_folder = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "UUID of the folder to place this template in. **How to get it:** "
+            "call `list_prompt_folders` first. Omit or pass null to leave at "
+            "workspace root."
+        ),
+    )
+    organization = serializers.UUIDField(
+        read_only=True,
+        help_text="Organization UUID. Auto-set from the authenticated user.",
+    )
+    created_by = serializers.UUIDField(
+        read_only=True,
+        help_text="UUID of the user who created the template. Auto-set on create.",
+    )
+
     class Meta:
         model = PromptTemplate
         fields = [

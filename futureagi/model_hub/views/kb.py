@@ -33,8 +33,11 @@ logger = structlog.get_logger(__name__)
 
 
 class KnowledgeBaseViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
-    """
-    ViewSet for handling KnowledgeBase operations.
+    """A knowledge base is a chunked, embedded corpus used to ground LLM prompts
+    (RAG), seed synthetic data generation, or back agents with grounded answers.
+    Each KB has a name (unique per organization), an embedding model, a chunk
+    size, and a collection of indexed files. List, fetch, update, or soft-delete
+    KBs here; pass `search` to filter the list by name.
     """
 
     queryset = KnowledgeBase.objects.all()

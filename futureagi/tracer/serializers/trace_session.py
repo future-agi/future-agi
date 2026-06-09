@@ -12,13 +12,29 @@ from tracer.serializers.filters import (
 
 
 class TraceSessionSerializer(serializers.ModelSerializer):
+    """A trace session groups all the traces a single end-user conversation/run produced in an observe project — its traces (and their spans) share one ``session.id``. Browse sessions for a project via list_sessions and open one with get_session to see its session-level cost/token/duration aggregates and the traces it contains."""
+
     project = serializers.PrimaryKeyRelatedField(
-        queryset=Project.objects.all(), many=False
+        queryset=Project.objects.all(),
+        many=False,
+        help_text="UUID of the trace project this session belongs to (from list_projects).",
     )
 
     class Meta:
         model = TraceSession
         fields = ["id", "project", "bookmarked", "name", "created_at"]
+        extra_kwargs = {
+            "id": {
+                "help_text": "UUID of the session; pass it to get_session as the session id."
+            },
+            "bookmarked": {
+                "help_text": "Whether a user has bookmarked/starred this session."
+            },
+            "name": {
+                "help_text": "The session identifier the SDK sent in the OTel ``session.id`` attribute (the user-facing session id, distinct from the UUID)."
+            },
+            "created_at": {"help_text": "When this session record was first created."},
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

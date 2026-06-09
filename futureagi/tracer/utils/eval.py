@@ -518,6 +518,16 @@ def build_session_context(session) -> dict | None:
         return None
 
 
+class SpanMissingRequiredFieldError(ValueError):
+    """A span lacks a required mapped attribute for an eval.
+
+    Subclasses ValueError (so existing `except ValueError` paths still behave),
+    but lets callers distinguish "this span has no data for a required field"
+    (which should be SKIPPED, not counted as an error — TH-5412) from genuine
+    evaluation errors.
+    """
+
+
 def _process_mapping(
     mapping: dict | None, span: ObservationSpan, eval_template_id: int
 ) -> dict:
@@ -619,7 +629,7 @@ def _process_mapping(
             logger.warning(
                 f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"
             )
-            raise ValueError(
+            raise SpanMissingRequiredFieldError(
                 f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"
             )
 
@@ -2038,6 +2048,16 @@ def evaluate_observation_span_observe(
             logger.debug("eval_clustering_dispatch_skipped", exc_info=True)
 
         return True
+    except SpanMissingRequiredFieldError as e:
+        # The span has no data for a required mapped field — skip it instead of
+        # recording an error, so an eval task isn't full of "errors" for spans
+        # that simply lack the field (TH-5412). No failed_spans entry, no error
+        # EvalLogger row.
+        logger.info(
+            f"Skipping span {observation_span_id} for eval "
+            f"{custom_eval_config_id} (missing required field): {e}"
+        )
+        return None
     except ValueError as e:
         # Expected validation failure (missing/invalid eval input). Persisted as
         # a failed span below; WARNING keeps it out of the Sentry issue stream.

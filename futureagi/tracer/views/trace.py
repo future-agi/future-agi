@@ -68,6 +68,7 @@ from tracer.serializers.trace import (
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.graph_dispatch import (
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,

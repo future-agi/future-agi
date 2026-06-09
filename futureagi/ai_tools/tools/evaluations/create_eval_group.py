@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -16,7 +15,7 @@ class CreateEvalGroupInput(PydanticBaseModel):
     name: str = Field(
         description="Name for the eval group", min_length=1, max_length=255
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None, description="Description of the eval group"
     )
     eval_template_ids: list[UUID] = Field(

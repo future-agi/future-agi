@@ -11,8 +11,12 @@ from tracer.serializers.filters import (
 
 
 class ProjectVersionSerializer(serializers.ModelSerializer):
+    """A named version (run/experiment) within a trace project — each version groups the spans/traces produced by one experiment run so they can be compared side by side. Use these tools to manage experiment versions of a project: list/read via list_project_version / get_project_version, create a new run with create_project_version, and rename or update its metadata via update_project_version. The auto-incrementing `version` label (v1, v2, ...) is read-only; `avg_eval_score` and `eval_tags` summarize the evaluation results for the run."""
+
     project = serializers.PrimaryKeyRelatedField(
-        queryset=Project.objects.all(), many=False
+        queryset=Project.objects.all(),
+        many=False,
+        help_text="UUID of the trace project this version belongs to (from list_projects).",
     )
 
     class Meta:
@@ -31,6 +35,18 @@ class ProjectVersionSerializer(serializers.ModelSerializer):
             "annotations",
         ]
         read_only_fields = ["version"]
+        extra_kwargs = {
+            "id": {"help_text": "UUID of this project version (from list_project_version)."},
+            "name": {"help_text": "Human-readable name for this experiment version/run."},
+            "metadata": {"help_text": "Arbitrary JSON metadata describing this run (e.g. config, parameters)."},
+            "start_time": {"help_text": "Timestamp when this version's run started."},
+            "end_time": {"help_text": "Timestamp when this version's run finished."},
+            "error": {"help_text": "JSON error details if the run failed, otherwise null."},
+            "eval_tags": {"help_text": "List of evaluation tags computed for this run."},
+            "avg_eval_score": {"help_text": "Average evaluation score across this run's spans/traces."},
+            "version": {"help_text": "Read-only auto-assigned version label (v1, v2, v3, ...), unique per project."},
+            "annotations": {"help_text": "UUID of the annotations group associated with this version, if any."},
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

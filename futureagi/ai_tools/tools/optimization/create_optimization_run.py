@@ -41,6 +41,19 @@ class CreateOptimizationRunInput(PydanticBaseModel):
         default=None,
         description="List of UserEvalMetric IDs to use as optimization objectives",
     )
+    test_execution_id: Optional[UUID] = Field(
+        default=None,
+        description=(
+            "Optional UUID of the test execution this optimization run is for "
+            "('Fix My Agent'). Links the run to that test execution so it shows "
+            "under its Optimization tab. Get it from get_test_execution / "
+            "list_test_executions."
+        ),
+    )
+    run_test_id: Optional[UUID] = Field(
+        default=None,
+        description="Optional UUID of the run test to link this optimization run to.",
+    )
 
 
 @register_tool
@@ -71,6 +84,8 @@ class CreateOptimizationRunTool(BaseTool):
             organization=context.organization,
             workspace=context.workspace,
             eval_template_ids=params.eval_template_ids,
+            test_execution_id=params.test_execution_id,
+            run_test_id=params.run_test_id,
         )
 
         if isinstance(result, ServiceError):

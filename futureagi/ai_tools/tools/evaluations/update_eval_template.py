@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -15,20 +15,20 @@ class UpdateEvalTemplateInput(PydanticBaseModel):
     )
 
     # ── Core fields ──
-    name: Optional[str] = Field(default=None, description="Name for the template")
-    description: Optional[str] = Field(default=None, description="Description")
-    eval_type: Optional[Literal["llm", "code", "agent"]] = Field(
+    name: str | None = Field(default=None, description="Name for the template")
+    description: str | None = Field(default=None, description="Description")
+    eval_type: Literal["llm", "code", "agent"] | None = Field(
         default=None,
         description="Change eval type: 'llm', 'code', or 'agent'.",
     )
-    instructions: Optional[str] = Field(
+    instructions: str | None = Field(
         default=None,
         description=(
             "Evaluation instructions/criteria. Must include {{variable}} "
             "placeholders for non-code evals."
         ),
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         default=None,
         description=(
             "Model for evaluation. Prefer turing models (no extra setup): "
@@ -37,7 +37,7 @@ class UpdateEvalTemplateInput(PydanticBaseModel):
             "'gpt-4o', 'claude-sonnet-4-6', 'gemini-2.5-pro', etc."
         ),
     )
-    output_type: Optional[Literal["pass_fail", "percentage", "deterministic"]] = Field(
+    output_type: Literal["pass_fail", "percentage", "deterministic"] | None = Field(
         default=None,
         description=(
             "Output type: 'pass_fail' (binary Pass/Fail), "
@@ -45,7 +45,7 @@ class UpdateEvalTemplateInput(PydanticBaseModel):
             "'deterministic' (custom choices with scores — requires choice_scores)."
         ),
     )
-    pass_threshold: Optional[float] = Field(
+    pass_threshold: float | None = Field(
         default=None,
         ge=0.0,
         le=1.0,
@@ -55,55 +55,53 @@ class UpdateEvalTemplateInput(PydanticBaseModel):
             "For deterministic: choice_score >= threshold = Pass."
         ),
     )
-    choice_scores: Optional[dict] = Field(
+    choice_scores: dict | None = Field(
         default=None,
         description=(
             "Choice scores. Required when output_type='deterministic'. "
             "Keys are choice labels, values are float scores."
         ),
     )
-    tags: Optional[list[str]] = Field(
-        default=None, description="tags for the template"
-    )
-    check_internet: Optional[bool] = Field(
+    tags: list[str] | None = Field(default=None, description="tags for the template")
+    check_internet: bool | None = Field(
         default=None,
         description="Whether the eval can access the internet.",
     )
-    template_format: Optional[Literal["mustache", "jinja"]] = Field(
+    template_format: Literal["mustache", "jinja"] | None = Field(
         default=None,
         description="Template variable format: 'mustache' or 'jinja'.",
     )
-    error_localizer_enabled: Optional[bool] = Field(
+    error_localizer_enabled: bool | None = Field(
         default=None,
         description="Enable/disable error localizer for this eval.",
     )
-    publish: Optional[bool] = Field(
+    publish: bool | None = Field(
         default=None,
         description="Set to true to publish a draft eval (make it visible in listings).",
     )
 
     # ── Code eval fields ──
-    code: Optional[str] = Field(
+    code: str | None = Field(
         default=None,
         description="evaluation code (for code-type evals).",
     )
-    code_language: Optional[Literal["python", "javascript"]] = Field(
+    code_language: Literal["python", "javascript"] | None = Field(
         default=None,
         description="Code language: 'python' or 'javascript'.",
     )
 
     # ── LLM eval fields ──
-    messages: Optional[list[dict]] = Field(
+    messages: list[dict] | None = Field(
         default=None,
         description="message chain for LLM evals: [{role, content}].",
     )
-    few_shot_examples: Optional[list[dict]] = Field(
+    few_shot_examples: list[dict] | None = Field(
         default=None,
         description="few-shot examples: [{input, output, score}].",
     )
 
     # ── Agent eval fields ──
-    mode: Optional[Literal["auto", "agent", "quick"]] = Field(
+    mode: Literal["auto", "agent", "quick"] | None = Field(
         default=None,
         description=(
             "Agent evaluation mode: "
@@ -112,18 +110,18 @@ class UpdateEvalTemplateInput(PydanticBaseModel):
             "'auto' (auto-selects based on data complexity)."
         ),
     )
-    tools: Optional[dict] = Field(
+    tools: dict | None = Field(
         default=None,
         description=(
             "Tool configuration for agent evals: "
             "{'internet': bool, 'connectors': ['connector-uuid']}."
         ),
     )
-    knowledge_bases: Optional[list[str]] = Field(
+    knowledge_bases: list[str] | None = Field(
         default=None,
         description="Knowledge base UUIDs for agent evals to search during evaluation.",
     )
-    data_injection: Optional[dict] = Field(
+    data_injection: dict | None = Field(
         default=None,
         description=(
             "Context injection for agent evals. Flags: "
@@ -131,7 +129,7 @@ class UpdateEvalTemplateInput(PydanticBaseModel):
             "'trace_context', 'session_context', 'call_context'."
         ),
     )
-    summary: Optional[dict] = Field(
+    summary: dict | None = Field(
         default=None,
         description=(
             "Explanation style for agent evals: "
@@ -141,9 +139,9 @@ class UpdateEvalTemplateInput(PydanticBaseModel):
     )
 
     # Aliases for alternate field names (excluded from schema sent to LLM).
-    criteria: Optional[str] = Field(default=None, exclude=True)
-    eval_tags: Optional[list[str]] = Field(default=None, exclude=True)
-    choices_map: Optional[dict] = Field(default=None, exclude=True)
+    criteria: str | None = Field(default=None, exclude=True)
+    eval_tags: list[str] | None = Field(default=None, exclude=True)
+    choices_map: dict | None = Field(default=None, exclude=True)
 
 
 @register_tool
@@ -266,7 +264,9 @@ class UpdateEvalTemplateTool(BaseTool):
             )
             if msgs:
                 for msg in msgs:
-                    all_text.append(msg.get("content", "") if isinstance(msg, dict) else "")
+                    all_text.append(
+                        msg.get("content", "") if isinstance(msg, dict) else ""
+                    )
             combined = "\n".join(t for t in all_text if t)
 
             if template_format == "jinja":
@@ -471,5 +471,9 @@ class UpdateEvalTemplateTool(BaseTool):
 
         return ToolResult(
             content=section("Eval Template Updated", info),
-            data={"id": str(template.id), "name": template.name, "updated_fields": changed_fields},
+            data={
+                "id": str(template.id),
+                "name": template.name,
+                "updated_fields": changed_fields,
+            },
         )

@@ -187,6 +187,26 @@ class OptimizeDataset(BaseModel):
         blank=True,
         help_text="Evaluation templates to optimize for",
     )
+    # Link an optimization run back to the test execution / run test it was
+    # created from, so "Fix My Agent" runs created via MCP show up under the
+    # test execution's Optimization tab (TH-5384). Nullable — floating runs
+    # (not started from a test execution) leave these empty.
+    test_execution = models.ForeignKey(
+        "simulate.TestExecution",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="optimization_runs",
+        help_text="Test execution this optimization run was created from.",
+    )
+    run_test = models.ForeignKey(
+        "simulate.RunTest",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="optimization_runs",
+        help_text="Run test this optimization run is linked to.",
+    )
 
     def __str__(self):
         return str(self.name)

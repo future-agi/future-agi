@@ -19,15 +19,81 @@ OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
 
 
 class UserAlertMonitorSerializer(serializers.ModelSerializer):
+    """An alert monitor that watches one telemetry metric on an observe trace project
+    and fires critical/warning alerts (email + Slack) when it crosses a threshold.
+    Listed/read via list_alert_monitors / get_alert_monitor and created/edited via
+    create_alert_monitor / update_alert_monitor. Configure it with a `metric_type`,
+    a `threshold_type` (static or percentage_change), threshold values, and a
+    `threshold_operator`; for `evaluation_metrics`, point `metric` at a CustomEvalConfig."""
+
     project = serializers.PrimaryKeyRelatedField(
-        queryset=Project.objects.filter(trace_type="observe"), required=True
+        queryset=Project.objects.filter(trace_type="observe"),
+        required=True,
+        help_text="UUID of the observe trace project to monitor (from list_projects).",
     )
-    name = serializers.CharField(required=True)
+    name = serializers.CharField(
+        required=True,
+        help_text="Human-readable name for this monitor; must be unique within the project.",
+    )
     metric_name = serializers.SerializerMethodField()
 
     class Meta:
         model = UserAlertMonitor
         fields = "__all__"
+        extra_kwargs = {
+            "threshold_operator": {
+                "help_text": (
+                    "How the metric is compared to the threshold: 'greater_than' or "
+                    "'less_than'."
+                ),
+            },
+            "critical_threshold_value": {
+                "help_text": (
+                    "Value (or percentage, for percentage_change thresholds) that "
+                    "triggers a critical alert. Required for static/percentage_change."
+                ),
+            },
+            "warning_threshold_value": {
+                "help_text": (
+                    "Optional value (or percentage) that triggers a warning alert; "
+                    "must be on the non-critical side of critical_threshold_value."
+                ),
+            },
+            "notification_emails": {
+                "help_text": "Up to 5 email addresses to notify when the monitor fires.",
+            },
+            "slack_webhook_url": {
+                "help_text": "Optional Slack incoming-webhook URL to post alerts to.",
+            },
+            "slack_notes": {
+                "help_text": "Optional note included in the Slack alert message.",
+            },
+            "is_mute": {
+                "help_text": "If true, the monitor is muted and will not send notifications.",
+            },
+            "filters": {
+                "help_text": (
+                    "Optional JSON filters scoping which spans the metric is computed "
+                    "over (e.g. observation_type, span_attributes_filters)."
+                ),
+            },
+            "metric_type": {
+                "help_text": (
+                    "What this alert monitor watches. Allowed values: "
+                    "count_of_errors (total error count); "
+                    "error_rates_for_function_calling (tool/function-call error rate); "
+                    "error_free_session_rates (percent of sessions with no errors); "
+                    "service_provider_error_rates (upstream provider error rate); "
+                    "llm_api_failure_rates (LLM API failure rate); "
+                    "span_response_time (span latency); "
+                    "llm_response_time (LLM latency); "
+                    "token_usage (tokens per window); "
+                    "daily_tokens_spent / monthly_tokens_spent (token spend); "
+                    "evaluation_metrics (alert on an eval score — set `metric` to "
+                    "the CustomEvalConfig id to monitor)."
+                ),
+            },
+        }
 
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
@@ -243,11 +309,45 @@ class UserAlertMonitorPreviewGraphSerializer(UserAlertMonitorSerializer):
 
 
 class UserAlertMonitorLogSerializer(serializers.ModelSerializer):
-    resolved_by = UserSerializer(read_only=True)
+    """A single firing/log entry for an alert monitor — recorded each time a monitor's threshold is breached. It captures the severity, message, the time window evaluated, and whether it has been resolved. List these via list_alert_monitor_logs (or filter to one monitor) and read one with get_alert_monitor_log to triage what tripped the alert."""
+
+    resolved_by = UserSerializer(
+        read_only=True,
+        help_text="The user who marked this alert log as resolved, if any.",
+    )
 
     class Meta:
         model = UserAlertMonitorLog
         exclude = ["deleted_at", "deleted", "alert", "updated_at"]
+        extra_kwargs = {
+            "id": {
+                "help_text": "UUID of this alert log entry; pass it to get_alert_monitor_log."
+            },
+            "type": {
+                "help_text": "Severity of the alert: 'critical' or 'warning'."
+            },
+            "message": {
+                "help_text": "Human-readable description of what tripped the monitor."
+            },
+            "resolved": {
+                "help_text": "Whether this alert log has been marked resolved."
+            },
+            "resolved_at": {
+                "help_text": "Timestamp when the alert log was resolved, if resolved."
+            },
+            "link": {
+                "help_text": "Deep link to the relevant view (e.g. the monitor or affected traces), if set."
+            },
+            "time_window_start": {
+                "help_text": "Start of the time window the monitor evaluated when it fired."
+            },
+            "time_window_end": {
+                "help_text": "End of the time window the monitor evaluated when it fired."
+            },
+            "created_at": {
+                "help_text": "When this alert fired (the log entry was created)."
+            },
+        }
 
 
 class UserAlertMonitorLogWriteSerializer(serializers.ModelSerializer):

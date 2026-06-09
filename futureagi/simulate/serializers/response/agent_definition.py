@@ -3,16 +3,21 @@ from rest_framework import serializers
 
 from agentcc.services.credential_manager import mask_key
 from simulate.models import AgentDefinition, AgentVersion
-from simulate.models.agent_definition import AgentTypeChoices
 
 MASKED_CREDENTIAL_VALUE = "********"
 
 
 class AgentDefinitionResponseSerializer(serializers.ModelSerializer):
-    """
-    Response serializer for AgentDefinition detail endpoints.
-    Used by: create, edit, restore, detail responses.
-    All fields are read-only — this is a pure output contract.
+    """An agent definition is the durable record of a deployed or
+    in-development conversational agent (voice or text).
+
+    Definitions carry the agent's identity (name, description, provider,
+    model), routing config (phone, assistant id, voice/transport stack),
+    and live LiveKit credentials when applicable. Versions of a definition
+    track config changes over time. Use list_agents to discover agent IDs,
+    list_agent_versions to see version history. Use this output contract
+    for create, edit, restore, and detail responses — all fields are
+    read-only on the output side.
     """
 
     livekit_url = serializers.SerializerMethodField()

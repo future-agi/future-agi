@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Navigate } from "react-router-dom";
 import Box from "@mui/material/Box";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import useFalconStore from "./store/useFalconStore";
 import useFalconSocket from "./hooks/useFalconSocket";
 import { useFalconContext } from "./hooks/useFalconContext";
@@ -20,6 +21,12 @@ import CustomizePanel from "./components/CustomizePanel";
 export default function FalconAIFullPage() {
   const { conversationId: urlConversationId } = useParams();
   const navigate = useNavigate();
+  // Falcon AI is not available on self-hosted/OSS. If an OSS user reaches this
+  // route directly, redirect them away instead of rendering the "feature not
+  // available / upgrade your plan" screen (TH-4698). (The FAB and the dashboard
+  // index redirect already keep OSS users off Falcon; this closes the
+  // direct-URL gap.)
+  const { isOSS } = useDeploymentMode();
 
   const currentConversationId = useFalconStore((s) => s.currentConversationId);
   const setCurrentConversation = useFalconStore(
@@ -162,6 +169,12 @@ export default function FalconAIFullPage() {
     },
     [setPendingPrompt],
   );
+
+  // OSS users never see the Falcon page (and thus never the upgrade screen) —
+  // bounce them to the default dashboard route. (TH-4698)
+  if (isOSS) {
+    return <Navigate to="/dashboard/prototype" replace />;
+  }
 
   return (
     <Box

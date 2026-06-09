@@ -23,6 +23,14 @@ class SharedLinkAccessSerializer(serializers.ModelSerializer):
 
 
 class SharedLinkListSerializer(serializers.ModelSerializer):
+    """A shareable link to a platform resource — a trace, dashboard, eval_run,
+    dataset, or project — identified by the (`resource_type`, `resource_id`) pair.
+    Listed/read via list_shared_links / get_shared_link, created via
+    create_shared_link, edited via update_shared_link, and revoked via
+    delete_shared_link. `access_type` is 'public' (anyone with the link) or
+    'restricted' (only emails on the ACL); `share_url` is the link to share and
+    `access_count` is the number of people granted access."""
+
     access_count = serializers.SerializerMethodField()
     share_url = serializers.SerializerMethodField()
 
@@ -42,6 +50,19 @@ class SharedLinkListSerializer(serializers.ModelSerializer):
             "share_url",
         ]
         read_only_fields = fields
+        extra_kwargs = {
+            "resource_type": {
+                "help_text": "Kind of resource shared: trace, dashboard, eval_run, dataset, or project.",
+            },
+            "resource_id": {
+                "help_text": "ID of the shared resource (matches resource_type, e.g. the trace id).",
+            },
+            "access_type": {
+                "help_text": "'public' (anyone with the link) or 'restricted' (ACL emails only).",
+            },
+            "is_active": {"help_text": "Whether the link is active; false means revoked."},
+            "expires_at": {"help_text": "Optional expiry timestamp; null means it never expires."},
+        }
 
     def get_access_count(self, obj):
         return obj.access_list.filter(deleted=False).count()

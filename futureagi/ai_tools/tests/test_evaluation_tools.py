@@ -3,7 +3,6 @@ from unittest.mock import patch
 
 import pytest
 
-from ai_tools.registry import registry
 from ai_tools.tests.conftest import run_tool
 from ai_tools.tests.fixtures import make_eval_template, make_evaluation
 
@@ -274,6 +273,65 @@ class TestCreateEvalTemplateTool:
 
         assert result.is_error
         assert "already exists" in result.content
+
+    # ── TH-5254: scored evals must not be created as pass_fail ──
+
+    def test_scored_eval_infers_percentage(self, tool_context):
+        """A scored/0-1 eval with no explicit output_type should become 'percentage',
+        not pass_fail — otherwise the UI shows Pass/Fail for a score eval (TH-5254)."""
+        result = run_tool(
+            "create_eval_template",
+            {
+                "name": "relevance-score-5254",
+                "criteria": "Rate how relevant {{output}} is to {{input}} on a scale of 0 to 1.",
+                "required_keys": ["input", "output"],
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+        assert result.data["output_type"] == "percentage"
+
+    def test_rating_language_infers_percentage(self, tool_context):
+        result = run_tool(
+            "create_eval_template",
+            {
+                "name": "helpfulness-rating-5254",
+                "criteria": "Give a score from 0-100 for how helpful {{output}} is.",
+                "required_keys": ["output"],
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+        assert result.data["output_type"] == "percentage"
+
+    def test_explicit_pass_fail_is_respected(self, tool_context):
+        """If the caller explicitly sets pass_fail, score-language must NOT override it."""
+        result = run_tool(
+            "create_eval_template",
+            {
+                "name": "explicit-passfail-5254",
+                "criteria": "Rate on a scale of 0 to 1 whether {{output}} is toxic.",
+                "required_keys": ["output"],
+                "output_type": "pass_fail",
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+        assert result.data["output_type"] == "pass_fail"
+
+    def test_binary_eval_stays_pass_fail(self, tool_context):
+        """A genuinely binary check with no score language stays pass_fail."""
+        result = run_tool(
+            "create_eval_template",
+            {
+                "name": "valid-json-check-5254",
+                "criteria": "Determine whether {{output}} is valid JSON. Answer Pass or Fail.",
+                "required_keys": ["output"],
+            },
+            tool_context,
+        )
+        assert not result.is_error, result.content
+        assert result.data["output_type"] == "pass_fail"
 
 
 class TestUpdateEvalTemplateTool:

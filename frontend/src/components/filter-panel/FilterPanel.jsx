@@ -31,6 +31,7 @@ import {
   Tab,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
@@ -866,43 +867,50 @@ function QueryInput({
             ...params.InputProps,
             startAdornment: (
               <>
-                {tokens.map((token, idx) => (
-                  <Chip
-                    key={idx}
-                    label={`${fieldMap[token.field]?.label || token.field} ${token.operator} ${token.value}`}
-                    size="small"
-                    onClick={() => editToken(idx)}
-                    onDelete={() => handleDeleteToken(idx)}
-                    deleteIcon={<Iconify icon="mdi:close" width={10} />}
-                    sx={{
-                      height: 22,
-                      fontSize: 11,
-                      mr: 0.25,
-                      bgcolor: (theme) =>
-                        alpha(theme.palette.primary.main, 0.08),
-                      color: "primary.main",
-                      border: "1px solid",
-                      borderColor: (theme) =>
-                        alpha(theme.palette.primary.main, 0.2),
-                      cursor: "pointer",
-                      transition: (theme) =>
-                        theme.transitions.create(
-                          ["background-color", "border-color"],
-                          { duration: theme.transitions.duration.shortest },
-                        ),
-                      "&:hover": {
-                        bgcolor: (theme) =>
-                          alpha(theme.palette.primary.main, 0.16),
-                        borderColor: (theme) =>
-                          alpha(theme.palette.primary.main, 0.4),
-                      },
-                      "& .MuiChip-deleteIcon": {
-                        color: "primary.main",
-                        "&:hover": { color: "primary.dark" },
-                      },
-                    }}
-                  />
-                ))}
+                {tokens.map((token, idx) => {
+                  // Full "field operator value" text — shown as a tooltip so a
+                  // long/truncated applied filter is still fully readable on
+                  // hover (TH-4517).
+                  const tokenLabel = `${fieldMap[token.field]?.label || token.field} ${token.operator} ${token.value}`;
+                  return (
+                    <Tooltip key={idx} title={tokenLabel} arrow placement="top">
+                      <Chip
+                        label={tokenLabel}
+                        size="small"
+                        onClick={() => editToken(idx)}
+                        onDelete={() => handleDeleteToken(idx)}
+                        deleteIcon={<Iconify icon="mdi:close" width={10} />}
+                        sx={{
+                          height: 22,
+                          fontSize: 11,
+                          mr: 0.25,
+                          bgcolor: (theme) =>
+                            alpha(theme.palette.primary.main, 0.08),
+                          color: "primary.main",
+                          border: "1px solid",
+                          borderColor: (theme) =>
+                            alpha(theme.palette.primary.main, 0.2),
+                          cursor: "pointer",
+                          transition: (theme) =>
+                            theme.transitions.create(
+                              ["background-color", "border-color"],
+                              { duration: theme.transitions.duration.shortest },
+                            ),
+                          "&:hover": {
+                            bgcolor: (theme) =>
+                              alpha(theme.palette.primary.main, 0.16),
+                            borderColor: (theme) =>
+                              alpha(theme.palette.primary.main, 0.4),
+                          },
+                          "& .MuiChip-deleteIcon": {
+                            color: "primary.main",
+                            "&:hover": { color: "primary.dark" },
+                          },
+                        }}
+                      />
+                    </Tooltip>
+                  );
+                })}
                 {inlinePrefix.map((p, i) => (
                   <Box
                     key={i}

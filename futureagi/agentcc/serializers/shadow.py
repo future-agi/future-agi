@@ -37,6 +37,12 @@ class AgentccShadowExperimentSerializer(serializers.ModelSerializer):
 
 
 class AgentccShadowResultSerializer(serializers.ModelSerializer):
+    """A single captured shadow comparison: the production (source) model's
+    response side by side with a shadow model's response for the same request,
+    plus latency, token, and status-code metrics. Read-only; produced by shadow
+    experiments. Listed/read via list_agentcc_shadow_results /
+    get_agentcc_shadow_result."""
+
     class Meta:
         model = AgentccShadowResult
         fields = [
@@ -58,3 +64,31 @@ class AgentccShadowResultSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = fields
+        extra_kwargs = {
+            "experiment": {
+                "help_text": "UUID of the shadow experiment that produced this result (from list_agentcc_shadow_experiments)."
+            },
+            "request_id": {
+                "help_text": "Gateway request id this comparison was captured from."
+            },
+            "source_model": {"help_text": "The production (source) model name."},
+            "shadow_model": {"help_text": "The shadow model name compared against."},
+            "source_response": {"help_text": "Text response from the source model."},
+            "shadow_response": {"help_text": "Text response from the shadow model."},
+            "source_latency_ms": {
+                "help_text": "Source model latency in milliseconds."
+            },
+            "shadow_latency_ms": {
+                "help_text": "Shadow model latency in milliseconds."
+            },
+            "source_tokens": {"help_text": "Token count for the source response."},
+            "shadow_tokens": {"help_text": "Token count for the shadow response."},
+            "source_status_code": {"help_text": "HTTP status code of the source call."},
+            "shadow_status_code": {"help_text": "HTTP status code of the shadow call."},
+            "shadow_error": {
+                "help_text": "Error message if the shadow call failed, else empty."
+            },
+            "prompt_hash": {
+                "help_text": "Hash of the prompt used to group identical requests."
+            },
+        }

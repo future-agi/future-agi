@@ -1,4 +1,5 @@
-from typing import Literal, Optional
+import re
+from typing import Literal
 
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field, field_validator, model_validator
@@ -6,6 +7,32 @@ from pydantic import Field, field_validator, model_validator
 from ai_tools.base import BaseTool, ToolContext, ToolResult
 from ai_tools.formatting import format_datetime, key_value_block, section
 from ai_tools.registry import register_tool
+
+# TH-5254: detect when an eval's instructions describe a graded/numeric score
+# rather than a binary verdict. Used to auto-correct output_type when the caller
+# (Falcon) left it at the pass_fail default for what is really a scored eval —
+# otherwise the UI shows Pass/Fail for a 0-1 score eval.
+_SCORE_LANGUAGE_PATTERNS = [
+    r"\b0\s*(?:-|to|–|—)\s*1\b",  # 0-1, 0 to 1
+    r"\b0\s*(?:-|to|–|—)\s*100\b",  # 0-100
+    r"\b1\s*(?:-|to|–|—)\s*(?:5|10)\b",  # 1-5, 1-10
+    r"\bscale\s+of\b",
+    r"\bon\s+a\s+scale\b",
+    r"\bout\s+of\s+(?:5|10|100)\b",
+    r"\bpercentage\b",
+    r"\bscore\b",
+    r"\brating\b",
+    r"\brate\s+(?:the|how|this|each)\b",
+    r"\bhow\s+(?:well|much|relevant|faithful|similar|accurate)\b",
+]
+_SCORE_LANGUAGE_RE = re.compile("|".join(_SCORE_LANGUAGE_PATTERNS), re.IGNORECASE)
+
+
+def _looks_like_scored_eval(text: str | None) -> bool:
+    """True if the eval instructions describe a graded/numeric score."""
+    if not text:
+        return False
+    return bool(_SCORE_LANGUAGE_RE.search(text))
 
 
 class CreateEvalTemplateInput(PydanticBaseModel):
@@ -25,7 +52,7 @@ class CreateEvalTemplateInput(PydanticBaseModel):
 
         return validate_eval_name(v)
 
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None, description="Description of what this evaluation measures"
     )
     eval_type: Literal["llm", "code", "agent"] = Field(
@@ -36,7 +63,7 @@ class CreateEvalTemplateInput(PydanticBaseModel):
             "or 'agent' (Falcon AI powered, uses agent loop with tools)."
         ),
     )
-    instructions: Optional[str] = Field(
+    instructions: str | None = Field(
         default=None,
         description=(
             "Evaluation prompt / criteria. MUST include template variables "
@@ -46,7 +73,7 @@ class CreateEvalTemplateInput(PydanticBaseModel):
             "{{row}}, {{span}}, {{trace}} which are resolved automatically."
         ),
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         default="turing_large",
         description=(
             "Model for evaluation (not used for code evals). "
@@ -57,17 +84,28 @@ class CreateEvalTemplateInput(PydanticBaseModel):
     output_type: Literal["pass_fail", "percentage", "deterministic"] = Field(
         default="pass_fail",
         description=(
-            "Output type: 'pass_fail' (binary Pass/Fail), 'percentage' (0-100 score), "
-            "'deterministic' (custom choices with scores — requires choice_scores)."
+            "How the eval result is scored and displayed. Choose deliberately — "
+            "it controls how the UI renders results:\n"
+            "- 'percentage': a graded/numeric score (0-1 or 0-100). Use this whenever "
+            "the eval rates quality on a scale, gives a score, a rating, or 'how much/"
+            "how well' — e.g. relevance, faithfulness, helpfulness, coherence scores. "
+            "If in doubt for an LLM judge that grades quality, prefer 'percentage'.\n"
+            "- 'pass_fail': a strictly binary yes/no verdict (e.g. 'is the output valid "
+            "JSON?', 'does it contain PII?'). Only use when the result is genuinely two "
+            "outcomes, not a degree.\n"
+            "- 'deterministic': fixed labeled choices each mapped to a score "
+            "(requires choice_scores).\n"
+            "Picking 'pass_fail' for a scored eval makes the UI show Pass/Fail instead "
+            "of the score — set 'percentage' for scored evals."
         ),
     )
-    pass_threshold: Optional[float] = Field(
+    pass_threshold: float | None = Field(
         default=0.5,
         ge=0.0,
         le=1.0,
         description="Score threshold for pass/fail determination (0.0-1.0, default 0.5).",
     )
-    choice_scores: Optional[dict] = Field(
+    choice_scores: dict | None = Field(
         default=None,
         description=(
             "Score per choice option. Required when output_type='deterministic'. "
@@ -75,7 +113,7 @@ class CreateEvalTemplateInput(PydanticBaseModel):
             "{'Excellent': 1.0, 'Good': 0.7, 'Poor': 0.3, 'Bad': 0.0})."
         ),
     )
-    tags: Optional[list[str]] = Field(
+    tags: list[str] | None = Field(
         default=None,
         description="Tags to categorize this evaluation template.",
     )
@@ -92,27 +130,27 @@ class CreateEvalTemplateInput(PydanticBaseModel):
     )
 
     # ── Code eval fields ──
-    code: Optional[str] = Field(
+    code: str | None = Field(
         default=None,
         description=(
             "Custom evaluation code. Required when eval_type='code'. "
             "Python or JavaScript code that receives inputs and returns a score."
         ),
     )
-    code_language: Optional[Literal["python", "javascript"]] = Field(
+    code_language: Literal["python", "javascript"] | None = Field(
         default=None,
         description="Code language: 'python' or 'javascript'. Required when eval_type='code'.",
     )
 
     # ── LLM eval fields ──
-    messages: Optional[list[dict]] = Field(
+    messages: list[dict] | None = Field(
         default=None,
         description=(
             "Message chain for LLM evals. List of {role, content} dicts. "
             "Example: [{'role': 'system', 'content': '...'}, {'role': 'user', 'content': '...'}]"
         ),
     )
-    few_shot_examples: Optional[list[dict]] = Field(
+    few_shot_examples: list[dict] | None = Field(
         default=None,
         description=(
             "Reference datasets for few-shot calibration (LLM and agent evals). "
@@ -122,14 +160,14 @@ class CreateEvalTemplateInput(PydanticBaseModel):
     )
 
     # ── Agent eval fields ──
-    mode: Optional[Literal["auto", "agent", "quick"]] = Field(
+    mode: Literal["auto", "agent", "quick"] | None = Field(
         default=None,
         description=(
             "Agent eval mode: 'agent' (default, multi-turn with tools), "
             "'quick' (single-turn, fast), 'auto' (adapts to data complexity)."
         ),
     )
-    tools: Optional[dict] = Field(
+    tools: dict | None = Field(
         default=None,
         description=(
             "Tool configuration for agent evals. "
@@ -138,14 +176,14 @@ class CreateEvalTemplateInput(PydanticBaseModel):
             "Example: {'internet': true, 'connectors': ['connector-uuid']}"
         ),
     )
-    knowledge_bases: Optional[list[str]] = Field(
+    knowledge_bases: list[str] | None = Field(
         default=None,
         description=(
             "Knowledge base IDs for agent evals. The agent can search these KBs "
             "during evaluation for fact-grounding. Pass a list of KB UUIDs."
         ),
     )
-    data_injection: Optional[dict] = Field(
+    data_injection: dict | None = Field(
         default=None,
         description=(
             "Context injection for agent evals. Flags: 'variables_only' (default), "
@@ -154,7 +192,7 @@ class CreateEvalTemplateInput(PydanticBaseModel):
         ),
     )
 
-    summary: Optional[dict] = Field(
+    summary: dict | None = Field(
         default=None,
         description=(
             "Explanation style for agent evals: "
@@ -164,10 +202,10 @@ class CreateEvalTemplateInput(PydanticBaseModel):
     )
 
     # Aliases for alternate field names (excluded from schema sent to LLM).
-    criteria: Optional[str] = Field(default=None, exclude=True)
-    template_type: Optional[str] = Field(default=None, exclude=True)
-    required_keys: Optional[list[str]] = Field(default=None, exclude=True)
-    choices: Optional[dict] = Field(default=None, exclude=True)
+    criteria: str | None = Field(default=None, exclude=True)
+    template_type: str | None = Field(default=None, exclude=True)
+    required_keys: list[str] | None = Field(default=None, exclude=True)
+    choices: dict | None = Field(default=None, exclude=True)
 
     @model_validator(mode="after")
     def normalize_and_validate(self):
@@ -179,32 +217,66 @@ class CreateEvalTemplateInput(PydanticBaseModel):
                 self.eval_type = mapped
         if self.criteria and not self.instructions:
             self.instructions = self.criteria
-        if self.choices and not self.choice_scores and self.output_type == "deterministic":
+
+        # TH-5254: if the caller didn't explicitly choose an output_type and the
+        # instructions clearly describe a graded/numeric score, treat it as a
+        # 'percentage' (score) eval rather than the pass_fail default — otherwise
+        # the UI renders Pass/Fail for what is really a 0-1 score eval.
+        if (
+            "output_type" not in self.model_fields_set
+            and self.output_type == "pass_fail"
+            and self.eval_type in (None, "llm", "agent")
+            and _looks_like_scored_eval(self.instructions)
+        ):
+            self.output_type = "percentage"
+
+        if (
+            self.choices
+            and not self.choice_scores
+            and self.output_type == "deterministic"
+        ):
             keys = list(self.choices.keys())
             n = len(keys)
-            self.choice_scores = {k: round(1.0 - i / max(n - 1, 1), 2) for i, k in enumerate(keys)}
+            self.choice_scores = {
+                k: round(1.0 - i / max(n - 1, 1), 2) for i, k in enumerate(keys)
+            }
 
         # Validate
         if self.eval_type == "code" and not self.code:
             raise ValueError("'code' field is required when eval_type='code'.")
 
-        # Validate: non-code evals need instructions (unless data_injection)
-        if self.eval_type != "code" and not self.instructions:
+        # Validate: non-code evals need instructions that actually interpolate
+        # data via at least one {{template variable}} (or pull data via
+        # data_injection). Instructions with no variable produce an eval that
+        # ignores the row entirely — a silent footgun when created via Falcon.
+        if self.eval_type != "code":
             has_injection = (
-                self.data_injection
-                and (
-                    self.data_injection.get("full_row")
-                    or not self.data_injection.get("variables_only", True)
+                (
+                    self.data_injection
+                    and (
+                        self.data_injection.get("full_row")
+                        or not self.data_injection.get("variables_only", True)
+                    )
                 )
-            ) if self.data_injection else False
-            if not has_injection:
+                if self.data_injection
+                else False
+            )
+            has_variable = bool(
+                self.instructions and re.search(r"\{\{.*?\}\}", self.instructions)
+            )
+            if not has_variable and not has_injection:
                 raise ValueError(
-                    "Instructions are required. Include template variables like {{input}}, {{output}}."
+                    "Instructions must include at least one template variable "
+                    "like {{input}} or {{output}} (the variables map to data "
+                    "columns at runtime). Without a template variable the eval "
+                    "would ignore the row being evaluated."
                 )
 
         # Validate: deterministic needs choice_scores
         if self.output_type == "deterministic" and not self.choice_scores:
-            raise ValueError("choice_scores is required when output_type='deterministic'.")
+            raise ValueError(
+                "choice_scores is required when output_type='deterministic'."
+            )
 
         return self
 
@@ -234,7 +306,6 @@ class CreateEvalTemplateTool(BaseTool):
         self, params: CreateEvalTemplateInput, context: ToolContext
     ) -> ToolResult:
         import re
-        import traceback
 
         from model_hub.models.choices import OwnerChoices
         from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
@@ -360,9 +431,7 @@ class CreateEvalTemplateTool(BaseTool):
 
         elif params.eval_type == "agent":
             # Merge auto-detected context flags with explicit data_injection
-            merged_injection = dict(
-                params.data_injection or {"variables_only": True}
-            )
+            merged_injection = dict(params.data_injection or {"variables_only": True})
             if auto_flags:
                 merged_injection.update(auto_flags)
                 merged_injection.pop("variables_only", None)
@@ -491,7 +560,9 @@ class CreateEvalTemplateTool(BaseTool):
             content += f"\n\n### {label}\n\n{preview}"
 
         if required_keys:
-            content += f"\n\n**Variables:** {', '.join(f'`{k}`' for k in required_keys)}"
+            content += (
+                f"\n\n**Variables:** {', '.join(f'`{k}`' for k in required_keys)}"
+            )
 
         content += "\n\n_Use `test_eval_template` to validate the template before running evaluations._"
 

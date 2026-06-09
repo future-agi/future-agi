@@ -8,10 +8,18 @@ from tfc.middleware.workspace_context import (
 
 
 class PersonaSerializer(serializers.ModelSerializer):
-    """
-    Serializer for Persona model - returns business fields only.
-    Supports both API contract field names (profession, language, custom_properties)
-    and model field names (occupation, languages, metadata) for updates.
+    """A persona is a reusable user archetype used by agent simulations.
+
+    Personas capture demographic (age_group, gender, location, occupation),
+    behavioural (communication_style, conversation_speed, interrupt_sensitivity),
+    and stylistic (tone, verbosity, slang_usage, emoji_usage) traits. The
+    simulator generates synthetic conversations by sampling personas against
+    a target agent. Use list_personas to find existing ones, create_persona
+    to register a new one, duplicate_persona to clone-and-rename. Personas
+    are workspace-scoped; is_default marks system-provided samples.
+    Supports both API contract field names (profession, language,
+    custom_properties) and model field names (occupation, languages,
+    metadata) for updates.
     """
 
     persona_type_display = serializers.CharField(

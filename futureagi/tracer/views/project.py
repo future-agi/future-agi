@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
+from ai_tools.drf_bridge import expose_to_mcp
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
 from tfc.routers import uses_db
@@ -59,6 +60,50 @@ from tracer.utils.helper import get_default_project_version_config, get_sort_que
 logger = structlog.get_logger(__name__)
 
 
+@expose_to_mcp(
+    category="tracing",
+    tools={
+        "list": {
+            "name": "list_trace_projects",
+            "query_params": {
+                "name": {
+                    "type": str,
+                    "description": "Filter projects by name (case-insensitive substring match). Example: 'chatbot' matches 'production-chatbot-v2'.",
+                    "required": False,
+                },
+                "project_type": {
+                    "type": str,
+                    "description": "Filter by project type. One of: 'experiment' (offline eval runs) or 'observe' (live production tracing). Omit to return both.",
+                    "required": False,
+                },
+                "page_number": {
+                    "type": int,
+                    "default": 0,
+                    "description": "Page number, 0-indexed. Example: 0 for first page, 1 for second page.",
+                    "required": False,
+                },
+                "page_size": {
+                    "type": int,
+                    "default": 20,
+                    "description": "Number of projects per page. Range 1-100. Default 20.",
+                    "required": False,
+                },
+            },
+        },
+        "retrieve": {
+            "name": "get_trace_project",
+        },
+        "create": {
+            "name": "create_trace_project",
+            "include_fields": ["name", "model_type", "trace_type", "source", "tags"],
+        },
+        "update_project_name": {
+            "name": "rename_trace_project",
+            "serializer": "ProjectNameUpdateSerializer",
+            "method": "POST",
+        },
+    },
+)
 class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
