@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import process from "node:process";
 import { promisify } from "node:util";
@@ -34,9 +35,11 @@ async function main() {
   let browser = null;
   let page = null;
   let caughtError = null;
+  let selection = null;
+  let seededFixtureCleanup = null;
 
   try {
-    const selection = await selectMetricsQueue(auth);
+    selection = await selectMetricsQueue(auth);
     const expected = buildExpectedUiValues(selection);
 
     browser = await puppeteer.launch({
@@ -151,6 +154,12 @@ async function main() {
     );
     assert(pageErrors.length === 0, `Page errors: ${pageErrors.join("; ")}`);
 
+    if (selection.seeded) {
+      seededFixtureCleanup = await cleanupMetricQueueFixture(
+        selection.queue.id,
+      );
+    }
+
     console.log(
       JSON.stringify(
         {
@@ -182,9 +191,11 @@ async function main() {
             pair_count: asArray(selection.agreement.annotator_pairs).length,
           },
           db_audit: selection.dbAudit,
+          seeded_fixture: Boolean(selection.seeded),
           model_hub_request_count: modelHubRequests.length,
           browser_mutations: browserMutations.map(maskRequest),
           screenshot: SCREENSHOT_PATH,
+          cleanup: seededFixtureCleanup ? [seededFixtureCleanup] : [],
         },
         null,
         2,
@@ -221,6 +232,22 @@ async function main() {
     );
   } finally {
     if (browser) await browser.close();
+    if (selection?.seeded && !seededFixtureCleanup) {
+      await cleanupMetricQueueFixture(selection.queue.id).catch((error) => {
+        console.error(
+          JSON.stringify(
+            {
+              cleanup: "hard delete annotation queue metrics fixture",
+              status: "failed",
+              queue_id: selection.queue.id,
+              error: error.message,
+            },
+            null,
+            2,
+          ),
+        );
+      });
+    }
   }
 
   if (caughtError) throw caughtError;
@@ -228,7 +255,7 @@ async function main() {
 
 async function selectMetricsQueue(auth) {
   const configuredQueueId = process.env.ANNOTATION_METRICS_QUEUE_ID;
-  const candidates = configuredQueueId
+  let candidates = configuredQueueId
     ? [
         {
           queue_id: configuredQueueId,
@@ -242,6 +269,12 @@ async function selectMetricsQueue(auth) {
         organizationId: auth.organizationId,
         workspaceId: auth.workspaceId,
       });
+  let seededQueueId = null;
+  if (!configuredQueueId && candidates.length === 0) {
+    const seededCandidate = await seedMetricQueueFixture(auth);
+    seededQueueId = seededCandidate.queue_id;
+    candidates = [seededCandidate];
+  }
   assert(
     candidates.length > 0,
     "No local annotation queue metrics candidates were found.",
@@ -292,6 +325,7 @@ async function selectMetricsQueue(auth) {
         analytics,
         agreement,
         dbAudit,
+        seeded: Boolean(candidate.seeded),
       };
     } catch (error) {
       failures.push({
@@ -302,11 +336,217 @@ async function selectMetricsQueue(auth) {
     }
   }
 
+  if (seededQueueId) {
+    await cleanupMetricQueueFixture(seededQueueId).catch(() => null);
+  }
   throw new Error(
     `No accessible queue rendered all metrics endpoints: ${JSON.stringify(
       failures,
     )}`,
   );
+}
+
+async function seedMetricQueueFixture(auth) {
+  const queueId = randomUUID();
+  const labelId = randomUUID();
+  const queueLabelId = randomUUID();
+  const annotatorId = randomUUID();
+  const itemOneId = randomUUID();
+  const itemTwoId = randomUUID();
+  const scoreOneId = randomUUID();
+  const scoreTwoId = randomUUID();
+  const runId = Date.now().toString(36);
+  const queueName = `ui_aq_metrics_${runId}`;
+  const labelName = `ui_aq_metrics_label_${runId}`;
+  const labelSettings = {
+    rule_prompt: "",
+    multi_choice: false,
+    options: [{ label: "accurate" }, { label: "needs review" }],
+    auto_annotate: false,
+    strategy: "manual",
+  };
+  const metadata = {
+    smoke: "annotation-queue-metrics-panels",
+    run_id: runId,
+  };
+
+  const sql = `
+WITH inserted_label AS (
+  INSERT INTO model_hub_annotationslabels (
+    created_at, updated_at, deleted, deleted_at, id, name, type, settings,
+    description, organization_id, project_id, workspace_id, metadata, allow_notes
+  )
+  VALUES (
+    NOW(), NOW(), FALSE, NULL, ${sqlUuid(labelId)}, ${sqlText(labelName)},
+    'categorical', ${sqlJson(labelSettings)}, 'Synthetic metrics smoke label',
+    ${sqlUuid(auth.organizationId)}, NULL, ${sqlUuid(auth.workspaceId)},
+    ${sqlJson(metadata)}, FALSE
+  )
+  RETURNING id
+),
+inserted_queue AS (
+  INSERT INTO model_hub_annotationqueue (
+    created_at, updated_at, deleted, deleted_at, id, name, description,
+    instructions, status, assignment_strategy, annotations_required,
+    reservation_timeout_minutes, requires_review, created_by_id,
+    organization_id, workspace_id, project_id, is_default, dataset_id,
+    agent_definition_id, auto_assign
+  )
+  VALUES (
+    NOW(), NOW(), FALSE, NULL, ${sqlUuid(queueId)}, ${sqlText(queueName)},
+    'Synthetic fixture for annotation queue metrics smoke.',
+    'Synthetic fixture for annotation queue metrics smoke.', 'active', 'manual',
+    2, 60, FALSE, ${sqlUuid(auth.user.id)}, ${sqlUuid(auth.organizationId)},
+    ${sqlUuid(auth.workspaceId)}, NULL, FALSE, NULL, NULL, TRUE
+  )
+  RETURNING id, name
+),
+inserted_queue_label AS (
+  INSERT INTO model_hub_annotationqueuelabel (
+    created_at, updated_at, deleted, deleted_at, id, required, "order", label_id, queue_id
+  )
+  SELECT NOW(), NOW(), FALSE, NULL, ${sqlUuid(queueLabelId)}, TRUE, 0,
+    inserted_label.id, inserted_queue.id
+  FROM inserted_label, inserted_queue
+  RETURNING id
+),
+inserted_annotator AS (
+  INSERT INTO model_hub_annotationqueueannotator (
+    created_at, updated_at, deleted, deleted_at, id, role, roles, queue_id, user_id
+  )
+  SELECT NOW(), NOW(), FALSE, NULL, ${sqlUuid(annotatorId)}, 'manager',
+    ${sqlJson(["manager", "reviewer", "annotator"])}, inserted_queue.id,
+    ${sqlUuid(auth.user.id)}
+  FROM inserted_queue
+  RETURNING id
+),
+inserted_items AS (
+  INSERT INTO model_hub_queueitem (
+    created_at, updated_at, deleted, deleted_at, id, source_type, status,
+    priority, "order", metadata, reserved_at, reservation_expires_at,
+    review_status, reviewed_at, review_notes, assigned_to_id, call_execution_id,
+    dataset_row_id, observation_span_id, organization_id, prototype_run_id,
+    queue_id, reserved_by_id, reviewed_by_id, trace_id, workspace_id,
+    trace_session_id
+  )
+  VALUES
+    (
+      NOW(), NOW(), FALSE, NULL, ${sqlUuid(itemOneId)}, 'trace', 'completed',
+      10, 0, ${sqlJson({ ...metadata, item: "completed" })}, NULL, NULL,
+      NULL, NULL, NULL, ${sqlUuid(auth.user.id)}, NULL, NULL, NULL,
+      ${sqlUuid(auth.organizationId)}, NULL, ${sqlUuid(queueId)}, NULL, NULL,
+      NULL, ${sqlUuid(auth.workspaceId)}, NULL
+    ),
+    (
+      NOW(), NOW(), FALSE, NULL, ${sqlUuid(itemTwoId)}, 'trace', 'pending',
+      0, 1, ${sqlJson({ ...metadata, item: "pending" })}, NULL, NULL,
+      NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+      ${sqlUuid(auth.organizationId)}, NULL, ${sqlUuid(queueId)}, NULL, NULL,
+      NULL, ${sqlUuid(auth.workspaceId)}, NULL
+    )
+  RETURNING id
+),
+inserted_scores AS (
+  INSERT INTO model_hub_score (
+    created_at, updated_at, deleted, deleted_at, id, source_type, value,
+    score_source, notes, annotator_id, call_execution_id, dataset_row_id,
+    label_id, observation_span_id, organization_id, project_id, prototype_run_id,
+    queue_item_id, trace_id, trace_session_id, workspace_id, value_history
+  )
+  VALUES
+    (
+      NOW(), NOW(), FALSE, NULL, ${sqlUuid(scoreOneId)}, 'trace',
+      ${sqlJson("accurate")}, 'human', 'Synthetic matching score.',
+      ${sqlUuid(auth.user.id)}, NULL, NULL, ${sqlUuid(labelId)}, NULL,
+      ${sqlUuid(auth.organizationId)}, NULL, NULL, ${sqlUuid(itemOneId)},
+      NULL, NULL, ${sqlUuid(auth.workspaceId)}, '[]'::jsonb
+    ),
+    (
+      NOW(), NOW(), FALSE, NULL, ${sqlUuid(scoreTwoId)}, 'trace',
+      ${sqlJson("accurate")}, 'human', 'Synthetic matching score.',
+      ${sqlUuid(auth.user.id)}, NULL, NULL, ${sqlUuid(labelId)}, NULL,
+      ${sqlUuid(auth.organizationId)}, NULL, NULL, ${sqlUuid(itemOneId)},
+      NULL, NULL, ${sqlUuid(auth.workspaceId)}, '[]'::jsonb
+    )
+  RETURNING id
+)
+SELECT json_build_object(
+  'queue_id', ${sqlText(queueId)},
+  'queue_name', ${sqlText(queueName)},
+  'active_items', (SELECT COUNT(*) FROM inserted_items),
+  'active_scores', (SELECT COUNT(*) FROM inserted_scores),
+  'annotators', 1,
+  'comparable_item_labels', 1,
+  'seeded', TRUE
+)::text;
+`;
+
+  return runPostgresJson(sql);
+}
+
+async function cleanupMetricQueueFixture(queueId) {
+  const sql = `
+WITH target_queue AS (
+  SELECT id FROM model_hub_annotationqueue
+  WHERE id = ${sqlUuid(queueId)}
+    AND name LIKE 'ui_aq_metrics_%'
+),
+target_items AS (
+  SELECT id FROM model_hub_queueitem
+  WHERE queue_id IN (SELECT id FROM target_queue)
+),
+target_labels AS (
+  SELECT label_id FROM model_hub_annotationqueuelabel
+  WHERE queue_id IN (SELECT id FROM target_queue)
+),
+deleted_scores AS (
+  DELETE FROM model_hub_score
+  WHERE queue_item_id IN (SELECT id FROM target_items)
+  RETURNING 1
+),
+deleted_members AS (
+  DELETE FROM model_hub_annotationqueueannotator
+  WHERE queue_id IN (SELECT id FROM target_queue)
+  RETURNING 1
+),
+deleted_queue_labels AS (
+  DELETE FROM model_hub_annotationqueuelabel
+  WHERE queue_id IN (SELECT id FROM target_queue)
+  RETURNING 1
+),
+deleted_items AS (
+  DELETE FROM model_hub_queueitem
+  WHERE queue_id IN (SELECT id FROM target_queue)
+    AND (SELECT COUNT(*) FROM deleted_scores) >= 0
+  RETURNING 1
+),
+deleted_queue AS (
+  DELETE FROM model_hub_annotationqueue
+  WHERE id IN (SELECT id FROM target_queue)
+    AND (SELECT COUNT(*) FROM deleted_items) >= 0
+    AND (SELECT COUNT(*) FROM deleted_members) >= 0
+    AND (SELECT COUNT(*) FROM deleted_queue_labels) >= 0
+  RETURNING 1
+),
+deleted_labels AS (
+  DELETE FROM model_hub_annotationslabels
+  WHERE id IN (SELECT label_id FROM target_labels)
+    AND name LIKE 'ui_aq_metrics_label_%'
+    AND (SELECT COUNT(*) FROM deleted_queue) >= 0
+  RETURNING 1
+)
+SELECT json_build_object(
+  'cleanup', 'hard delete annotation queue metrics fixture',
+  'status', 'passed',
+  'deleted_score_count', (SELECT COUNT(*) FROM deleted_scores),
+  'deleted_queue_item_count', (SELECT COUNT(*) FROM deleted_items),
+  'deleted_member_count', (SELECT COUNT(*) FROM deleted_members),
+  'deleted_label_membership_count', (SELECT COUNT(*) FROM deleted_queue_labels),
+  'deleted_label_count', (SELECT COUNT(*) FROM deleted_labels),
+  'deleted_queue_count', (SELECT COUNT(*) FROM deleted_queue)
+)::text;
+`;
+  return runPostgresJson(sql);
 }
 
 function buildExpectedUiValues({ progress, analytics, agreement }) {
@@ -593,6 +833,14 @@ function maskRequest(rawRequest) {
 function sqlUuid(value) {
   assert(isUuid(value), "SQL UUID value must be a UUID.");
   return `'${value}'::uuid`;
+}
+
+function sqlText(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function sqlJson(value) {
+  return `${sqlText(JSON.stringify(value))}::jsonb`;
 }
 
 function browserExecutablePath() {

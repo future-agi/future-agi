@@ -3,7 +3,6 @@ import json
 import traceback
 from collections import defaultdict
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional
 
 try:
     import orjson
@@ -14,9 +13,7 @@ except ImportError:
 
 import pandas as pd
 import structlog
-
-logger = structlog.get_logger(__name__)
-from django.db import OperationalError, connection, models, transaction
+from django.db import OperationalError, models, transaction
 from django.db.models import (
     Avg,
     Case,
@@ -1953,17 +1950,26 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         # display_name override from the PG overlay (UI rename). Soft-id by
         # trace_session_id; scope by project set when known.
-        overlay_qs = TraceSessionOverlay.objects.filter(
-            trace_session_id__in=ids,
-            deleted=False,
-        )
-        proj_list = [str(p) for p in (project_ids or []) if p]
-        if proj_list:
-            overlay_qs = overlay_qs.filter(project_id__in=proj_list)
-        display_map = {
-            str(tsid): name
-            for tsid, name in overlay_qs.values_list("trace_session_id", "display_name")
-        }
+        display_map = {}
+        try:
+            overlay_qs = TraceSessionOverlay.objects.filter(
+                trace_session_id__in=ids,
+                deleted=False,
+            )
+            proj_list = [str(p) for p in (project_ids or []) if p]
+            if proj_list:
+                overlay_qs = overlay_qs.filter(project_id__in=proj_list)
+            display_map = {
+                str(tsid): name
+                for tsid, name in overlay_qs.values_list(
+                    "trace_session_id", "display_name"
+                )
+            }
+        except Exception as e:
+            logger.warning(
+                "session_name_overlay_lookup_failed",
+                error=str(e)[:200],
+            )
 
         out: dict[str, str | None] = {}
         for sid in ids:
@@ -2076,9 +2082,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         org = _get_request_organization(request)
         filters = list(validated_data.get("filters", []) or [])
         sort_params = validated_data.get("sort_params", [])
-        page_number = validated_data["page_number"]
-        page_size = validated_data["page_size"]
-        user_id_qp = validated_data.get("user_id")
+        page_number = validated_data.get("page_number", 0)
+        page_size = validated_data.get("page_size", 30)
+        user_id_qp = validated_data.get("user_id") or getattr(
+            request, "query_params", {}
+        ).get("user_id")
 
         # Support user_id injected as a structural filter (the cross-project
         # user detail page prepends one). Extract the raw user_id string from
@@ -2127,16 +2135,50 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # be in `_ids` or the list is silently empty — and `end_users` supplies it
         # directly (no deterministic_id compute here), no double-count because a
         # net-new id has no remap entry (resolves to itself).
+        end_user_display = None
         if user_id_raw:
             from tracer.services.clickhouse.v2.end_user_dict_reader import (
                 resolve_end_user_ids_by_user_id,
             )
 
-            _ids = resolve_end_user_ids_by_user_id(
-                user_id_raw,
-                organization_id=org.id if org else None,
-                project_id=(project_id if (not org_scope and project_id) else None),
-            )
+            try:
+                _ids = resolve_end_user_ids_by_user_id(
+                    user_id_raw,
+                    organization_id=org.id if org else None,
+                    project_id=(project_id if (not org_scope and project_id) else None),
+                )
+            except Exception as e:
+                logger.warning(
+                    "session_list_user_id_ch_resolve_failed",
+                    error=str(e)[:200],
+                )
+                _ids = []
+            if not _ids:
+                try:
+                    end_user_qs = EndUser.objects.filter(user_id=user_id_raw)
+                    if org:
+                        end_user_qs = end_user_qs.filter(organization=org)
+                    if not org_scope and project_id:
+                        end_user_qs = end_user_qs.filter(project_id=project_id)
+                    end_user_rows = list(
+                        end_user_qs.values(
+                            "id",
+                            "user_id",
+                            "user_id_type",
+                            "user_id_hash",
+                        )
+                    )
+                    _ids = [
+                        str(row.get("id")) for row in end_user_rows if row.get("id")
+                    ]
+                    if end_user_rows:
+                        end_user_display = end_user_rows[0]
+                except Exception as e:
+                    logger.warning(
+                        "session_list_user_id_pg_fallback_failed",
+                        error=str(e)[:200],
+                    )
+                    _ids = []
             if not _ids:
                 _ids = [NIL_UUID]
             filters.append(
