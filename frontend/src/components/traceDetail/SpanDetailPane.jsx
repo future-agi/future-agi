@@ -40,7 +40,8 @@ import ScoresListSection from "src/components/ScoresListSection/ScoresListSectio
 import { normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
-import EvalsTabView, { collectAllEvalsFromEntry } from "./EvalsTabView";
+import { collectAllEvalsFromEntry } from "./EvalsTabView";
+import EvalRollupSection from "./EvalRollupSection";
 import { openFixWithFalcon } from "src/sections/falcon-ai/helpers/openFixWithFalcon";
 import ImageCard from "src/components/multimodal/ImageCard";
 import AudioCellRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/AudioCellRenderer";
@@ -1734,6 +1735,7 @@ EventCard.propTypes = { event: PropTypes.object };
 
 const SpanDetailPane = ({
   entry,
+  evalResults,
   allSpans,
   traceStartTime,
   isRootSpan,
@@ -2148,8 +2150,14 @@ const SpanDetailPane = ({
             shared EvalsTabView component so the trace drawer and the
             voice drawer use the same eval UI. */}
         {activeTab === "evals" && (
-          <EvalsTabView
-            evals={collectAllEvalsFromEntry(entry)}
+          <EvalRollupSection
+            evals={
+              isRootSpan
+                ? collectAllEvalsFromEntry(entry)
+                : collectAllEvalsFromEntry({ ...entry, children: [] })
+            }
+            evalResults={evalResults}
+            scope={isRootSpan ? "trace" : "span"}
             onSelectSpan={onSelectSpan}
             emptyMessage="No evaluations for this span or its children"
             onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
@@ -2759,6 +2767,7 @@ SpanDetailPane.propTypes = {
     evalScores: PropTypes.array,
     annotations: PropTypes.array,
   }),
+  evalResults: PropTypes.object,
   allSpans: PropTypes.array,
   traceStartTime: PropTypes.any,
   isRootSpan: PropTypes.bool,

@@ -1211,6 +1211,7 @@ const TraceDetailDrawerV2 = ({
               >
                 <SpanDetailPane
                   entry={selectedSpanData}
+                  evalResults={data?.eval_results}
                   allSpans={spans}
                   traceStartTime={
                     spans?.length ? getSpan(spans[0])?.start_time : null
@@ -1294,6 +1295,7 @@ const TraceDetailDrawerV2 = ({
               {selectedSpanData ? (
                 <SpanDetailPane
                   entry={selectedSpanData}
+                  evalResults={data?.eval_results}
                   allSpans={spans}
                   traceStartTime={
                     spans?.length ? getSpan(spans[0])?.start_time : null
