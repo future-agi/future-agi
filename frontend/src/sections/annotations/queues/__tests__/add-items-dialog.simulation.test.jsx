@@ -41,6 +41,7 @@ vi.mock("src/hooks/use-debounce", () => ({
 vi.mock("ag-grid-react", async () => {
   const React = await import("react");
   return {
+    // eslint-disable-next-line react/prop-types
     AgGridReact: ({ onGridReady }) => {
       React.useEffect(() => {
         onGridReady?.({ api: agGridMock.api });
