@@ -1,0 +1,64 @@
+# Reproducibility passports for simulation runs
+
+Simulation and eval runs can fail for reasons that are hard to separate after
+the fact: a prompt version changed, an eval mapping drifted, a scenario row was
+filtered differently, or a simulator agent moved to a different model. A
+reproducibility passport is a deterministic JSON artifact that records the
+configuration surface needed to explain and replay a `TestExecution`.
+
+The backend helper lives in:
+
+```python
+from simulate.services.reproducibility_passport import (
+    build_test_execution_passport,
+    diff_passports,
+)
+```
+
+## What the passport captures
+
+`build_test_execution_passport(test_execution)` returns:
+
+- `execution`: run status, scenario ids, call counts, timestamps, and error reason
+- `run_test`: source type, dataset row selection, workspace, and tool-eval flag
+- `agent`: agent definition fields, agent version snapshot hash, and simulator hash
+- `prompt`: prompt template/version ids and prompt config snapshot hash
+- `scenarios`: scenario ids, dataset ids, metadata, and source hashes
+- `eval_configs`: eval template/config/mapping/filter fields and criteria hash
+- `execution_options`: execution metadata and selected dataset/scenario ids
+- `section_hashes`: stable SHA-256 hashes for every section
+- `passport_hash`: a top-level hash of the passport schema and section hashes
+
+Secrets are recursively redacted from nested config objects before hashing or
+returning the artifact. Free-text prompt and scenario bodies are represented by
+hashes instead of copied into the passport.
+
+## How to use it for replay
+
+Capture a passport before starting a rerun or regression investigation:
+
+```python
+original = build_test_execution_passport(test_execution)
+```
+
+After recreating or rerunning the execution, compare the new passport:
+
+```python
+rerun = build_test_execution_passport(rerun_execution)
+drift = diff_passports(original, rerun)
+
+if drift.has_drift:
+    logger.info("simulation_replay_drift", extra=drift.as_dict())
+```
+
+Section-level drift lets the caller decide whether a result changed because of
+model behavior or because the replay inputs were no longer identical.
+
+## Why this matters
+
+The same artifact can support several product surfaces:
+
+- rerun preflight checks before comparing eval scores
+- self-healing workflows that explain which input section changed
+- audit logs for prompt and eval version changes
+- bug reports that are useful without exposing raw transcripts or credentials
