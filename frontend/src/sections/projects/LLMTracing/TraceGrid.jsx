@@ -22,6 +22,7 @@ import {
   getTraceListColumnDefs,
   FILTER_FOR_HAS_EVAL,
   generateAnnotationColumnsForTracing,
+  generateEvalColumnsGroupedByTask,
 } from "./common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -251,7 +252,10 @@ const TraceGrid = React.forwardRef(
                       .filter((cc) => newById.has(cc.id))
                       .map((cc) => {
                         seen.add(cc.id);
-                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
                       });
                     const added = newCols.filter((nc) => !seen.has(nc.id));
                     finalNonCustom = [...kept, ...added];
@@ -341,23 +345,40 @@ const TraceGrid = React.forwardRef(
         };
       }
 
-      // Flat columns — no grouping for eval/annotation metrics
+      // Flat columns — no grouping for annotation metrics; eval metrics are
+      // grouped under their parent Task (§4.1).
       const bottomRowObj = {};
       const annotationCols = columns.filter(
         (c) => c?.groupBy === "Annotation Metrics",
       );
       const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
+      const evalCols = columns.filter(
+        (c) => c?.groupBy === "Evaluation Metrics",
+      );
       const otherCols = columns.filter(
         (c) =>
           c?.groupBy !== "Annotation Metrics" &&
-          c?.groupBy !== "Custom Columns",
+          c?.groupBy !== "Custom Columns" &&
+          c?.groupBy !== "Evaluation Metrics",
       );
 
-      // Build flat column defs for non-annotation, non-custom columns
+      // Build flat column defs for base (non-eval/annotation/custom) columns
       const columnDefsResult = otherCols.map((c) => {
         bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
         return getTraceListColumnDefs(c);
       });
+
+      // §4.1 — eval columns grouped under their parent Task (trace view scope:
+      // trace-level + span-level rollups; session-level excluded per §4.3.1).
+      const evalTaskGroups = generateEvalColumnsGroupedByTask(evalCols, {
+        view: "trace",
+      });
+      if (evalTaskGroups.length > 0) {
+        for (const c of evalCols) {
+          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+        }
+        columnDefsResult.push(...evalTaskGroups);
+      }
 
       // Group custom columns under a "Custom Columns" header (TH-4151)
       if (customCols.length > 0) {

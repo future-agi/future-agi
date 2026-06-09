@@ -2123,6 +2123,7 @@ const SpanDetailPane = ({
           <EvalsTabView
             evals={collectAllEvalsFromEntry(entry)}
             onSelectSpan={onSelectSpan}
+            showSpanRollup={isRootSpan}
             emptyMessage="No evaluations for this span or its children"
             onFixWithFalcon={({ level, ev, failingEvals, allEvals }) => {
               const traceId = span?.trace;

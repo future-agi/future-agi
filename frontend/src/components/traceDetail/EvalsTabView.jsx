@@ -6,6 +6,9 @@ import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
+import { RollupResult, inferType, TYPE } from "./EvalRollupSection";
+import { resolveEvalTask } from "src/sections/projects/LLMTracing/evalTaskMock";
+import EvalSourceGlyph from "src/sections/projects/LLMTracing/Renderers/EvalSourceGlyph";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
 // see the informational toast — preserves pre-integration behavior.
@@ -110,8 +113,46 @@ export function scoreColor(score) {
   };
 }
 
+/** Colored score chip — the traffic-light badge used for span eval scores and
+ *  (in the rollup view) for an eval's aggregated average. */
+const ScoreBadge = ({ sc, label }) => (
+  <Typography
+    sx={{
+      display: "inline-block",
+      fontSize: 11.5,
+      fontWeight: "fontWeightSemiBold",
+      color: sc.text,
+      bgcolor: sc.bg,
+      px: 0.75,
+      py: 0.15,
+      borderRadius: "3px",
+      minWidth: 36,
+      textAlign: "center",
+    }}
+  >
+    {label}
+  </Typography>
+);
+
+ScoreBadge.propTypes = { sc: PropTypes.object, label: PropTypes.node };
+
+/** Mean of the numeric scores across a group's spans, skipping errored rows. */
+const rollupMean = (rows) => {
+  const scores = (rows || [])
+    .filter((r) => r?.error !== true && r?.result !== "ERROR")
+    .map((r) => Number(r?.score))
+    .filter((n) => Number.isFinite(n));
+  if (!scores.length) return null;
+  return scores.reduce((a, b) => a + b, 0) / scores.length;
+};
+
 /** Single eval row with collapsible explanation + optional "View span" */
-const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => {
+const EvalTableRow = ({
+  ev,
+  onSelectSpan,
+  showSpanColumn,
+  onFixWithFalcon,
+}) => {
   const [expanded, setExpanded] = useState(false);
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
@@ -233,21 +274,7 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
               />
             ))
           ) : (
-            <Typography
-              sx={{
-                display: "inline-block",
-                fontSize: 11.5,
-                fontWeight: "fontWeightSemiBold",
-                color: sc.text,
-                bgcolor: sc.bg,
-                px: 0.75,
-                py: 0.15,
-                borderRadius: "3px",
-                minWidth: 36,
-              }}
-            >
-              {scoreLabel}
-            </Typography>
+            <ScoreBadge sc={sc} label={scoreLabel} />
           )}
         </Box>
 
@@ -406,6 +433,150 @@ EvalTableRow.propTypes = {
   onFixWithFalcon: PropTypes.func,
 };
 
+// Task group header in the merged (rollup) view — labels the Eval Task that
+// owns the evals beneath it.
+const TaskGroupHeader = ({ name, evalCount, level }) => (
+  <Box
+    sx={{
+      display: "flex",
+      alignItems: "center",
+      gap: 0.75,
+      px: 1.5,
+      py: 0.6,
+      bgcolor: "background.neutral",
+      borderBottom: "1px solid",
+      borderColor: "divider",
+      position: "sticky",
+      top: 28,
+      zIndex: 1,
+    }}
+  >
+    <Iconify icon="mdi:clipboard-check-outline" width={13} color="purple.500" />
+    <Typography
+      sx={{
+        fontSize: 11.5,
+        fontWeight: 700,
+        letterSpacing: "0.02em",
+        color: "text.primary",
+      }}
+    >
+      {name}
+    </Typography>
+    <Typography sx={{ fontSize: 10.5, color: "text.disabled" }}>
+      {evalCount} eval{evalCount === 1 ? "" : "s"}
+    </Typography>
+    {/* Task source level (trace / span / session) — one glyph per task, not
+        per row, since the level is a property of the Task. */}
+    {level && <EvalSourceGlyph level={level} sx={{ ml: "auto" }} />}
+  </Box>
+);
+
+TaskGroupHeader.propTypes = {
+  name: PropTypes.string,
+  evalCount: PropTypes.number,
+  level: PropTypes.string,
+};
+
+// One eval within a Task group: a rollup headline across the trace's spans,
+// expandable to the per-span detail rows (the existing EvalTableRow, with all
+// its functionality — explanation, error localization, Fix with Falcon).
+const EvalGroupRow = ({
+  group,
+  onSelectSpan,
+  showSpanColumn,
+  onFixWithFalcon,
+}) => {
+  const [expanded, setExpanded] = useState(false);
+  const spanCount = group.rows.length;
+  // Numeric evals roll up to an average shown as a colored chip (same badge as
+  // the per-span scores); pass/fail & choice keep their count chips.
+  const mean = group.type === TYPE.PERCENT ? rollupMean(group.rows) : null;
+  return (
+    <>
+      <Box
+        onClick={() => setExpanded((p) => !p)}
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          px: 1.5,
+          py: 0.6,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          cursor: "pointer",
+          "&:hover": { bgcolor: "rgba(0,0,0,0.02)" },
+          minHeight: 32,
+        }}
+      >
+        {/* Expand chevron — aligns with EvalTableRow's chevron column */}
+        <Box sx={{ width: 20, flexShrink: 0 }}>
+          <Iconify
+            icon={expanded ? "mdi:chevron-down" : "mdi:chevron-right"}
+            width={14}
+            color="text.disabled"
+          />
+        </Box>
+
+        {/* Eval name — under the "Evaluation metric" column */}
+        <Typography
+          noWrap
+          sx={{
+            width: showSpanColumn ? "30%" : "60%",
+            fontSize: 12,
+            fontWeight: 600,
+          }}
+        >
+          {group.evalName}
+        </Typography>
+
+        {/* Aggregated score — under the "Score" column, as a chip */}
+        <Box sx={{ width: "15%", display: "flex", flexWrap: "wrap", gap: 0.5 }}>
+          {group.type === TYPE.PERCENT ? (
+            <ScoreBadge
+              sc={scoreColor(mean)}
+              label={mean != null ? `${Math.round(mean)}%` : "—"}
+            />
+          ) : (
+            <RollupResult type={group.type} rows={group.rows} />
+          )}
+        </Box>
+
+        {/* Span column spacer (rollup spans many spans — no single name) */}
+        {showSpanColumn && <Box sx={{ width: "30%" }} />}
+
+        {/* Span count kept on the side, matching the table's action column */}
+        <Typography
+          sx={{
+            width: "25%",
+            fontSize: 10.5,
+            color: "text.disabled",
+            textAlign: "right",
+            flexShrink: 0,
+          }}
+        >
+          {spanCount} span{spanCount === 1 ? "" : "s"}
+        </Typography>
+      </Box>
+      {expanded &&
+        group.rows.map((ev) => (
+          <EvalTableRow
+            key={ev.id || ev.eval_name}
+            ev={ev}
+            onSelectSpan={onSelectSpan}
+            showSpanColumn={showSpanColumn}
+            onFixWithFalcon={onFixWithFalcon}
+          />
+        ))}
+    </>
+  );
+};
+
+EvalGroupRow.propTypes = {
+  group: PropTypes.object.isRequired,
+  onSelectSpan: PropTypes.func,
+  showSpanColumn: PropTypes.bool,
+  onFixWithFalcon: PropTypes.func,
+};
+
 /**
  * Main shared view. Renders:
  *  - summary bar (pass/fail counts, progress, optional "Fix with Falcon")
@@ -418,6 +589,7 @@ const EvalsTabView = ({
   emptyMessage,
   showSpanColumn = true,
   onFixWithFalcon,
+  showSpanRollup = false,
 }) => {
   const [search, setSearch] = useState("");
   const list = useMemo(() => (Array.isArray(evals) ? evals : []), [evals]);
@@ -443,6 +615,45 @@ const EvalsTabView = ({
         (e.spanName || "").toLowerCase().includes(q),
     );
   }, [list, search]);
+
+  // Merged (rollup) view: group the (search-filtered) eval rows by their Eval
+  // Task, then by eval name. Each eval is rolled up across the trace's spans
+  // and expandable to per-span detail. Tasks ordered newest-first.
+  const taskGroups = useMemo(() => {
+    if (!showSpanRollup) return [];
+    const byTask = new Map();
+    for (const ev of filtered) {
+      const task = resolveEvalTask({
+        id: ev.eval_config_id,
+        name: ev.eval_name,
+        eval_config_id: ev.eval_config_id,
+      });
+      let g = byTask.get(task.taskId);
+      if (!g) {
+        g = {
+          taskId: task.taskId,
+          taskName: task.taskName,
+          level: task.level,
+          createdAt: task.createdAt,
+          evals: new Map(),
+        };
+        byTask.set(task.taskId, g);
+      }
+      const key = ev.eval_name || ev.eval_config_id || "eval";
+      if (!g.evals.has(key)) g.evals.set(key, []);
+      g.evals.get(key).push(ev);
+    }
+    return Array.from(byTask.values())
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      .map((g) => ({
+        ...g,
+        evals: Array.from(g.evals.entries()).map(([evalName, rows]) => ({
+          evalName,
+          rows,
+          type: inferType(rows),
+        })),
+      }));
+  }, [filtered, showSpanRollup]);
 
   if (list.length === 0) {
     return (
@@ -716,15 +927,49 @@ const EvalsTabView = ({
           <Box sx={{ width: "25%" }} />
         </Box>
 
-        {filtered.map((ev) => (
-          <EvalTableRow
-            key={ev.id || ev.eval_name}
-            ev={ev}
-            onSelectSpan={onSelectSpan}
-            showSpanColumn={showSpanColumn}
-            onFixWithFalcon={onFixWithFalcon}
-          />
-        ))}
+        {showSpanRollup
+          ? taskGroups.map((task) => (
+              <React.Fragment key={task.taskId}>
+                <TaskGroupHeader
+                  name={task.taskName}
+                  evalCount={task.evals.length}
+                  level={task.level}
+                />
+                {task.evals.map((group) =>
+                  // Nest only when there are sub-evals to roll up (the eval ran
+                  // across >1 span). A single eval (e.g. a trace-level eval, or
+                  // one that ran on a single span) renders as a flat row — no
+                  // pointless "Trace average" nesting — straight to its output
+                  // + explanation dropdown.
+                  group.rows.length > 1 ? (
+                    <EvalGroupRow
+                      key={group.evalName}
+                      group={group}
+                      onSelectSpan={onSelectSpan}
+                      showSpanColumn={showSpanColumn}
+                      onFixWithFalcon={onFixWithFalcon}
+                    />
+                  ) : (
+                    <EvalTableRow
+                      key={group.evalName}
+                      ev={group.rows[0]}
+                      onSelectSpan={onSelectSpan}
+                      showSpanColumn={showSpanColumn}
+                      onFixWithFalcon={onFixWithFalcon}
+                    />
+                  ),
+                )}
+              </React.Fragment>
+            ))
+          : filtered.map((ev) => (
+              <EvalTableRow
+                key={ev.id || ev.eval_name}
+                ev={ev}
+                onSelectSpan={onSelectSpan}
+                showSpanColumn={showSpanColumn}
+                onFixWithFalcon={onFixWithFalcon}
+              />
+            ))}
       </Box>
     </Box>
   );
@@ -736,6 +981,7 @@ EvalsTabView.propTypes = {
   emptyMessage: PropTypes.string,
   showSpanColumn: PropTypes.bool,
   onFixWithFalcon: PropTypes.func,
+  showSpanRollup: PropTypes.bool,
 };
 
 export default EvalsTabView;

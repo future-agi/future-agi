@@ -147,6 +147,7 @@ import { getFilterExtraProperties } from "src/utils/prototypeObserveUtils";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 import { useParams, useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import { setEvalTaskRegistry } from "./evalTaskMock";
 
 import { PROJECT_SOURCE } from "src/utils/constants";
 import { useLLMTracingFilters } from "./useLLMTracingFilters";
@@ -1216,6 +1217,33 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     select: (data) => data.data?.result,
     enabled: Boolean(observeId),
   });
+
+  // Real eval-task list → feeds the eval→Task registry so the tracing table
+  // groups eval columns under their actual Task name + level (§4.1, §4.3).
+  // Read-only consumption of an existing endpoint; no backend change.
+  const { data: evalTaskList } = useQuery({
+    queryKey: ["eval-task-list", observeId],
+    queryFn: () =>
+      axios.get(endpoints.project.getEvalTaskList(), {
+        params: {
+          page: 1,
+          page_size: 200,
+          ...(observeId ? { project_id: observeId } : {}),
+        },
+      }),
+    select: (data) => data.data?.result,
+    enabled: Boolean(observeId),
+  });
+
+  useEffect(() => {
+    const items =
+      evalTaskList?.table ||
+      evalTaskList?.tasks ||
+      evalTaskList?.results ||
+      evalTaskList?.data ||
+      (Array.isArray(evalTaskList) ? evalTaskList : []);
+    setEvalTaskRegistry(items);
+  }, [evalTaskList]);
 
   // Shared node click handler for agent graph/path views
   const handleAgentNodeClick = useCallback(

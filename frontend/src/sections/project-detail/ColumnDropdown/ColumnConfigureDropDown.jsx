@@ -27,6 +27,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import Iconify from "src/components/iconify";
 import { useDebounce } from "src/hooks/use-debounce";
+import { groupEvalColumnsByTask } from "src/sections/projects/LLMTracing/evalTaskMock";
 
 // ---------------------------------------------------------------------------
 // Aggregate selection state
@@ -197,6 +198,119 @@ DraggableColumnRow.propTypes = {
 };
 
 // ---------------------------------------------------------------------------
+// Eval Task group section (§4.2) — master toggle (with indeterminate) over the
+// group's evals, plus a per-eval toggle for each. Collapsible. Used only when
+// `useGrouping` is set and eval columns are present.
+// ---------------------------------------------------------------------------
+const EvalTaskGroupSection = ({ group, onColumnChange }) => {
+  const [collapsed, setCollapsed] = useState(false);
+  const state = aggregateState(group.evals);
+  return (
+    <Box>
+      {/* Group master row */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: "4px",
+          px: "4px",
+          py: "2px",
+          borderRadius: "4px",
+          cursor: "pointer",
+          "&:hover": { bgcolor: "action.hover" },
+        }}
+        onClick={() => setCollapsed((c) => !c)}
+      >
+        <Checkbox
+          size="small"
+          checked={state === SELECTION_STATE.ALL}
+          indeterminate={state === SELECTION_STATE.SOME}
+          onClick={(e) => e.stopPropagation()}
+          onChange={(e) =>
+            onColumnChange(toggleMap(group.evals, e.target.checked))
+          }
+          sx={{
+            p: 0,
+            width: 16,
+            height: 16,
+            "& .MuiSvgIcon-root": { fontSize: 16 },
+            "&.Mui-checked": { color: "primary.light" },
+            "&.MuiCheckbox-indeterminate": { color: "primary.light" },
+          }}
+          inputProps={{ "aria-label": `Toggle ${group.taskName} task` }}
+        />
+        <Typography
+          noWrap
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: "0.02em",
+            color: "text.secondary",
+          }}
+        >
+          {group.taskName}
+        </Typography>
+        <Iconify
+          icon={collapsed ? "mdi:chevron-down" : "mdi:chevron-up"}
+          width={16}
+          sx={{ color: "text.disabled", flexShrink: 0 }}
+        />
+      </Box>
+
+      {/* Per-eval rows */}
+      {!collapsed &&
+        group.evals.map((col) => (
+          <Box
+            key={col.id}
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: "4px",
+              pl: "20px",
+              pr: "4px",
+              py: "2px",
+              borderRadius: "4px",
+              "&:hover": { bgcolor: "action.hover" },
+            }}
+          >
+            <Checkbox
+              size="small"
+              checked={col.isVisible}
+              onChange={(e) => onColumnChange({ [col.id]: e.target.checked })}
+              sx={{
+                p: 0,
+                width: 16,
+                height: 16,
+                "& .MuiSvgIcon-root": { fontSize: 16 },
+                "&.Mui-checked": { color: "primary.light" },
+              }}
+            />
+            <Typography
+              noWrap
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: 14,
+                lineHeight: "22px",
+                color: "text.primary",
+              }}
+            >
+              {col.name}
+            </Typography>
+          </Box>
+        ))}
+    </Box>
+  );
+};
+
+EvalTaskGroupSection.propTypes = {
+  group: PropTypes.object.isRequired,
+  onColumnChange: PropTypes.func.isRequired,
+};
+
+// ---------------------------------------------------------------------------
 // ColumnConfigureDropDown
 // ---------------------------------------------------------------------------
 const ColumnConfigureDropDown = ({
@@ -207,7 +321,7 @@ const ColumnConfigureDropDown = ({
   setColumns,
   onColumnVisibilityChange,
   defaultGrouping: _defaultGrouping = "Run Columns",
-  useGrouping: _useGrouping = false,
+  useGrouping = false,
   placement = "bottom",
 }) => {
   const theme = useTheme();
@@ -226,6 +340,24 @@ const ColumnConfigureDropDown = ({
       col?.name?.toLowerCase()?.includes(debouncedSearchQuery.toLowerCase()),
     );
   }, [flatColumns, debouncedSearchQuery]);
+
+  // §4.2 — when grouping is enabled, eval columns are split out and rendered as
+  // collapsible Task-group sections (below). Base columns keep the existing
+  // flat, draggable list. When grouping is off, behaviour is unchanged.
+  const baseColumns = useMemo(
+    () =>
+      useGrouping
+        ? filteredColumns.filter((c) => c?.groupBy !== "Evaluation Metrics")
+        : filteredColumns,
+    [filteredColumns, useGrouping],
+  );
+  const evalTaskGroups = useMemo(() => {
+    if (!useGrouping) return [];
+    const evalCols = filteredColumns.filter(
+      (c) => c?.groupBy === "Evaluation Metrics",
+    );
+    return groupEvalColumnsByTask(evalCols);
+  }, [filteredColumns, useGrouping]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -371,10 +503,10 @@ const ColumnConfigureDropDown = ({
           onDragEnd={handleDragEnd}
         >
           <SortableContext
-            items={filteredColumns.map((c) => c.id)}
+            items={baseColumns.map((c) => c.id)}
             strategy={verticalListSortingStrategy}
           >
-            {filteredColumns.map((column) => (
+            {baseColumns.map((column) => (
               <DraggableColumnRow
                 key={column.id}
                 id={column.id}
@@ -387,6 +519,15 @@ const ColumnConfigureDropDown = ({
             ))}
           </SortableContext>
         </DndContext>
+
+        {/* §4.2 — eval columns grouped by parent Task */}
+        {evalTaskGroups.map((group) => (
+          <EvalTaskGroupSection
+            key={group.taskId}
+            group={group}
+            onColumnChange={onColumnChange}
+          />
+        ))}
 
         {filteredColumns.length === 0 && (
           <Typography

@@ -23,6 +23,13 @@ import { isCellValueEmpty } from "src/components/table/utils";
 import AnnotationHeaderCellRenderer from "../../agents/CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "../../agents/NewAnnotationCellRenderer";
 import headerComponentLabels from "../../agents/headerComponetLabels";
+import {
+  groupEvalColumnsByTask,
+  filterEvalColumnsForView,
+  TASK_LEVEL,
+} from "./evalTaskMock";
+import ChoiceClusterCell from "./Renderers/ChoiceClusterCell";
+import EvalTaskGroupHeader from "./Renderers/EvalTaskGroupHeader";
 
 export const AllowedGroups = [
   "Evaluation Metrics",
@@ -803,12 +810,107 @@ export const generateAnnotationColumnsForTracing = (
   }));
 };
 
+// A choice eval is split by the backend into per-choice numeric columns named
+// like "Avg. neutral (tone_26_Mar_2026)". This matches such a column and
+// extracts [, choiceLabel, parentEvalName].
+const CHOICE_COL_RE = /^(?:avg\.?\s+)?(.+?)\s*\(([^)]+)\)\s*$/i;
+
+// Build the children colDefs for one Task group. Per-choice columns that share
+// a parent choice eval are merged into a single collated chip-cluster column
+// (§4.6.1); everything else uses the normal eval cell.
+const buildEvalGroupChildren = (evals, level) => {
+  const isRollup = level === TASK_LEVEL.SPAN;
+  const clusters = new Map(); // parentEvalName -> [{ col, label }]
+  const order = []; // preserve column order
+  for (const col of evals) {
+    const m = CHOICE_COL_RE.exec(col?.name || "");
+    if (m) {
+      const parent = m[2].trim();
+      if (!clusters.has(parent)) {
+        clusters.set(parent, []);
+        order.push({ type: "cluster", key: parent });
+      }
+      clusters.get(parent).push({ col, label: m[1].trim() });
+    } else {
+      order.push({ type: "col", col });
+    }
+  }
+
+  const children = [];
+  const done = new Set();
+  for (const item of order) {
+    if (item.type === "col") {
+      children.push(
+        getTraceListColumnDefs({ ...item.col, _isEvalRollup: isRollup }),
+      );
+      continue;
+    }
+    if (done.has(item.key)) continue;
+    done.add(item.key);
+    const members = clusters.get(item.key);
+    // Only collapse when there are ≥2 per-choice siblings — a lone match is
+    // an ordinary eval that happens to have parentheses in its name.
+    if (members.length >= 2) {
+      const siblings = members.map(({ col, label }) => ({ id: col.id, label }));
+      children.push({
+        colId: `eval-choice-${item.key}`,
+        headerName: item.key,
+        minWidth: 240,
+        flex: 1,
+        resizable: true,
+        headerComponent: CustomTraceHeaderRenderer,
+        headerComponentParams: { group: "Evaluation Metrics" },
+        valueGetter: (params) => {
+          const choices = siblings
+            .map((s) => {
+              const v = params?.data?.[s.id];
+              const pct = v == null || v === "" ? null : Number(v);
+              return { label: s.label, pct: Number.isFinite(pct) ? pct : null };
+            })
+            .filter((c) => c.pct != null);
+          return choices.length ? { choices } : null;
+        },
+        cellRenderer: ChoiceClusterCell,
+      });
+    } else {
+      children.push(
+        getTraceListColumnDefs({ ...members[0].col, _isEvalRollup: isRollup }),
+      );
+    }
+  }
+  return children;
+};
+
+// §4.1 — group eval columns under their parent Task as two-tier AG-Grid column
+// groups, mirroring the Custom Columns grouping already used in this table
+// (plain { headerName, children, marryChildren } → default group header band).
+// `view` scopes which evals appear (§4.3): "trace" = trace+span(rollup), "span" = span only.
+export const generateEvalColumnsGroupedByTask = (
+  evalCols = [],
+  { view = "trace" } = {},
+) => {
+  if (!evalCols.length) return [];
+  const scoped = filterEvalColumnsForView(evalCols, view);
+  if (!scoped.length) return [];
+  const groups = groupEvalColumnsByTask(scoped);
+  return groups.map((group) => ({
+    headerName: group.taskName,
+    groupId: `eval-task-${group.taskId}`,
+    marryChildren: true,
+    // Source glyph lives on the Task band (one per task), not per cell.
+    headerGroupComponent: EvalTaskGroupHeader,
+    headerGroupComponentParams: { evalSourceLevel: group.level },
+    children: buildEvalGroupChildren(group.evals, group.level),
+  }));
+};
+
 export const DOC_LINKS = {
   llmTracing: "https://docs.futureagi.com/docs/observe",
   sessions: "https://docs.futureagi.com/docs/observe/features/session",
   evals: "https://docs.futureagi.com/docs/observe/features/evals",
   alerts: "https://docs.futureagi.com/docs/observe/features/alerts",
-  users: "https://docs.futureagi.com/docs/observe/features/manual-tracing/set-session-user-id",
+  users:
+    "https://docs.futureagi.com/docs/observe/features/manual-tracing/set-session-user-id",
   charts: "https://docs.futureagi.com/docs/observe/features/evals",
 };
 
