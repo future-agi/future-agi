@@ -466,7 +466,7 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
 // ---------------------------------------------------------------------------
 // Build React Flow nodes + edges from API data
 // ---------------------------------------------------------------------------
-const buildFlowData = (graphData, direction = "LR", theme = null) => {
+export const buildFlowData = (graphData, direction = "LR", theme = null) => {
   if (!graphData?.nodes?.length) return { nodes: [], edges: [] };
 
   const nodeIdSet = new Set(graphData.nodes.map((n) => n.id));
