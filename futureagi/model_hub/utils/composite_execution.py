@@ -129,6 +129,7 @@ def _execute_child(
             trace_context=trace_context,
             session_context=session_context,
             call_context=call_context,
+            resolved_version=link.pinned_version if link.pinned_version else None,
         )
 
         score: float | None = None

@@ -216,14 +216,18 @@ def run_eval_func(
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
 
-        # Track which eval version produced this result
-        try:
-            default_version = EvalTemplateVersion.objects.get_default(template)
-            if default_version:
-                source_config["version_id"] = str(default_version.id)
-                source_config["version_number"] = default_version.version_number
-        except Exception:
-            pass
+        # Track which eval version produced this result.
+        # If the caller passed a resolved_version (e.g. pinned composite
+        # child), use that — otherwise fall back to the template default.
+        _tracked_version = kwargs.get("resolved_version")
+        if not _tracked_version:
+            try:
+                _tracked_version = EvalTemplateVersion.objects.get_default(template)
+            except Exception:
+                pass
+        if _tracked_version:
+            source_config["version_id"] = str(_tracked_version.id)
+            source_config["version_number"] = _tracked_version.version_number
 
         try:
             from ee.usage.schemas.event_types import BillingEventType

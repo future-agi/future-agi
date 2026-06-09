@@ -100,8 +100,7 @@ def backfill_apicalllog_version_info(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("model_hub", "0100_merge_20260521_0749"),
-        ("usage", "__latest__"),
+        ("model_hub", "0110_merge_20260609_1253"),
     ]
 
     operations = [

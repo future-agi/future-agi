@@ -1725,8 +1725,7 @@ class EvalUsageLogItemSerializer(serializers.Serializer):
     aggregate_pass = serializers.BooleanField(required=False, allow_null=True)
 
 
-class EvalUsageLogsSerializer(serializers.Serializer):
-    items = EvalUsageLogItemSerializer(many=True)
+class EvalUsagePaginationSerializer(serializers.Serializer):
     total = serializers.IntegerField()
     page = serializers.IntegerField()
     page_size = serializers.IntegerField()
@@ -1737,7 +1736,8 @@ class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     is_composite = serializers.BooleanField()
     stats = EvalUsageStatsSerializer()
     chart = EvalUsageChartPointSerializer(many=True)
-    logs = EvalUsageLogsSerializer()
+    table = serializers.ListField(child=serializers.DictField())
+    logs = EvalUsagePaginationSerializer()
 
 
 class EvalUsageStatsResponseSerializer(serializers.Serializer):
@@ -2949,9 +2949,6 @@ class ExperimentAdditionalEvaluationsRequestSerializer(serializers.Serializer):
         child=serializers.UUIDField(),
         allow_empty=False,
     )
-
-
-# ── Eval Usage Column Config ────────────────────────────────────────
 
 
 
